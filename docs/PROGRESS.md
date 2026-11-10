@@ -36,7 +36,7 @@
 - [x] Paper Extractor 并行 map 阶段
 - [x] Evidence Checker
 - [ ] 主题综合、机制库和研究地图
-- [ ] 论文 gold set 回归
+- [x] 论文 gold set 回归
 
 ## Phase 3：数据与实验协议
 
@@ -120,3 +120,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 3 数据分布保持检查（类别 top-share 漂移 warning/blocker、数值 σ 均值漂移、slice.distributionCheck 记录与构建时打印）| 22b4938 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 34 files/205 vitest + 5 python 全过 | 客户端/域/主体边界对通用 CSV 以 pending 明示（领域适配器负责）；标签无关漂移检测 | Phase 3 剩余仅凭据依赖项（Protocol Synthesis LLM）与语料依赖项（首发领域 gold set）
 2026-11-10 | 真实语料+真实凭据验证批次：.env 安全加载（679cdc3）、74 篇增量扫描/解析全通+坏PDF失败隔离（2af9b9a）、capability guard 关闭原生工具逃逸+keyed 真实模型集成测试（3025170）、引文排版归一化（508f32e）| 全部见各 commit | 门禁：pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 36 files/217 vitest+5 python（含真实模型 keyed 测试）；真实证据核验13/13与8/8 pass；增量证据：冷扫描reused=0→热30→wave2 new44/skip30→74/74 indexed | 论文/数据/.env 均被 gitignore 排除且 staged 无 secret；并行 map、向量检索、LaTeX/OCR、gold set 仍未做 | 下一模块：Paper Extractor 并行 map 阶段（extract --parallel 批量抽取）
 2026-11-10 | Phase 2 Paper Extractor 并行 map 阶段：ideaseek extract（增量选择/extract+verify 链/K 个并行 worker 子进程/超时与退出码）、handler 跨 run 全局 parsed 复用 | ac64bfe | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 37 files/222 vitest+5 python 全过（fake 并行 e2e + keyed 真实模型并行 e2e，2 篇/K=2/零失败）| 并发上限钳制4（API/内存保护）；全量 74 篇真实抽取由 --limit 分批执行以控成本 | 下一模块：论文 gold set 回归（语料已就位）或向量检索
+2026-11-10 | Phase 2 gold set 回归：sampleSources+evaluateSource+aggregate（覆盖率/卡片有效/证据支持/页定位/哈希绑定/判定通过率）+ ideaseek evaluate + knowledge/goldset-report.json | 80182b1+0454b79+2edc576+timeout-fix | 门禁 38 files/230 vitest+5 python 全绿 | 真实校准（12 篇/seed42，真实模型）：coverage100% cardValid100% evidence89.5% pageAccuracy89.5% hashBinding100% verdictPass75% avgClaims8；3 篇存在未过核验引文（模型转述/页码归属），正是人工复核入口 knowledge/goldset-report.json；全语料74/74 已抽取+核验 | 下一模块：主题综合、机制库和研究地图（卡片已就绪，凭据已解锁）
