@@ -23,6 +23,7 @@ import type {
 import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from './types.js';
 import type {
   BeginCommitResult,
+  DatasetSliceRecord,
   PaperIndexEntry,
   PaperIndexMeta,
   PaperSearchHit,
@@ -143,6 +144,20 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         paper_key UNINDEXED,
         tokenize = 'porter unicode61'
       );
+    `,
+  },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE IF NOT EXISTS dataset_slice (
+        slice_id TEXT PRIMARY KEY,
+        dataset_snapshot_id TEXT NOT NULL,
+        scale TEXT NOT NULL,
+        record_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dataset_slice_dataset
+        ON dataset_slice(dataset_snapshot_id, scale);
     `,
   },
 ];
@@ -838,6 +853,79 @@ export class SqliteWorkflowDb implements WorkflowDb {
         parser: row.parser,
         pageCount: row.page_count,
         indexedAt: row.indexed_at,
+      })),
+    );
+  }
+
+  upsertSlice(slice: DatasetSliceRecord): Promise<void> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        this.db
+          .prepare(
+            'INSERT INTO dataset_slice (slice_id, dataset_snapshot_id, scale, record_json, created_at) VALUES (?, ?, ?, ?, ?) ' +
+              'ON CONFLICT(slice_id) DO UPDATE SET dataset_snapshot_id = excluded.dataset_snapshot_id, scale = excluded.scale, record_json = excluded.record_json',
+          )
+          .run(
+            slice.sliceId,
+            slice.datasetSnapshotId,
+            slice.scale,
+            JSON.stringify(slice.record),
+            slice.createdAt,
+          );
+      }),
+    );
+  }
+
+  getSlice(sliceId: string): Promise<DatasetSliceRecord | null> {
+    const row = this.db.prepare('SELECT * FROM dataset_slice WHERE slice_id = ?').get(sliceId) as
+      | {
+          slice_id: string;
+          dataset_snapshot_id: string;
+          scale: string;
+          record_json: string;
+          created_at: number;
+        }
+      | undefined;
+    if (!row) return Promise.resolve(null);
+    return Promise.resolve({
+      sliceId: row.slice_id,
+      datasetSnapshotId: row.dataset_snapshot_id,
+      scale: row.scale,
+      record: parseJson<Record<string, unknown>>(row.record_json, {}),
+      createdAt: row.created_at,
+    });
+  }
+
+  listSlices(
+    opts: { datasetSnapshotId?: string; scale?: string } = {},
+  ): Promise<DatasetSliceRecord[]> {
+    let sql = 'SELECT * FROM dataset_slice';
+    const params: string[] = [];
+    const where: string[] = [];
+    if (opts.datasetSnapshotId) {
+      where.push('dataset_snapshot_id = ?');
+      params.push(opts.datasetSnapshotId);
+    }
+    if (opts.scale) {
+      where.push('scale = ?');
+      params.push(opts.scale);
+    }
+    if (where.length > 0) sql += ' WHERE ' + where.join(' AND ');
+    sql += ' ORDER BY created_at, slice_id';
+    const rows = this.db.prepare(sql).all(...params) as unknown as {
+      slice_id: string;
+      dataset_snapshot_id: string;
+      scale: string;
+      record_json: string;
+      created_at: number;
+    }[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        sliceId: row.slice_id,
+        datasetSnapshotId: row.dataset_snapshot_id,
+        scale: row.scale,
+        record: parseJson<Record<string, unknown>>(row.record_json, {}),
+        createdAt: row.created_at,
       })),
     );
   }

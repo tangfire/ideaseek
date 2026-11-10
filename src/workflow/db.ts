@@ -61,6 +61,15 @@ export interface BlockResult {
   run: RunRecord;
 }
 
+export interface DatasetSliceRecord {
+  sliceId: string;
+  datasetSnapshotId: string;
+  scale: string;
+  /** Full DatasetSlice JSON (docs/DATA_CONTRACTS.md). */
+  record: Record<string, unknown>;
+  createdAt: number;
+}
+
 export interface PaperIndexEntry {
   /** Content hash of the parsed source (sha256:<hex>) — index entry identity. */
   paperKey: string;
@@ -160,6 +169,11 @@ export interface WorkflowDb {
   removePaperIndex(paperKey: string): Promise<boolean>;
   searchPapers(query: string, opts?: { limit?: number }): Promise<PaperSearchHit[]>;
   listIndexedPapers(): Promise<PaperIndexMeta[]>;
+
+  // Dataset slice registry (migration v3)
+  upsertSlice(slice: DatasetSliceRecord): Promise<void>;
+  getSlice(sliceId: string): Promise<DatasetSliceRecord | null>;
+  listSlices(opts?: { datasetSnapshotId?: string; scale?: string }): Promise<DatasetSliceRecord[]>;
 
   // Workers
   registerWorker(input: {
