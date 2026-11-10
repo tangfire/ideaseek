@@ -47,7 +47,7 @@
 - [x] 用户确认和 protocol lock
 - [x] Scenario Planner 和实验组合 L0–L4
 - [x] DatasetSlice `smoke/quick/standard`、handoff manifest 和晋级规则
-- [ ] 数据分布保持、客户端/域/主体边界和泄漏检查
+- [x] 数据分布保持、客户端/域/主体边界和泄漏检查
 - [ ] 首发领域验证（优先联邦学习模型异构）及人工 gold set
 
 ## Phase 4：Comparison
@@ -117,3 +117,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 3 Scenario/Portfolio L0–L4 契约+校验（等级枚举/重复/稳定性种子≥3/L4 外部数据门槛/晋级与停止规则）+ buildDefaultPortfolio 确定性默认组合 | a90e0de | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 32 files/196 vitest + 5 python 全过 | Experiment Designer LLM 生成与实际实验消费属凭据/Phase5 依赖；晋级执行需 idea workspace | 下一模块：handoff manifest 或收口汇报
 2026-11-10 | Phase 3 handoff manifest 契约（slice 引用+环境+命令+provenance+不执行全量训练的边界声明）与 buildHandoff 组装器 | 7a084e0 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 33 files/200 vitest + 5 python 全过 | experiment handoff CLI 命令待 idea workspace（Phase 5）接线 | Phase 3 无凭据可交付项完成
 2026-11-10 | Phase 3 checkbox 确认：Leakage/Validity Checker（确定性层+pending 明示）、ProtocolProposal schema、协议确认与锁定、Scenario L0–L4、DatasetSlice+handoff+晋级规则（CLI promote/handoff 待 Phase 5 接线）| d8ef880+89a9d51+a90e0de+5325888+7a084e0 | 各模块门禁全绿（33 files/200 vitest+5 python）| Protocol Synthesis LLM 生成需凭据；语义级检查需适配器 | 剩余：数据分布保持检查（可做）与首发领域验证（需语料）
+2026-11-10 | Phase 3 数据分布保持检查（类别 top-share 漂移 warning/blocker、数值 σ 均值漂移、slice.distributionCheck 记录与构建时打印）| 22b4938 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 34 files/205 vitest + 5 python 全过 | 客户端/域/主体边界对通用 CSV 以 pending 明示（领域适配器负责）；标签无关漂移检测 | Phase 3 剩余仅凭据依赖项（Protocol Synthesis LLM）与语料依赖项（首发领域 gold set）
