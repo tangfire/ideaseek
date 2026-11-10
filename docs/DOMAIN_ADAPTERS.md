@@ -1,6 +1,32 @@
 # IdeaSeek 可选领域插件
 
-IdeaSeek 的通用底座负责论文知识、Agent 编排、comparison、代码修复、资源调度、checkpoint 和报告；具体项目的实验协议由论文、comparison 代码和用户数据共同综合出来。领域插件是可选的薄扩展，只在某个方向需要特殊格式解析、泄漏检查、指标或安全边界时增加。平台不要求用户预先手写科研规则：Protocol Synthesis Agent 负责提出协议，Evidence Checker 和 Dataset Analyst 负责检查，只有无法安全推断的科学语义才请求用户确认。
+IdeaSeek 的通用底座负责论文知识、Agent 编排、comparison、代码修复、资源调度、checkpoint 和报告；具体项目的实验协议由论文、comparison 代码和用户数据共同综合出来。领域插件不是 IdeaSeek 的必需组成部分，也不是 idea 生成的前置条件。它们只在某个方向需要特殊格式解析、泄漏检查、指标或安全边界时增加，并且可以由用户、实验室或社区独立开发和安装。平台不要求用户预先手写科研规则：Protocol Synthesis Agent 负责提出协议，Evidence Checker 和 Dataset Analyst 负责检查，只有无法安全推断的科学语义才请求用户确认。
+
+## 什么时候需要插件
+
+优先使用通用能力。只有出现以下情况才建议写插件：
+
+- 数据格式无法通过通用 parser 和用户提供的入口稳定读取；
+- 某类泄漏规则必须由领域知识确定，通用检查器无法安全判断；
+- 指标实现、仿真器或资源估算具有稳定的领域标准；
+- 用户实验室已有可复用的任务模板，希望在多个项目中复用。
+
+插件补充确定性能力，不替代论文学习、机制推理或 idea 生成。一个方向没有插件时，IdeaSeek 仍然可以用通用解析、Protocol Synthesis 和用户确认运行；插件缺失不能自动成为阻塞。
+
+## 插件边界
+
+插件可以声明 parser、dataset inspector、split validator、metric provider、experiment adapter 或 resource estimator。插件必须通过公开 schema 接口返回结构化结果，附来源、版本和错误，不得直接修改原始数据或绕过权限。插件不能注册第二套 Agent Loop；需要 Agent 推理时调用 IdeaSeek/DSH 提供的角色和工具。
+
+用户可在项目中安装或启用插件，例如：
+
+```bash
+ideaseek plugin list
+ideaseek plugin install <package-or-local-path>
+ideaseek plugin enable <plugin-id>
+ideaseek plugin doctor <plugin-id>
+```
+
+插件的代码、依赖、许可证、版本和 capability 都记录在项目 manifest；没有用户启用的插件不会参与运行。
 
 ## 适配器契约
 

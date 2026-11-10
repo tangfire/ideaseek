@@ -89,6 +89,7 @@ Phase 4：Comparison 完整闭环
 
 目标：用一个真实研究方向验证通用论文学习、协议综合、comparison、quick/standard 实验和 handoff 的完整闭环。优先使用联邦学习模型异构，但不把领域知识硬编码进核心。
 
+- [ ] 定义可选插件 SDK、安装/启用/doctor 和权限 manifest
 - [ ] 接入真实 FL 数据集并生成 dataset manifest
 - [ ] 生成客户端/模型异构实验协议并通过泄漏门禁
 - [ ] 在至少两个代表性数据切片上验证 protocol lock

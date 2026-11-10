@@ -60,6 +60,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [PROVENANCE_AND_CITATIONS.md](PROVENANCE_AND_CITATIONS.md)：论文证据、引用、实验数值和失效链。
 - [RESEARCH_INTEGRITY.md](RESEARCH_INTEGRITY.md)：小规模验证、数据泄漏、选择偏差和结果标签。
 - [DOMAIN_ADAPTERS.md](DOMAIN_ADAPTERS.md)：多模态、短视频、图像分割和联邦学习等方向的可选解析器/检查器扩展。
+- [PLUGIN_SDK.md](PLUGIN_SDK.md)：用户和实验室开发可选 IdeaSeek 插件的边界与契约。
 - [USER_EXPERIENCE.md](USER_EXPERIENCE.md)：小规模项目、自动模式和小白用户操作路径。
 - [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md)：可执行开发阶段、任务依赖和验收标准。
 - [PROGRESS.md](PROGRESS.md)：带 checkbox 的实际开发进度和模块交付记录。
