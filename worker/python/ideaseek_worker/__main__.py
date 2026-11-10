@@ -131,6 +131,48 @@ def cmd_tables(args: argparse.Namespace) -> int:
     return 0
 
 
+
+MAX_OCR_PAGES = 20
+
+def cmd_ocr(args: argparse.Namespace) -> int:
+    """Image-based OCR fallback for scanned PDFs (NO_TEXT_LAYER inputs)."""
+    path = args.path
+    if not Path(path).is_file():
+        return _fail("FILE_NOT_FOUND", f"no such file: {path}")
+    try:
+        import pypdfium2 as pdfium
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError as exc:
+        return _fail("PARSER_MISSING", f"OCR dependencies missing: {exc}")
+    try:
+        pdf = pdfium.PdfDocument(path)
+    except Exception as exc:
+        return _fail("PARSE_FAILED", f"cannot open PDF: {exc}")
+    try:
+        engine = RapidOCR()
+    except Exception as exc:
+        return _fail("PARSER_MISSING", f"cannot initialize OCR engine: {exc}")
+    pages = []
+    total = min(len(pdf), MAX_OCR_PAGES)
+    try:
+        for index in range(total):
+            image = pdf[index].render(scale=2.0).to_pil()
+            result, _ = engine(image)
+            text = "\n".join(item[1] for item in result) if result else ""
+            pages.append({"page": index + 1, "text": text})
+    except Exception as exc:
+        return _fail("PARSE_FAILED", f"OCR failed: {exc}")
+    if not any(page["text"].strip() for page in pages):
+        return _fail("NO_TEXT_LAYER", "OCR produced no text (image-only or empty pages)")
+    _emit({
+        "source": str(path),
+        "pageCount": len(pages),
+        "pages": pages,
+        "parser": "rapidocr+pypdfium2",
+        "ocrPagesTruncated": max(0, len(pdf) - total),
+    })
+    return 0
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -144,6 +186,10 @@ def main(argv: list[str] | None = None) -> int:
     fixture_cmd.add_argument("out")
     fixture_cmd.add_argument("--marker", default="Evidence", help="page text marker")
     fixture_cmd.set_defaults(func=cmd_make_fixture)
+
+    ocr_cmd = sub.add_parser("ocr", help="image-based OCR fallback for scanned PDFs")
+    ocr_cmd.add_argument("path")
+    ocr_cmd.set_defaults(func=cmd_ocr)
 
     tables_cmd = sub.add_parser("tables", help="extract table grids from a PDF")
     tables_cmd.add_argument("path")

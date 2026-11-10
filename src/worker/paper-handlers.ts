@@ -1,7 +1,7 @@
 import { IdeaseekError, isIdeaseekError } from '../core/errors.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
-import { extractTables, parsePdf } from '../knowledge/pdf.js';
+import { extractTables, ocrPdf, parsePdf } from '../knowledge/pdf.js';
 import { verifyPaperEvidence } from '../knowledge/checker.js';
 import { parseLatex } from '../knowledge/latex.js';
 import { sha256OfFile, sha256Of } from '../core/hash.js';
@@ -88,22 +88,40 @@ export const paperParse: TaskHandler = async (ctx: TaskContext) => {
     throw error;
   }
   const abs = join(ctx.runtime.paths.root, ...pdfPath.split('/'));
-  let parsed;
+  let parsed: { pageCount: number; pages: { page: number; text: string }[]; parser: string };
+  let usedOcr = false;
   try {
     parsed = await parsePdf(abs);
   } catch (error) {
-    // File-level parse failures are content-addressed: retrying identical
-    // bytes cannot heal them, so fail fast and let the run flag this paper
-    // without burning attempts (docs: 失败论文被标记而不是丢失).
-    if (
-      isIdeaseekError(error) &&
-      ['PARSE_FAILED', 'FILE_NOT_FOUND', 'EMPTY_FILE', 'ENCRYPTED_PDF', 'NO_TEXT_LAYER'].includes(
-        error.code,
-      )
-    ) {
-      (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    // Scanned PDFs (no text layer) fall back to the OCR engine in the worker
+    // venv; every other file-level failure is content-addressed and permanent
+    // (retrying identical bytes cannot heal it — flag, don't lose, and don't
+    // burn attempts; docs: 失败论文被标记而不是丢失).
+    const isNoTextLayer = isIdeaseekError(error) && error.code === 'NO_TEXT_LAYER';
+    if (isNoTextLayer) {
+      try {
+        const ocr = await ocrPdf(abs);
+        parsed = { pageCount: ocr.pageCount, pages: ocr.pages, parser: ocr.parser };
+        usedOcr = true;
+      } catch (ocrError) {
+        const wrapped = new IdeaseekError(
+          'NO_TEXT_LAYER',
+          `no text layer and OCR fallback unavailable: ${
+            isIdeaseekError(ocrError) ? ocrError.message : String(ocrError)
+          }`,
+        );
+        (wrapped as IdeaseekError & { permanent?: boolean }).permanent = true;
+        throw wrapped;
+      }
+    } else {
+      if (
+        isIdeaseekError(error) &&
+        ['PARSE_FAILED', 'FILE_NOT_FOUND', 'EMPTY_FILE', 'ENCRYPTED_PDF'].includes(error.code)
+      ) {
+        (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+      }
+      throw error;
     }
-    throw error;
   }
   const sourceHash = await sha256OfFile(abs);
   const payload = {
@@ -112,17 +130,20 @@ export const paperParse: TaskHandler = async (ctx: TaskContext) => {
     pageCount: parsed.pageCount,
     pages: parsed.pages,
     parser: parsed.parser,
+    ocr: usedOcr,
   };
   return {
     artifacts: [
       {
         kind: 'parsed-paper',
         data: `${JSON.stringify(payload, null, 2)}\n`,
-        meta: { filename: 'parsed-paper.json', parser: parsed.parser },
+        meta: { filename: 'parsed-paper.json', parser: parsed.parser, ocr: usedOcr },
       },
     ],
-    summary: `parsed ${parsed.pageCount} page(s) from ${basename(pdfPath)} (${parsed.parser})`,
-    data: { pageCount: parsed.pageCount, sourceHash },
+    summary: usedOcr
+      ? `ocr ${parsed.pageCount} page(s) from ${basename(pdfPath)} (${parsed.parser})`
+      : `parsed ${parsed.pageCount} page(s) from ${basename(pdfPath)} (${parsed.parser})`,
+    data: { pageCount: parsed.pageCount, sourceHash, ocr: usedOcr },
   };
 };
 

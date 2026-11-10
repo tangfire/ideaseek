@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IdeaseekError, type IdeaseekErrorCode } from '../core/errors.js';
 
@@ -34,19 +34,41 @@ export function workerPythonDir(): string {
   return resolve(here, '..', '..', 'worker', 'python');
 }
 
+let cachedPython: string | null | undefined;
+
+/**
+ * Interpreter preference: the isolated worker venv (pinned wheels incl.
+ * stable onnxruntime for OCR) first, then system python3/python.
+ */
 async function pythonBinary(): Promise<string> {
-  for (const candidate of ['python3', 'python']) {
-    const works = await new Promise<boolean>((resolveProbe) => {
-      const child = spawn(candidate, ['--version'], { stdio: 'ignore' });
-      child.on('error', () => resolveProbe(false));
-      child.on('close', (code) => resolveProbe(code === 0));
-    });
-    if (works) return candidate;
+  if (cachedPython) return cachedPython;
+  const venvCandidate =
+    process.platform === 'win32'
+      ? join(workerPythonDir(), '.venv', 'Scripts', 'python.exe')
+      : join(workerPythonDir(), '.venv', 'bin', 'python');
+  for (const candidate of [venvCandidate, 'python3', 'python']) {
+    if (!candidate) continue;
+    const probe = await probePython(candidate);
+    if (probe) {
+      cachedPython = probe;
+      return probe;
+    }
   }
-  throw new IdeaseekError(
-    'ENV_UNSUPPORTED',
-    'no python3/python on PATH; install Python 3.10+ for PDF parsing (ideaseek doctor)',
-  );
+  throw new IdeaseekError('ENV_UNSUPPORTED', 'no python interpreter found for the worker');
+}
+
+async function probePython(candidate: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(candidate, ['--version'], { stdio: 'ignore' });
+    } catch {
+      resolve(null);
+      return;
+    }
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => resolve(code === 0 ? candidate : null));
+  });
 }
 
 export interface ParsePdfOptions {
@@ -229,6 +251,82 @@ export async function extractTables(
             ? (payload.code as IdeaseekErrorCode)
             : 'PARSE_FAILED',
           payload?.message ?? 'table extraction failed',
+        ),
+      );
+    });
+  });
+}
+
+export interface OcrResult {
+  source: string;
+  pageCount: number;
+  pages: ParsedPage[];
+  parser: string;
+  /** Pages beyond the OCR cap that were not processed. */
+  ocrPagesTruncated: number;
+}
+
+/**
+ * Image-based OCR fallback (rapidocr + pypdfium2 in the worker venv) for
+ * scanned PDFs that parsePdf reports as NO_TEXT_LAYER. Same strict JSON
+ * protocol; OCR is capped (20 pages) and PARSER_MISSING means the venv was
+ * not provisioned — the caller flags the paper instead of crashing.
+ */
+export async function ocrPdf(pdfPath: string, opts: ParsePdfOptions = {}): Promise<OcrResult> {
+  const python = opts.pythonBin ?? (await pythonBinary());
+  const cwd = workerPythonDir();
+  const timeoutMs = opts.timeoutMs ?? 300_000;
+
+  return new Promise<OcrResult>((resolvePromise, reject) => {
+    const child = spawn(python, ['-m', 'ideaseek_worker', 'ocr', pdfPath], {
+      cwd,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new IdeaseekError('PARSE_FAILED', 'OCR timed out'));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => (stdout += String(chunk)));
+    child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new IdeaseekError('ENV_UNSUPPORTED', `cannot spawn python: ${error.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
+        try {
+          resolvePromise(JSON.parse(line) as OcrResult);
+        } catch (error) {
+          reject(
+            new IdeaseekError(
+              'PARSE_FAILED',
+              `cannot parse OCR output: ${(error as Error).message}`,
+            ),
+          );
+        }
+        return;
+      }
+      let payload: { code?: string; message?: string } | null = null;
+      for (const line of stderr.trim().split(/\r?\n/).reverse()) {
+        if (!line.startsWith('{')) continue;
+        try {
+          payload = JSON.parse(line) as { code?: string; message?: string };
+          break;
+        } catch {
+          continue;
+        }
+      }
+      reject(
+        new IdeaseekError(
+          payload?.code && PARSER_CODES.has(payload.code)
+            ? (payload.code as IdeaseekErrorCode)
+            : 'PARSE_FAILED',
+          payload?.message ?? 'OCR failed',
         ),
       );
     });

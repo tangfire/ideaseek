@@ -120,3 +120,39 @@ class TablesTests(unittest.TestCase):
         )
         self.assertEqual(out.returncode, 1)
         self.assertEqual(json.loads(out.stderr)["code"], "FILE_NOT_FOUND")
+
+
+class OcrTests(unittest.TestCase):
+    def test_ocr_roundtrip_with_venv_or_skip(self) -> None:
+        """OCR runs under the pinned venv; skipped when the venv is absent."""
+        root = Path(__file__).resolve().parents[1]
+        venv_py = root / ".venv" / "Scripts" / "python.exe"
+        if not venv_py.exists():
+            venv_py = root / ".venv" / "bin" / "python"
+        if not venv_py.exists():
+            self.skipTest("worker venv not provisioned (see README)")
+
+        pdf = root / "_ocr_fixture.pdf"
+        pdf.write_bytes(build_minimal_pdf(["OCR selftest words"]))
+        try:
+            out = subprocess.run(
+                [str(venv_py), "-m", "ideaseek_worker", "ocr", str(pdf)],
+                capture_output=True, text=True, cwd=str(root), timeout=300,
+            )
+        finally:
+            pdf.unlink(missing_ok=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        payload = json.loads(out.stdout)
+        self.assertTrue(payload["pages"])
+        self.assertTrue(any("OCR" in p["text"] for p in payload["pages"]), payload["pages"])
+        self.assertEqual(payload["parser"], "rapidocr+pypdfium2")
+
+    def test_ocr_missing_file_uses_error_protocol(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        env = {**__import__("os").environ, "PYTHONPATH": str(root)}
+        out = subprocess.run(
+            [sys.executable, "-m", "ideaseek_worker", "ocr", str(root / "nope.pdf")],
+            capture_output=True, text=True, env=env, cwd=str(root), timeout=60,
+        )
+        self.assertEqual(out.returncode, 1)
+        self.assertEqual(json.loads(out.stderr)["code"], "FILE_NOT_FOUND")
