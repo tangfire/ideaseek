@@ -11,7 +11,7 @@ export interface CapabilityPatch {
   patchPath: string;
   /** The patch content (also useful for tests/debugging). */
   yaml: string;
-  pluginPaths: { researchTools: string; extractorProfile: string };
+  pluginPaths: { researchTools: string; extractorProfile: string; capabilityGuard: string };
 }
 
 function siblingSource(moduleDir: string, name: string): string {
@@ -44,11 +44,13 @@ export async function writeCapabilityPatch(opts: {
   const moduleDir = opts.moduleDir ?? dirname(fileURLToPath(import.meta.url));
   const researchTools = siblingSource(moduleDir, 'research-tools');
   const extractorProfile = siblingSource(moduleDir, 'extractor-profile');
+  const capabilityGuard = siblingSource(moduleDir, 'capability-guard');
 
   const rows = [
     {
       insert: [
         { id: 'ideaseek-research-tools', name: researchTools },
+        { id: 'ideaseek-capability-guard', name: capabilityGuard },
         {
           id: 'ideaseek-agent-preset-registry',
           name: '@deepseek-ai/dsh-agent-preset-registry',
@@ -76,6 +78,6 @@ export async function writeCapabilityPatch(opts: {
   return {
     patchPath,
     yaml,
-    pluginPaths: { researchTools, extractorProfile },
+    pluginPaths: { researchTools, extractorProfile, capabilityGuard },
   };
 }

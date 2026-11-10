@@ -38,6 +38,8 @@ export interface DshAdapterOptions {
    * preset with tool allowlist). Default true; tests may disable it.
    */
   capabilityPatch?: boolean;
+  /** Per-request model output cap (DSH sets this at spawn; default 4096). */
+  maxOutputTokens?: number;
 }
 
 /** Stable DSH LlmFailure.code → IdeaSeek handling (docs: never parse messages). */
@@ -212,6 +214,7 @@ export class DshHarnessAdapter implements HarnessAdapter {
       patches,
       provider: this.opts.provider ?? 'deepseek-official',
       model: this.opts.model ?? 'deepseek-v4-flash',
+      maxTokens: this.opts.maxOutputTokens ?? 8192, // spawn-time; budget.maxOutputTokens is advisory
       initializeTimeoutMs: this.opts.initializeTimeoutMs ?? 15_000,
     });
     this.harness = harness;
@@ -275,7 +278,16 @@ export class DshHarnessAdapter implements HarnessAdapter {
 
     const json = extractJson(result.finalResponse);
     if (!json) {
-      throw new Error('dsh response did not contain a JSON object matching the output schema');
+      const head = (result.finalResponse ?? '').replace(/\s+/g, ' ').slice(0, 200);
+      const reason = result.finishReason ?? 'null';
+      if (reason === 'length' || reason === 'max-tokens') {
+        throw new Error(
+          `dsh response was truncated by the output token cap (finishReason=${reason})`,
+        );
+      }
+      throw new Error(
+        `dsh response did not contain a JSON object (finishReason=${reason}${head ? `; starts: ${head}` : ''})`,
+      );
     }
 
     onEvent?.({
