@@ -74,6 +74,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)：版本发布、迁移、回滚和升级验收。
 - [BOOTSTRAP_DEVELOPMENT.md](BOOTSTRAP_DEVELOPMENT.md)：从 clone DSH、创建 IdeaSeek 私有仓库到让开发 Agent 开工的步骤。
 - [PACKAGING.md](PACKAGING.md)：普通用户安装、开发安装、doctor、升级、回滚和平台支持。
+- [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：专业产品的 onboarding、可观测性、成本、安全、交付和维护要求。
 
 ## 首版边界
 

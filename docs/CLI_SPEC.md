@@ -9,6 +9,7 @@ ideaseek init
 ideaseek start --question "..."
 ideaseek setup
 ideaseek doctor
+ideaseek plan --question "..."
 ideaseek scan
 ideaseek organize [--apply]
 ideaseek intake
@@ -21,6 +22,7 @@ ideaseek run --question "..." --detach
 ideaseek attach --run <id>
 ideaseek watch --run <id>
 ideaseek status --detail
+ideaseek explain <task|decision|artifact>
 ideaseek events --run <id> --since <seq>
 ideaseek pause [--hard]
 ideaseek resume [--run <id>]
