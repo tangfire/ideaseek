@@ -1,0 +1,36 @@
+# IdeaSeek project configuration (docs/CONFIG_SPEC.md).
+# Configuration expresses intent and resource bounds. Never store secrets here.
+config_version: 1
+project:
+  name: IdeaSeek
+  domain: ''
+research:
+  question: ''
+  mode: auto
+  idea_limit: 1
+  external_search: false
+inputs:
+  papers_dir: papers
+  datasets_dir: datasets
+  comparisons_dir: comparisons
+runtime:
+  profile: headless
+  model_route: default
+  container_runtime: docker
+  allow_network: false
+  default_data_scale: quick
+  lease_ttl_seconds: 30
+  heartbeat_interval_seconds: 8
+  max_attempts: 3
+  worker_poll_ms: 200
+resources:
+  max_parallel_agents: 8
+  max_parallel_ideas: 2
+  max_gpu_hours: 20
+  max_model_cost: 50
+  max_iteration_rounds: 3
+policy:
+  require_all_comparisons: true
+  require_user_confirmation_before_experiments: true
+  allow_paper_reimplementation: true
+  auto_accept_discovered_comparisons: false

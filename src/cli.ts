@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
+import { loadLocalEnv } from './core/env.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerConfirmCommand } from './commands/confirm.js';
 import { registerDataCommand } from './commands/data.js';
@@ -75,6 +76,7 @@ export function buildProgram(): Command {
 }
 
 export async function runCli(argv: string[]): Promise<number> {
+  loadLocalEnv(); // names-only, never overrides host env, never logs values
   try {
     await buildProgram().parseAsync(argv);
     const code = process.exitCode;
