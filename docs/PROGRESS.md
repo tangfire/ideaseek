@@ -34,7 +34,7 @@
 - [ ] PaperCard schema 和证据定位
 - [ ] 去重、全文/向量检索和增量处理
 - [ ] Paper Extractor 并行 map 阶段
-- [ ] Evidence Checker
+- [x] Evidence Checker
 - [ ] 主题综合、机制库和研究地图
 - [ ] 论文 gold set 回归
 
@@ -109,3 +109,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 2 Evidence Checker（确定性层）：verifyPaperEvidence 引文/页码/哈希绑定核验、paper.verify 任务链、evidence_verdict 事件、FakeHarness 输出合规 PaperCard、extract 平台盖章 document_hash/paper_id | cd7959e | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 25 files/150 vitest + 5 python 全过（checker 判定矩阵9例 + 双链 e2e verdict pass）| 判定仅覆盖确定性部分（结构/引文/绑定）；语义级核验与真实抽取需模型凭据 | 下一模块：knowledge_search DSH 工具封装或 ingest 并行解析入口（均可无凭据推进）
 2026-11-10 | Phase 2 knowledge_search DSH 工具（CLI 子进程查询 FTS 索引、单写者协议、解析器 allowlist 扩展为 project_read+knowledge_search）| e5297f4 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 26 files/156 vitest + 5 python 全过 | DSH 子进程不直连 DB（经 ideaseek search --json）；工具真实被模型调用的会话级验证需凭据 | 下一模块：ingest 并行解析入口（无凭据）
 2026-11-10 | Phase 2 ideaseek ingest（扫描→按内容哈希跨 run 增量分派 paper.parse→内联执行→FTS 刷新→search 提示；空转 no-op 不建 run）+ make-fixture --marker | 3d0117a | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 27 files/161 vitest + 5 python 全过 | 相同字节的重复 PDF 按内容寻址只索引一次（预期语义）；抽取/综合仍需模型凭据 | Phase 2 可无凭据推进的模块已完成；余项需 DEEPSEEK_API_KEY 或用户语料（见阶段汇报）
+2026-11-10 | Phase 2 Evidence Checker checkbox 完成确认（确定性核验层已交付并测试；语义级复核增强仍需模型）| cd7959e | 同上 | 数值-单位逐项对照依赖抽取带 quote；无 quote 的页码定位记为 weak | 外部依赖：真实抽取需 DEEPSEEK_API_KEY，gold set 需用户语料
