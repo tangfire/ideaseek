@@ -79,6 +79,10 @@ ideaseek init
 
 实现 HarnessAdapter、固定 DSH commit、最小 Cordis plugin/bundle、一个假 Paper Agent、capability profile、工具 schema、权限和 Agent 事件映射。模型额度耗尽时进入 QUOTA_EXHAUSTED，补充额度后可继续，不重做成功任务。
 
+### Phase 1.5：CLI 交互与可观察性
+
+实现启动 banner、`ideaseek ›` 提示符、RunEvent 实时摘要、审批反馈、attach/watch/replay、plain/JSON 输出和脱敏日志。CLI 只显示 Supervisor 状态，不自行维护科研状态，也不显示模型隐藏推理。
+
 ### Phase 2：论文和知识库
 
 实现 input scan/intake/manifest、PDF/PaperCard、证据定位、去重、全文检索、并行 map/reduce、Evidence Checker、主题综合、机制库和研究地图。

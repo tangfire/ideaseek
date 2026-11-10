@@ -12,6 +12,12 @@
 
 验收：不同角色看到不同工具和路径；模型 key 不进入 prompt、事件和日志；Agent session 与工作流状态可关联但互不替代。
 
+## Phase 1.5：CLI 交互与可观察性
+
+实现 IdeaSeek 的交互式终端层：启动 banner、`ideaseek ›` 提示符、阶段/Agent/任务事件摘要、审批界面、attach/watch/replay、pause/resume 反馈、plain/JSON 输出和脱敏日志。UI 只订阅 Supervisor 的 RunEvent，不自行维护科研状态。
+
+验收：用户能看到当前阶段、完成/排队/失败任务、资源和阻塞原因；SSH 断开后可以 attach 继续观察；交互、plain 和 JSON 三种模式都不泄露 secret 或模型隐藏推理。
+
 ## Phase 2：论文与知识库
 
 实现 PDF 解析/OCR、页码证据、去重、全文/向量检索、PaperCard、主题综合和研究地图。先用人工标注的 30–100 篇论文校准。
