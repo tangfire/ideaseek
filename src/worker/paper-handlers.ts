@@ -1,7 +1,7 @@
 import { IdeaseekError, isIdeaseekError } from '../core/errors.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
-import { parsePdf } from '../knowledge/pdf.js';
+import { extractTables, parsePdf } from '../knowledge/pdf.js';
 import { verifyPaperEvidence } from '../knowledge/checker.js';
 import { sha256OfFile, sha256Of } from '../core/hash.js';
 import { basename, join } from 'node:path';
@@ -308,6 +308,57 @@ async function readChainedParserVersion(ctx: TaskContext): Promise<string | null
   }
 }
 
+/**
+ * Opt-in table extraction (docs: 表格/图表解析): pdfplumber grids for one
+ * paper, committed as a paper-tables artifact. nonBlocking like other
+ * per-paper data tasks: a broken layout flags the paper, never the run.
+ */
+export const paperTables: TaskHandler = async (ctx: TaskContext) => {
+  await applyFaults(ctx);
+  const pdfPath = typeof ctx.payload.pdfPath === 'string' ? ctx.payload.pdfPath : '';
+  if (!pdfPath || !pdfPath.toLowerCase().endsWith('.pdf') || pdfPath.includes('..')) {
+    const error = new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'paper.tables needs a project-relative payload.pdfPath',
+    );
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const abs = join(ctx.runtime.paths.root, ...pdfPath.split('/'));
+  let result;
+  try {
+    result = await extractTables(abs);
+  } catch (error) {
+    if (
+      isIdeaseekError(error) &&
+      ['PARSE_FAILED', 'FILE_NOT_FOUND', 'EMPTY_FILE', 'PARSER_MISSING'].includes(error.code)
+    ) {
+      (error as IdeaseekError & { permanent?: boolean }).permanent =
+        error.code !== 'PARSER_MISSING';
+    }
+    throw error;
+  }
+  const sourceHash = await sha256OfFile(abs);
+  const payload = {
+    source: pdfPath,
+    sourceHash,
+    tables: result.tables,
+    tableCount: result.tableCount,
+    parser: result.parser,
+  };
+  return {
+    artifacts: [
+      {
+        kind: 'paper-tables',
+        data: `${JSON.stringify(payload, null, 2)}
+`,
+        meta: { filename: 'paper-tables.json', parser: result.parser },
+      },
+    ],
+    summary: `extracted ${result.tableCount} table(s) from ${pdfPath}`,
+    data: { tableCount: result.tableCount, sourceHash },
+  };
+};
 /** Source hash for provenance: the real file when known, else the excerpt bytes. */
 async function computeSourceHash(ctx: TaskContext): Promise<string | null> {
   const sourcePath = typeof ctx.payload.sourcePath === 'string' ? ctx.payload.sourcePath : '';

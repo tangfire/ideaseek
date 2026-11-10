@@ -85,6 +85,52 @@ def _force_utf8_streams() -> None:
                 pass
 
 
+
+MAX_TABLES_PER_DOC = 30
+MAX_TABLE_ROWS = 60
+MAX_TABLE_COLS = 20
+
+def cmd_tables(args: argparse.Namespace) -> int:
+    """Extract table grids from a PDF (docs: 表格/图表解析, opt-in)."""
+    try:
+        import pdfplumber
+    except ImportError as exc:
+        return _fail("PARSER_MISSING", f"pdfplumber is not installed: {exc}")
+    path = args.path
+    if not Path(path).is_file():
+        return _fail("FILE_NOT_FOUND", f"no such file: {path}")
+    tables = []
+    try:
+        with pdfplumber.open(path) as pdf:
+            for page_no, page in enumerate(pdf.pages, start=1):
+                if len(tables) >= MAX_TABLES_PER_DOC:
+                    break
+                try:
+                    grids = page.extract_tables() or []
+                except Exception:
+                    grids = []
+                for grid in grids:
+                    if len(tables) >= MAX_TABLES_PER_DOC:
+                        break
+                    if not grid or not any(any(cell for cell in row) for row in grid):
+                        continue
+                    rows = []
+                    for row in grid[:MAX_TABLE_ROWS]:
+                        cells = ["" if cell is None else str(cell).strip() for cell in row]
+                        rows.append(cells[:MAX_TABLE_COLS])
+                    if rows:
+                        tables.append({"page": page_no, "rows": rows})
+    except Exception as exc:
+        return _fail("PARSE_FAILED", f"cannot extract tables: {exc}")
+    _emit({
+        "source": str(path),
+        "tables": tables,
+        "tableCount": len(tables),
+        "parser": f"pdfplumber/{pdfplumber.__version__}",
+    })
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -98,6 +144,10 @@ def main(argv: list[str] | None = None) -> int:
     fixture_cmd.add_argument("out")
     fixture_cmd.add_argument("--marker", default="Evidence", help="page text marker")
     fixture_cmd.set_defaults(func=cmd_make_fixture)
+
+    tables_cmd = sub.add_parser("tables", help="extract table grids from a PDF")
+    tables_cmd.add_argument("path")
+    tables_cmd.set_defaults(func=cmd_tables)
 
     self_cmd = sub.add_parser("selftest", help="parse a generated fixture end to end")
     self_cmd.set_defaults(func=cmd_selftest)

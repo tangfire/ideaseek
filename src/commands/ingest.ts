@@ -42,6 +42,22 @@ export function partitionPdfs(
 }
 
 /** Content hashes of every committed parsed-paper artifact (cross-run). */
+/** Source hashes of papers whose table grids are already extracted. */
+export async function collectTabledSourceHashes(runtime: ProjectRuntime): Promise<Set<string>> {
+  const hashes = new Set<string>();
+  for (const artifact of await runtime.db.listArtifactsByKind('paper-tables')) {
+    try {
+      const payload = JSON.parse(await runtime.store.readFinalText(artifact.contentHash)) as {
+        sourceHash?: string;
+      };
+      if (payload.sourceHash) hashes.add(payload.sourceHash);
+    } catch {
+      // Unreadable artifact: the paper re-extracts tables (idempotent).
+    }
+  }
+  return hashes;
+}
+
 export async function collectParsedHashes(runtime: ProjectRuntime): Promise<Set<string>> {
   const hashes = new Set<string>();
   const artifacts = await runtime.db.listArtifactsByKind('parsed-paper');
@@ -105,9 +121,10 @@ export function registerIngestCommand(program: Command): void {
     .command('ingest')
     .description('parse all new PDFs (incremental by content hash) and index them for search')
     .option('--enqueue-only', 'enqueue parse tasks without executing them')
+    .option('--tables', 'also extract table grids (pdfplumber; slower, opt-in)')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { enqueueOnly?: boolean; json?: boolean }) => {
+      action(async (opts: { enqueueOnly?: boolean; tables?: boolean; json?: boolean }) => {
         const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
         try {
           assertConfigUsable(runtime.configLoad);
@@ -116,8 +133,16 @@ export function registerIngestCommand(program: Command): void {
           const manifest = await loadManifest(runtime);
           const parsedHashes = await collectParsedHashes(runtime);
           const { pending, alreadyParsed } = partitionPdfs(manifest, parsedHashes);
+          const tabledHashes = opts.tables ? await collectTabledSourceHashes(runtime) : null;
+          const tablesPending =
+            tabledHashes === null
+              ? []
+              : manifest.files.filter((file) => {
+                  const isPdf = file.ext === '.pdf' || file.relPath.toLowerCase().endsWith('.pdf');
+                  return isPdf && file.sha256 && !tabledHashes.has(file.sha256);
+                });
 
-          if (pending.length === 0) {
+          if (pending.length === 0 && tablesPending.length === 0) {
             const indexed = await runtime.db.listIndexedPapers();
             if (opts.json) {
               process.stdout.write(
@@ -157,6 +182,21 @@ export function registerIngestCommand(program: Command): void {
             if (wasNew) enqueued.push(task.taskId);
           }
 
+          let tablesEnqueued = 0;
+          for (const pdf of tablesPending) {
+            if (!pdf.sha256) continue;
+            const { created } = await runtime.db.enqueueTask({
+              runId,
+              type: 'paper.tables',
+              phase: 'DEMO',
+              payload: { pdfPath: pdf.relPath, nonBlocking: true },
+              dependsOn: [],
+              idempotencyKey: `tables:${pdf.relPath}:${pdf.sha256.slice(7, 23)}:v1`,
+              maxAttempts: runtime.config.runtime.maxAttempts,
+            });
+            if (created) tablesEnqueued += 1;
+          }
+
           if (opts.enqueueOnly) {
             if (opts.json) {
               process.stdout.write(
@@ -164,13 +204,14 @@ export function registerIngestCommand(program: Command): void {
                   pending: pending.length,
                   alreadyParsed,
                   enqueued: enqueued.length,
+                  tablesEnqueued,
                   runId,
                   actions,
                 }),
               );
             } else {
               process.stdout.write(
-                `ingest: ${enqueued.length} parse task(s) enqueued into ${runId} (${alreadyParsed} already parsed)\n`,
+                `ingest: ${enqueued.length} parse task(s) + ${tablesEnqueued} table task(s) enqueued into ${runId} (${alreadyParsed} already parsed)\n`,
               );
               process.stdout.write('next: ideaseek worker\n');
             }
@@ -191,6 +232,7 @@ export function registerIngestCommand(program: Command): void {
                 pending: pending.length,
                 alreadyParsed,
                 enqueued: enqueued.length,
+                tablesEnqueued,
                 runId,
                 status: finalRun?.status,
                 exitReason: exit.reason,
@@ -200,7 +242,7 @@ export function registerIngestCommand(program: Command): void {
             );
           } else {
             process.stdout.write(
-              `ingest → ${finalRun?.status}: parsed ${enqueued.length} new paper(s), skipped ${alreadyParsed}\n`,
+              `ingest → ${finalRun?.status}: parsed ${enqueued.length} new paper(s), tables ${tablesEnqueued}, skipped ${alreadyParsed}\n`,
             );
             process.stdout.write(`  index: ${refreshed} paper(s) searchable\n`);
             process.stdout.write('next: ideaseek search <terms>\n');

@@ -87,3 +87,36 @@ class ParseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TablesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="ideaseek-tables-")
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_fixture_has_no_tables_but_succeeds(self) -> None:
+        pdf = self.tmp / "plain.pdf"
+        pdf.write_bytes(build_minimal_pdf(["Just prose, no grids."]))
+        env = {**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        out = subprocess.run(
+            [sys.executable, "-m", "ideaseek_worker", "tables", str(pdf)],
+            capture_output=True, text=True, env=env,
+            cwd=str(Path(__file__).resolve().parents[1]), timeout=120,
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        payload = json.loads(out.stdout)
+        self.assertEqual(payload["tableCount"], len(payload["tables"]))
+        self.assertTrue(payload["parser"].startswith("pdfplumber/"))
+
+    def test_missing_file_reports_stable_code(self) -> None:
+        env = {**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+        out = subprocess.run(
+            [sys.executable, "-m", "ideaseek_worker", "tables", str(self.tmp / "nope.pdf")],
+            capture_output=True, text=True, env=env,
+            cwd=str(Path(__file__).resolve().parents[1]), timeout=60,
+        )
+        self.assertEqual(out.returncode, 1)
+        self.assertEqual(json.loads(out.stderr)["code"], "FILE_NOT_FOUND")

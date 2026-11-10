@@ -153,3 +153,84 @@ export async function makeFixturePdf(outPath: string, marker?: string): Promise<
     });
   });
 }
+
+export interface ExtractedTable {
+  page: number;
+  rows: string[][];
+}
+
+export interface TablesResult {
+  source: string;
+  tables: ExtractedTable[];
+  tableCount: number;
+  parser: string;
+}
+
+/**
+ * Spawns the Python worker `tables` command (pdfplumber). Same strict JSON
+ * protocol and error taxonomy as parsePdf; opt-in because layout analysis
+ * costs seconds per page.
+ */
+export async function extractTables(
+  pdfPath: string,
+  opts: ParsePdfOptions = {},
+): Promise<TablesResult> {
+  const python = opts.pythonBin ?? (await pythonBinary());
+  const cwd = workerPythonDir();
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+
+  return new Promise<TablesResult>((resolvePromise, reject) => {
+    const child = spawn(python, ['-m', 'ideaseek_worker', 'tables', pdfPath], {
+      cwd,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new IdeaseekError('PARSE_FAILED', 'table extraction timed out'));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => (stdout += String(chunk)));
+    child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new IdeaseekError('ENV_UNSUPPORTED', `cannot spawn python: ${error.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
+        try {
+          resolvePromise(JSON.parse(line) as TablesResult);
+        } catch (error) {
+          reject(
+            new IdeaseekError(
+              'PARSE_FAILED',
+              `cannot parse tables output: ${(error as Error).message}`,
+            ),
+          );
+        }
+        return;
+      }
+      let payload: { code?: string; message?: string } | null = null;
+      for (const line of stderr.trim().split(/\r?\n/).reverse()) {
+        if (!line.startsWith('{')) continue;
+        try {
+          payload = JSON.parse(line) as { code?: string; message?: string };
+          break;
+        } catch {
+          continue;
+        }
+      }
+      reject(
+        new IdeaseekError(
+          payload?.code && PARSER_CODES.has(payload.code)
+            ? (payload.code as IdeaseekErrorCode)
+            : 'PARSE_FAILED',
+          payload?.message ?? 'table extraction failed',
+        ),
+      );
+    });
+  });
+}
