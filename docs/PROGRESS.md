@@ -48,7 +48,7 @@
 - [ ] Scenario Planner 和实验组合 L0–L4
 - [ ] DatasetSlice `smoke/quick/standard`、handoff manifest 和晋级规则
 - [ ] 数据分布保持、客户端/域/主体边界和泄漏检查
-- [ ] 首发领域适配器及人工 gold set
+- [ ] 首发领域验证（优先联邦学习模型异构）及人工 gold set
 
 ## Phase 4：Comparison
 

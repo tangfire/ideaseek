@@ -43,7 +43,7 @@ DSH 是 Agent Runtime 和插件宿主，不是科研数据库、GPU 调度器或
 
 ## 模型层
 
-首版使用 DSH 原生 provider。通过内部 `ModelGateway` 接口保留接入 Pi `pi-ai`、vLLM 或 OpenAI-compatible 服务的可能性；不把 Pi Agent Runtime 与 DSH Agent Loop 叠加。请求记录 provider、model、prompt/schema 版本、token、成本、重试和错误。
+首版直接使用 DSH 原生 provider，不引入 Pi。通过内部模型接口保留未来接入其他 provider、vLLM 或 OpenAI-compatible 服务的可能性；不把任何外部 Agent Runtime 与 DSH Agent Loop 叠加。请求记录 provider、model、prompt/schema 版本、token、成本、重试和错误。
 
 ## 可靠性
 

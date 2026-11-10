@@ -20,7 +20,7 @@
 
 ## Phase 3：数据集和 comparison
 
-实现 dataset card、首个领域适配器、comparison 候选发现、官方代码导入、论文重实现、Baseline Repair 和统一评测协议。
+实现 dataset card、Protocol Synthesis Agent、Leakage/Validity Checker、comparison 候选发现、官方代码导入、论文重实现、Baseline Repair 和统一评测协议；不要求先手工完成某个领域的完整适配器。
 
 验收：每个 required comparison 能标记来源、许可、差异和状态；原始仓库不变；至少一个真实任务中所有 required comparison 可运行或明确阻塞。
 
@@ -30,15 +30,15 @@
 
 验收：两个 idea 能并行运行且互不污染；每个结果能追溯到 idea/version、代码、数据、环境、场景和 run；报告能区分机制支持、稳定性、场景鲁棒性和外部验证；支持继续、否证、无效运行三种路径。
 
-## Phase 5：首发领域适配器
+## Phase 5：首发领域验证
 
-选定一个具体任务族（建议图像分割或定义清晰的短视频任务），实现 dataset card、切分、指标、comparison 适配、ExperimentSpec、消融和 gold set。跑通从论文到 baseline、idea、代码和小规模实验的完整闭环。
+选定一个具体任务族（当前可选联邦学习模型异构），用论文、comparison 代码和用户数据自动生成 dataset card、切分、指标、comparison 适配、ExperimentSpec、消融和 gold set。跑通从论文到 baseline、idea、代码和小规模实验的完整闭环。领域适配器只补充必要解析器和检查器，不把科学方案硬编码成前置配置。
 
 验收：研究者能检查数据语义、切分和指标；平台能区分代码/环境失败与科学假设失败；结果可复现且不发生明显泄漏。
 
-## Phase 6：自动 comparison 发现与扩展
+## Phase 6：自动 comparison 发现与领域扩展
 
-实现从论文实验表格和研究地图发现候选 comparison、自动补代码、来源/许可证策略、成本限制和可选用户确认模式。扩展多 GPU、本地 vLLM、外部索引和更大论文集；再按 `DOMAIN_ADAPTERS.md` 增加多模态早期预测、短视频、联邦模型异构和联邦域泛化适配器。
+实现从论文实验表格和研究地图发现候选 comparison、自动补代码、来源/许可证策略、成本限制和可选用户确认模式。扩展多 GPU、本地模型和外部索引；再按 `DOMAIN_ADAPTERS.md` 增加多模态早期预测、短视频、图像分割和联邦域泛化适配器。
 
 每一阶段先写契约和失败测试，再实现 happy path；不要在 Phase 1 前堆复杂多 Agent 角色，也不要在质量指标未达标前追求千篇论文吞吐。
 
