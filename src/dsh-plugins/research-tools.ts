@@ -18,32 +18,44 @@ import { isAbsolute, join, normalize, sep } from 'node:path';
 export const inject = ['tools'];
 
 const MAX_BYTES = 1024 * 1024;
-const DENIED_PREFIXES = ['.research/', '.env'];
 
 function workspaceRoot(): string | null {
   const root = process.env.IDEASEEK_WORKSPACE_ROOT;
   return root && isAbsolute(root) ? normalize(root) : null;
 }
 
-function resolveInsideWorkspace(root: string, relative: string): string {
-  if (isAbsolute(relative)) {
+/** Windows drive (`C:\…`) or UNC (`\\server\share`) — rejected as absolute. */
+const WIN_ABSOLUTE = /^(?:[a-zA-Z]:[/\\]|[\\/]{2})/;
+
+/**
+ * Resolves a caller-supplied path strictly inside the workspace root.
+ * Platform-agnostic: works with either separator in `root` or `relative`
+ * (the DSH subprocess runs on the host OS, tests run on both). A single
+ * leading separator means "relative to the project root", never OS-absolute.
+ * Exported for permission unit tests; also used by `execute`.
+ */
+export function resolveInsideWorkspace(root: string, relative: string): string {
+  if (WIN_ABSOLUTE.test(relative)) {
     throw new Error('project_read: absolute paths are not allowed; pass a project-relative path');
   }
-  const normalized = normalize(relative).replace(/^([/\\])+/, '');
-  if (normalized.split(/[\\/]/).includes('..')) {
+  const cleaned = relative.replace(/^[/\\]+/, '');
+  if (cleaned.split(/[\\/]/).includes('..')) {
     throw new Error('project_read: path escapes the workspace root');
   }
-  const lower = normalized.replace(/\\/g, '/').toLowerCase();
-  if (
-    DENIED_PREFIXES.some(
-      (prefix) => lower === prefix.replace(/\/$/, '') || lower.startsWith(prefix),
-    )
-  ) {
-    throw new Error(`project_read: ${normalized} is platform-managed and not readable by agents`);
+  // Deny platform-managed segments anywhere in the path: the .research
+  // database/audit tree and any .env* credential file.
+  const denied = cleaned
+    .split(/[\\/]/)
+    .some(
+      (segment) => segment === '.research' || segment === '.env' || segment.startsWith('.env.'),
+    );
+  if (denied) {
+    throw new Error(`project_read: ${cleaned} is platform-managed and not readable by agents`);
   }
-  const abs = join(root, normalized);
-  const rootWithSep = root.endsWith(sep) ? root : root + sep;
-  if (abs !== root && !abs.startsWith(rootWithSep)) {
+  const rootNorm = normalize(root);
+  const abs = normalize(join(rootNorm, cleaned));
+  const rootWithSep = rootNorm.endsWith(sep) ? rootNorm : rootNorm + sep;
+  if (abs !== rootNorm && !abs.startsWith(rootWithSep)) {
     throw new Error('project_read: path escapes the workspace root');
   }
   return abs;
