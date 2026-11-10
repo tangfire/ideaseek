@@ -93,7 +93,7 @@ Phase 4：Comparison 完整闭环
 
 - [ ] Mechanism Analyst、Idea Generator、Research Discussant
 - [ ] Novelty Challenger、Synthesis Lead
-- [ ] IdeaCard 机制链和 `DRAFT_COMPOSITION` 门槛
+- [x] IdeaCard 机制链和 `DRAFT_COMPOSITION` 门槛
 - [ ] 独立 idea workspace 和代码版本
 - [ ] Code Implementer、smoke test、静态检查
 - [ ] GPU Capacity Planner 和多 idea 并行

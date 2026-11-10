@@ -17,6 +17,7 @@ import { registerExperimentCommand } from './commands/experiment.js';
 import { registerExtractCommand } from './commands/extract.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerIngestCommand } from './commands/ingest.js';
+import { registerIdeaCommand } from './commands/idea.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -82,6 +83,7 @@ export function buildProgram(): Command {
   registerDataCommand(program);
   registerConfirmCommand(program);
   registerExperimentCommand(program);
+  registerIdeaCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);
