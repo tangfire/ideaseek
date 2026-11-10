@@ -141,8 +141,11 @@ export function registerIngestCommand(program: Command): void {
                   const isPdf = file.ext === '.pdf' || file.relPath.toLowerCase().endsWith('.pdf');
                   return isPdf && file.sha256 && !tabledHashes.has(file.sha256);
                 });
+          const latexPending = manifest.files.filter(
+            (file) => file.ext === '.tex' && file.sha256 && !parsedHashes.has(file.sha256),
+          );
 
-          if (pending.length === 0 && tablesPending.length === 0) {
+          if (pending.length === 0 && tablesPending.length === 0 && latexPending.length === 0) {
             const indexed = await runtime.db.listIndexedPapers();
             if (opts.json) {
               process.stdout.write(
@@ -197,6 +200,21 @@ export function registerIngestCommand(program: Command): void {
             if (created) tablesEnqueued += 1;
           }
 
+          let latexEnqueued = 0;
+          for (const tex of latexPending) {
+            if (!tex.sha256) continue;
+            const { created } = await runtime.db.enqueueTask({
+              runId,
+              type: 'paper.latex',
+              phase: 'DEMO',
+              payload: { texPath: tex.relPath, nonBlocking: true },
+              dependsOn: [],
+              idempotencyKey: `latex:${tex.relPath}:${tex.sha256.slice(7, 23)}:v1`,
+              maxAttempts: runtime.config.runtime.maxAttempts,
+            });
+            if (created) latexEnqueued += 1;
+          }
+
           if (opts.enqueueOnly) {
             if (opts.json) {
               process.stdout.write(
@@ -205,6 +223,7 @@ export function registerIngestCommand(program: Command): void {
                   alreadyParsed,
                   enqueued: enqueued.length,
                   tablesEnqueued,
+                  latexEnqueued,
                   runId,
                   actions,
                 }),
@@ -233,6 +252,7 @@ export function registerIngestCommand(program: Command): void {
                 alreadyParsed,
                 enqueued: enqueued.length,
                 tablesEnqueued,
+                latexEnqueued,
                 runId,
                 status: finalRun?.status,
                 exitReason: exit.reason,

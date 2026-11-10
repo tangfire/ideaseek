@@ -7,7 +7,13 @@ import { DshHarnessAdapter } from '../dsh/dsh-adapter.js';
 import { projectPaths } from '../config/paths.js';
 import { join } from 'node:path';
 import { demoHandlers } from '../worker/handlers.js';
-import { paperExtract, paperParse, paperTables, paperVerify } from '../worker/paper-handlers.js';
+import {
+  paperExtract,
+  paperLatex,
+  paperParse,
+  paperTables,
+  paperVerify,
+} from '../worker/paper-handlers.js';
 import { synthMap, synthTopic } from '../worker/synthesis-handlers.js';
 import type { TaskHandler } from '../worker/types.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
@@ -221,6 +227,7 @@ export function buildHandlers(): Record<string, TaskHandler> {
     'paper.extract': paperExtract,
     'paper.verify': paperVerify,
     'paper.tables': paperTables,
+    'paper.latex': paperLatex,
     'synth.topic': synthTopic,
     'synth.map': synthMap,
   };

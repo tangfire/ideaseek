@@ -3,6 +3,7 @@ import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
 import { extractTables, parsePdf } from '../knowledge/pdf.js';
 import { verifyPaperEvidence } from '../knowledge/checker.js';
+import { parseLatex } from '../knowledge/latex.js';
 import { sha256OfFile, sha256Of } from '../core/hash.js';
 import { basename, join } from 'node:path';
 
@@ -308,6 +309,62 @@ async function readChainedParserVersion(ctx: TaskContext): Promise<string | null
   }
 }
 
+/**
+ * LaTeX source leg: .tex yields the same parsed-paper artifact shape as PDFs
+ * (single evidence page), so extract/search/evaluate work unchanged.
+ */
+export const paperLatex: TaskHandler = async (ctx: TaskContext) => {
+  await applyFaults(ctx);
+  const texPath = typeof ctx.payload.texPath === 'string' ? ctx.payload.texPath : '';
+  if (!texPath || !texPath.toLowerCase().endsWith('.tex') || texPath.includes('..')) {
+    const error = new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'paper.latex needs a project-relative payload.texPath',
+    );
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const abs = join(ctx.runtime.paths.root, ...texPath.split('/'));
+  let source: string;
+  try {
+    source = await (await import('node:fs/promises')).readFile(abs, 'utf8');
+  } catch (error) {
+    const wrapped = new IdeaseekError(
+      'FILE_NOT_FOUND',
+      `cannot read ${texPath}: ${(error as Error).message}`,
+    );
+    (wrapped as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw wrapped;
+  }
+  const document = parseLatex(source);
+  if (!document.text.trim()) {
+    const error = new IdeaseekError('PARSE_FAILED', 'latex source produced no readable text');
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const sourceHash = await sha256OfFile(abs);
+  const payload = {
+    source: texPath,
+    sourceHash,
+    pageCount: 1,
+    pages: [{ page: 1, text: document.text }],
+    parser: document.parser,
+    title: document.title,
+    sectionCount: document.sections.length,
+  };
+  return {
+    artifacts: [
+      {
+        kind: 'parsed-paper',
+        data: `${JSON.stringify(payload, null, 2)}
+`,
+        meta: { filename: 'parsed-paper.json', parser: document.parser },
+      },
+    ],
+    summary: `parsed latex ${texPath} (${document.sections.length} section(s))`,
+    data: { sourceHash, sections: document.sections.length },
+  };
+};
 /**
  * Opt-in table extraction (docs: 表格/图表解析): pdfplumber grids for one
  * paper, committed as a paper-tables artifact. nonBlocking like other
