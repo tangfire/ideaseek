@@ -27,6 +27,7 @@ import { extractRepoUrls } from '../comparison/discover.js';
 import type {
   BeginCommitResult,
   ComparisonDoc,
+  ExperimentDoc,
   DatasetSliceRecord,
   EmbeddingRow,
   EmbeddingRowInput,
@@ -208,6 +209,21 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         required INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
+    `,
+  },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE IF NOT EXISTS experiment (
+        spec_id TEXT PRIMARY KEY,
+        version INTEGER NOT NULL,
+        spec_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        spec_json TEXT NOT NULL,
+        result_json TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_experiment_status ON experiment(status);
     `,
   },
 ];
@@ -2398,6 +2414,147 @@ export class SqliteWorkflowDb implements WorkflowDb {
       record: parseJson<Record<string, unknown>>(row.doc_json, {}),
       updatedAt: row.updated_at,
     };
+  }
+
+  private rowToExperiment(row: {
+    spec_id: string;
+    version: number;
+    spec_hash: string;
+    status: string;
+    spec_json: string;
+    result_json: string | null;
+    updated_at: number;
+  }): ExperimentDoc {
+    return {
+      specId: row.spec_id,
+      version: row.version,
+      specHash: row.spec_hash,
+      status: row.status as ExperimentDoc['status'],
+      spec: parseJson<Record<string, unknown>>(row.spec_json, {}),
+      result: row.result_json
+        ? parseJson<Record<string, unknown> | null>(row.result_json, null)
+        : null,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private requireExperiment(specId: string): ExperimentDoc {
+    const row = this.db.prepare('SELECT * FROM experiment WHERE spec_id = ?').get(specId) as
+      | {
+          spec_id: string;
+          version: number;
+          spec_hash: string;
+          status: string;
+          spec_json: string;
+          result_json: string | null;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) throw new IdeaseekError('TASK_NOT_FOUND', `experiment ${specId} not found`);
+    return this.rowToExperiment(row);
+  }
+
+  upsertExperiment(doc: ExperimentDoc): Promise<void> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const existing = this.db
+          .prepare('SELECT version, spec_hash FROM experiment WHERE spec_id = ?')
+          .get(doc.specId) as { version: number; spec_hash: string } | undefined;
+        if (existing) {
+          if (existing.spec_hash === doc.specHash) {
+            // Idempotent re-record of the identical spec: refresh timestamp only.
+            this.db
+              .prepare('UPDATE experiment SET updated_at = ? WHERE spec_id = ?')
+              .run(doc.updatedAt, doc.specId);
+            return;
+          }
+          if (doc.version <= existing.version) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              `spec ${doc.specId} already recorded at version ${existing.version} with a different hash; bump version to ${existing.version + 1}`,
+              { specId: doc.specId, existingVersion: existing.version },
+            );
+          }
+        }
+        this.db
+          .prepare(
+            'INSERT INTO experiment (spec_id, version, spec_hash, status, spec_json, result_json, updated_at) ' +
+              'VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+              'ON CONFLICT(spec_id) DO UPDATE SET version = excluded.version, spec_hash = excluded.spec_hash, ' +
+              'status = excluded.status, spec_json = excluded.spec_json, result_json = excluded.result_json, updated_at = excluded.updated_at',
+          )
+          .run(
+            doc.specId,
+            doc.version,
+            doc.specHash,
+            doc.status,
+            JSON.stringify(doc.spec),
+            doc.result ? JSON.stringify(doc.result) : null,
+            doc.updatedAt,
+          );
+      }),
+    );
+  }
+
+  getExperiment(specId: string): Promise<ExperimentDoc | null> {
+    const row = this.db.prepare('SELECT * FROM experiment WHERE spec_id = ?').get(specId) as
+      | {
+          spec_id: string;
+          version: number;
+          spec_hash: string;
+          status: string;
+          spec_json: string;
+          result_json: string | null;
+          updated_at: number;
+        }
+      | undefined;
+    return Promise.resolve(row ? this.rowToExperiment(row) : null);
+  }
+
+  listExperiments(filter: { status?: ExperimentDoc['status'] } = {}): Promise<ExperimentDoc[]> {
+    let sql = 'SELECT * FROM experiment';
+    const params: string[] = [];
+    if (filter.status !== undefined) {
+      sql += ' WHERE status = ?';
+      params.push(filter.status);
+    }
+    sql += ' ORDER BY spec_id';
+    const rows = this.db.prepare(sql).all(...params) as unknown as {
+      spec_id: string;
+      version: number;
+      spec_hash: string;
+      status: string;
+      spec_json: string;
+      result_json: string | null;
+      updated_at: number;
+    }[];
+    return Promise.resolve(rows.map((row) => this.rowToExperiment(row)));
+  }
+
+  attachExperimentResult(
+    specId: string,
+    result: Record<string, unknown>,
+    status: Exclude<ExperimentDoc['status'], 'planned'>,
+  ): Promise<ExperimentDoc> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const current = this.requireExperiment(specId);
+        if (current.result) {
+          throw new IdeaseekError(
+            'ALREADY_COMMITTED',
+            `experiment ${specId} already has a result (status ${current.status}); record a new spec version instead`,
+            { specId },
+          );
+        }
+        const now = Date.now();
+        this.db
+          .prepare(
+            'UPDATE experiment SET status = ?, result_json = ?, updated_at = ? WHERE spec_id = ?',
+          )
+          .run(status, JSON.stringify(result), now, specId);
+        return this.requireExperiment(specId);
+      }),
+    );
   }
 
   close(): Promise<void> {

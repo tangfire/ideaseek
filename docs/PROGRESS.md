@@ -85,7 +85,7 @@ Phase 4：Comparison 完整闭环
 - [x] 官方代码定位和许可证记录
 - [x] Baseline Repair Agent
 - [ ] Baseline Reproduction Agent
-- [ ] 统一 ExperimentSpec/RunResult
+- [x] 统一 ExperimentSpec/RunResult
 - [ ] 所有 required comparison 门槛
 
 ## Phase 5：Idea 与实验闭环

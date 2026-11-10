@@ -100,6 +100,21 @@ export interface ComparisonDoc {
   updatedAt: number;
 }
 
+/** Experiment registry row (migration v7): spec + optional attached result. */
+export interface ExperimentDoc {
+  specId: string;
+  version: number;
+  /** Content hash of the spec at record time (stableJson). */
+  specHash: string;
+  /** planned until a result is attached; then mirrors result.status. */
+  status: 'planned' | 'succeeded' | 'failed' | 'partial' | 'invalid';
+  /** Full ExperimentSpec JSON (docs/DATA_CONTRACTS.md). */
+  spec: Record<string, unknown>;
+  /** Full RunResult JSON; null while planned. */
+  result: Record<string, unknown> | null;
+  updatedAt: number;
+}
+
 export interface DatasetSliceRecord {
   sliceId: string;
   datasetSnapshotId: string;
@@ -229,6 +244,21 @@ export interface WorkflowDb {
   getComparison(methodId: string): Promise<ComparisonDoc | null>;
   listComparisons(filter?: { required?: boolean }): Promise<ComparisonDoc[]>;
   transitionComparison(methodId: string, to: string, reason?: string): Promise<ComparisonDoc>;
+
+  // Experiment registry (migration v7)
+  /**
+   * Idempotent by content: same specId+hash → no-op; a different hash is
+   * accepted only when `version` strictly increases (no silent overwrites).
+   */
+  upsertExperiment(doc: ExperimentDoc): Promise<void>;
+  getExperiment(specId: string): Promise<ExperimentDoc | null>;
+  listExperiments(filter?: { status?: ExperimentDoc['status'] }): Promise<ExperimentDoc[]>;
+  /** Attaches a validated result and moves status off `planned`. */
+  attachExperimentResult(
+    specId: string,
+    result: Record<string, unknown>,
+    status: Exclude<ExperimentDoc['status'], 'planned'>,
+  ): Promise<ExperimentDoc>;
 
   // Protocol locks (migration v4)
   lockProtocol(lock: ProtocolLockRecord): Promise<void>;
