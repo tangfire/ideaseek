@@ -419,7 +419,12 @@ export function registerComparisonCommand(program: Command): void {
           // (plan §C.10). `excluded` is an explicit, reasoned opt-out.
           const PASSING = new Set(['smoke-tested', 'evaluated', 'validated']);
           const skipped: { methodId: string; reason: string | null }[] = [];
-          const passed: { methodId: string; status: string; via: 'status' | 'experiment' }[] = [];
+          const passed: {
+            methodId: string;
+            status: string;
+            via: 'status' | 'experiment';
+            algorithmModified?: boolean;
+          }[] = [];
           const blocking: { methodId: string; status: string; hint: string }[] = [];
 
           // Experiment results covering a method also prove it runs under a
@@ -448,7 +453,14 @@ export function registerComparisonCommand(program: Command): void {
               continue;
             }
             if (PASSING.has(method.status)) {
-              passed.push({ methodId: method.methodId, status: method.status, via: 'status' });
+              const repro = method.record.reproduction as
+                { algorithmModified?: boolean } | undefined;
+              passed.push({
+                methodId: method.methodId,
+                status: method.status,
+                via: 'status',
+                ...(repro?.algorithmModified ? { algorithmModified: true } : {}),
+              });
               continue;
             }
             const viaExperiment = experimentCover.get(method.methodId);
@@ -500,7 +512,9 @@ export function registerComparisonCommand(program: Command): void {
           );
           for (const entry of passed) {
             process.stdout.write(
-              `  PASS  ${entry.methodId}  ${entry.status}${entry.via === 'experiment' ? ' (experiment result)' : ''}\n`,
+              `  PASS  ${entry.methodId}  ${entry.status}` +
+                `${entry.via === 'experiment' ? ' (experiment result)' : ''}` +
+                `${entry.algorithmModified ? ' (algorithm-modified, revised method)' : ''}\n`,
             );
           }
           for (const entry of skipped) {

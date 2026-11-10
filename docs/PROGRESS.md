@@ -85,7 +85,7 @@ Phase 4：Comparison 完整闭环
 - [x] 用户仓库导入和 upstream/worktree 隔离
 - [x] 官方代码定位和许可证记录
 - [x] Baseline Repair Agent
-- [ ] Baseline Reproduction Agent
+- [x] Baseline Reproduction Agent
 - [x] 统一 ExperimentSpec/RunResult
 - [x] 所有 required comparison 门槛
 

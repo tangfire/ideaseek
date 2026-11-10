@@ -1,0 +1,685 @@
+import { readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { IdeaseekError } from '../core/errors.js';
+import { sha256Of, type ContentHash } from '../core/hash.js';
+import { redactSecrets } from '../core/redact.js';
+import { ensureDir, writeFileAtomic } from '../core/atomic.js';
+import {
+  classifyRepairFailure,
+  collectWorktreeDiff,
+  runRepairCommand,
+  writeRepairLog,
+} from './repair.js';
+import { stableJson } from '../experiment/spec.js';
+import type {
+  RepairFailureKind,
+  ReproductionBlueprint,
+  ReproductionConfidence,
+  ReproductionPhase,
+  ReproductionPhaseResult,
+  ReproductionRecord,
+} from './types.js';
+
+/**
+ * Baseline Reproduction engine (docs/plan.md §C.7 / AGENT_ROLES): when no
+ * official code exists, turn paper evidence + a structured blueprint into an
+ * auditable reimplementation inside comparisons/<id>/worktree. There is no
+ * upstream clone for a reimplementation — the platform never touches user
+ * repositories. Every run records paper-explicit content, assumptions,
+ * missing details, confidence and the code diff; a changed algorithm
+ * fingerprint can only proceed with an explicit algorithm-modified flag.
+ */
+
+export const REPRODUCTION_PHASES: ReproductionPhase[] = [
+  'brief',
+  'generate',
+  'check-code',
+  'check-data',
+  'check-metrics',
+  'smoke',
+  'record',
+];
+
+const CONFIDENCE_LEVELS: ReproductionConfidence[] = ['high', 'medium', 'low'];
+
+export interface BlueprintValidation {
+  ok: boolean;
+  errors: string[];
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Structural + evidence validation. Fails fast with no side effects so an
+ * incomplete paper grounding never reaches the worktree (requirement:
+ * 论文细节缺失 is an error, not a silent downgrade).
+ */
+export function validateReproductionBlueprint(
+  value: unknown,
+  opts: { methodId: string; paperRefs: string[] },
+): BlueprintValidation {
+  const errors: string[] = [];
+  if (!isObject(value)) {
+    return { ok: false, errors: ['blueprint must be an object'] };
+  }
+  if (value.methodId !== opts.methodId) {
+    errors.push(
+      `blueprint.methodId "${String(value.methodId)}" does not match --method ${opts.methodId}`,
+    );
+  }
+  if (opts.paperRefs.length === 0) {
+    errors.push(
+      'method has no paperRefs — register the paper source first (comparison register --paper)',
+    );
+  }
+  if (!Array.isArray(value.paperExplicit) || value.paperExplicit.length === 0) {
+    errors.push('paperExplicit must list at least one paper-explicit statement');
+  } else {
+    for (const [i, entry] of value.paperExplicit.entries()) {
+      if (!isObject(entry)) {
+        errors.push(`paperExplicit[${i}] must be { statement, evidence }`);
+        continue;
+      }
+      if (typeof entry.statement !== 'string' || !entry.statement.trim()) {
+        errors.push(`paperExplicit[${i}].statement must be a non-empty string`);
+      }
+      if (typeof entry.evidence !== 'string' || !entry.evidence.trim()) {
+        errors.push(`paperExplicit[${i}].evidence must cite a paper location`);
+      }
+    }
+  }
+  for (const field of ['assumptions', 'missingDetails'] as const) {
+    const list = value[field];
+    if (!Array.isArray(list) || list.some((item) => typeof item !== 'string')) {
+      errors.push(`${field} must be an array of strings`);
+    }
+  }
+  if (
+    typeof value.confidence !== 'string' ||
+    !CONFIDENCE_LEVELS.includes(value.confidence as never)
+  ) {
+    errors.push(`confidence must be one of ${CONFIDENCE_LEVELS.join(' | ')}`);
+  }
+  if (!isObject(value.algorithm)) {
+    errors.push('algorithm block is required');
+  } else {
+    const algorithm = value.algorithm;
+    if (algorithm.source !== undefined && typeof algorithm.source !== 'string') {
+      errors.push('algorithm.source must be a string when present');
+    }
+    if (algorithm.entry !== undefined) {
+      if (!Array.isArray(algorithm.entry) || algorithm.entry.some((c) => typeof c !== 'string')) {
+        errors.push('algorithm.entry must be an argv array of strings');
+      }
+    }
+    if (
+      !isObject(algorithm.dataInterface) ||
+      typeof algorithm.dataInterface.description !== 'string'
+    ) {
+      errors.push('algorithm.dataInterface.description is required');
+    }
+    if (!Array.isArray(algorithm.metrics) || algorithm.metrics.length === 0) {
+      errors.push('algorithm.metrics must list at least one metric');
+    } else {
+      for (const [i, metric] of algorithm.metrics.entries()) {
+        if (!isObject(metric) || typeof metric.name !== 'string' || !metric.name) {
+          errors.push(`algorithm.metrics[${i}].name is required`);
+        } else if (metric.direction !== 'higher' && metric.direction !== 'lower') {
+          errors.push(`algorithm.metrics[${i}].direction must be higher | lower`);
+        }
+      }
+    }
+    if (algorithm.hyperparameters !== undefined && !isObject(algorithm.hyperparameters)) {
+      errors.push('algorithm.hyperparameters must be an object');
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+export interface FingerprintInput {
+  source: string;
+  entry: string[];
+  dataInterface: { description: string };
+  metrics: unknown[];
+  hyperparameters?: Record<string, unknown>;
+}
+
+/**
+ * Semantic identity of the implementation: source + entry + data interface +
+ * metrics + hyperparameters. A changed fingerprint is a potential algorithm
+ * semantic change and requires --algorithm-modified (requirement 6).
+ */
+export function computeAlgorithmFingerprint(algorithm: FingerprintInput): ContentHash {
+  return sha256Of(
+    stableJson({
+      source: algorithm.source,
+      entry: algorithm.entry,
+      dataInterface: algorithm.dataInterface,
+      metrics: algorithm.metrics,
+      hyperparameters: algorithm.hyperparameters ?? null,
+    }),
+  );
+}
+
+export function defaultEntry(algorithm: ReproductionBlueprint['algorithm']): string[] {
+  if (Array.isArray(algorithm.entry) && algorithm.entry.length > 0) return [...algorithm.entry];
+  return ['python', 'reproduce.py'];
+}
+
+/** Resolves the implementation source: --code file wins over inline source. */
+export async function resolveSource(
+  blueprint: ReproductionBlueprint,
+  codePath?: string,
+): Promise<{ source: string; origin: string }> {
+  if (codePath) {
+    const { readFile } = await import('node:fs/promises');
+    try {
+      const source = await readFile(codePath, 'utf8');
+      if (!source.trim()) {
+        throw new IdeaseekError('INVALID_ARGUMENT', `code file ${codePath} is empty`);
+      }
+      return { source, origin: codePath };
+    } catch (error) {
+      if (error instanceof IdeaseekError) throw error;
+      throw new IdeaseekError(
+        'INVALID_ARGUMENT',
+        `code generation failed: cannot read --code ${codePath}: ${(error as Error).message}`,
+      );
+    }
+  }
+  const inline = blueprint.algorithm.source;
+  if (typeof inline === 'string' && inline.trim()) {
+    return { source: inline, origin: 'blueprint.algorithm.source' };
+  }
+  throw new IdeaseekError(
+    'INVALID_ARGUMENT',
+    'code generation failed: no implementation source (provide --code <file> or blueprint.algorithm.source)',
+  );
+}
+
+export function reproductionPath(projectRoot: string, methodId: string): string {
+  return join(projectRoot, 'comparisons', methodId, 'reproduction.json');
+}
+
+export async function loadReproduction(
+  projectRoot: string,
+  methodId: string,
+): Promise<ReproductionRecord | null> {
+  try {
+    const { readFile } = await import('node:fs/promises');
+    return JSON.parse(
+      await readFile(reproductionPath(projectRoot, methodId), 'utf8'),
+    ) as ReproductionRecord;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveReproduction(
+  projectRoot: string,
+  record: ReproductionRecord,
+): Promise<void> {
+  record.updatedAt = Date.now();
+  const dir = join(projectRoot, 'comparisons', record.methodId);
+  await ensureDir(dir);
+  await writeFileAtomic(
+    reproductionPath(projectRoot, record.methodId),
+    `${JSON.stringify(record, null, 2)}\n`,
+  );
+}
+
+export interface GenerateResult {
+  written: string[];
+  worktreeDir: string;
+}
+
+function renderReadme(
+  blueprint: ReproductionBlueprint,
+  opts: {
+    fingerprint: string;
+    algorithmModified: boolean;
+    algorithmModifiedReason?: string;
+    sourceOrigin: string;
+    cardSources: string[];
+    protocolId: string | null;
+  },
+): string {
+  const lines: string[] = [
+    `# Paper reimplementation — ${blueprint.methodId}`,
+    '',
+    '> sourceKind: **paper-reimplementation** — this is NOT official code.',
+    `> algorithm fingerprint: \`${opts.fingerprint}\``,
+    ...(opts.algorithmModified
+      ? [
+          `> **algorithm-modified**: ${opts.algorithmModifiedReason ?? 'declared by user'}`,
+          '> results below belong to the revised method, not the original paper baseline.',
+        ]
+      : []),
+    '',
+    '## Paper-explicit content',
+    '',
+    ...blueprint.paperExplicit.map((item) => `- ${item.statement} — _${item.evidence}_`),
+    '',
+    '## Platform implementation assumptions',
+    '',
+    ...(blueprint.assumptions.length > 0
+      ? blueprint.assumptions.map((item) => `- ${item}`)
+      : ['- _none declared_']),
+    '',
+    '## Missing details (not specified by the paper)',
+    '',
+    ...(blueprint.missingDetails.length > 0
+      ? blueprint.missingDetails.map((item) => `- ${item}`)
+      : ['- _none_']),
+    '',
+    `## Reproduction confidence: **${blueprint.confidence}**`,
+    '',
+    `- code origin: ${opts.sourceOrigin}`,
+    `- linked PaperCards: ${opts.cardSources.length > 0 ? opts.cardSources.join(', ') : 'none'}`,
+    `- protocol: ${opts.protocolId ?? 'none'}`,
+    `- data interface: ${blueprint.algorithm.dataInterface.description}`,
+    `- metrics: ${blueprint.algorithm.metrics.map((m) => `${m.name}(${m.direction})`).join(', ')}`,
+    `- hyperparameters: ${JSON.stringify(blueprint.algorithm.hyperparameters ?? {})}`,
+    '',
+    '## Validation contract (entry argv prefix, default `python reproduce.py`)',
+    '',
+    '```text',
+    '<entry> check-data [--data PATH]  # exit 0 when the data interface holds',
+    '<entry> check-metrics             # exit 0 when metrics are computable',
+    '<entry> smoke                     # minimal run; prints {"metrics": {...}} JSON',
+    '```',
+    '',
+    'Top-level module code must not execute on import (the platform imports it',
+    'for the dependency check). Scale is smoke-only — no full training here.',
+    '',
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Writes the implementation + provenance README + plan snapshot into the
+ * worktree and prepares a git repo (empty scaffold commit) so the generated
+ * code is captured as a reviewable diff. No upstream directory exists for a
+ * reimplementation — nothing user-owned is ever written.
+ */
+export async function generateWorktree(
+  projectRoot: string,
+  input: {
+    methodId: string;
+    blueprint: ReproductionBlueprint;
+    source: string;
+    sourceOrigin: string;
+    fingerprint: string;
+    algorithmModified: boolean;
+    algorithmModifiedReason?: string;
+    cardSources: string[];
+    protocolId: string | null;
+  },
+): Promise<GenerateResult> {
+  const worktreeDir = join(projectRoot, 'comparisons', input.methodId, 'worktree');
+  await ensureDir(worktreeDir);
+
+  const { runGit } = await import('./importer.js');
+  const gitDir = join(worktreeDir, '.git');
+  let hasGit = false;
+  try {
+    await stat(gitDir);
+    hasGit = true;
+  } catch {
+    hasGit = false;
+  }
+  if (!hasGit) {
+    const init = await runGit(['init'], { cwd: worktreeDir, timeoutMs: 60_000 });
+    if (init.code !== 0) {
+      throw new IdeaseekError(
+        'INVALID_STATE',
+        `cannot git-init reproduction worktree: ${init.out.slice(-300)}`,
+      );
+    }
+    const commit = await runGit(
+      [
+        '-c',
+        'user.name=ideaseek',
+        '-c',
+        'user.email=ideaseek@local',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'reproduction scaffold (empty baseline for diff review)',
+      ],
+      { cwd: worktreeDir, timeoutMs: 60_000 },
+    );
+    if (commit.code !== 0) {
+      throw new IdeaseekError(
+        'INVALID_STATE',
+        `cannot create scaffold commit: ${commit.out.slice(-300)}`,
+      );
+    }
+  }
+
+  const entry = defaultEntry(input.blueprint.algorithm);
+  const entryScript = entry[1] && entry[1].endsWith('.py') ? entry[1] : 'reproduce.py';
+  const written: string[] = [];
+  const write = async (name: string, content: string) => {
+    await writeFileAtomic(join(worktreeDir, name), content);
+    written.push(name);
+  };
+  await write(entryScript, input.source);
+  await write(
+    'README.md',
+    renderReadme(input.blueprint, {
+      fingerprint: input.fingerprint,
+      algorithmModified: input.algorithmModified,
+      algorithmModifiedReason: input.algorithmModifiedReason,
+      sourceOrigin: input.sourceOrigin,
+      cardSources: input.cardSources,
+      protocolId: input.protocolId,
+    }),
+  );
+  await write('reproduction-plan.json', `${JSON.stringify(input.blueprint, null, 2)}\n`);
+  return { written, worktreeDir };
+}
+
+export interface CheckOptions {
+  projectRoot: string;
+  methodId: string;
+  worktreeDir: string;
+  entry: string[];
+  /** Optional data path forwarded to `check-data --data <path>`. */
+  dataPath?: string;
+  timeoutMs: number;
+  smokeTimeoutMs: number;
+  /** Called after each phase so crashes resume from the last OK phase. */
+  onPhase: (record: ReproductionRecord) => Promise<void>;
+}
+
+async function pythonFiles(worktreeDir: string): Promise<string[]> {
+  const names = await readdir(worktreeDir).catch(() => [] as string[]);
+  return names.filter((name) => name.endsWith('.py'));
+}
+
+function moduleOf(entry: string[]): string | null {
+  const script = entry[1];
+  if (!script || !script.endsWith('.py')) return null;
+  const base = script.replace(/\.py$/, '');
+  return base.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+/**
+ * Runs the validation ladder in order (code → data → metrics → smoke),
+ * persisting each phase result before moving on. Stops at the first failure.
+ */
+export async function runValidationPhases(
+  record: ReproductionRecord,
+  opts: CheckOptions,
+): Promise<ReproductionPhaseResult | null> {
+  const done = new Set(record.completedPhases);
+
+  const runPhase = async (
+    phase: ReproductionPhase,
+    command: string[],
+    timeoutMs: number,
+    classify: (log: string, exitCode: number, timedOut: boolean) => RepairFailureKind | null,
+  ): Promise<ReproductionPhaseResult | null> => {
+    if (done.has(phase)) return null;
+    const started = Date.now();
+    const run = await runRepairCommand(command, opts.worktreeDir, timeoutMs);
+    const logName = `reproduce-${opts.methodId}-${phase}.log`;
+    const logPath = `.research/logs/${logName}`;
+    await writeRepairLog(opts.projectRoot, logName, command, run.exitCode, run.out);
+    const failed = run.exitCode !== 0 || run.timedOut;
+    const result: ReproductionPhaseResult = {
+      phase,
+      at: started,
+      durationMs: Date.now() - started,
+      exitCode: run.exitCode,
+      ok: !failed,
+      logPath,
+    };
+    if (failed) {
+      const kind = classify(run.out, run.exitCode, run.timedOut);
+      const classified = kind
+        ? { kind }
+        : classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+      result.failureKind = classified.kind;
+      const firstLine = run.out
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
+      result.summary = redactSecrets(
+        run.timedOut ? `timed out after ${timeoutMs}ms` : (firstLine ?? `exit ${run.exitCode}`),
+      ).slice(0, 300);
+    }
+    record.phases.push(result);
+    if (result.ok) record.completedPhases.push(phase);
+    else record.outcome = 'failed';
+    await opts.onPhase(record);
+    return failed ? result : null;
+  };
+
+  // 1. code check: py_compile every root *.py, then import the entry module.
+  //    Both steps merge into ONE phase result so resume bookkeeping stays
+  //    consistent (a failed import must not leave check-code "completed").
+  if (!done.has('check-code')) {
+    const phaseStarted = Date.now();
+    const files = await pythonFiles(opts.worktreeDir);
+    const fail = async (
+      kind: RepairFailureKind,
+      summary: string,
+      exitCode: number,
+      durationMs: number,
+    ): Promise<ReproductionPhaseResult> => {
+      const result: ReproductionPhaseResult = {
+        phase: 'check-code',
+        at: phaseStarted,
+        durationMs,
+        exitCode,
+        ok: false,
+        failureKind: kind,
+        summary: redactSecrets(summary).slice(0, 300),
+      };
+      record.phases.push(result);
+      record.outcome = 'failed';
+      await opts.onPhase(record);
+      return result;
+    };
+
+    if (files.length === 0) {
+      return fail('syntax-error', 'no .py files generated in the worktree', 1, 0);
+    }
+    const compile = await runRepairCommand(
+      [opts.entry[0] ?? 'python', '-m', 'py_compile', ...files],
+      opts.worktreeDir,
+      opts.timeoutMs,
+    );
+    await writeRepairLog(
+      opts.projectRoot,
+      `reproduce-${opts.methodId}-compile.log`,
+      [opts.entry[0] ?? 'python', '-m', 'py_compile', ...files],
+      compile.exitCode,
+      compile.out,
+    );
+    if (compile.exitCode !== 0 || compile.timedOut) {
+      const classified = classifyRepairFailure(compile.out, compile.exitCode, compile.timedOut);
+      return fail(classified.kind, classified.summary, compile.exitCode, Date.now() - phaseStarted);
+    }
+
+    const mod = moduleOf(opts.entry);
+    if (mod) {
+      const importRun = await runRepairCommand(
+        [opts.entry[0] ?? 'python', '-c', `import ${mod}`],
+        opts.worktreeDir,
+        opts.timeoutMs,
+      );
+      await writeRepairLog(
+        opts.projectRoot,
+        `reproduce-${opts.methodId}-import.log`,
+        [opts.entry[0] ?? 'python', '-c', `import ${mod}`],
+        importRun.exitCode,
+        importRun.out,
+      );
+      if (importRun.exitCode !== 0 || importRun.timedOut) {
+        const classified = classifyRepairFailure(
+          importRun.out,
+          importRun.exitCode,
+          importRun.timedOut,
+        );
+        return fail(
+          classified.kind,
+          classified.summary,
+          importRun.exitCode,
+          Date.now() - phaseStarted,
+        );
+      }
+    }
+
+    record.phases.push({
+      phase: 'check-code',
+      at: phaseStarted,
+      durationMs: Date.now() - phaseStarted,
+      exitCode: 0,
+      ok: true,
+      logPath: `.research/logs/reproduce-${opts.methodId}-compile.log`,
+    });
+    record.completedPhases.push('check-code');
+    await opts.onPhase(record);
+  }
+
+  // 2. data interface check.
+  const dataCommand = [...opts.entry, 'check-data'];
+  if (opts.dataPath) dataCommand.push('--data', opts.dataPath);
+  const dataFail = await runPhase('check-data', dataCommand, opts.timeoutMs, () => null);
+  if (dataFail) return dataFail;
+
+  // 3. metric computability check.
+  const metricsFail = await runPhase(
+    'check-metrics',
+    [...opts.entry, 'check-metrics'],
+    opts.timeoutMs,
+    () => null,
+  );
+  if (metricsFail) return metricsFail;
+
+  return null;
+}
+
+export interface SmokeOutcome {
+  metrics: { name: string; value: number }[];
+  raw: string;
+}
+
+/**
+ * Runs the bounded smoke (scale=smoke — never full training) and parses the
+ * `{"metrics": {...}}` line against the blueprint's metric list.
+ */
+export async function runSmoke(
+  record: ReproductionRecord,
+  opts: CheckOptions,
+  expectedMetrics: { name: string; direction: string }[],
+): Promise<{ failure: ReproductionPhaseResult | null; smoke: SmokeOutcome | null }> {
+  if (record.completedPhases.includes('smoke')) {
+    return {
+      failure: null,
+      smoke: { metrics: record.smokeMetrics ?? [], raw: '' },
+    };
+  }
+  const started = Date.now();
+  const command = [...opts.entry, 'smoke'];
+  const run = await runRepairCommand(command, opts.worktreeDir, opts.smokeTimeoutMs);
+  const logName = `reproduce-${opts.methodId}-smoke.log`;
+  const logPath = `.research/logs/${logName}`;
+  await writeRepairLog(opts.projectRoot, logName, command, run.exitCode, run.out);
+
+  const base = {
+    phase: 'smoke' as const,
+    at: started,
+    durationMs: Date.now() - started,
+    exitCode: run.exitCode,
+    logPath,
+  };
+  if (run.exitCode !== 0 || run.timedOut) {
+    const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+    const failure: ReproductionPhaseResult = {
+      ...base,
+      ok: false,
+      failureKind: run.timedOut ? 'timeout' : classified.kind,
+      summary: run.timedOut
+        ? `smoke timed out after ${opts.smokeTimeoutMs}ms`
+        : classified.summary.slice(0, 300),
+    };
+    record.phases.push(failure);
+    record.outcome = 'failed';
+    await opts.onPhase(record);
+    return { failure, smoke: null };
+  }
+
+  // Parse the last JSON line carrying {"metrics": {...}}.
+  const lines = run.out.split(/\r?\n/).filter((line) => line.trim());
+  let parsed: { metrics?: Record<string, unknown> } | null = null;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      const candidate = JSON.parse(lines[i]!) as { metrics?: Record<string, unknown> };
+      if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
+        parsed = candidate;
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+  if (!parsed) {
+    const failure: ReproductionPhaseResult = {
+      ...base,
+      ok: false,
+      failureKind: 'unknown',
+      summary: 'smoke produced no {"metrics": {...}} JSON line',
+    };
+    record.phases.push(failure);
+    record.outcome = 'failed';
+    await opts.onPhase(record);
+    return { failure, smoke: null };
+  }
+
+  const metrics: SmokeOutcome['metrics'] = [];
+  const missing: string[] = [];
+  const metricMap = parsed.metrics ?? {};
+  for (const expected of expectedMetrics) {
+    const value = metricMap[expected.name];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      missing.push(expected.name);
+      continue;
+    }
+    metrics.push({ name: expected.name, value });
+  }
+  if (missing.length > 0) {
+    const failure: ReproductionPhaseResult = {
+      ...base,
+      ok: false,
+      failureKind: 'unknown',
+      summary: `smoke metrics missing or non-finite: ${missing.join(', ')}`,
+    };
+    record.phases.push(failure);
+    record.outcome = 'failed';
+    await opts.onPhase(record);
+    return { failure, smoke: null };
+  }
+
+  const success: ReproductionPhaseResult = { ...base, ok: true };
+  record.phases.push(success);
+  record.completedPhases.push('smoke');
+  record.smokeMetrics = metrics;
+  await opts.onPhase(record);
+  return { failure: null, smoke: { metrics, raw: run.out.slice(-2000) } };
+}
+
+/** Worktree diff hash for the record (generated code is uncommitted by design). */
+export async function reproductionPatchHash(worktreeDir: string): Promise<string | null> {
+  try {
+    const diff = await collectWorktreeDiff(worktreeDir);
+    return diff.patchHash;
+  } catch {
+    return null;
+  }
+}

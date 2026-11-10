@@ -104,6 +104,93 @@ export interface RepairSummary {
   updatedAt: number;
 }
 
+/** Paper-explicit content the reproduction is grounded in (plan §C.7). */
+export interface ReproductionEvidence {
+  statement: string;
+  /** Citation locator: paper id + page/quote. */
+  evidence: string;
+}
+
+export type ReproductionConfidence = 'high' | 'medium' | 'low';
+
+/**
+ * Structured reproduction plan authored from the papers (by an agent or the
+ * user). The platform validates it, generates the worktree scaffold and
+ * never lets it pose as official code (docs/DATA_CONTRACTS ComparisonMethod).
+ */
+export interface ReproductionBlueprint {
+  methodId: string;
+  paperExplicit: ReproductionEvidence[];
+  assumptions: string[];
+  missingDetails: string[];
+  confidence: ReproductionConfidence;
+  algorithm: {
+    /** Python implementation source; may be omitted when --code <file> is used. */
+    source?: string;
+    /** argv prefix; defaults to ['python', 'reproduce.py']. */
+    entry?: string[];
+    dataInterface: { description: string };
+    metrics: { name: string; direction: 'higher' | 'lower' }[];
+    hyperparameters?: Record<string, unknown>;
+  };
+}
+
+export type ReproductionPhase =
+  'brief' | 'generate' | 'check-code' | 'check-data' | 'check-metrics' | 'smoke' | 'record';
+
+export type ReproductionOutcome = 'in-progress' | 'validated' | 'failed';
+
+export interface ReproductionPhaseResult {
+  phase: ReproductionPhase;
+  at: number;
+  durationMs: number;
+  exitCode: number;
+  ok: boolean;
+  /** Classified from the phase log (reuse of the repair taxonomy). */
+  failureKind?: RepairFailureKind;
+  /** Redacted, truncated diagnosis. */
+  summary?: string;
+  logPath?: string;
+}
+
+/** Crash-safe per-phase record at comparisons/<id>/reproduction.json. */
+export interface ReproductionRecord {
+  methodId: string;
+  /** sha256 over the algorithm block (stableJson) — semantic-change detector. */
+  fingerprint: string;
+  outcome: ReproductionOutcome;
+  startedAt: number;
+  updatedAt: number;
+  /** Phases already OK in this session (resume skips them). */
+  completedPhases: ReproductionPhase[];
+  phases: ReproductionPhaseResult[];
+  paperExplicit: ReproductionEvidence[];
+  assumptions: string[];
+  missingDetails: string[];
+  confidence: ReproductionConfidence;
+  algorithmModified: boolean;
+  algorithmModifiedReason?: string;
+  cardSources: string[];
+  protocolId: string | null;
+  patchHash: string | null;
+  specId: string | null;
+  /** Parsed smoke metrics (kept for resume + ExperimentSpec attachment). */
+  smokeMetrics?: { name: string; value: number }[];
+}
+
+/** Summary mirrored into the method record after a reproduction run. */
+export interface ReproductionSummary {
+  outcome: 'validated' | 'failed';
+  failedPhase: ReproductionPhase | null;
+  failureKind: RepairFailureKind | null;
+  confidence: ReproductionConfidence;
+  algorithmModified: boolean;
+  fingerprint: string;
+  patchHash: string | null;
+  specId: string | null;
+  updatedAt: number;
+}
+
 export interface ComparisonMethod {
   methodId: string;
   /** Paper references (hashes or ids) this method answers to. */
@@ -117,6 +204,7 @@ export interface ComparisonMethod {
   statusReason?: string;
   smoke?: ComparisonSmoke;
   repair?: RepairSummary;
+  reproduction?: ReproductionSummary;
   history?: ComparisonHistoryEntry[];
   notes: string[];
   createdAt: number;

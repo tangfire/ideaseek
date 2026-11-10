@@ -8,11 +8,22 @@ import {
   parseEntryCommand,
   repairStore,
 } from '../comparison/repair.js';
+import {
+  computeAlgorithmFingerprint,
+  defaultEntry,
+  resolveSource,
+  validateReproductionBlueprint,
+} from '../comparison/reproduce.js';
 import type {
   ComparisonMethod,
   ComparisonStatus,
+  RepairFailureKind,
   RepairRecord,
   RepairSummary,
+  ReproductionBlueprint,
+  ReproductionPhase,
+  ReproductionRecord,
+  ReproductionSummary,
 } from '../comparison/types.js';
 import { exportMethodYaml } from './comparison.js';
 import { action, jsonLine } from './shared.js';
@@ -312,6 +323,635 @@ export function registerBaselineCommand(program: Command): void {
         },
       ),
     );
+
+  baseline
+    .command('reproduce')
+    .description(
+      'generate an auditable paper reimplementation in the worktree and validate it (no official code)',
+    )
+    .requiredOption(
+      '--method <methodId>',
+      'comparison method id (sourceKind paper-reimplementation)',
+    )
+    .option(
+      '--blueprint <path>',
+      'reproduction blueprint JSON (default: comparisons/<id>/blueprint.json)',
+    )
+    .option('--code <path>', 'implementation .py file (overrides blueprint.algorithm.source)')
+    .option('--data <path>', 'data path forwarded to `check-data --data <path>`')
+    .option('--algorithm-modified', 'declare that semantics differ from the prior reproduction')
+    .option('--reason <text>', 'required with --algorithm-modified')
+    .option('--timeout <ms>', 'per-check command timeout', (value) => Number(value), 60_000)
+    .option('--smoke-timeout <ms>', 'smoke command timeout', (value) => Number(value), 120_000)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (opts: {
+          method: string;
+          blueprint?: string;
+          code?: string;
+          data?: string;
+          algorithmModified?: boolean;
+          reason?: string;
+          timeout: number;
+          smokeTimeout: number;
+          json?: boolean;
+        }) => {
+          const root = await openRoot();
+          if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
+          }
+          if (!Number.isFinite(opts.smokeTimeout) || opts.smokeTimeout < 100) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--smoke-timeout must be >= 100 ms');
+          }
+          if (opts.algorithmModified && !(opts.reason && opts.reason.trim())) {
+            throw new IdeaseekError(
+              'USER_INPUT_REQUIRED',
+              '--algorithm-modified requires --reason (semantic changes must be declared, never silent)',
+            );
+          }
+          const runtime = await openRuntime(root);
+          try {
+            const prepared = await prepareReproduction(root, runtime, opts);
+            return await executeReproduction(root, runtime, opts, prepared);
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
+    );
+}
+
+type ReproduceOpts = {
+  method: string;
+  blueprint?: string;
+  code?: string;
+  data?: string;
+  algorithmModified?: boolean;
+  reason?: string;
+  timeout: number;
+  smokeTimeout: number;
+  json?: boolean;
+};
+
+interface PreparedReproduction {
+  methodId: string;
+  blueprint: ReproductionBlueprint;
+  source: string;
+  sourceOrigin: string;
+  fingerprint: string;
+  algorithmModified: boolean;
+  algorithmModifiedReason?: string;
+  entry: string[];
+  cardSources: string[];
+  protocolId: string | null;
+}
+
+/**
+ * Fail-fast preparation: contract checks, blueprint validation and source
+ * resolution all happen BEFORE any status transition or worktree write, so a
+ * missing paper grounding or missing code never leaves partial state.
+ */
+async function prepareReproduction(
+  root: string,
+  runtime: Awaited<ReturnType<typeof openRuntime>>,
+  opts: ReproduceOpts,
+): Promise<PreparedReproduction> {
+  const doc = await runtime.db.getComparison(opts.method);
+  if (!doc) throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${opts.method} not found`);
+  const method = toMethod(doc.record);
+
+  if (method.sourceKind !== 'paper-reimplementation') {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `${opts.method} is sourceKind=${method.sourceKind}; reproduction only applies to paper-reimplementation methods` +
+        (method.sourceKind === 'official-code'
+          ? ' — official code uses: ideaseek baseline repair --method ' + opts.method
+          : ''),
+    );
+  }
+  const upstreamDir = join(root, 'comparisons', opts.method, 'upstream');
+  try {
+    await (await import('node:fs/promises')).stat(upstreamDir);
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `${opts.method} has an upstream/ clone — official code present, use ideaseek baseline repair`,
+    );
+  } catch (error) {
+    if (error instanceof IdeaseekError) throw error;
+    // no upstream → continue
+  }
+
+  const REPRODUCIBLE: readonly ComparisonStatus[] = [
+    'candidate',
+    'accepted',
+    'source-resolved',
+    'implemented',
+    'repairing',
+    'blocked',
+    'smoke-tested',
+  ];
+  if (!REPRODUCIBLE.includes(method.status)) {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `cannot reproduce ${opts.method} from status ${method.status}; ` +
+        `use set-status to move it back to repairing first`,
+      { status: method.status },
+    );
+  }
+
+  const blueprintPath = opts.blueprint ?? join(root, 'comparisons', opts.method, 'blueprint.json');
+  const { readFile } = await import('node:fs/promises');
+  let raw: string;
+  try {
+    raw = await readFile(blueprintPath, 'utf8');
+  } catch (error) {
+    throw new IdeaseekError(
+      'FILE_NOT_FOUND',
+      `cannot read blueprint ${blueprintPath}: ${(error as Error).message}`,
+    );
+  }
+  let blueprintValue: unknown;
+  try {
+    blueprintValue = JSON.parse(raw);
+  } catch (error) {
+    throw new IdeaseekError(
+      'PARSE_FAILED',
+      `blueprint ${blueprintPath} is not valid JSON: ${(error as Error).message}`,
+    );
+  }
+  const validation = validateReproductionBlueprint(blueprintValue, {
+    methodId: opts.method,
+    paperRefs: method.paperRefs,
+  });
+  if (!validation.ok) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `incomplete paper grounding: ${validation.errors.join('; ')}`,
+    );
+  }
+  const blueprint = blueprintValue as ReproductionBlueprint;
+
+  const { source, origin } = await resolveSource(blueprint, opts.code);
+  const entry = defaultEntry(blueprint.algorithm);
+  const fingerprint = computeAlgorithmFingerprint({
+    source,
+    entry,
+    dataInterface: blueprint.algorithm.dataInterface,
+    metrics: blueprint.algorithm.metrics,
+    hyperparameters: blueprint.algorithm.hyperparameters,
+  });
+
+  const { loadReproduction } = await import('../comparison/reproduce.js');
+  const prior = await loadReproduction(root, opts.method);
+  const algorithmModified = opts.algorithmModified === true;
+  const algorithmModifiedReason = opts.reason?.trim();
+  if (prior && prior.fingerprint !== fingerprint && !algorithmModified) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `algorithm semantics changed since the last reproduction (fingerprint ${prior.fingerprint.slice(0, 12)}… → ${fingerprint.slice(0, 12)}…); ` +
+        'pass --algorithm-modified --reason "<why>" so results cannot pose as the original method',
+    );
+  }
+  if (algorithmModified && !algorithmModifiedReason) {
+    throw new IdeaseekError('USER_INPUT_REQUIRED', '--algorithm-modified requires --reason');
+  }
+
+  // PaperCards linked by paper id / source path (recorded, not required).
+  const { loadCards } = await import('../knowledge/cards.js');
+  const cards = await loadCards(runtime).catch(() => []);
+  const cardSources = cards
+    .filter(
+      (loaded) =>
+        method.paperRefs.includes(String(loaded.card.paper_id ?? '')) ||
+        method.paperRefs.includes(loaded.source),
+    )
+    .map((loaded) => loaded.source);
+
+  // Latest protocol proposal linkage (recorded when present).
+  let protocolId: string | null = null;
+  try {
+    const artifacts = await runtime.db.listArtifactsByKind('protocol-proposal');
+    const chosen = artifacts[artifacts.length - 1];
+    if (chosen) {
+      const proposal = JSON.parse(await runtime.store.readFinalText(chosen.contentHash)) as {
+        protocolId?: unknown;
+      };
+      if (typeof proposal.protocolId === 'string') protocolId = proposal.protocolId;
+    }
+  } catch {
+    // no protocol yet — linkage stays null
+  }
+
+  return {
+    methodId: opts.method,
+    blueprint,
+    source,
+    sourceOrigin: origin,
+    fingerprint,
+    algorithmModified,
+    algorithmModifiedReason,
+    entry,
+    cardSources,
+    protocolId,
+  };
+}
+
+async function executeReproduction(
+  root: string,
+  runtime: Awaited<ReturnType<typeof openRuntime>>,
+  opts: ReproduceOpts,
+  prepared?: PreparedReproduction,
+): Promise<number> {
+  const prep = prepared ?? (await prepareReproduction(root, runtime, opts));
+  const { methodId, blueprint, fingerprint, entry } = prep;
+
+  // --- status discipline: reach source-resolved before generation.
+  const doc = (await runtime.db.getComparison(methodId))!;
+  let status = doc.status as ComparisonStatus;
+  if (status === 'candidate') {
+    await runtime.db.transitionComparison(methodId, 'accepted', 'reproduction approved');
+    status = 'accepted';
+  }
+  if (status === 'accepted') {
+    await runtime.db.transitionComparison(
+      methodId,
+      'source-resolved',
+      'paper source + blueprint resolved',
+    );
+    status = 'source-resolved';
+  }
+
+  // --- record: resume an in-progress session with the same fingerprint.
+  const {
+    loadReproduction,
+    saveReproduction,
+    generateWorktree,
+    runValidationPhases,
+    runSmoke,
+    reproductionPatchHash,
+  } = await import('../comparison/reproduce.js');
+  const prior = await loadReproduction(root, methodId);
+  const resume =
+    prior !== null && prior.outcome === 'in-progress' && prior.fingerprint === fingerprint;
+  const now = Date.now();
+  const record: ReproductionRecord = resume
+    ? {
+        ...prior!,
+        algorithmModified: prior!.algorithmModified || prep.algorithmModified,
+        algorithmModifiedReason: prep.algorithmModifiedReason ?? prior!.algorithmModifiedReason,
+      }
+    : {
+        methodId,
+        fingerprint,
+        outcome: 'in-progress',
+        startedAt: now,
+        updatedAt: now,
+        completedPhases: ['brief'],
+        phases: [],
+        paperExplicit: blueprint.paperExplicit,
+        assumptions: blueprint.assumptions,
+        missingDetails: blueprint.missingDetails,
+        confidence: blueprint.confidence,
+        algorithmModified: prep.algorithmModified,
+        algorithmModifiedReason: prep.algorithmModifiedReason,
+        cardSources: prep.cardSources,
+        protocolId: prep.protocolId,
+        patchHash: null,
+        specId: null,
+      };
+  await saveReproduction(root, record);
+
+  const onPhase = (r: ReproductionRecord) => saveReproduction(root, r);
+  const printFailure = (failed: {
+    phase: ReproductionPhase;
+    failureKind?: RepairFailureKind;
+    summary?: string;
+    logPath?: string;
+  }): void => {
+    if (opts.json) {
+      process.stdout.write(
+        jsonLine({
+          methodId,
+          outcome: 'failed',
+          failedPhase: failed.phase,
+          failureKind: failed.failureKind ?? null,
+          summary: failed.summary ?? null,
+          logPath: failed.logPath ?? null,
+        }),
+      );
+    } else {
+      process.stdout.write(
+        `reproduce ${methodId}: FAILED at ${failed.phase} (${failed.failureKind ?? 'unknown'})\n`,
+      );
+      process.stdout.write(`  ${failed.summary ?? ''}\n`);
+      if (failed.logPath) process.stdout.write(`  log: ${failed.logPath}\n`);
+      process.stdout.write(
+        `next: fix the implementation, then rerun: ideaseek baseline reproduce --method ${methodId}\n`,
+      );
+    }
+  };
+
+  // Mirror a failure into the method record + status graph (plan §C.7:
+  // failures are recorded, never silent).
+  const failMethod = async (failed: {
+    phase: ReproductionPhase;
+    failureKind?: RepairFailureKind;
+    summary?: string;
+  }): Promise<void> => {
+    const current = (await runtime.db.getComparison(methodId))!;
+    const currentStatus = current.status as ComparisonStatus;
+    const summary: ReproductionSummary = {
+      outcome: 'failed',
+      failedPhase: failed.phase,
+      failureKind: failed.failureKind ?? null,
+      confidence: blueprint.confidence,
+      algorithmModified: record.algorithmModified,
+      fingerprint,
+      patchHash: null,
+      specId: null,
+      updatedAt: Date.now(),
+    };
+    const reason = truncateReason(
+      `reproduction ${failed.phase} failed: ${failed.failureKind ?? 'unknown'} - ${failed.summary ?? ''}`,
+    );
+    await runtime.db.upsertComparison({
+      methodId,
+      status: currentStatus,
+      required: current.required,
+      record: {
+        ...toMethod(current.record),
+        reproduction: summary,
+        statusReason: reason,
+        updatedAt: summary.updatedAt,
+      } as unknown as Record<string, unknown>,
+      updatedAt: summary.updatedAt,
+    });
+    if (currentStatus === 'source-resolved' || currentStatus === 'smoke-tested') {
+      await runtime.db.transitionComparison(
+        methodId,
+        currentStatus === 'smoke-tested' ? 'repairing' : 'blocked',
+        reason,
+      );
+    } else if (currentStatus === 'implemented') {
+      await runtime.db.transitionComparison(methodId, 'repairing', reason);
+    }
+    // repairing / blocked keep their status; reason already recorded above.
+    const finalDoc = await runtime.db.getComparison(methodId);
+    if (finalDoc) await exportMethodYaml(root, toMethod(finalDoc.record));
+  };
+
+  try {
+    // --- generate (skipped when resuming past it).
+    if (!record.completedPhases.includes('generate')) {
+      const generated = await generateWorktree(root, {
+        methodId,
+        blueprint,
+        source: prep.source,
+        sourceOrigin: prep.sourceOrigin,
+        fingerprint,
+        algorithmModified: record.algorithmModified,
+        algorithmModifiedReason: record.algorithmModifiedReason,
+        cardSources: prep.cardSources,
+        protocolId: prep.protocolId,
+      });
+      void generated;
+      record.completedPhases.push('generate');
+      await onPhase(record);
+    }
+  } catch (error) {
+    const message = (error as Error).message;
+    record.outcome = 'failed';
+    record.phases.push({
+      phase: 'generate',
+      at: Date.now(),
+      durationMs: 0,
+      exitCode: 1,
+      ok: false,
+      failureKind: 'unknown',
+      summary: message.slice(0, 300),
+    });
+    await onPhase(record);
+    await failMethod({ phase: 'generate', failureKind: 'unknown', summary: message });
+    printFailure({
+      phase: 'generate',
+      failureKind: 'unknown',
+      summary: message,
+    });
+    return 1;
+  }
+
+  const worktreeDir = join(root, 'comparisons', methodId, 'worktree');
+  const checkOpts = {
+    projectRoot: root,
+    methodId,
+    worktreeDir,
+    entry,
+    dataPath: opts.data,
+    timeoutMs: opts.timeout,
+    smokeTimeoutMs: opts.smokeTimeout,
+    onPhase,
+  };
+
+  const failedPhase = await runValidationPhases(record, checkOpts);
+  if (failedPhase) {
+    await failMethod(failedPhase);
+    printFailure(failedPhase);
+    return 1;
+  }
+
+  const { failure: smokeFailure, smoke } = await runSmoke(
+    record,
+    checkOpts,
+    blueprint.algorithm.metrics,
+  );
+  if (smokeFailure) {
+    await failMethod(smokeFailure);
+    printFailure(smokeFailure);
+    return 1;
+  }
+
+  // --- success: patch hash, validated record, status walk, spec + result.
+  const patchHash = await reproductionPatchHash(worktreeDir);
+  record.outcome = 'validated';
+  record.patchHash = patchHash;
+  if (!record.completedPhases.includes('record')) record.completedPhases.push('record');
+
+  const methodNow = toMethod((await runtime.db.getComparison(methodId))!.record);
+  const summary: ReproductionSummary = {
+    outcome: 'validated',
+    failedPhase: null,
+    failureKind: null,
+    confidence: blueprint.confidence,
+    algorithmModified: record.algorithmModified,
+    fingerprint,
+    patchHash,
+    specId: `repro-${methodId}`,
+    updatedAt: Date.now(),
+  };
+  const notes = [...methodNow.notes];
+  if (record.algorithmModified && !notes.some((n) => n.startsWith('algorithm-modified:'))) {
+    notes.push(
+      `algorithm-modified: ${record.algorithmModifiedReason ?? 'declared'} (results are a revised method, not the original baseline)`,
+    );
+  }
+  await runtime.db.upsertComparison({
+    methodId,
+    status: methodNow.status,
+    required: methodNow.required,
+    record: {
+      ...methodNow,
+      entry,
+      reproduction: summary,
+      notes,
+      statusReason: undefined,
+      updatedAt: summary.updatedAt,
+    } as unknown as Record<string, unknown>,
+    updatedAt: summary.updatedAt,
+  });
+
+  // Legal walk to smoke-tested from wherever the session started.
+  let walk = (await runtime.db.getComparison(methodId))!.status as ComparisonStatus;
+  const hop = async (to: ComparisonStatus, reason?: string) => {
+    if (walk === to) return;
+    await runtime.db.transitionComparison(methodId, to, reason);
+    walk = to;
+  };
+  if (walk === 'blocked') {
+    await hop('source-resolved', 'reproduction validated');
+    await hop('implemented', 'reimplementation generated and checked');
+    await hop('smoke-tested');
+  } else if (walk === 'source-resolved') {
+    await hop('implemented', 'reimplementation generated and checked');
+    await hop('smoke-tested');
+  } else if (walk === 'implemented' || walk === 'repairing') {
+    await hop('smoke-tested');
+  }
+  // smoke-tested and beyond: no status change.
+
+  record.specId = `repro-${methodId}`;
+  await saveReproduction(root, record);
+
+  // --- unified ExperimentSpec/RunResult attachment (scale=smoke only).
+  const { computeSpecHash, validateExperimentSpec } = await import('../experiment/spec.js');
+  const specId = `repro-${methodId}`;
+  const existingSpec = await runtime.db.getExperiment(specId);
+  const spec = {
+    specId,
+    version: existingSpec ? existingSpec.version : 1,
+    idea: null,
+    comparisonIds: [methodId],
+    codeCommit: null,
+    dataSnapshotId: opts.data
+      ? `local:${opts.data.split(/[\\/]/).pop() ?? 'data'}`
+      : 'synthetic:reproduction-fixture',
+    sliceIds: [],
+    environment: {
+      python: process.version,
+      notes: [`paper-reproduction smoke (scale=smoke)`, `algorithm-fingerprint:${fingerprint}`],
+    },
+    command: [...entry, 'smoke'],
+    metrics: blueprint.algorithm.metrics,
+    seeds: [42],
+    resources: {},
+    budget: { maxMinutes: 5 },
+    protocolId: prep.protocolId,
+    createdAt: Date.now(),
+  };
+  const specValidation = validateExperimentSpec(spec);
+  if (!specValidation.ok) {
+    // The reproduction itself succeeded; a spec problem is reported but does
+    // not invalidate the validated record.
+    process.stderr.write(
+      `warning: experiment spec not recorded: ${specValidation.errors.join('; ')}\n`,
+    );
+  } else {
+    const specHash = computeSpecHash(spec);
+    const hashChanged = existingSpec !== null && existingSpec.specHash !== specHash;
+    const nextVersion = existingSpec
+      ? hashChanged
+        ? existingSpec.version + 1
+        : existingSpec.version
+      : 1;
+    spec.version = nextVersion;
+    const finalHash = computeSpecHash(spec);
+    await runtime.db.upsertExperiment({
+      specId,
+      version: nextVersion,
+      specHash: finalHash,
+      status:
+        existingSpec && existingSpec.specHash === finalHash && existingSpec.result
+          ? existingSpec.status
+          : 'planned',
+      spec: spec as unknown as Record<string, unknown>,
+      result: existingSpec && existingSpec.specHash === finalHash ? existingSpec.result : null,
+      updatedAt: Date.now(),
+    });
+    const currentSpec = await runtime.db.getExperiment(specId);
+    if (currentSpec && !currentSpec.result && smoke) {
+      const startedAt = Math.min(...record.phases.map((p) => p.at), Date.now());
+      await runtime.db.attachExperimentResult(
+        specId,
+        {
+          specId,
+          status: 'succeeded',
+          logRefs: [`.research/logs/reproduce-${methodId}-smoke.log`],
+          artifactRefs: [],
+          metrics: smoke.metrics,
+          resourcesUsed: {},
+          failure: null,
+          startedAt,
+          finishedAt: Date.now(),
+          explanation: `reproduction smoke (scale=smoke), confidence=${blueprint.confidence}${record.algorithmModified ? ', algorithm-modified' : ''}`,
+        } as unknown as Record<string, unknown>,
+        'succeeded',
+      );
+    }
+  }
+
+  const finalDoc = await runtime.db.getComparison(methodId);
+  if (finalDoc) await exportMethodYaml(root, toMethod(finalDoc.record));
+
+  const finalStatus = finalDoc?.status ?? 'smoke-tested';
+  if (opts.json) {
+    process.stdout.write(
+      jsonLine({
+        methodId,
+        outcome: 'validated',
+        status: finalStatus,
+        confidence: blueprint.confidence,
+        algorithmModified: record.algorithmModified,
+        fingerprint,
+        patchHash,
+        specId: record.specId,
+        phases: record.phases.map((p) => ({ phase: p.phase, ok: p.ok, exitCode: p.exitCode })),
+        smokeMetrics: smoke?.metrics ?? [],
+        missingDetails: blueprint.missingDetails.length,
+        assumptions: blueprint.assumptions.length,
+      }),
+    );
+  } else {
+    process.stdout.write(
+      `reproduce ${methodId}: VALIDATED → ${finalStatus} (confidence=${blueprint.confidence}${record.algorithmModified ? ', algorithm-modified' : ''})\n`,
+    );
+    for (const phase of record.phases) {
+      process.stdout.write(
+        `  ${phase.ok ? 'ok  ' : 'FAIL'} ${phase.phase.padEnd(14)} ${phase.durationMs}ms${phase.failureKind ? `  ${phase.failureKind}` : ''}\n`,
+      );
+    }
+    process.stdout.write(`  worktree: ${worktreeDir}\n`);
+    process.stdout.write(`  patch: ${patchHash ?? '(none)'}\n`);
+    process.stdout.write(
+      `  spec: ${record.specId} v${spec?.version ?? 1} + smoke result attached\n`,
+    );
+    process.stdout.write(
+      `  paper-explicit ${blueprint.paperExplicit.length} · assumptions ${blueprint.assumptions.length} · missing ${blueprint.missingDetails.length}\n`,
+    );
+    process.stdout.write(
+      'next: ideaseek comparison gate   (quick/standard runs stay hands-off; no full training here)\n',
+    );
+  }
+  return 0;
 }
 
 function printRounds(attempts: RepairRecord['attempts']): void {
