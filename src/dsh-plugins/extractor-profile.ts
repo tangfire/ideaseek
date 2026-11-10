@@ -9,5 +9,5 @@ import type { Context } from '@deepseek-ai/cordis';
 export const inject = ['tools'];
 
 export function apply(ctx: Context): void {
-  ctx.tools.restrict({ allow: ['project_read'] });
+  ctx.tools.restrict({ allow: ['project_read', 'knowledge_search'] });
 }

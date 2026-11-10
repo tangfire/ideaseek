@@ -2,6 +2,10 @@ import type { Context } from '@deepseek-ai/cordis';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, sep } from 'node:path';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 /**
  * IdeaSeek research tool plugin, loaded into the DSH subprocess via a
@@ -61,7 +65,96 @@ export function resolveInsideWorkspace(root: string, relative: string): string {
   return abs;
 }
 
+/**
+ * Resolves the ideaseek CLI for the knowledge_search tool: explicit env wins,
+ * else the built CLI next to this module (dist/dsh-plugins → dist/cli.js).
+ */
+export function resolveIdeaseekCli(): string | null {
+  const fromEnv = process.env.IDEASEEK_CLI_PATH;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dist/dsh-plugins → dist/cli.js (built layout); src/dsh-plugins →
+  // ../../dist/cli.js (tests import sources but spawn the built CLI).
+  for (const candidate of [
+    resolvePath(here, '..', 'cli.js'),
+    resolvePath(here, '..', '..', 'dist', 'cli.js'),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+export interface KnowledgeSearchOptions {
+  query: string;
+  limit?: number;
+  cwd: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Runs `ideaseek search --json` in the project and formats page-level hits
+ * for the model. The DSH subprocess never opens the workflow DB directly —
+ * the CLI is the single writer/reader protocol, keeping locking and schema
+ * in one place. Output is bounded and contains only indexed page snippets.
+ */
+export function runKnowledgeSearch(opts: KnowledgeSearchOptions): string {
+  const terms = opts.query.trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) throw new Error('knowledge_search: empty query');
+  const cli = resolveIdeaseekCli();
+  if (!cli) {
+    throw new Error(
+      'knowledge_search: ideaseek CLI not found (build dist/ or set IDEASEEK_CLI_PATH)',
+    );
+  }
+  const limit = Math.min(Math.max(opts.limit ?? 10, 1), 50);
+  const result = spawnSync(
+    process.execPath,
+    [cli, 'search', ...terms, '--json', '--limit', String(limit)],
+    { cwd: opts.cwd, encoding: 'utf8', timeout: opts.timeoutMs ?? 15_000 },
+  );
+  if (result.error) {
+    throw new Error(`knowledge_search: ${result.error.message}`);
+  }
+  const stdout = (result.stdout ?? '').trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
+  if (result.status !== 0) {
+    const stderr = (result.stderr ?? '').trim().slice(0, 300);
+    throw new Error(
+      `knowledge_search failed (exit ${result.status}): ${stderr || stdout.slice(0, 200)}`,
+    );
+  }
+  let payload: { hits?: { source: string; page: number; snippet: string }[] };
+  try {
+    payload = JSON.parse(stdout) as typeof payload;
+  } catch {
+    throw new Error('knowledge_search: unreadable CLI output');
+  }
+  const hits = payload.hits ?? [];
+  if (hits.length === 0) return 'no matching passages in parsed papers';
+  return hits.map((hit) => `${hit.source}:p${hit.page} — ${hit.snippet}`).join('\n');
+}
+
 export function apply(ctx: Context): void {
+  ctx.tools.register(
+    defineTool({
+      name: 'knowledge_search',
+      description:
+        'Full-text search across parsed papers in this project; returns page-level ' +
+        'hits with snippets (source:pN — text). Read-only.',
+      parameters: {
+        query: { type: 'string', required: true, description: 'search terms' },
+        limit: { type: 'number', description: 'maximum hits (default 10, max 50)' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args: { query: string; limit?: number }): Promise<string> {
+        const cwd = workspaceRoot() ?? process.cwd();
+        return runKnowledgeSearch({ query: args.query, limit: args.limit, cwd });
+      },
+    }),
+  );
+
   ctx.tools.register(
     defineTool({
       name: 'project_read',
