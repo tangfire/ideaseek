@@ -1,4 +1,5 @@
 import { IdeaseekError, isIdeaseekError } from '../core/errors.js';
+import { isHarnessBlockError } from '../dsh/adapter.js';
 import { newId } from '../core/ids.js';
 import type { StagedArtifact } from '../artifact/store.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
@@ -251,6 +252,25 @@ export class FakeWorker {
       } catch (ackError) {
         this.onLog(`${task.type} cancel ack failed: ${(ackError as Error).message}`);
       }
+      return;
+    }
+
+    if (isHarnessBlockError(error)) {
+      // Quota/auth/network are external conditions: park the run without
+      // burning the task attempt (docs/WORKFLOW_SPEC.md §QUOTA_EXHAUSTED).
+      await cleanup();
+      await runtime.db.blockExternal(
+        task.taskId,
+        this.workerId,
+        {
+          code: error.block,
+          message: error.message.slice(0, 500),
+          retryable: true,
+          at: runtime.clock.now(),
+        },
+        error.block,
+      );
+      this.onLog(`${task.type} blocked: ${error.block}`);
       return;
     }
 

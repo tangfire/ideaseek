@@ -7,11 +7,14 @@ import { IdeaseekError } from '../core/errors.js';
 import { projectPaths } from '../config/paths.js';
 import { readCliVersion, writeDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
-import { demoHandlers } from '../worker/handlers.js';
+import { readFile } from 'node:fs/promises';
+import { basename, resolve as resolvePath } from 'node:path';
 import { countInputs, resolveStrategy } from '../workflow/strategy.js';
 import {
   action,
   assertConfigUsable,
+  buildHandlers,
+  buildHarness,
   countByStatus,
   enqueueDemoPipeline,
   isBlockedRun,
@@ -30,6 +33,8 @@ export function registerRunCommand(program: Command): void {
     .option('--enqueue-only', 'create/adopt the run and enqueue tasks without executing')
     .option('--detach', 'start a background supervisor and return immediately')
     .option('--fault <json>', 'fault injection map, e.g. \'{"demo.analyze":{"crash":true}}\'')
+    .option('--paper <path>', 'also enqueue a Phase 1 paper.extract task for this text file')
+    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
     .option('--force', 'attach even if another live worker holds this run')
     .option('--json', 'machine-readable output')
     .action(
@@ -40,10 +45,15 @@ export function registerRunCommand(program: Command): void {
           enqueueOnly?: boolean;
           detach?: boolean;
           fault?: string;
+          paper?: string;
+          harness?: string;
           force?: boolean;
           json?: boolean;
         }) => {
-          const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+          const runtime = await ProjectRuntime.open({
+            cwd: process.cwd(),
+            harness: buildHarness(opts.harness),
+          });
           try {
             assertConfigUsable(runtime.configLoad);
             const faults = parseFaultSpec(opts.fault);
@@ -95,7 +105,12 @@ export function registerRunCommand(program: Command): void {
                 strategy: resolveStrategy(runtime.config.research.mode, counts),
               });
               await enqueueDemoPipeline(runtime, run, question, faults);
-              actions.push('created run with demo pipeline');
+              if (opts.paper) {
+                await enqueuePaperExtract(runtime, run.runId, opts.paper);
+                actions.push('created run with demo pipeline + paper.extract');
+              } else {
+                actions.push('created run with demo pipeline');
+              }
             }
 
             if (!run) throw new IdeaseekError('INTERNAL', 'run state lost after create');
@@ -134,11 +149,15 @@ export function registerRunCommand(program: Command): void {
               await ensureDir(paths.logsDir);
               const logPath = join(paths.logsDir, `${run.runId}.log`);
               const fd = openSync(logPath, 'a');
-              const child = spawn(process.execPath, [script, 'supervise', '--run', run.runId], {
-                cwd: process.cwd(),
-                detached: true,
-                stdio: ['ignore', fd, fd],
-              });
+              const child = spawn(
+                process.execPath,
+                [script, 'supervise', '--run', run.runId, '--harness', opts.harness ?? 'fake'],
+                {
+                  cwd: process.cwd(),
+                  detached: true,
+                  stdio: ['ignore', fd, fd],
+                },
+              );
               closeSync(fd);
               if (!child.pid) {
                 throw new IdeaseekError('INTERNAL', 'failed to spawn background supervisor');
@@ -177,7 +196,7 @@ export function registerRunCommand(program: Command): void {
 
             const { exit } = await runWorkerInteractive(runtime, run.runId, {
               kind: 'inline',
-              handlers: demoHandlers,
+              handlers: buildHandlers(),
               onLog: opts.json ? undefined : (message) => process.stderr.write(`  · ${message}\n`),
             });
 
@@ -248,4 +267,37 @@ async function liveWorkersOf(runtime: ProjectRuntime, runId: string): Promise<nu
   const workers = await runtime.db.listWorkers(runId);
   const cutoff = runtime.clock.now() - runtime.config.runtime.leaseTtlSeconds * 3000;
   return workers.filter((worker) => worker.heartbeatAt >= cutoff).length;
+}
+/** Reads a Phase 1 paper excerpt and enqueues `paper.extract` idempotently. */
+async function enqueuePaperExtract(
+  runtime: ProjectRuntime,
+  runId: string,
+  paperPathArg: string,
+): Promise<void> {
+  const paperPath = resolvePath(process.cwd(), paperPathArg);
+  let paperText: string;
+  try {
+    paperText = await readFile(paperPath, 'utf8');
+  } catch (error) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      `cannot read --paper file ${paperPathArg}: ${(error as Error).message}`,
+    );
+  }
+  const maxBytes = 256 * 1024;
+  if (Buffer.byteLength(paperText, 'utf8') > maxBytes) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `--paper file exceeds the Phase 1 limit of ${maxBytes} bytes (pass an excerpt)`,
+    );
+  }
+  await runtime.db.enqueueTask({
+    runId,
+    type: 'paper.extract',
+    phase: 'DEMO',
+    payload: { paperName: basename(paperPath), paperText },
+    dependsOn: [],
+    idempotencyKey: 'paper.extract:v1',
+    maxAttempts: runtime.config.runtime.maxAttempts,
+  });
 }

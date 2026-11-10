@@ -1,0 +1,10 @@
+{
+  "dsh": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "localReferencePath": "D:/deepseek-harness",
+    "commit": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+    "gitDescribe": "dsh-v0.2.2-rc.1-811-gfcc0ad4621",
+    "recordedAt": "2026-11-10",
+    "note": "Phase 1 pins the developer-preview DSH commit used for API study and compatibility tests; IdeaSeek never modifies DSH core and only consumes public Cordis/Agent/Session/Tool/Subagent/SDK APIs."
+  }
+}

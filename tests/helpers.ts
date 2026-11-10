@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Clock } from '../src/core/clock.js';
+import type { HarnessAdapter } from '../src/dsh/adapter.js';
 import { ProjectRuntime } from '../src/workflow/runtime.js';
 import type { RunRecord, TaskRecord } from '../src/workflow/types.js';
 import type { FaultSpec } from '../src/worker/types.js';
@@ -31,7 +32,13 @@ export interface TestRuntime {
 
 export async function openRuntime(
   dir: string,
-  opts: { clock?: Clock; recover?: boolean; staleTempMs?: number; workerStaleMs?: number } = {},
+  opts: {
+    clock?: Clock;
+    recover?: boolean;
+    staleTempMs?: number;
+    workerStaleMs?: number;
+    harness?: HarnessAdapter;
+  } = {},
 ): Promise<ProjectRuntime> {
   return ProjectRuntime.open({ cwd: dir, ...opts });
 }

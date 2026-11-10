@@ -1,4 +1,5 @@
 import type { Clock } from '../core/clock.js';
+import type { HarnessAdapter } from '../dsh/adapter.js';
 import { systemClock } from '../core/clock.js';
 import { IdeaseekError } from '../core/errors.js';
 import { ArtifactStore, type StagedArtifact } from '../artifact/store.js';
@@ -18,6 +19,12 @@ export interface OpenRuntimeOptions {
   workerStaleMs?: number;
   /** Skip the recovery scan (only for tests that orchestrate it manually). */
   recover?: boolean;
+  /**
+   * Agent runtime used by harness-backed task handlers (Phase 1+). Optional:
+   * Phase 0 demo tasks never touch it. Injected rather than constructed so
+   * tests run the FakeHarnessAdapter and deployments can pin a DSH adapter.
+   */
+  harness?: HarnessAdapter;
 }
 
 export interface CommitTaskInput {
@@ -43,6 +50,8 @@ export class ProjectRuntime {
   readonly store: ArtifactStore;
   readonly project: ProjectRecord;
   readonly clock: Clock;
+  /** Agent runtime for harness-backed tasks; null in pure Phase 0 usage. */
+  readonly harness: HarnessAdapter | null;
   /** Filled by {@link recover}; starts empty until the first recovery run. */
   recovery: RecoveryReport;
 
@@ -54,6 +63,7 @@ export class ProjectRuntime {
     project: ProjectRecord;
     clock: Clock;
     recovery: RecoveryReport;
+    harness: HarnessAdapter | null;
   }) {
     this.paths = args.paths;
     this.configLoad = args.configLoad;
@@ -63,6 +73,7 @@ export class ProjectRuntime {
     this.project = args.project;
     this.clock = args.clock;
     this.recovery = args.recovery;
+    this.harness = args.harness;
   }
 
   static async open(opts: OpenRuntimeOptions): Promise<ProjectRuntime> {
@@ -83,6 +94,7 @@ export class ProjectRuntime {
       tmpDir: paths.artifactTmpDir,
       staleTempMs: opts.staleTempMs ?? 60_000,
     });
+    if (opts.harness) await opts.harness.initialize();
     const runtime = new ProjectRuntime({
       paths,
       configLoad,
@@ -91,6 +103,7 @@ export class ProjectRuntime {
       project,
       clock,
       recovery: emptyRecoveryReport(),
+      harness: opts.harness ?? null,
     });
     if (opts.recover !== false) {
       await runtime.recover(opts.workerStaleMs);
@@ -220,5 +233,6 @@ export class ProjectRuntime {
 
   async close(): Promise<void> {
     await this.db.close();
+    if (this.harness) await this.harness.shutdown().catch(() => undefined);
   }
 }

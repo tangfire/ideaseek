@@ -1,6 +1,11 @@
 import type { Command } from 'commander';
 import { IdeaseekError, exitCodeForError } from '../core/errors.js';
 import type { LoadedConfig } from '../config/config.js';
+import type { HarnessAdapter } from '../dsh/adapter.js';
+import { FakeHarnessAdapter } from '../dsh/fake-adapter.js';
+import { withPaperExtract } from '../worker/handlers.js';
+import { paperExtract } from '../worker/paper-handlers.js';
+import type { TaskHandler } from '../worker/types.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord, TaskRecord, RunStatus } from '../workflow/types.js';
 import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from '../workflow/types.js';
@@ -188,6 +193,24 @@ export async function runWorkerInteractive(
     process.off('SIGINT', onSigint);
     process.off('SIGTERM', onSigint);
   }
+}
+
+/** Builds the agent harness for CLI commands (Phase 1: fake only). */
+export function buildHarness(kind: string | undefined): HarnessAdapter {
+  const selected = kind ?? 'fake';
+  if (selected === 'fake') return new FakeHarnessAdapter();
+  if (selected === 'dsh') {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      'dsh harness adapter is not wired yet; use --harness fake (Phase 1 embedding in progress)',
+    );
+  }
+  throw new IdeaseekError('INVALID_ARGUMENT', `unknown harness kind: ${selected}`);
+}
+
+/** Worker handler registry: demo pipeline + harness-backed paper extractor. */
+export function buildHandlers(): Record<string, TaskHandler> {
+  return withPaperExtract(paperExtract);
 }
 
 export function jsonLine(value: unknown): string {

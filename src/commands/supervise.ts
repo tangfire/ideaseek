@@ -3,8 +3,14 @@ import { IdeaseekError } from '../core/errors.js';
 import { projectPaths } from '../config/paths.js';
 import { readDaemonInfo, writeDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
-import { demoHandlers } from '../worker/handlers.js';
-import { assertConfigUsable, action, resolveRun, runWorkerInteractive } from './shared.js';
+import {
+  assertConfigUsable,
+  action,
+  buildHandlers,
+  buildHarness,
+  resolveRun,
+  runWorkerInteractive,
+} from './shared.js';
 
 /**
  * `ideaseek supervise` — the internal long-lived worker loop spawned
@@ -17,9 +23,13 @@ export function registerSuperviseCommand(program: Command): void {
     .command('supervise')
     .description('internal: background supervisor loop (spawned by run --detach)')
     .option('--run <runId>', 'run id (default: latest)')
+    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
     .action(
-      action(async (opts: { run?: string }) => {
-        const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+      action(async (opts: { run?: string; harness?: string }) => {
+        const runtime = await ProjectRuntime.open({
+          cwd: process.cwd(),
+          harness: buildHarness(opts.harness),
+        });
         const paths = projectPaths(process.cwd());
         try {
           assertConfigUsable(runtime.configLoad);
@@ -53,7 +63,7 @@ export function registerSuperviseCommand(program: Command): void {
           try {
             const { exit } = await runWorkerInteractive(runtime, run.runId, {
               kind: 'standalone',
-              handlers: demoHandlers,
+              handlers: buildHandlers(),
               onLog: (message) => process.stdout.write(`[supervise] ${message}\n`),
             });
             const info = readDaemonInfo(paths.researchDir);

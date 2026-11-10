@@ -1,10 +1,11 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
-import { demoHandlers } from '../worker/handlers.js';
 import {
   action,
   assertConfigUsable,
+  buildHandlers,
+  buildHarness,
   isBlockedRun,
   isTerminalRun,
   jsonLine,
@@ -21,11 +22,21 @@ export function registerWorkerCommand(program: Command): void {
     .option('--idle-exit <ms>', 'exit after this many ms without claimable work', (value) =>
       Number(value),
     )
+    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
     .option('--json', 'machine-readable output')
     .action(
       action(
-        async (opts: { run?: string; maxTasks?: number; idleExit?: number; json?: boolean }) => {
-          const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+        async (opts: {
+          run?: string;
+          maxTasks?: number;
+          idleExit?: number;
+          harness?: string;
+          json?: boolean;
+        }) => {
+          const runtime = await ProjectRuntime.open({
+            cwd: process.cwd(),
+            harness: buildHarness(opts.harness),
+          });
           try {
             assertConfigUsable(runtime.configLoad);
             const run = await resolveRun(runtime, opts.run);
@@ -58,7 +69,7 @@ export function registerWorkerCommand(program: Command): void {
 
             const { exit } = await runWorkerInteractive(runtime, run.runId, {
               kind: 'standalone',
-              handlers: demoHandlers,
+              handlers: buildHandlers(),
               maxTasks: Number.isFinite(opts.maxTasks) ? opts.maxTasks : undefined,
               idleExitMs: Number.isFinite(opts.idleExit) ? opts.idleExit : undefined,
               onLog: opts.json ? undefined : (message) => process.stderr.write(`  · ${message}\n`),
