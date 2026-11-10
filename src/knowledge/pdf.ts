@@ -134,10 +134,12 @@ export async function parsePdf(pdfPath: string, opts: ParsePdfOptions = {}): Pro
 }
 
 /** Convenience for tests: writes a fixture PDF via the worker CLI. */
-export async function makeFixturePdf(outPath: string): Promise<void> {
+export async function makeFixturePdf(outPath: string, marker?: string): Promise<void> {
   const python = await pythonBinary();
   await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn(python, ['-m', 'ideaseek_worker', 'make-fixture', outPath], {
+    const args = ['-m', 'ideaseek_worker', 'make-fixture', outPath];
+    if (marker) args.push('--marker', marker);
+    const child = spawn(python, args, {
       cwd: workerPythonDir(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });

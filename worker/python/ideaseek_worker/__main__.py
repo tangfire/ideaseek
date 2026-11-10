@@ -41,9 +41,10 @@ def cmd_parse(args: argparse.Namespace) -> int:
 
 def cmd_make_fixture(args: argparse.Namespace) -> int:
     """Writes a small multi-page fixture PDF (tests only; no binary committed)."""
+    marker = getattr(args, "marker", "Evidence")
     pages = [
-        "Evidence Page One: the transformer uses attention only.",
-        "Evidence Page Two: recurrence is dispensable.",
+        f"{marker} Page One: the transformer uses attention only.",
+        f"{marker} Page Two: recurrence is dispensable.",
     ]
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     fixture_cmd = sub.add_parser("make-fixture", help="write a test fixture PDF")
     fixture_cmd.add_argument("out")
+    fixture_cmd.add_argument("--marker", default="Evidence", help="page text marker")
     fixture_cmd.set_defaults(func=cmd_make_fixture)
 
     self_cmd = sub.add_parser("selftest", help="parse a generated fixture end to end")

@@ -8,6 +8,7 @@ import { registerControlCommands } from './commands/control.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerEventsCommand } from './commands/events.js';
 import { registerInitCommand } from './commands/init.js';
+import { registerIngestCommand } from './commands/ingest.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -50,6 +51,7 @@ export function buildProgram(): Command {
   registerInitCommand(program);
   registerStartCommand(program);
   registerScanCommand(program);
+  registerIngestCommand(program);
   registerIntakeCommand(program);
   registerOrganizeCommand(program);
   registerSetupCommand(program);
