@@ -1,0 +1,74 @@
+#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Command, CommanderError } from 'commander';
+import { registerControlCommands } from './commands/control.js';
+import { registerEventsCommand } from './commands/events.js';
+import { registerInitCommand } from './commands/init.js';
+import { registerNextCommand } from './commands/next.js';
+import { registerRunCommand } from './commands/run.js';
+import { registerStatusCommand } from './commands/status.js';
+import { registerWorkerCommand } from './commands/worker.js';
+
+function readVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+export function buildProgram(): Command {
+  const program = new Command();
+  program
+    .name('ideaseek')
+    .description('DSH-based multi-agent research workflow platform (Phase 0: recoverable skeleton)')
+    .version(readVersion())
+    .showHelpAfterError()
+    .configureOutput({
+      writeErr: (text) => process.stderr.write(text),
+    });
+
+  registerInitCommand(program);
+  registerRunCommand(program);
+  registerWorkerCommand(program);
+  registerStatusCommand(program);
+  registerNextCommand(program);
+  registerEventsCommand(program);
+  registerControlCommands(program);
+  return program;
+}
+
+export async function runCli(argv: string[]): Promise<number> {
+  try {
+    await buildProgram().parseAsync(argv);
+    const code = process.exitCode;
+    return typeof code === 'number' ? code : 0;
+  } catch (error) {
+    if (error instanceof CommanderError) {
+      // Help/version requests exit 0; misuse exits with commander's code.
+      return typeof error.exitCode === 'number' ? error.exitCode : 1;
+    }
+    process.stderr.write(`error: ${(error as Error).stack ?? String(error)}\n`);
+    return 1;
+  }
+}
+
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, '/')}`).href;
+
+if (invokedDirectly || process.env.IDEASEEK_CLI === '1') {
+  runCli(process.argv).then(
+    (code) => process.exit(code),
+    (error) => {
+      process.stderr.write(`error: ${(error as Error).stack ?? String(error)}\n`);
+      process.exit(1);
+    },
+  );
+}

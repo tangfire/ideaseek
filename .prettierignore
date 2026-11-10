@@ -1,0 +1,8 @@
+dist/
+node_modules/
+coverage/
+.research/
+pnpm-lock.yaml
+
+# Repository docs are hand-maintained; keep their diffs reviewable
+**/*.md
