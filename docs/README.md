@@ -54,6 +54,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [AGENT_ROLES.md](AGENT_ROLES.md)：Agent 角色、能力 profile、输入输出和权限。
 - [WORKFLOW_SPEC.md](WORKFLOW_SPEC.md)：工作流状态机、阶段门槛和恢复语义。
 - [CLI_SPEC.md](CLI_SPEC.md)：命令、实时交互、后台运行和退出码。
+- [TERMINAL_UX.md](TERMINAL_UX.md)：CLI banner、Logo、交互提示符、事件流和审批界面。
 - [DATA_CONTRACTS.md](DATA_CONTRACTS.md)：核心对象、目录和 JSON 契约。
 - [CONFIG_SPEC.md](CONFIG_SPEC.md)：`research.yaml`、默认值、资源边界和配置迁移。
 - [PROVENANCE_AND_CITATIONS.md](PROVENANCE_AND_CITATIONS.md)：论文证据、引用、实验数值和失效链。

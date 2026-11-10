@@ -18,6 +18,8 @@
 
 按任务补读：`AGENT_ROLES.md`、`CLI_SPEC.md`、`DATA_CONTRACTS.md`、`OPERATIONS.md`、`EVALUATION.md`、`EXPERIMENT_PORTFOLIO.md`、`CODE_STYLE.md`、`GIT_WORKFLOW.md`。
 
+涉及 CLI/TUI、实时事件、banner、审批或 attach/replay 时，补读 `TERMINAL_UX.md`。
+
 涉及配置、报告引用、实验结论或发布时，必须补读 `CONFIG_SPEC.md`、`PROVENANCE_AND_CITATIONS.md`、`RESEARCH_INTEGRITY.md` 和 `RELEASE_CHECKLIST.md`。
 涉及具体研究方向、数据切分、指标或实验协议时，必须补读 `DOMAIN_ADAPTERS.md`，并先确定该方向适配器的契约。
 

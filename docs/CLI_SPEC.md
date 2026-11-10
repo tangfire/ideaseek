@@ -35,6 +35,8 @@ ideaseek report [--run <id>]
 
 `init` 创建目录和模板，不覆盖已有文件；`start` 是小白用户的一键入口，组合轻量检测、扫描、协议草案和受限运行；`setup` 优先自动检测并只询问无法安全推断的配置；`doctor` 只做检查；`scan` 递归发现用户随手放入的论文、代码、数据和压缩包；`organize` 预览或应用对象归类，但不移动/覆盖原始文件；`config explain` 显示生效配置来源；`confirm protocol` 确认平台提出的实验协议；`next` 只给建议，不启动高成本工作；`run` 创建或恢复工作流；`attach/watch` 订阅实时事件；`pause/resume/cancel` 是可审计的控制操作。
 
+交互提示符、启动 banner、事件摘要、审批块和 plain/JSON 显示模式遵循 [TERMINAL_UX.md](TERMINAL_UX.md)。CLI UI 只显示状态和动作摘要，不显示模型隐藏推理。
+
 `scan` 默认扫描 `papers/`、`datasets/`、`comparisons/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、`ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
 
 如果运行因 token/API 额度、GitHub 限额或 provider 余额暂停，状态为 `QUOTA_EXHAUSTED` 或 `AUTH_REQUIRED`。用户补充额度/凭据后执行 `ideaseek doctor`，再执行 `ideaseek continue`；它从最近 checkpoint 继续，不重做已经成功的任务。
