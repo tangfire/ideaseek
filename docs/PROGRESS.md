@@ -6,11 +6,11 @@
 
 - [x] `ideaseek init` 幂等创建项目目录和模板
 - [ ] `ideaseek start` 小白用户一键入口和规模自适应策略
-- [ ] `ideaseek setup/doctor/config explain`
-- [ ] 自动检测 Python/Node/容器/CUDA/GPU/磁盘
+- [x] `ideaseek setup/doctor/config explain`
+- [x] 自动检测 Python/Node/容器/CUDA/GPU/磁盘
 - [ ] `scan/intake/organize` 与 InputManifest
 - [ ] `starter/standard/research` 运行策略和报告措辞
-- [ ] 配置 schema、迁移和 ResolvedConfig 快照
+- [x] 配置 schema、迁移和 ResolvedConfig 快照
 - [x] Workflow DB 与 artifact store 接口
 - [x] Task lease、heartbeat、重试、取消和幂等提交
 - [x] RunEvent 持久化、`status/next`
@@ -94,4 +94,5 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 
 ```text
 2026-11-10 | Phase 0 可恢复垂直切片（init/status/next/events、Workflow DB、lease/heartbeat/重试/取消/幂等两阶段提交、RunEvent 回放、Artifact Store hash+原子提交、pause/resume/continue/cancel、假 Worker、故障注入与重启恢复） | 07f3cae | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 7 files / 50 tests passed（含 Worker 崩溃、重复提交、租约过期、输出写入中断、进程重启、quota 阻塞、CLI e2e 退出码） | Windows 下 SIGINT 无法投递给子进程，Ctrl-C 语义只做了进程内测试；后台 supervisor/attach/watch 未实现；scan/intake/organize、setup/doctor、start 未实现；配置无迁移器；DSH 未接入 | 下一模块：ideaseek setup/doctor/config explain + 自动环境检测（依赖本切片的 config 抽象）
+2026-11-10 | Phase 0 setup/doctor/config explain、环境自动检测（Node/Python/容器/GPU+CUDA/磁盘）、配置 schema 严格校验与 config_version 迁移、ResolvedConfig run 快照 | 306d13a | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 10 files / 69 tests passed（含 schema/迁移单测、探针超时/ENOENT、setup 幂等、坏配置下 run/worker 拒绝与 doctor/next 退出码） | 探测均为本地只读，无网络探测；凭据检查占位（Phase 1 接 DSH provider）；setup 规范化会丢弃 yaml 注释（先备份） | 下一模块：scan/intake/organize 与 InputManifest（依赖 init/paths 抽象）
 ```
