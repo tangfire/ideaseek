@@ -32,7 +32,7 @@
 
 - [x] PDF/LaTeX/OCR/表格/图表解析
 - [x] PaperCard schema 和证据定位
-- [ ] 去重、全文/向量检索和增量处理
+- [x] 去重、全文/向量检索和增量处理
 - [x] Paper Extractor 并行 map 阶段
 - [x] Evidence Checker
 - [x] 主题综合、机制库和研究地图
@@ -129,3 +129,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 3 Protocol Synthesis Agent：buildProtocolInput（语料+数据画像、无数据集时强制低置信标注）+protocol.propose 任务（内嵌 schema/平台盖章/校验门/哈希复用）+ ideaseek protocol propose 接入 confirm 锁定闭环 | b53340f | 门禁 43 files/254 vitest+9 python 全绿（propose→confirm→lock e2e + proposal-current 幂等）| 真实模型版协议提案可用 --harness dsh（伪输出已过校验器；真跑待数据集语义确认更有意义）| Phase 3 余：数据分布已做、领域验证需用户数据集
 2026-11-10 | 真实模型协议闭环验证：protocol propose --harness dsh（1/1 完成）→ confirm --by researcher 锁定；指标带 paper-evidence 来源（accuracy↑/comm-rounds↓、conf 0.75-0.85）、基线取自语料真方法（FedAvg/FedProx/FedDF/FedMD/FedProto/FedGKT）、数据依赖字段被自动降为 agent-inference 低置信并生成5条用户确认项 | 代码同上（89a9d51 系列）| 无需新提交（真实运行验证）| Phase 3 仅余「首发领域验证+gold set（联邦学习）」——需用户提供 datasets/ 数据集与 comparison 代码
 2026-11-10 | 外部只读数据集接入（用户决定1）：inputs.readonly_datasets + Python npz 联邦画像（全检查表）+ data describe dataset-manifest.json + 联邦切片规则 v2（选择清单、零拷贝）+ data slices 自动6切片 | 81311b0 | 门禁 44 files/261 vitest+9 python 全绿 | 真实 FedPF mnist 实测：20 clients/52,492 train/17,508 test、x=[N,1,28,28]f32、labels0-9、tvMean=0.7348（强 non-IID）、rootHash sha256:20da58b6…、只读指纹前后一致、staged 无数据文件 | research.yaml 仅含路径（已提交）；.npz 需 allow_pickle 已处理
+2026-11-10 | 用户决定2落地：本地 embedding（fastembed0.9.1+MiniLM-L6-v2/Apache-2.0，共享缓存+指纹 manifest）、迁移v5向量表、增量嵌入、FTS-first RRF 混合检索+全失败回退、setup/doctor --install-embeddings、证据免责输出 | 591cb11 | 门禁 45 files/266 vitest+9 python 全绿 | 真实74篇：首搜嵌入1357页(8m13一次性)/hybrid融合40+40；复搜增量0嵌入3s；无外部 embedding API | Phase 2 checkbox 全部完成
