@@ -132,7 +132,15 @@ export async function buildIdeaSpec(
     seeds: Array.isArray(config.seeds)
       ? config.seeds.filter((s): s is number => typeof s === 'number' && Number.isInteger(s))
       : [42],
-    resources: {},
+    resources: (() => {
+      const res = (config.resources ?? {}) as { gpus?: unknown; memoryGiB?: unknown };
+      return {
+        ...(typeof res.gpus === 'number' && res.gpus >= 0 ? { gpus: Math.floor(res.gpus) } : {}),
+        ...(typeof res.memoryGiB === 'number' && res.memoryGiB > 0
+          ? { memoryGiB: res.memoryGiB }
+          : {}),
+      };
+    })(),
     budget: {
       maxRuns: card.budget.maxRounds,
       maxMinutes: card.budget.maxGpuMinutes,

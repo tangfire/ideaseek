@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { loadLocalEnv } from './core/env.js';
 import { registerBaselineCommand } from './commands/baseline.js';
+import { registerCapacityCommand } from './commands/capacity.js';
 import { registerComparisonCommand } from './commands/comparison.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerConfirmCommand } from './commands/confirm.js';
@@ -96,6 +97,7 @@ export function buildProgram(): Command {
   registerControlCommands(program);
   registerComparisonCommand(program);
   registerBaselineCommand(program);
+  registerCapacityCommand(program);
   registerPapersCommand(program);
   registerLogsCommand(program);
   registerDecisionCommand(program);

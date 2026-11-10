@@ -518,6 +518,7 @@ if __name__ == "__main__":
       metrics: card.minimalExperiment.metrics,
       baselines: card.minimalExperiment.baselines,
       ablations: card.minimalExperiment.ablations,
+      resources: { gpus: 0, memoryGiB: 1 },
       note: 'scaffold — quick/standard only; full runs go through experiment handoff',
     },
     null,
