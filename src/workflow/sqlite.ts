@@ -1021,6 +1021,16 @@ export class SqliteWorkflowDb implements WorkflowDb {
           phase: task.phase,
           objectId: task.taskId,
           role: input.workerId,
+          eventType: 'task_result',
+          summary: result.summary,
+          status: 'succeeded',
+          artifactRefs: rows.map((row) => row.artifact_id),
+        });
+        this.insertEvent({
+          runId: task.runId,
+          phase: task.phase,
+          objectId: task.taskId,
+          role: input.workerId,
           eventType: 'task_succeeded',
           summary: `${task.type} succeeded`,
           status: 'succeeded',

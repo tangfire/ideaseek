@@ -178,12 +178,3 @@ export const demoHandlers: Record<string, TaskHandler> = {
   'demo.analyze': analyze,
   'demo.report': report,
 };
-
-/**
- * Handlers registered by CLI workers: the demo pipeline plus the Phase 1
- * harness-backed Paper Extractor (defined separately so this module stays
- * free of adapter dependencies).
- */
-export function withPaperExtract(extract: TaskHandler): Record<string, TaskHandler> {
-  return { ...demoHandlers, 'paper.extract': extract };
-}

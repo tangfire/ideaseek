@@ -1,6 +1,73 @@
 import { IdeaseekError } from '../core/errors.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
+import { parsePdf } from '../knowledge/pdf.js';
+import { sha256OfFile } from '../core/hash.js';
+import { basename, join } from 'node:path';
+
+interface ParsedPaperArtifact {
+  pageCount: number;
+  pages: { page: number; text: string }[];
+}
+
+/** Reads the upstream `parsed-paper` artifact and adds `[page N]` markers. */
+async function textFromParsedDependency(ctx: TaskContext): Promise<string> {
+  for (const depId of ctx.task.dependsOn) {
+    const dep = await ctx.runtime.db.getTask(depId);
+    if (!dep || dep.status !== 'succeeded' || !dep.result) continue;
+    const rows = await ctx.runtime.db.listArtifacts(dep.taskId);
+    const parsedRow = rows.find((row) => row.kind === 'parsed-paper' && row.status === 'committed');
+    if (!parsedRow) continue;
+    const parsed = JSON.parse(
+      await ctx.runtime.store.readFinalText(parsedRow.contentHash),
+    ) as ParsedPaperArtifact;
+    const text = parsed.pages
+      .map((page) => `[page ${page.page}]\n${page.text.trim()}`)
+      .join('\n\n');
+    if (text.trim()) return text;
+  }
+  return '';
+}
+
+/** Phase 2 ingest: PDF -> page-tagged text artifact (evidence locators kept). */
+export const paperParse: TaskHandler = async (ctx: TaskContext) => {
+  await applyFaults(ctx);
+  const pdfPath = typeof ctx.payload.pdfPath === 'string' ? ctx.payload.pdfPath : '';
+  if (!pdfPath || !pdfPath.toLowerCase().endsWith('.pdf')) {
+    const error = new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'paper.parse needs payload.pdfPath pointing at a .pdf file',
+    );
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  if (pdfPath.includes('..')) {
+    const error = new IdeaseekError('INVALID_ARGUMENT', 'pdfPath must be project-relative');
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const abs = join(ctx.runtime.paths.root, ...pdfPath.split('/'));
+  const parsed = await parsePdf(abs);
+  const sourceHash = await sha256OfFile(abs);
+  const payload = {
+    source: pdfPath,
+    sourceHash,
+    pageCount: parsed.pageCount,
+    pages: parsed.pages,
+    parser: parsed.parser,
+  };
+  return {
+    artifacts: [
+      {
+        kind: 'parsed-paper',
+        data: `${JSON.stringify(payload, null, 2)}\n`,
+        meta: { filename: 'parsed-paper.json', parser: parsed.parser },
+      },
+    ],
+    summary: `parsed ${parsed.pageCount} page(s) from ${basename(pdfPath)} (${parsed.parser})`,
+    data: { pageCount: parsed.pageCount, sourceHash },
+  };
+};
 
 /**
  * Phase 1 Paper Extractor task: feeds one paper excerpt through the harness
@@ -8,6 +75,10 @@ import { applyFaults } from './handlers.js';
  * structured card as an artifact. The handler never sees credentials — the
  * adapter owns auth — and never persists raw prompts, only the structured
  * output the schema allows.
+ *
+ * Input resolution: explicit `payload.paperText`, or — when the workflow
+ * chained `paper.parse` upstream — the dependency's `parsed-paper` artifact
+ * rehydrated with `[page N]` markers so page evidence survives extraction.
  *
  * Idempotency key is derived from the workflow task id (not the attempt), so
  * a retried task maps to one logical agent call and duplicate commits stay
@@ -31,9 +102,16 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
   await harness.initialize();
 
   const paperName = typeof ctx.payload.paperName === 'string' ? ctx.payload.paperName : 'paper';
-  const paperText = typeof ctx.payload.paperText === 'string' ? ctx.payload.paperText : '';
+  let paperText = typeof ctx.payload.paperText === 'string' ? ctx.payload.paperText : '';
   if (!paperText.trim()) {
-    const error = new IdeaseekError('USER_INPUT_REQUIRED', 'paper.extract needs payload.paperText');
+    // Chained after paper.parse: rehydrate the parsed pages with locators.
+    paperText = await textFromParsedDependency(ctx);
+  }
+  if (!paperText.trim()) {
+    const error = new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'paper.extract needs payload.paperText or a succeeded paper.parse dependency',
+    );
     (error as IdeaseekError & { permanent?: boolean }).permanent = true;
     throw error;
   }

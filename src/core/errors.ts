@@ -23,6 +23,13 @@ export type IdeaseekErrorCode =
   | 'DEPENDENCY_NOT_MET'
   | 'INVALID_ARGUMENT'
   | 'USER_INPUT_REQUIRED'
+  | 'ENV_UNSUPPORTED'
+  | 'PARSE_FAILED'
+  | 'FILE_NOT_FOUND'
+  | 'EMPTY_FILE'
+  | 'ENCRYPTED_PDF'
+  | 'NO_TEXT_LAYER'
+  | 'PARSER_MISSING'
   | 'QUOTA_EXHAUSTED'
   | 'AUTH_REQUIRED'
   | 'NETWORK_BLOCKED'
@@ -67,6 +74,15 @@ export function exitCodeForError(error: unknown): number {
     case 'RUN_NOT_ACTIVE':
     case 'RUN_BLOCKED':
       return EXIT_USER_INPUT;
+    case 'ENV_UNSUPPORTED':
+      return EXIT_ENV_UNSUPPORTED;
+    case 'PARSE_FAILED':
+    case 'FILE_NOT_FOUND':
+    case 'EMPTY_FILE':
+    case 'ENCRYPTED_PDF':
+    case 'NO_TEXT_LAYER':
+    case 'PARSER_MISSING':
+      return EXIT_TASK_FAILED;
     case 'TASK_CANCELED':
       return EXIT_CANCELED;
     case 'RUN_TERMINAL':

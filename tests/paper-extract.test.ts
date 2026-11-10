@@ -391,3 +391,64 @@ describe('tool-call audit persistence', () => {
     await harness.shutdown();
   });
 });
+
+describe('CLI: PDF parse chain (--paper file.pdf)', () => {
+  function runCli(
+    cwd: string,
+    args: string[],
+    timeoutMs = 30_000,
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [CLI_BIN, ...args], {
+        cwd,
+        env: { ...process.env, IDEASEEK_CLI: '1' },
+      });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error(`cli ${args.join(' ')} timed out; stderr=${stderr}`));
+      }, timeoutMs);
+      child.stdout.on('data', (chunk) => (stdout += String(chunk)));
+      child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+      child.on('error', reject);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code: code ?? -1, stdout, stderr });
+      });
+    });
+  }
+
+  it('chains paper.parse → paper.extract for a real PDF and keeps page evidence', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-pdfchain-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+
+    const { makeFixturePdf } = await import('../src/knowledge/pdf.js');
+    const pdfPath = join(dir, 'incoming', 'attention.pdf');
+    try {
+      await makeFixturePdf(pdfPath);
+    } catch {
+      return; // python/pypdf unavailable in this environment
+    }
+
+    const run = await runCli(dir, ['run', '--question', 'pdf chain', '--paper', pdfPath, '--json']);
+    expect(run.code).toBe(0);
+    const payload = JSON.parse(run.stdout) as { status: string; tasks: Record<string, number> };
+    expect(payload.status).toBe('COMPLETED');
+    // demo.ingest + demo.analyze + demo.report + paper.parse + paper.extract
+    expect(payload.tasks.succeeded).toBe(5);
+
+    const events = await runCli(dir, ['events', '--json']);
+    const stream = JSON.parse(events.stdout) as {
+      events: { eventType: string; summary: string }[];
+    };
+    const summaries = stream.events.map((event) => event.summary);
+    expect(summaries.some((line) => line.includes('parsed-paper committed'))).toBe(true);
+    expect(summaries.some((line) => line.includes('paper.parse succeeded'))).toBe(true);
+    expect(summaries.some((line) => line.includes('parsed 2 page(s)'))).toBe(true);
+
+    const status = await runCli(dir, ['status', '--detail']);
+    expect(status.stdout).toContain('paper.parse');
+    expect(status.stdout).toContain('paper.extract');
+  }, 90_000);
+});

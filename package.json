@@ -24,8 +24,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run && pnpm test:python",
+    "test:watch": "vitest",
+    "test:python": "node worker/python/run-tests.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.1.0",

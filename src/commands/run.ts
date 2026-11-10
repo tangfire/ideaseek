@@ -7,8 +7,8 @@ import { IdeaseekError } from '../core/errors.js';
 import { projectPaths } from '../config/paths.js';
 import { readCliVersion, writeDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
-import { readFile } from 'node:fs/promises';
-import { basename, resolve as resolvePath } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { basename, relative, resolve as resolvePath } from 'node:path';
 import { countInputs, resolveStrategy } from '../workflow/strategy.js';
 import {
   action,
@@ -268,35 +268,80 @@ async function liveWorkersOf(runtime: ProjectRuntime, runId: string): Promise<nu
   const cutoff = runtime.clock.now() - runtime.config.runtime.leaseTtlSeconds * 3000;
   return workers.filter((worker) => worker.heartbeatAt >= cutoff).length;
 }
-/** Reads a Phase 1 paper excerpt and enqueues `paper.extract` idempotently. */
+/**
+ * Enqueues the paper pipeline for `--paper`:
+ * - `.pdf` → `paper.parse` (page-tagged text) then `paper.extract` chained on
+ *   it, so page locators survive into the structured card;
+ * - anything else → treated as a text excerpt, extracted directly.
+ * Both tasks are idempotent per run, so re-running is a no-op.
+ */
 async function enqueuePaperExtract(
   runtime: ProjectRuntime,
   runId: string,
   paperPathArg: string,
 ): Promise<void> {
   const paperPath = resolvePath(process.cwd(), paperPathArg);
-  let paperText: string;
+  let info;
   try {
-    paperText = await readFile(paperPath, 'utf8');
+    info = await stat(paperPath);
   } catch (error) {
     throw new IdeaseekError(
       'USER_INPUT_REQUIRED',
       `cannot read --paper file ${paperPathArg}: ${(error as Error).message}`,
     );
   }
-  const maxBytes = 256 * 1024;
-  if (Buffer.byteLength(paperText, 'utf8') > maxBytes) {
+  if (!info.isFile()) {
+    throw new IdeaseekError('USER_INPUT_REQUIRED', `--paper path is not a file: ${paperPathArg}`);
+  }
+  const isPdf = paperPath.toLowerCase().endsWith('.pdf');
+  const maxBytes = isPdf ? 50 * 1024 * 1024 : 256 * 1024;
+  if (info.size > maxBytes) {
     throw new IdeaseekError(
       'INVALID_ARGUMENT',
-      `--paper file exceeds the Phase 1 limit of ${maxBytes} bytes (pass an excerpt)`,
+      `--paper file exceeds the limit of ${maxBytes} bytes${isPdf ? '' : ' (pass an excerpt)'}`,
     );
   }
+
+  const relPath = relative(runtime.paths.root, paperPath).split(/[\\/]/).join('/');
+  if (relPath.startsWith('..')) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `--paper file must live inside the project (got ${paperPathArg})`,
+    );
+  }
+
+  let dependsOn: string[] = [];
+  if (isPdf) {
+    const parsed = await runtime.db.enqueueTask({
+      runId,
+      type: 'paper.parse',
+      phase: 'DEMO',
+      payload: { pdfPath: relPath },
+      dependsOn: [],
+      idempotencyKey: 'paper.parse:v1',
+      maxAttempts: runtime.config.runtime.maxAttempts,
+    });
+    dependsOn = [parsed.task.taskId];
+  }
+
+  let paperText = '';
+  if (!isPdf) {
+    try {
+      paperText = await readFile(paperPath, 'utf8');
+    } catch (error) {
+      throw new IdeaseekError(
+        'USER_INPUT_REQUIRED',
+        `cannot read --paper file ${paperPathArg}: ${(error as Error).message}`,
+      );
+    }
+  }
+
   await runtime.db.enqueueTask({
     runId,
     type: 'paper.extract',
     phase: 'DEMO',
-    payload: { paperName: basename(paperPath), paperText },
-    dependsOn: [],
+    payload: { paperName: basename(paperPath), paperText, sourcePath: relPath },
+    dependsOn,
     idempotencyKey: 'paper.extract:v1',
     maxAttempts: runtime.config.runtime.maxAttempts,
   });
