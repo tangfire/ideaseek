@@ -22,10 +22,10 @@
 
 - [x] 固定 DSH commit/包版本和兼容性测试
 - [x] `HarnessAdapter`
-- [ ] Cordis plugins/bundles/profile 加载
-- [ ] 模型 provider、额度耗尽和凭据恢复
-- [ ] Agent capability profiles
-- [ ] Tool schemas、权限和审计事件
+- [x] Cordis plugins/bundles/profile 加载
+- [x] 模型 provider、额度耗尽和凭据恢复
+- [x] Agent capability profiles
+- [x] Tool schemas、权限和审计事件
 - [x] 假 Paper Extractor 端到端任务
 
 ## Phase 2：论文与知识库
@@ -102,3 +102,5 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 0 ideaseek start 一键入口（initializeProject/performSetup/performScan 复用抽取 + 问题持久化 + 环境摘要 + 下一步向导） | 30f69ee | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 15 files / 88 tests passed（bootstrap/幂等/问题保留/有输入后 next 切换） | start 不自动执行 run（Phase 0 受限语义，执行仍显式） | 下一模块：后台 supervisor、attach/watch/events
 2026-11-10 | Phase 0 后台 supervisor（run --detach + daemon.json 心跳）、attach/watch 实时事件流（DB 轮询回放+跟随）、status supervisor 状态 | 473b792 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 17 files / 97 tests passed（follow 回放/signal/worker-lost、detach→完成→attach 回放 e2e、watch 退出码、pause 关停 daemon） | attach/watch 基于 DB 轮询（默认300ms）而非推送；Windows 无法向子进程投 SIGINT（watch/attach 的 Ctrl-C 语义仅进程内测试）；supervise 为内部命令 | Phase 0 全部 checkbox 完成；下一阶段 Phase 1：HarnessAdapter + 固定 DSH commit
 2026-11-10 | Phase 1 起步：runtime-lock.json 固定 DSH commit fcc0ad46 + 兼容性测试、HarnessAdapter 契约（结构化 runTask/类型化 block/脱敏事件）、FakeHarnessAdapter、paper.extract 假 Paper Extractor 端到端（quota 恢复/永久失败/缺 harness 路径）、CLI --paper/--harness | f57517e | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 19 files / 108 tests passed | DSH 真实适配（SDK/Cordis 嵌入）与 provider/profile/tool-schema 尚未接入，--harness dsh 明确报错；凭据仍为占位 | 下一模块：读取 DSH 公开 API 报告 → DshHarnessAdapter（SDK 或 in-process Cordis）
+2026-11-10 | Phase 1 DshHarnessAdapter（@deepseek-ai/dsh-sdk-client 0.2.2-rc.1 子进程边界、稳定 LlmFailure 码映射、JSON 抽取、真实 keyless spawn 测试）| d17c203 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 20 files / 117 tests | DSH 无 cancel RPC：超时即关闭 runtime 重试；带真实 key 的模型调用未测（无凭据，e2e 自跳过） | 下一模块：Cordis 插件与 capability profile
+2026-11-10 | Phase 1 capability profile + 研究工具插件 + 审计（generated ideaseek.cordis.yml：research-tools、preset registry 默认 ideaseek-extractor、工具 allowlist 子插件；DSH_PERMISSION_MODE=read-only + project_read 路径守卫；papercard 持久化 toolCalls/sessionId + harness_tool_call RunEvent；doctor 显示 DSH pin 与凭据存在性）| 26de559 + 79c1e7c | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 21 files / 125 tests（含 dsh --dump-config 组合验证与真实 keyless spawn 加载 patch）| 多角色可见性目前只有 extractor allowlist（第二角色随 Phase 2 综合角色落地）；审批流未启用（Phase 1 提取不调用需审批的工具） | Phase 1 checkbox 全部完成；带 key 的端到端模型调用留给用户提供凭据后验证
