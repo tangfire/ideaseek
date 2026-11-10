@@ -3,7 +3,9 @@ import { join, resolve } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { buildCsvSlices } from '../experiment/slice-csv.js';
+import { profileCsv, renderDatasetCard } from '../experiment/dataset-card.js';
 import { sha256OfFile } from '../core/hash.js';
+import { writeFileAtomic } from '../core/atomic.js';
 import type { SliceScale } from '../experiment/slices.js';
 import { action, jsonLine } from './shared.js';
 
@@ -132,8 +134,9 @@ export function registerDataCommand(program: Command): void {
               process.stdout.write(
                 `  ${entry.sliceId}  ${entry.scale}  ${record.stats?.selectedRows ?? '?'}/${record.stats?.totalRows ?? '?'} rows  seed=${record.seed ?? '?'}\n`,
               );
-              if (opts.scale || opts.dataset)
+              if (opts.scale || opts.dataset) {
                 process.stdout.write(`    rule: ${record.rule ?? '—'}\n`);
+              }
             }
             return 0;
           } finally {
@@ -145,7 +148,7 @@ export function registerDataCommand(program: Command): void {
 
   data
     .command('describe')
-    .description('dataset inventory (Phase 3 Dataset Analyst lands with the full card)')
+    .description('profile dataset files into a deterministic dataset card')
     .option('--json', 'machine-readable output')
     .action(
       action(async (opts: { json?: boolean }) => {
@@ -155,27 +158,67 @@ export function registerDataCommand(program: Command): void {
           const manifest = await readManifest(
             join(runtime.paths.knowledgeDir, 'input-manifest.json'),
           );
-          const dataFiles = manifest?.files.filter((file) => file.role === 'data') ?? [];
+          const dataFiles = (manifest?.files ?? []).filter(
+            (file) => file.role === 'data' && file.ext === '.csv',
+          );
+
+          const profiles = [];
+          for (const file of dataFiles) {
+            try {
+              profiles.push(
+                await profileCsv(join(runtime.paths.root, file.relPath), {
+                  now: Date.now(),
+                  generatedBy: 'ideaseek data describe',
+                }),
+              );
+            } catch {
+              // Unreadable/corrupt file: skip its profile; scan still lists it.
+            }
+          }
+
+          const generatedAt = Date.now();
+          const cardPath = join(runtime.paths.knowledgeDir, 'dataset-card.json');
+          const mdPath = join(runtime.paths.knowledgeDir, 'dataset-card.md');
+          if (profiles.length > 0) {
+            await writeFileAtomic(
+              cardPath,
+              `${JSON.stringify({ generatedAt, profiles }, null, 2)}\n`,
+            );
+            await writeFileAtomic(mdPath, renderDatasetCard(profiles, generatedAt));
+          }
+
           const slices = await runtime.db.listSlices();
           if (opts.json) {
             process.stdout.write(
               jsonLine({
                 dataFiles: dataFiles.length,
-                files: dataFiles.map((f) => f.relPath),
+                profiles,
                 slices: slices.length,
+                cardPath: profiles.length > 0 ? cardPath : null,
               }),
             );
             return 0;
           }
-          process.stdout.write(`dataset files (from scan): ${dataFiles.length}\n`);
-          for (const file of dataFiles.slice(0, 50)) {
+
+          process.stdout.write(`dataset CSV files (from scan): ${dataFiles.length}\n`);
+          for (const profile of profiles) {
             process.stdout.write(
-              `  ${file.relPath}  ${file.bytes} B  ${file.sha256 ?? file.hashStatus}\n`,
+              `  ${profile.source.path}: ${profile.rows} rows × ${profile.columns.length} columns, missing=${profile.quality.missingCells}, dup=${profile.quality.duplicateRows}\n`,
             );
+            for (const candidate of profile.labelCandidates) {
+              process.stdout.write(
+                `    label candidate: ${candidate.column} (confidence ${candidate.confidence}) — needs confirmation\n`,
+              );
+            }
+            if (!profile.licenseHint) {
+              process.stdout.write('    license: no license file found next to the data\n');
+            }
           }
           process.stdout.write(`registered slices: ${slices.length}\n`);
-          if (dataFiles.length === 0) {
-            process.stdout.write('hint: put datasets under datasets/ and run ideaseek scan\n');
+          if (profiles.length > 0) {
+            process.stdout.write(`dataset card: ${mdPath}\n`);
+          } else if (dataFiles.length === 0) {
+            process.stdout.write('hint: put CSV datasets under datasets/ and run ideaseek scan\n');
           }
           return 0;
         } finally {
