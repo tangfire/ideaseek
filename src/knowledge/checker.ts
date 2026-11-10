@@ -53,7 +53,13 @@ export interface VerifyEvidenceInput {
 }
 
 function normalize(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().toLowerCase();
+  return text
+    .normalize('NFKC') // fold PDF typography: fi/fl/ff ligatures, full-width forms
+    .replace(/­/g, '') // soft hyphens
+    .replace(/([A-Za-z])-\s+([A-Za-z])/g, '$1$2') // line-break hyphenation
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 /** Finds `quote` in the source; returns the 1-based page when paged input exists. */

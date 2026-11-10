@@ -166,3 +166,74 @@ describe('verifyPaperEvidence', () => {
     expect(report.structureErrors.join(' ')).toContain('title');
   });
 });
+
+describe('typographic normalization (PDF ligatures and hyphenation)', () => {
+  it('matches quotes across NFKC ligatures', () => {
+    const pages = [
+      { page: 1, text: 'Results: classiﬁcation ﬁnal accuracy was 91.2% aﬀecting ﬂow' },
+    ];
+    const report = verifyPaperEvidence({
+      card: card({
+        claims: [
+          {
+            text: 'ligature quote',
+            evidence: [
+              { page: 1, quote: 'classification final accuracy was 91.2% affecting flow' },
+            ],
+          },
+        ],
+      }),
+      pages,
+      sourceText: null,
+      sourceHash: HASH,
+      now: 1,
+    });
+    expect(report.verdict).toBe('pass');
+    expect(report.spanChecks[0]!.ok).toBe(true);
+  });
+
+  it('matches quotes across soft hyphens and line-break hyphenation', () => {
+    const pages = [
+      {
+        page: 1,
+        text: 'The re­presentations are learned end-to-end across experi-\nmental conditions',
+      },
+    ];
+    const report = verifyPaperEvidence({
+      card: card({
+        claims: [
+          {
+            text: 'hyphen quote',
+            evidence: [
+              {
+                page: 1,
+                quote: 'The representations are learned end-to-end across experimental conditions',
+              },
+            ],
+          },
+        ],
+      }),
+      pages,
+      sourceText: null,
+      sourceHash: HASH,
+      now: 2,
+    });
+    expect(report.verdict).toBe('pass');
+  });
+
+  it('still fails genuinely altered quotes', () => {
+    const pages = [{ page: 1, text: 'accuracy reached 91.2 percent on the validation set' }];
+    const report = verifyPaperEvidence({
+      card: card({
+        claims: [
+          { text: 'altered', evidence: [{ page: 1, quote: 'accuracy reached 99.9 percent' }] },
+        ],
+      }),
+      pages,
+      sourceText: null,
+      sourceHash: HASH,
+      now: 3,
+    });
+    expect(report.verdict).toBe('fail');
+  });
+});
