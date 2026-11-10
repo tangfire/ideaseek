@@ -105,6 +105,13 @@ export function registerDataCommand(program: Command): void {
                 process.stdout.write(
                   `  ${slice.sliceId}  ${slice.scale}  ${slice.stats.selectedRows}/${slice.stats.totalRows} rows  seed=${slice.seed}\n`,
                 );
+                const warnings = slice.distributionCheck?.warnings ?? [];
+                if (warnings.length > 0) {
+                  process.stdout.write(`    distribution warnings: ${warnings.length}\n`);
+                  for (const warning of warnings) {
+                    process.stdout.write(`      ! ${warning}\n`);
+                  }
+                }
               }
               process.stdout.write('next: ideaseek data slices\n');
               return 0;

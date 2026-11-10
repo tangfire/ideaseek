@@ -10,6 +10,7 @@ import {
   type DatasetSlice,
   type SliceScale,
 } from './slices.js';
+import { checkDistributionPreservation } from './distribution.js';
 
 /**
  * Minimal RFC-4180-style CSV parser (quotes, escaped quotes, embedded
@@ -120,6 +121,13 @@ export async function buildCsvSlices(opts: BuildSlicesOptions): Promise<DatasetS
     const outputHash = sha256Of(body);
     const sliceId = `ds-${inputHash.slice(7, 19)}-${scale}-r${SLICE_RULE_VERSION}`;
 
+    const distribution = checkDistributionPreservation({
+      header,
+      sourceRows: rows,
+      selectedIndices: selection.indices,
+      now: opts.now,
+    });
+
     await writeFileAtomic(join(opts.outDir, `${sliceId}.csv`), body);
     const slice: DatasetSlice = {
       sliceId,
@@ -138,6 +146,12 @@ export async function buildCsvSlices(opts: BuildSlicesOptions): Promise<DatasetS
         `fraction for ${scale} is ${SCALE_FRACTIONS[scale]}`,
         'group/time-aware splitting requires a domain adapter before leakage-sensitive use',
       ],
+      distributionCheck: {
+        ok: distribution.ok,
+        warnings: distribution.drifts
+          .filter((drift) => drift.severity !== 'ok')
+          .map((drift) => `${drift.column}: ${drift.detail}`),
+      },
     };
     await writeFileAtomic(
       join(opts.outDir, `${sliceId}.json`),

@@ -34,6 +34,8 @@ export interface DatasetSlice {
   generatedBy: string;
   generatedAt: number;
   limits: string[];
+  /** Distribution preservation vs the source (ok + human-readable warnings). */
+  distributionCheck?: { ok: boolean; warnings: string[] };
 }
 
 /** Fraction of the dataset selected per scale (rule v1). */
