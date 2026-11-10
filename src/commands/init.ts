@@ -106,6 +106,62 @@ async function writeIfAbsent(path: string, content: string): Promise<boolean> {
   return true;
 }
 
+export interface InitOutcome {
+  already: boolean;
+  root: string;
+  name: string;
+  createdDirs: string[];
+  createdFiles: string[];
+  dbPath: string;
+}
+
+/**
+ * Idempotent project bootstrap shared by `init` and `start`: creates the
+ * workspace directories, writes templates only when absent and registers the
+ * project row. Never overwrites user-edited files.
+ */
+export async function initializeProject(cwd: string, name?: string): Promise<InitOutcome> {
+  const paths = projectPaths(cwd);
+  const projectName = name ?? basename(cwd);
+  if (await isProjectRoot(cwd)) {
+    return {
+      already: true,
+      root: cwd,
+      name: projectName,
+      createdDirs: [],
+      createdFiles: [],
+      dbPath: paths.dbFile,
+    };
+  }
+
+  const createdDirs: string[] = [];
+  for (const dir of WORKSPACE_DIRS) {
+    await ensureDir(join(cwd, dir));
+    createdDirs.push(dir);
+  }
+
+  const createdFiles: string[] = [];
+  if (await writeIfAbsent(paths.configFile, researchYaml(projectName)))
+    createdFiles.push('research.yaml');
+  if (await writeIfAbsent(paths.readmeFile, readmeMd(projectName))) createdFiles.push('README.md');
+  if (await writeIfAbsent(paths.gitignoreFile, PROJECT_GITIGNORE)) createdFiles.push('.gitignore');
+
+  const db = new SqliteWorkflowDb(paths.dbFile);
+  try {
+    await db.ensureProject({ root: cwd, name: projectName });
+  } finally {
+    await db.close();
+  }
+  return {
+    already: false,
+    root: cwd,
+    name: projectName,
+    createdDirs,
+    createdFiles,
+    dbPath: paths.dbFile,
+  };
+}
+
 export function registerInitCommand(program: Command): void {
   program
     .command('init')
@@ -115,10 +171,9 @@ export function registerInitCommand(program: Command): void {
     .action(
       action(async (opts: { json?: boolean; name?: string }) => {
         const cwd = process.cwd();
-        const paths = projectPaths(cwd);
-        const name = opts.name ?? basename(cwd);
+        const outcome = await initializeProject(cwd, opts.name);
 
-        if (await isProjectRoot(cwd)) {
+        if (outcome.already) {
           // Idempotent: never overwrite existing files or schema.
           if (opts.json) {
             process.stdout.write(
@@ -130,42 +185,22 @@ export function registerInitCommand(program: Command): void {
           return 0;
         }
 
-        const createdDirs: string[] = [];
-        for (const dir of WORKSPACE_DIRS) {
-          await ensureDir(join(cwd, dir));
-          createdDirs.push(dir);
-        }
-
-        const createdFiles: string[] = [];
-        if (await writeIfAbsent(paths.configFile, researchYaml(name)))
-          createdFiles.push('research.yaml');
-        if (await writeIfAbsent(paths.readmeFile, readmeMd(name))) createdFiles.push('README.md');
-        if (await writeIfAbsent(paths.gitignoreFile, PROJECT_GITIGNORE))
-          createdFiles.push('.gitignore');
-
-        const db = new SqliteWorkflowDb(paths.dbFile);
-        try {
-          await db.ensureProject({ root: cwd, name });
-        } finally {
-          await db.close();
-        }
-
         if (opts.json) {
           process.stdout.write(
             jsonLine({
               initialized: true,
-              root: cwd,
-              name,
-              createdDirs,
-              createdFiles,
-              db: paths.dbFile,
+              root: outcome.root,
+              name: outcome.name,
+              createdDirs: outcome.createdDirs,
+              createdFiles: outcome.createdFiles,
+              db: outcome.dbPath,
             }),
           );
         } else {
-          process.stdout.write(`initialized IdeaSeek project "${name}" in ${cwd}\n`);
-          process.stdout.write(`  directories: ${createdDirs.length}\n`);
+          process.stdout.write(`initialized IdeaSeek project "${outcome.name}" in ${cwd}\n`);
+          process.stdout.write(`  directories: ${outcome.createdDirs.length}\n`);
           process.stdout.write(
-            `  created: ${createdFiles.length ? createdFiles.join(', ') : '(kept existing files)'}\n`,
+            `  created: ${outcome.createdFiles.length ? outcome.createdFiles.join(', ') : '(kept existing files)'}\n`,
           );
           process.stdout.write('next: ideaseek run --question "your research question"\n');
         }

@@ -37,6 +37,62 @@ function reviewPath(paths: ReturnType<typeof projectPaths>): string {
   return join(paths.knowledgeDir, 'input-review.md');
 }
 
+export interface ScanOutcome {
+  manifestPath: string;
+  reviewPath: string;
+  roots: string[];
+  files: number;
+  byRole: Record<string, number>;
+  groups: number;
+  duplicates: number;
+  reusedHashes: number;
+}
+
+/** Scans the entry directories and persists manifest + review. Shared by `scan` and `start`. */
+export async function performScan(cwd: string, extraRoots: string[] = []): Promise<ScanOutcome> {
+  const root = await findProjectRoot(cwd);
+  if (!root) {
+    throw new IdeaseekError('NOT_INITIALIZED', 'no IdeaSeek project here; run: ideaseek init');
+  }
+  const paths = projectPaths(root);
+  for (const extra of extraRoots) {
+    if (extra.startsWith('/') || extra.includes('..')) {
+      throw new IdeaseekError(
+        'INVALID_ARGUMENT',
+        `--path must be a project-relative directory without '..': ${extra}`,
+      );
+    }
+  }
+  const roots = [...DEFAULT_ROOTS, ...extraRoots];
+  const previous = await readManifest(manifestPath(paths));
+  const manifest = await scanProject({
+    projectRoot: paths.root,
+    roots,
+    now: Date.now(),
+    previous,
+  });
+  await writeManifest(manifestPath(paths), manifest);
+  await writeReview(reviewPath(paths), renderReview(manifest));
+
+  const reused = manifest.files.filter((file) => {
+    const old = previous?.files.find((entry) => entry.path === file.path);
+    return old && old.sha256 === file.sha256 && old.bytes === file.bytes;
+  }).length;
+  const byRole: Record<string, number> = {};
+  for (const file of manifest.files) byRole[file.role] = (byRole[file.role] ?? 0) + 1;
+
+  return {
+    manifestPath: manifestPath(paths),
+    reviewPath: reviewPath(paths),
+    roots,
+    files: manifest.files.length,
+    byRole,
+    groups: manifest.groups.length,
+    duplicates: manifest.duplicateSets.length,
+    reusedHashes: reused,
+  };
+}
+
 export function registerScanCommand(program: Command): void {
   program
     .command('scan')
@@ -50,62 +106,43 @@ export function registerScanCommand(program: Command): void {
     .option('--json', 'machine-readable output')
     .action(
       action(async (opts: { path: string[]; json?: boolean }) => {
-        const paths = await openProject();
-        const roots = [...DEFAULT_ROOTS, ...opts.path];
-        for (const extra of opts.path) {
-          if (extra.startsWith('/') || extra.includes('..')) {
-            throw new IdeaseekError(
-              'INVALID_ARGUMENT',
-              `--path must be a project-relative directory without '..': ${extra}`,
-            );
-          }
-        }
-        const previous = await readManifest(manifestPath(paths));
-        const manifest = await scanProject({
-          projectRoot: paths.root,
-          roots,
-          now: Date.now(),
-          previous,
-        });
-        await writeManifest(manifestPath(paths), manifest);
-        await writeReview(reviewPath(paths), renderReview(manifest));
-
-        const reused = manifest.files.filter((file) => {
-          const old = previous?.files.find((entry) => entry.path === file.path);
-          return old && old.sha256 === file.sha256 && old.bytes === file.bytes;
-        }).length;
-        const byRole: Record<string, number> = {};
-        for (const file of manifest.files) byRole[file.role] = (byRole[file.role] ?? 0) + 1;
+        const outcome = await performScan(process.cwd(), opts.path);
+        const { manifest, review, parserVersion, roots } = {
+          manifest: outcome.manifestPath,
+          review: outcome.reviewPath,
+          parserVersion: SCAN_PARSER_VERSION,
+          roots: outcome.roots,
+        };
 
         if (opts.json) {
           process.stdout.write(
             jsonLine({
-              manifest: manifestPath(paths),
-              review: reviewPath(paths),
-              parserVersion: SCAN_PARSER_VERSION,
+              manifest,
+              review,
+              parserVersion,
               roots,
-              files: manifest.files.length,
-              byRole,
-              groups: manifest.groups.length,
-              duplicates: manifest.duplicateSets.length,
-              reusedHashes: reused,
+              files: outcome.files,
+              byRole: outcome.byRole,
+              groups: outcome.groups,
+              duplicates: outcome.duplicates,
+              reusedHashes: outcome.reusedHashes,
             }),
           );
           return 0;
         }
         process.stdout.write(
-          `scanned ${manifest.files.length} file(s) under ${roots.map((root) => `${root}/`).join(' ')}\n`,
+          `scanned ${outcome.files} file(s) under ${roots.map((root) => `${root}/`).join(' ')}\n`,
         );
         process.stdout.write(
-          `  roles: ${Object.entries(byRole)
+          `  roles: ${Object.entries(outcome.byRole)
             .map(([role, count]) => `${role}=${count}`)
             .join(' ')}\n`,
         );
         process.stdout.write(
-          `  groups: ${manifest.groups.length} (pending confirmation) · duplicates: ${manifest.duplicateSets.length} · reused hashes: ${reused}\n`,
+          `  groups: ${outcome.groups} (pending confirmation) · duplicates: ${outcome.duplicates} · reused hashes: ${outcome.reusedHashes}\n`,
         );
-        process.stdout.write(`  manifest: ${manifestPath(paths)}\n`);
-        process.stdout.write(`  review: ${reviewPath(paths)}\n`);
+        process.stdout.write(`  manifest: ${manifest}\n`);
+        process.stdout.write(`  review: ${review}\n`);
         process.stdout.write('next: ideaseek intake\n');
         return 0;
       }),

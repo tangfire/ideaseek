@@ -17,6 +17,7 @@ import { registerNextCommand } from './commands/next.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerWorkerCommand } from './commands/worker.js';
 
@@ -44,6 +45,7 @@ export function buildProgram(): Command {
     });
 
   registerInitCommand(program);
+  registerStartCommand(program);
   registerScanCommand(program);
   registerIntakeCommand(program);
   registerOrganizeCommand(program);

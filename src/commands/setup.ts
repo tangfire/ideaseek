@@ -88,59 +88,97 @@ function applyDetection(
   return { changed, notes };
 }
 
+export interface SetupOutcome {
+  root: string;
+  dryRun: boolean;
+  wrote: boolean;
+  backupPath: string | null;
+  changed: string[];
+  notes: string[];
+  migrationNotes: string[];
+  env: EnvironmentReport;
+  configPath: string;
+}
+
+/**
+ * Auto-detects the environment and persists a normalized research.yaml
+ * (backup first when replacing an existing file). Shared by `setup` and
+ * `start`. Refuses to touch a config with blocking problems.
+ */
+export async function performSetup(
+  cwd: string,
+  opts: { dryRun?: boolean; question?: string } = {},
+): Promise<SetupOutcome> {
+  if (!(await isProjectRoot(cwd))) {
+    throw new IdeaseekError('NOT_INITIALIZED', 'no IdeaSeek project here; run: ideaseek init');
+  }
+  const paths = projectPaths(cwd);
+  const configLoad = await loadConfig(paths, cwd.split(/[\\/]/).pop() ?? 'project');
+  if (configLoad.errors.length > 0) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      `research.yaml has blocking problems; fix them first (ideaseek config explain): ${configLoad.errors[0]}`,
+    );
+  }
+  if (opts.question) {
+    configLoad.resolved.research.question = opts.question;
+  }
+
+  const env = await detectEnvironment(cwd);
+  const detection = applyDetection(configLoad.resolved, env);
+  const normalized = `${HEADER}${stringify(toFileShape(configLoad.resolved)).trimEnd()}\n`;
+  const currentFile = configLoad.existed ? await readFile(paths.configFile, 'utf8') : null;
+  const needsWrite = currentFile !== normalized;
+
+  let backupPath: string | null = null;
+  let wrote = false;
+  if (needsWrite && !opts.dryRun) {
+    if (currentFile !== null) {
+      backupPath = `${paths.configFile}.bak-${Date.now()}`;
+      await writeFileAtomic(backupPath, currentFile);
+    }
+    await writeFileAtomic(paths.configFile, normalized);
+    wrote = true;
+  }
+
+  return {
+    root: cwd,
+    dryRun: Boolean(opts.dryRun),
+    wrote,
+    backupPath,
+    changed: detection.changed,
+    notes: detection.notes,
+    migrationNotes: configLoad.migrationNotes,
+    env,
+    configPath: paths.configFile,
+  };
+}
+
 export function registerSetupCommand(program: Command): void {
   program
     .command('setup')
     .description('auto-detect the environment and persist a normalized research.yaml')
     .option('--dry-run', 'show what would change without writing')
+    .option('--question <text>', 'persist this research question into research.yaml')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { dryRun?: boolean; json?: boolean }) => {
+      action(async (opts: { dryRun?: boolean; question?: string; json?: boolean }) => {
         const cwd = process.cwd();
-        if (!(await isProjectRoot(cwd))) {
-          throw new IdeaseekError(
-            'NOT_INITIALIZED',
-            'no IdeaSeek project here; run: ideaseek init',
-          );
-        }
-        const paths = projectPaths(cwd);
-        const configLoad = await loadConfig(paths, cwd.split(/[\\/]/).pop() ?? 'project');
-        if (configLoad.errors.length > 0) {
-          throw new IdeaseekError(
-            'USER_INPUT_REQUIRED',
-            `research.yaml has blocking problems; fix them first (ideaseek config explain): ${configLoad.errors[0]}`,
-          );
-        }
-
-        const env = await detectEnvironment(cwd);
-        const detection = applyDetection(configLoad.resolved, env);
-        const normalized = `${HEADER}${stringify(toFileShape(configLoad.resolved)).trimEnd()}\n`;
-        const currentFile = configLoad.existed ? await readFile(paths.configFile, 'utf8') : null;
-        const needsWrite = currentFile !== normalized;
-
-        let backupPath: string | null = null;
-        let wrote = false;
-        if (needsWrite && !opts.dryRun) {
-          if (currentFile !== null) {
-            backupPath = `${paths.configFile}.bak-${Date.now()}`;
-            await writeFileAtomic(backupPath, currentFile);
-          }
-          await writeFileAtomic(paths.configFile, normalized);
-          wrote = true;
-        }
+        const outcome = await performSetup(cwd, opts);
+        const env = outcome.env;
 
         if (opts.json) {
           process.stdout.write(
             jsonLine({
-              root: cwd,
-              dryRun: Boolean(opts.dryRun),
-              wrote,
-              backupPath,
-              changed: detection.changed,
-              notes: detection.notes,
-              migrationNotes: configLoad.migrationNotes,
+              root: outcome.root,
+              dryRun: outcome.dryRun,
+              wrote: outcome.wrote,
+              backupPath: outcome.backupPath,
+              changed: outcome.changed,
+              notes: outcome.notes,
+              migrationNotes: outcome.migrationNotes,
               environment: env,
-              configPath: paths.configFile,
+              configPath: outcome.configPath,
             }),
           );
           return 0;
@@ -148,16 +186,15 @@ export function registerSetupCommand(program: Command): void {
 
         process.stdout.write(`setup: ${cwd}\n`);
         process.stdout.write(
-          wrote
-            ? `  wrote ${paths.configFile}${backupPath ? ` (backup: ${backupPath})` : ' (created)'}\n`
-            : opts.dryRun && needsWrite
-              ? `  would write ${paths.configFile} (dry-run)\n`
-              : `  ${paths.configFile} already normalized\n`,
+          outcome.wrote
+            ? `  wrote ${outcome.configPath}${outcome.backupPath ? ` (backup: ${outcome.backupPath})` : ' (created)'}\n`
+            : outcome.dryRun
+              ? `  would write ${outcome.configPath} (dry-run)\n`
+              : `  ${outcome.configPath} already normalized\n`,
         );
-        for (const change of detection.changed) process.stdout.write(`  changed: ${change}\n`);
-        for (const note of detection.notes) process.stdout.write(`  note: ${note}\n`);
-        for (const note of configLoad.migrationNotes)
-          process.stdout.write(`  migration: ${note}\n`);
+        for (const change of outcome.changed) process.stdout.write(`  changed: ${change}\n`);
+        for (const note of outcome.notes) process.stdout.write(`  note: ${note}\n`);
+        for (const note of outcome.migrationNotes) process.stdout.write(`  migration: ${note}\n`);
         process.stdout.write(
           `  environment: node ${env.node.version} · python ${
             env.python.available ? (env.python.version ?? 'yes') : 'missing'
