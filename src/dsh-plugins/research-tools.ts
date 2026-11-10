@@ -110,7 +110,7 @@ export function runKnowledgeSearch(opts: KnowledgeSearchOptions): string {
   const result = spawnSync(
     process.execPath,
     [cli, 'search', ...terms, '--json', '--limit', String(limit)],
-    { cwd: opts.cwd, encoding: 'utf8', timeout: opts.timeoutMs ?? 15_000 },
+    { cwd: opts.cwd, encoding: 'utf8', timeout: opts.timeoutMs ?? 120_000 },
   );
   if (result.error) {
     throw new Error(`knowledge_search: ${result.error.message}`);

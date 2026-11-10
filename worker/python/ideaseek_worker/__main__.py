@@ -13,6 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from .embed import cmd_embed, probe_environment, DEFAULT_MODEL
 from .federated import profile_dataset
 from .pdf_parse import PdfParseError, parse_pdf
 from .minipdf import build_minimal_pdf
@@ -190,6 +191,16 @@ def cmd_dataset(args) -> int:
     return 0
 
 
+def cmd_embed_probe(args) -> int:
+    model = args.model or DEFAULT_MODEL
+    _emit(probe_environment(args.cache_dir, model))
+    return 0
+
+
+def cmd_embed_wrap(_args) -> int:
+    return cmd_embed(_args)
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -207,6 +218,15 @@ def main(argv: list[str] | None = None) -> int:
     ocr_cmd = sub.add_parser("ocr", help="image-based OCR fallback for scanned PDFs")
     ocr_cmd.add_argument("path")
     ocr_cmd.set_defaults(func=cmd_ocr)
+
+    pr_cmd = sub.add_parser("embed-probe", help="fast embedding capability probe (no download)")
+    pr_cmd.add_argument("--model", default=None)
+    pr_cmd.add_argument("--cache-dir", default="")
+    pr_cmd.set_defaults(func=cmd_embed_probe)
+
+    emb_cmd = sub.add_parser("embed", help="local text embeddings (fastembed, stdin JSON)")
+    emb_cmd.add_argument("dummy", nargs="?", default=None, help=argparse.SUPPRESS)
+    emb_cmd.set_defaults(func=cmd_embed)
 
     ds_cmd = sub.add_parser("dataset", help="profile an external federated dataset (read-only)")
     ds_cmd.add_argument("root")

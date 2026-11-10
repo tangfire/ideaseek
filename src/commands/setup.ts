@@ -1,11 +1,17 @@
 import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { stringify } from 'yaml';
 import { IdeaseekError } from '../core/errors.js';
 import { writeFileAtomic } from '../core/atomic.js';
 import { CONFIG_VERSION, loadConfig, type LoadedConfig } from '../config/config.js';
 import { isProjectRoot, projectPaths } from '../config/paths.js';
 import { detectEnvironment, type EnvironmentReport } from '../runtime/detect.js';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  embeddingCacheDir,
+  installEmbeddingStack,
+} from '../retrieval/embeddings.js';
 import { action, jsonLine } from './shared.js';
 
 /**
@@ -34,6 +40,8 @@ function toFileShape(config: LoadedConfig['resolved']): Record<string, unknown> 
       container_runtime: config.runtime.containerRuntime,
       allow_network: config.runtime.allowNetwork,
       default_data_scale: config.runtime.defaultDataScale,
+      use_embeddings: config.runtime.useEmbeddings,
+      embedding_model: config.runtime.embeddingModel,
       lease_ttl_seconds: config.runtime.leaseTtlSeconds,
       heartbeat_interval_seconds: config.runtime.heartbeatIntervalSeconds,
       max_attempts: config.runtime.maxAttempts,
@@ -161,53 +169,85 @@ export function registerSetupCommand(program: Command): void {
     .description('auto-detect the environment and persist a normalized research.yaml')
     .option('--dry-run', 'show what would change without writing')
     .option('--question <text>', 'persist this research question into research.yaml')
+    .option(
+      '--install-embeddings',
+      'install the pinned local embedding stack (network required once)',
+    )
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { dryRun?: boolean; question?: string; json?: boolean }) => {
-        const cwd = process.cwd();
-        const outcome = await performSetup(cwd, opts);
-        const env = outcome.env;
+      action(
+        async (opts: {
+          dryRun?: boolean;
+          question?: string;
+          installEmbeddings?: boolean;
+          json?: boolean;
+        }) => {
+          const cwd = process.cwd();
+          const outcome = await performSetup(cwd, opts);
+          let embedding: {
+            model: string;
+            license: string;
+            fingerprint: string;
+            cacheDir: string;
+          } | null = null;
+          let embeddingError: string | null = null;
+          if (opts.installEmbeddings) {
+            try {
+              const installed = await installEmbeddingStack({
+                knowledgeDir: join(cwd, 'knowledge'),
+                modelId: DEFAULT_EMBEDDING_MODEL,
+              });
+              embedding = installed.manifest;
+            } catch (error) {
+              embeddingError = `${(error as Error).message} — search keeps using BM25/FTS fallback`;
+            }
+          }
+          const env = outcome.env;
 
-        if (opts.json) {
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                root: outcome.root,
+                dryRun: outcome.dryRun,
+                wrote: outcome.wrote,
+                backupPath: outcome.backupPath,
+                changed: outcome.changed,
+                notes: outcome.notes,
+                migrationNotes: outcome.migrationNotes,
+                environment: env,
+                configPath: outcome.configPath,
+                embedding,
+                embeddingError,
+                embeddingCache: embeddingCacheDir(),
+              }),
+            );
+            return 0;
+          }
+
+          process.stdout.write(`setup: ${cwd}\n`);
           process.stdout.write(
-            jsonLine({
-              root: outcome.root,
-              dryRun: outcome.dryRun,
-              wrote: outcome.wrote,
-              backupPath: outcome.backupPath,
-              changed: outcome.changed,
-              notes: outcome.notes,
-              migrationNotes: outcome.migrationNotes,
-              environment: env,
-              configPath: outcome.configPath,
-            }),
+            outcome.wrote
+              ? `  wrote ${outcome.configPath}${outcome.backupPath ? ` (backup: ${outcome.backupPath})` : ' (created)'}\n`
+              : outcome.dryRun
+                ? `  would write ${outcome.configPath} (dry-run)\n`
+                : `  ${outcome.configPath} already normalized\n`,
           );
+          for (const change of outcome.changed) process.stdout.write(`  changed: ${change}\n`);
+          for (const note of outcome.notes) process.stdout.write(`  note: ${note}\n`);
+          for (const note of outcome.migrationNotes) process.stdout.write(`  migration: ${note}\n`);
+          process.stdout.write(
+            `  environment: node ${env.node.version} · python ${
+              env.python.available ? (env.python.version ?? 'yes') : 'missing'
+            } · container ${
+              env.containerRuntimes.docker.available || env.containerRuntimes.podman.available
+                ? 'yes'
+                : 'missing'
+            } · gpu ${env.gpu.devices.length}\n`,
+          );
+          process.stdout.write('  credentials: not configured (Phase 1 wires DSH providers)\n');
+          process.stdout.write('next: ideaseek doctor\n');
           return 0;
-        }
-
-        process.stdout.write(`setup: ${cwd}\n`);
-        process.stdout.write(
-          outcome.wrote
-            ? `  wrote ${outcome.configPath}${outcome.backupPath ? ` (backup: ${outcome.backupPath})` : ' (created)'}\n`
-            : outcome.dryRun
-              ? `  would write ${outcome.configPath} (dry-run)\n`
-              : `  ${outcome.configPath} already normalized\n`,
-        );
-        for (const change of outcome.changed) process.stdout.write(`  changed: ${change}\n`);
-        for (const note of outcome.notes) process.stdout.write(`  note: ${note}\n`);
-        for (const note of outcome.migrationNotes) process.stdout.write(`  migration: ${note}\n`);
-        process.stdout.write(
-          `  environment: node ${env.node.version} · python ${
-            env.python.available ? (env.python.version ?? 'yes') : 'missing'
-          } · container ${
-            env.containerRuntimes.docker.available || env.containerRuntimes.podman.available
-              ? 'yes'
-              : 'missing'
-          } · gpu ${env.gpu.devices.length}\n`,
-        );
-        process.stdout.write('  credentials: not configured (Phase 1 wires DSH providers)\n');
-        process.stdout.write('next: ideaseek doctor\n');
-        return 0;
-      }),
+        },
+      ),
     );
 }

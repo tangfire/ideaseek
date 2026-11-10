@@ -13,7 +13,6 @@ inputs:
   papers_dir: papers
   datasets_dir: datasets
   comparisons_dir: comparisons
-  # External read-only dataset roots (never copied, never written by the platform)
   readonly_datasets:
     - D:/FedLab04/FedPF/dataset/mnist
 runtime:
@@ -22,6 +21,8 @@ runtime:
   container_runtime: docker
   allow_network: false
   default_data_scale: quick
+  use_embeddings: true
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
   lease_ttl_seconds: 30
   heartbeat_interval_seconds: 8
   max_attempts: 3

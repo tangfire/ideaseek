@@ -30,6 +30,9 @@ export interface ResolvedConfig {
     containerRuntime: string;
     allowNetwork: boolean;
     defaultDataScale: string;
+    /** Optional local embedding layer; FTS is always the base retrieval. */
+    useEmbeddings: boolean;
+    embeddingModel: string;
     leaseTtlSeconds: number;
     heartbeatIntervalSeconds: number;
     maxAttempts: number;
@@ -86,6 +89,8 @@ export function defaultConfig(projectName: string): ResolvedConfig {
       containerRuntime: 'docker',
       allowNetwork: false,
       defaultDataScale: 'quick',
+      useEmbeddings: true,
+      embeddingModel: 'sentence-transformers/all-MiniLM-L6-v2',
       leaseTtlSeconds: 30,
       heartbeatIntervalSeconds: 8,
       maxAttempts: 3,
@@ -118,6 +123,8 @@ const SHAPE: Record<string, readonly string[]> = {
     'container_runtime',
     'allow_network',
     'default_data_scale',
+    'use_embeddings',
+    'embedding_model',
     'lease_ttl_seconds',
     'heartbeat_interval_seconds',
     'max_attempts',
@@ -429,6 +436,18 @@ export async function loadConfig(
             message: `${path} must be one of: ${ENUMS['runtime.default_data_scale']!.join(', ')}`,
           };
     },
+  );
+  resolved.runtime.useEmbeddings = take(
+    'runtime',
+    'use_embeddings',
+    resolved.runtime.useEmbeddings,
+    coerceBoolean,
+  );
+  resolved.runtime.embeddingModel = take(
+    'runtime',
+    'embedding_model',
+    resolved.runtime.embeddingModel,
+    coerceString,
   );
   resolved.runtime.leaseTtlSeconds = take(
     'runtime',
