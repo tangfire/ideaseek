@@ -75,7 +75,18 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _force_utf8_streams() -> None:
+    """Windows consoles default to GBK; paper text must never crash JSON output."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
     sub = parser.add_subparsers(dest="command", required=True)
 

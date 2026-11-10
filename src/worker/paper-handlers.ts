@@ -1,4 +1,4 @@
-import { IdeaseekError } from '../core/errors.js';
+import { IdeaseekError, isIdeaseekError } from '../core/errors.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
 import { parsePdf } from '../knowledge/pdf.js';
@@ -48,7 +48,23 @@ export const paperParse: TaskHandler = async (ctx: TaskContext) => {
     throw error;
   }
   const abs = join(ctx.runtime.paths.root, ...pdfPath.split('/'));
-  const parsed = await parsePdf(abs);
+  let parsed;
+  try {
+    parsed = await parsePdf(abs);
+  } catch (error) {
+    // File-level parse failures are content-addressed: retrying identical
+    // bytes cannot heal them, so fail fast and let the run flag this paper
+    // without burning attempts (docs: 失败论文被标记而不是丢失).
+    if (
+      isIdeaseekError(error) &&
+      ['PARSE_FAILED', 'FILE_NOT_FOUND', 'EMPTY_FILE', 'ENCRYPTED_PDF', 'NO_TEXT_LAYER'].includes(
+        error.code,
+      )
+    ) {
+      (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    }
+    throw error;
+  }
   const sourceHash = await sha256OfFile(abs);
   const payload = {
     source: pdfPath,
@@ -85,6 +101,40 @@ export const paperParse: TaskHandler = async (ctx: TaskContext) => {
  * a retried task maps to one logical agent call and duplicate commits stay
  * no-ops at the artifact layer.
  */
+/** Prompt+schema version for provenance; bump when the instruction changes. */
+export const PAPERCARD_PROMPT_VERSION = 'papercard-v1-prompt.3';
+
+/**
+ * Self-contained extraction instruction. The schema is embedded (a real run
+ * showed the model improvising an incompatible card when it could not read
+ * schema files), and evidence quotes must be verbatim substrings anchored to
+ * the nearest `[page N]` marker so the Evidence Checker can verify them.
+ */
+export const PAPERCARD_INSTRUCTION = [
+  'Extract a structured paper card from the provided text only.',
+  'Only report facts supported by the provided text; use "unknown" for anything not present.',
+  'Do not call any tools; do not use outside knowledge; produce ONLY one JSON object, no prose, no fences.',
+  'Shape:',
+  '{',
+  '  "title": string,',
+  '  "problem": string,',
+  '  "method": {"summary": string, "steps": [string], "motivation": [string]},',
+  '  "datasets": [string],',
+  '  "metrics": [string],',
+  '  "baselines": [string],',
+  '  "limitations": [string],',
+  '  "claims": [{"text": string, "evidence": [{"page": number, "quote": string}]}],',
+  '  "unknowns": [string]',
+  '}',
+  'Rules:',
+  '- evidence.quote must be an EXACT verbatim substring of the input text (copy character-for-character; no paraphrase, no ellipsis).',
+  '- evidence.page = the number of the nearest preceding "[page N]" marker before the quote.',
+  '- include every numeric result you can support as a claim with a quote.',
+  '- method.steps/motivation, datasets, metrics, baselines, limitations, unknowns: plain short strings.',
+  '- Keep it concise: at most 5 method steps, 6 motivation items, 8 claims, and 8 items in each string array.',
+  '- Never quote more than 30 words per evidence quote.',
+].join('\n');
+
 export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
   await applyFaults(ctx);
 
@@ -117,32 +167,43 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
     throw error;
   }
 
+  // Bound prompt size: full text stays in the artifact for evidence checks;
+  // the extractor sees at most INPUT_CAP bytes (long papers otherwise time out).
+  const INPUT_CAP = 64 * 1024;
+  const originalBytes = Buffer.byteLength(paperText, 'utf8');
+  const feedText =
+    originalBytes > INPUT_CAP
+      ? paperText.slice(0, INPUT_CAP) +
+        '\n\n[... input truncated for the extractor; evidence checks still use the full parsed source ...]'
+      : paperText;
   const result = await harness.runTask(
     {
       runId: ctx.run.runId,
       taskId: ctx.task.taskId,
       profile: 'paper-extractor',
-      instruction:
-        'Extract a structured paper card. Only report facts supported by the provided text; ' +
-        'use "unknown" for anything not present. Output JSON matching the requested schema.',
-      inputs: [{ kind: 'text', name: paperName, content: paperText }],
+      instruction: PAPERCARD_INSTRUCTION,
+      inputs: [{ kind: 'text', name: paperName, content: feedText }],
       outputSchema: 'papercard-v1',
-      budget: { timeoutMs: 60_000 },
+      budget: { timeoutMs: 180_000, maxOutputTokens: 8192 },
       idempotencyKey: `paper-extract:${ctx.run.runId}:${ctx.task.taskId}`,
     },
     (event) => ctx.log(event.summary),
     ctx.signal,
   );
 
-  // Platform-stamped provenance: document identity is computed here, never
-  // trusted from model output (the Evidence Checker re-verifies binding).
+  // Platform-stamped provenance: document identity, parser and schema
+  // versions are computed here, never trusted from model output (the
+  // Evidence Checker re-verifies the binding).
   const modelCard = JSON.parse(result.output) as Record<string, unknown>;
   const documentHash = await computeSourceHash(ctx);
+  const depParser = await readChainedParserVersion(ctx);
   const card = {
     source: {
       paperName,
       sourcePath: typeof ctx.payload.sourcePath === 'string' ? ctx.payload.sourcePath : null,
-      inputBytes: Buffer.byteLength(paperText, 'utf8'),
+      inputBytes: originalBytes,
+      fedBytes: Buffer.byteLength(feedText, 'utf8'),
+      promptVersion: PAPERCARD_PROMPT_VERSION,
     },
     harness: result.runtime,
     sessionId: result.sessionId ?? null,
@@ -153,6 +214,8 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
       ...modelCard,
       paper_id: documentHash ? `paper-${documentHash.slice(7, 19)}` : 'unknown',
       document_hash: documentHash ?? modelCard.document_hash,
+      parser_version: depParser ?? 'unknown',
+      prompt_schema_version: 'papercard-v1',
     },
   };
 
@@ -182,6 +245,25 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
     data: { model: result.model, outputBytes: Buffer.byteLength(result.output, 'utf8') },
   };
 };
+
+/** Parser version from the chained paper.parse artifact (provenance stamp). */
+async function readChainedParserVersion(ctx: TaskContext): Promise<string | null> {
+  const parseId = ctx.task.dependsOn[0];
+  if (!parseId) return null;
+  const parseTask = await ctx.runtime.db.getTask(parseId);
+  if (!parseTask || parseTask.status !== 'succeeded') return null;
+  const rows = await ctx.runtime.db.listArtifacts(parseTask.taskId);
+  const parsedRow = rows.find((row) => row.kind === 'parsed-paper' && row.status === 'committed');
+  if (!parsedRow) return null;
+  try {
+    const parsed = JSON.parse(await ctx.runtime.store.readFinalText(parsedRow.contentHash)) as {
+      parser?: string;
+    };
+    return parsed.parser ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Source hash for provenance: the real file when known, else the excerpt bytes. */
 async function computeSourceHash(ctx: TaskContext): Promise<string | null> {

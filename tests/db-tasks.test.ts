@@ -296,3 +296,130 @@ describe('task queue and leases', () => {
     await expect(runtime.db.cancelRun(run.runId)).resolves.toMatchObject({ status: 'CANCELED' });
   });
 });
+
+describe('non-blocking failures (flagged without stranding siblings)', () => {
+  async function commitSuccess(task: { taskId: string; attempt: number }, workerId: string) {
+    const staged = await runtime.store.stage('out', 'ok', {});
+    await runtime.db.beginCommit({
+      taskId: task.taskId,
+      workerId,
+      attempt: task.attempt,
+      artifacts: [
+        {
+          kind: 'out',
+          tempPath: staged.tempPath,
+          contentHash: staged.contentHash,
+          size: staged.size,
+          meta: {},
+        },
+      ],
+      result: { summary: 'fine', artifacts: [] },
+    });
+    await runtime.store.promote([staged]);
+    return runtime.db.finalizeCommit({ taskId: task.taskId, workerId });
+  }
+
+  it('keeps the run RUNNING while non-blocking failures exist, settles at the end', async () => {
+    const single = await createEmptyRun();
+    const bad = await runtime.db.enqueueTask({
+      runId: single.runId,
+      type: 'paper.parse',
+      idempotencyKey: 'nb-bad',
+      maxAttempts: 1,
+      payload: { nonBlocking: true, pdfPath: 'papers/corrupt.pdf' },
+    });
+    await runtime.db.enqueueTask({
+      runId: single.runId,
+      type: 'paper.parse',
+      idempotencyKey: 'nb-ok-1',
+      payload: { nonBlocking: true },
+    });
+    await runtime.db.enqueueTask({
+      runId: single.runId,
+      type: 'paper.parse',
+      idempotencyKey: 'nb-ok-2',
+      payload: { nonBlocking: true },
+    });
+
+    // The corrupt paper fails permanently after its single attempt…
+    const t1 = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
+    expect(t1!.taskId).toBe(bad.task.taskId);
+    const failed = await runtime.db.failAttempt(t1!.taskId, 'w1', {
+      code: 'PARSE_FAILED',
+      message: 'invalid pdf header',
+      retryable: false,
+      at: clock.now(),
+    });
+    expect(failed.willRetry).toBe(false);
+    expect(failed.task.status).toBe('failed');
+    // …but the run keeps RUNNING so sibling papers still get parsed.
+    expect((await runtime.db.getRun(single.runId))?.status).toBe('RUNNING');
+
+    const t2 = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
+    await commitSuccess(t2!, 'w1');
+    expect((await runtime.db.getRun(single.runId))?.status).toBe('RUNNING');
+
+    const t3 = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
+    await commitSuccess(t3!, 'w1');
+
+    // Everything terminal now: the flagged failure settles the run.
+    const settled = await runtime.db.getRun(single.runId);
+    expect(settled?.status).toBe('FAILED');
+    const tasks = await runtime.db.listTasks(single.runId);
+    expect(tasks.filter((task) => task.status === 'succeeded')).toHaveLength(2);
+    expect(tasks.filter((task) => task.status === 'failed')).toHaveLength(1);
+    const events = await runtime.db.listEvents(single.runId);
+    expect(events.filter((event) => event.eventType === 'run_failed')).toHaveLength(1);
+  });
+
+  it('settles immediately when a non-blocking failure is the only/last task', async () => {
+    const single = await createEmptyRun();
+    await runtime.db.enqueueTask({
+      runId: single.runId,
+      type: 'paper.parse',
+      idempotencyKey: 'nb-only',
+      maxAttempts: 1,
+      payload: { nonBlocking: true },
+    });
+    const t1 = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
+    await runtime.db.failAttempt(t1!.taskId, 'w1', {
+      code: 'NO_TEXT_LAYER',
+      message: 'scanned PDF',
+      retryable: false,
+      at: clock.now(),
+    });
+    expect((await runtime.db.getRun(single.runId))?.status).toBe('FAILED');
+  });
+
+  it('all non-blocking tasks succeeding still completes the run', async () => {
+    const single = await createEmptyRun();
+    await runtime.db.enqueueTask({
+      runId: single.runId,
+      type: 'paper.parse',
+      idempotencyKey: 'nb-good',
+      payload: { nonBlocking: true },
+    });
+    const t1 = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
+    await commitSuccess(t1!, 'w1');
+    expect((await runtime.db.getRun(single.runId))?.status).toBe('COMPLETED');
+  });
+
+  it('regular failures keep immediate run-failure semantics (regression)', async () => {
+    const single = await createEmptyRun();
+    await runtime.db.enqueueTask({
+      runId: single.runId,
+      type: 'demo.ingest',
+      idempotencyKey: 'blocking-fail',
+      maxAttempts: 1,
+      payload: {},
+    });
+    const t1 = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
+    await runtime.db.failAttempt(t1!.taskId, 'w1', {
+      code: 'WORKER_ERROR',
+      message: 'boom',
+      retryable: false,
+      at: clock.now(),
+    });
+    expect((await runtime.db.getRun(single.runId))?.status).toBe('FAILED');
+  });
+});

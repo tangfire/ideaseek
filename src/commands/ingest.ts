@@ -149,7 +149,7 @@ export function registerIngestCommand(program: Command): void {
               runId,
               type: 'paper.parse',
               phase: 'DEMO',
-              payload: { pdfPath: pdf.relPath },
+              payload: { pdfPath: pdf.relPath, nonBlocking: true },
               dependsOn: [],
               idempotencyKey: `paper.parse:${pdf.relPath}:${pdf.sha256.slice(7, 23)}:v1`,
               maxAttempts: runtime.config.runtime.maxAttempts,

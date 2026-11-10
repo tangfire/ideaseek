@@ -1423,7 +1423,7 @@ export class SqliteWorkflowDb implements WorkflowDb {
           summary: `${task.type} failed (${error.code}): ${willRetry ? 'will retry' : 'no retries left'}`,
           status: willRetry ? 'queued' : 'failed',
         });
-        if (!willRetry) this.checkRunFailure(task.runId);
+        if (!willRetry) this.settleAfterTerminalFailure(task.runId, task);
         return { task: this.requireTask(taskId), willRetry };
       }),
     );
@@ -1746,7 +1746,7 @@ export class SqliteWorkflowDb implements WorkflowDb {
         summary: `${task.type} failed: commit interrupted and attempts exhausted`,
         status: 'failed',
       });
-      this.checkRunFailure(task.runId);
+      this.settleAfterTerminalFailure(task.runId, task);
       return this.requireTask(task.taskId);
     }
     this.db
@@ -1944,7 +1944,7 @@ export class SqliteWorkflowDb implements WorkflowDb {
           summary: `${task.type} lease expired and attempts exhausted`,
           status: 'failed',
         });
-        this.checkRunFailure(task.runId);
+        this.settleAfterTerminalFailure(task.runId, task);
         continue;
       }
       this.db
@@ -1987,7 +1987,39 @@ export class SqliteWorkflowDb implements WorkflowDb {
         summary: `all ${done} task(s) succeeded`,
         status: 'COMPLETED',
       });
+      return;
     }
+    // Mixed terminal state (some flagged failures, nothing claimable): settle.
+    this.settleIdleRun(runId);
+  }
+
+  /**
+   * A non-blocking failure (payload.nonBlocking, e.g. a corrupt PDF in
+   * ingest) must not stop sibling tasks: the run only turns FAILED once
+   * nothing remains claimable. Regular failures keep immediate semantics.
+   */
+  private settleAfterTerminalFailure(runId: string, task: TaskRecord): void {
+    if (task.payload.nonBlocking !== true) {
+      this.checkRunFailure(runId);
+      return;
+    }
+    this.settleIdleRun(runId);
+  }
+
+  /** Marks FAILED when every task is terminal and at least one failed. */
+  private settleIdleRun(runId: string): void {
+    const run = this.requireRun(runId);
+    if (TERMINAL_RUN_STATUSES.includes(run.status)) return;
+    const row = this.db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN status IN ('queued','leased','running','committing') THEN 1 ELSE 0 END) AS unfinished,
+           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+         FROM task WHERE run_id = ?`,
+      )
+      .get(runId) as { unfinished: number | null; failed: number | null };
+    if (Number(row.unfinished ?? 0) > 0) return;
+    if (Number(row.failed ?? 0) > 0) this.checkRunFailure(runId);
   }
 
   private checkRunFailure(runId: string): void {

@@ -316,7 +316,7 @@ async function enqueuePaperExtract(
       runId,
       type: 'paper.parse',
       phase: 'DEMO',
-      payload: { pdfPath: relPath },
+      payload: { pdfPath: relPath, nonBlocking: true },
       dependsOn: [],
       idempotencyKey: 'paper.parse:v1',
       maxAttempts: runtime.config.runtime.maxAttempts,

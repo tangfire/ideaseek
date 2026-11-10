@@ -125,7 +125,8 @@ export async function parsePdf(pdfPath: string, opts: ParsePdfOptions = {}): Pro
           payload?.code && PARSER_CODES.has(payload.code)
             ? (payload.code as IdeaseekErrorCode)
             : 'PARSE_FAILED',
-          payload?.message ?? `pdf parse failed (exit ${code ?? 'signal'})`,
+          payload?.message ??
+            `pdf parse failed (exit ${code ?? 'signal'}): ${(stderr.split(/\r?\n/).find((line) => line.trim()) ?? '').slice(0, 160)}`,
           { pdfPath, exitCode: code },
         ),
       );
