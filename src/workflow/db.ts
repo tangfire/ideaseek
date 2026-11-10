@@ -61,6 +61,15 @@ export interface BlockResult {
   run: RunRecord;
 }
 
+export interface ProtocolLockRecord {
+  protocolId: string;
+  protocolHash: string;
+  lockedAt: number;
+  confirmedBy: string;
+  /** Full proposal JSON as locked. */
+  record: Record<string, unknown>;
+}
+
 export interface DatasetSliceRecord {
   sliceId: string;
   datasetSnapshotId: string;
@@ -174,6 +183,11 @@ export interface WorkflowDb {
   upsertSlice(slice: DatasetSliceRecord): Promise<void>;
   getSlice(sliceId: string): Promise<DatasetSliceRecord | null>;
   listSlices(opts?: { datasetSnapshotId?: string; scale?: string }): Promise<DatasetSliceRecord[]>;
+
+  // Protocol locks (migration v4)
+  lockProtocol(lock: ProtocolLockRecord): Promise<void>;
+  getProtocolLock(protocolId: string): Promise<ProtocolLockRecord | null>;
+  listProtocolLocks(): Promise<ProtocolLockRecord[]>;
 
   // Workers
   registerWorker(input: {

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { registerConfigCommand } from './commands/config.js';
+import { registerConfirmCommand } from './commands/confirm.js';
 import { registerDataCommand } from './commands/data.js';
 import { registerControlCommands } from './commands/control.js';
 import { registerDoctorCommand } from './commands/doctor.js';
@@ -59,6 +60,7 @@ export function buildProgram(): Command {
   registerDoctorCommand(program);
   registerConfigCommand(program);
   registerDataCommand(program);
+  registerConfirmCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

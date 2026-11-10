@@ -24,6 +24,7 @@ import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from './types.js';
 import type {
   BeginCommitResult,
   DatasetSliceRecord,
+  ProtocolLockRecord,
   PaperIndexEntry,
   PaperIndexMeta,
   PaperSearchHit,
@@ -158,6 +159,18 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_dataset_slice_dataset
         ON dataset_slice(dataset_snapshot_id, scale);
+    `,
+  },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS protocol_lock (
+        protocol_id TEXT PRIMARY KEY,
+        protocol_hash TEXT NOT NULL,
+        locked_at INTEGER NOT NULL,
+        confirmed_by TEXT NOT NULL,
+        record_json TEXT NOT NULL
+      );
     `,
   },
 ];
@@ -926,6 +939,77 @@ export class SqliteWorkflowDb implements WorkflowDb {
         scale: row.scale,
         record: parseJson<Record<string, unknown>>(row.record_json, {}),
         createdAt: row.created_at,
+      })),
+    );
+  }
+
+  lockProtocol(lock: ProtocolLockRecord): Promise<void> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const existing = this.db
+          .prepare('SELECT protocol_hash FROM protocol_lock WHERE protocol_id = ?')
+          .get(lock.protocolId) as { protocol_hash: string } | undefined;
+        if (existing && existing.protocol_hash !== lock.protocolHash) {
+          throw new IdeaseekError(
+            'INVALID_STATE',
+            `protocol ${lock.protocolId} is already locked with a different hash`,
+          );
+        }
+        if (existing) return; // idempotent re-lock of the same content
+        this.db
+          .prepare(
+            'INSERT INTO protocol_lock (protocol_id, protocol_hash, locked_at, confirmed_by, record_json) VALUES (?, ?, ?, ?, ?)',
+          )
+          .run(
+            lock.protocolId,
+            lock.protocolHash,
+            lock.lockedAt,
+            lock.confirmedBy,
+            JSON.stringify(lock.record),
+          );
+      }),
+    );
+  }
+
+  getProtocolLock(protocolId: string): Promise<ProtocolLockRecord | null> {
+    const row = this.db
+      .prepare('SELECT * FROM protocol_lock WHERE protocol_id = ?')
+      .get(protocolId) as
+      | {
+          protocol_id: string;
+          protocol_hash: string;
+          locked_at: number;
+          confirmed_by: string;
+          record_json: string;
+        }
+      | undefined;
+    if (!row) return Promise.resolve(null);
+    return Promise.resolve({
+      protocolId: row.protocol_id,
+      protocolHash: row.protocol_hash,
+      lockedAt: row.locked_at,
+      confirmedBy: row.confirmed_by,
+      record: parseJson<Record<string, unknown>>(row.record_json, {}),
+    });
+  }
+
+  listProtocolLocks(): Promise<ProtocolLockRecord[]> {
+    const rows = this.db
+      .prepare('SELECT * FROM protocol_lock ORDER BY locked_at, protocol_id')
+      .all() as unknown as {
+      protocol_id: string;
+      protocol_hash: string;
+      locked_at: number;
+      confirmed_by: string;
+      record_json: string;
+    }[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        protocolId: row.protocol_id,
+        protocolHash: row.protocol_hash,
+        lockedAt: row.locked_at,
+        confirmedBy: row.confirmed_by,
+        record: parseJson<Record<string, unknown>>(row.record_json, {}),
       })),
     );
   }
