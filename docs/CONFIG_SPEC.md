@@ -11,6 +11,7 @@ project:
 research:
   question: "如何降低持续学习中的灾难性遗忘？"
   mode: auto
+  autonomy: guided
   idea_limit: 1
   external_search: false
 inputs:
@@ -42,6 +43,7 @@ policy:
 - 平台不得从文件夹名称推断研究问题、标签含义、comparison 是否 required 或数据集 split；这些属于需要用户确认的语义配置。
 - 未提供 `idea_limit` 时使用平台决策：默认先验证 1 个候选；命令行 `--ideas N` 只影响当前 run。
 - `research.mode: auto` 根据论文/数据/comparison 规模选择 `starter`、`standard` 或 `research`；用户可显式指定，但平台仍显示证据和资源限制。
+- `research.autonomy` 可选 `guided`（默认）、`autonomous` 或 `review-only`；无人值守必须显式配置，不能由 Agent 自行切换。
 - `runtime.default_data_scale` 默认是 `quick`，可选 `smoke`/`quick`/`standard`；IdeaSeek 不执行 full-scale 训练，只通过 handoff 生成用户后续全量实验配置。每个探索规模的样本、步数、客户端/场景和 GPU 预算都要可配置。
 - `max_parallel_ideas` 不得超过实际资源和 scheduler 安全上限；资源不足时排队。
 - `external_search`、`allow_network`、第三方模型外发和 GitHub 私有仓库访问分别控制，不互相隐含授权。

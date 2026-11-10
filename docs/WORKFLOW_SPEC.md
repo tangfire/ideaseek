@@ -81,7 +81,7 @@ CANDIDATE → ACCEPTED → SOURCE_RESOLVED → IMPLEMENTED
 
 ## 人工门槛
 
-用户可确认研究范围、数据解释、comparison 清单、实验预算和最终结果。无人值守模式只能跳过交互提示，不能突破硬预算、权限、数据快照和 required comparison 规则。
+用户可确认研究范围、数据解释、comparison 清单、实验预算和最终结果。默认 `guided` 模式在这些科学门槛暂停；`autonomous` 模式可以自动通过，但必须记录 Decision/Event，不能突破硬预算、权限、数据快照和 required comparison 规则；`review-only` 不写代码或启动实验。
 
 ## 增量输入
 

@@ -99,6 +99,7 @@ Phase 4：Comparison 完整闭环
 - [ ] 主实验、消融、失败分类和结果分析
 - [ ] Idea 版本迭代、否证和新 idea 分支
 - [ ] 结果/报告/复现清单
+- [ ] guided/autonomous/review-only 自动化策略和科学门槛
 
 ## Phase 6：首个方向验证
 

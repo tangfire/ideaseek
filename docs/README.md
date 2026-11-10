@@ -62,6 +62,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [DOMAIN_ADAPTERS.md](DOMAIN_ADAPTERS.md)：多模态、短视频、图像分割和联邦学习等方向的可选解析器/检查器扩展。
 - [PLUGIN_SDK.md](PLUGIN_SDK.md)：用户和实验室开发可选 IdeaSeek 插件的边界与契约。
 - [USER_EXPERIENCE.md](USER_EXPERIENCE.md)：小规模项目、自动模式和小白用户操作路径。
+- [AUTONOMY_POLICY.md](AUTONOMY_POLICY.md)：默认人工确认、无人值守和 review-only 运行模式。
 - [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md)：可执行开发阶段、任务依赖和验收标准。
 - [PROGRESS.md](PROGRESS.md)：带 checkbox 的实际开发进度和模块交付记录。
 - [EXPERIMENT_PORTFOLIO.md](EXPERIMENT_PORTFOLIO.md)：从小规模机制验证到多场景/跨数据验证的实验组合。
