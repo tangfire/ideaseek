@@ -2,6 +2,18 @@
 
 IdeaSeek is a DSH-based multi-agent research workflow platform.
 
+## Installation
+
+IdeaSeek is currently under active development. For the development checkout, read `docs/BOOTSTRAP_DEVELOPMENT.md` and `docs/AGENTS.md`. The target end-user installation after release is:
+
+```bash
+npm install -g ideaseek
+ideaseek doctor
+ideaseek init
+```
+
+Linux is the primary execution platform. Windows users should use WSL2 or SSH to a Linux server. See [docs/PACKAGING.md](docs/PACKAGING.md) for development installation, Python workers, upgrades, rollback, and platform support.
+
 The design and development handoff documents are in `docs/`. Start with:
 
 1. `docs/AGENTS.md`

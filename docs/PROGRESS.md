@@ -123,6 +123,8 @@ Phase 4：Comparison 完整闭环
 
 ## Phase 8：发布与运维
 
+- [ ] npm CLI/package 发布和版本校验
+- [ ] 一键安装/卸载和 `ideaseek doctor`
 - [ ] Linux 安装包和服务器部署验证
 - [ ] Windows/WSL2 使用路径验证
 - [ ] 回归集、依赖、许可证和 secret 检查
