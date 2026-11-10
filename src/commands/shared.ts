@@ -7,7 +7,7 @@ import { DshHarnessAdapter } from '../dsh/dsh-adapter.js';
 import { projectPaths } from '../config/paths.js';
 import { join } from 'node:path';
 import { demoHandlers } from '../worker/handlers.js';
-import { paperExtract, paperParse } from '../worker/paper-handlers.js';
+import { paperExtract, paperParse, paperVerify } from '../worker/paper-handlers.js';
 import type { TaskHandler } from '../worker/types.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord, TaskRecord, RunStatus } from '../workflow/types.js';
@@ -214,7 +214,12 @@ export function buildHarness(kind: string | undefined): HarnessAdapter {
 
 /** Worker handler registry: demo pipeline + harness-backed paper extractor. */
 export function buildHandlers(): Record<string, TaskHandler> {
-  return { ...demoHandlers, 'paper.parse': paperParse, 'paper.extract': paperExtract };
+  return {
+    ...demoHandlers,
+    'paper.parse': paperParse,
+    'paper.extract': paperExtract,
+    'paper.verify': paperVerify,
+  };
 }
 
 export function jsonLine(value: unknown): string {

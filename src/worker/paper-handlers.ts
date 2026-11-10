@@ -2,7 +2,8 @@ import { IdeaseekError } from '../core/errors.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
 import { parsePdf } from '../knowledge/pdf.js';
-import { sha256OfFile } from '../core/hash.js';
+import { verifyPaperEvidence } from '../knowledge/checker.js';
+import { sha256OfFile, sha256Of } from '../core/hash.js';
 import { basename, join } from 'node:path';
 
 interface ParsedPaperArtifact {
@@ -125,7 +126,7 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
         'Extract a structured paper card. Only report facts supported by the provided text; ' +
         'use "unknown" for anything not present. Output JSON matching the requested schema.',
       inputs: [{ kind: 'text', name: paperName, content: paperText }],
-      outputSchema: 'papercard-lite-v1',
+      outputSchema: 'papercard-v1',
       budget: { timeoutMs: 60_000 },
       idempotencyKey: `paper-extract:${ctx.run.runId}:${ctx.task.taskId}`,
     },
@@ -133,14 +134,26 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
     ctx.signal,
   );
 
+  // Platform-stamped provenance: document identity is computed here, never
+  // trusted from model output (the Evidence Checker re-verifies binding).
+  const modelCard = JSON.parse(result.output) as Record<string, unknown>;
+  const documentHash = await computeSourceHash(ctx);
   const card = {
-    source: { paperName, inputBytes: Buffer.byteLength(paperText, 'utf8') },
+    source: {
+      paperName,
+      sourcePath: typeof ctx.payload.sourcePath === 'string' ? ctx.payload.sourcePath : null,
+      inputBytes: Buffer.byteLength(paperText, 'utf8'),
+    },
     harness: result.runtime,
     sessionId: result.sessionId ?? null,
     model: result.model,
     usage: result.usage,
     toolCalls: result.toolCalls,
-    card: JSON.parse(result.output) as unknown,
+    card: {
+      ...modelCard,
+      paper_id: documentHash ? `paper-${documentHash.slice(7, 19)}` : 'unknown',
+      document_hash: documentHash ?? modelCard.document_hash,
+    },
   };
 
   // Persist an audit trail of every tool call the agent made: summaries are
@@ -162,10 +175,132 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
       {
         kind: 'papercard',
         data: `${JSON.stringify(card, null, 2)}\n`,
-        meta: { filename: 'papercard.json', schema: 'papercard-lite-v1' },
+        meta: { filename: 'papercard.json', schema: 'papercard-v1' },
       },
     ],
     summary: `extracted structured card for ${paperName} via ${result.runtime.kind}`,
     data: { model: result.model, outputBytes: Buffer.byteLength(result.output, 'utf8') },
+  };
+};
+
+/** Source hash for provenance: the real file when known, else the excerpt bytes. */
+async function computeSourceHash(ctx: TaskContext): Promise<string | null> {
+  const sourcePath = typeof ctx.payload.sourcePath === 'string' ? ctx.payload.sourcePath : '';
+  if (sourcePath && !sourcePath.includes('..')) {
+    return sha256OfFile(join(ctx.runtime.paths.root, ...sourcePath.split('/')));
+  }
+  const paperText = typeof ctx.payload.paperText === 'string' ? ctx.payload.paperText : '';
+  return paperText ? sha256Of(paperText) : null;
+}
+
+/**
+ * Evidence Checker task (deterministic layer): re-reads the committed
+ * papercard, verifies structure, hash binding and every claim quote against
+ * the parsed pages (or raw text), and commits an evidence-report. The check
+ * always commits its report — a failing verdict is information for the
+ * workflow, not a crash.
+ */
+export const paperVerify: TaskHandler = async (ctx: TaskContext) => {
+  await applyFaults(ctx);
+
+  const extractId = ctx.task.dependsOn[0];
+  if (!extractId) {
+    const error = new IdeaseekError(
+      'DEPENDENCY_NOT_MET',
+      'paper.verify requires paper.extract as its dependency',
+    );
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const extract = await ctx.runtime.db.getTask(extractId);
+  if (!extract || extract.status !== 'succeeded' || !extract.result) {
+    const error = new IdeaseekError('DEPENDENCY_NOT_MET', 'paper.extract has not succeeded yet');
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const extractArtifacts = await ctx.runtime.db.listArtifacts(extract.taskId);
+  const cardRow = extractArtifacts.find(
+    (row) => row.kind === 'papercard' && row.status === 'committed',
+  );
+  if (!cardRow) {
+    const error = new IdeaseekError('DEPENDENCY_NOT_MET', 'papercard artifact missing');
+    (error as IdeaseekError & { permanent?: boolean }).permanent = true;
+    throw error;
+  }
+  const wrapper = JSON.parse(await ctx.runtime.store.readFinalText(cardRow.contentHash)) as {
+    card: unknown;
+  };
+
+  // Pages from the chained parse task, or raw text for excerpt inputs.
+  let pages: { page: number; text: string }[] | null = null;
+  let sourceText: string | null = null;
+  // Independently recomputed source hash — never taken from the card itself,
+  // otherwise the binding check would be circular.
+  let independentHash: string | null = null;
+  const parseId = extract.dependsOn[0];
+  if (parseId) {
+    const parseTask = await ctx.runtime.db.getTask(parseId);
+    if (parseTask?.status === 'succeeded') {
+      const rows = await ctx.runtime.db.listArtifacts(parseTask.taskId);
+      const parsedRow = rows.find(
+        (row) => row.kind === 'parsed-paper' && row.status === 'committed',
+      );
+      if (parsedRow) {
+        const parsed = JSON.parse(await ctx.runtime.store.readFinalText(parsedRow.contentHash)) as {
+          pages: { page: number; text: string }[];
+          sourceHash?: string;
+        };
+        pages = parsed.pages;
+        independentHash = parsed.sourceHash ?? null;
+      }
+    }
+  }
+  const sourcePath = extract.payload.sourcePath;
+  if (!pages) {
+    if (typeof sourcePath === 'string' && sourcePath && !sourcePath.includes('..')) {
+      try {
+        const abs = join(ctx.runtime.paths.root, ...sourcePath.split('/'));
+        sourceText = await (await import('node:fs/promises')).readFile(abs, 'utf8');
+        independentHash ??= await sha256OfFile(abs);
+      } catch {
+        sourceText = null;
+      }
+    }
+  }
+  if (!pages && !sourceText) {
+    const paperText =
+      typeof extract.payload.paperText === 'string' ? extract.payload.paperText : '';
+    sourceText = paperText || null;
+    independentHash ??= paperText ? sha256Of(paperText) : null;
+  }
+
+  const report = verifyPaperEvidence({
+    card: wrapper.card,
+    pages,
+    sourceText,
+    sourceHash: independentHash,
+    now: ctx.runtime.clock.now(),
+  });
+
+  await ctx.runtime.db.appendEvent({
+    runId: ctx.run.runId,
+    phase: ctx.task.phase,
+    objectId: ctx.task.taskId,
+    role: 'evidence-checker',
+    eventType: 'evidence_verdict',
+    summary: `${report.verdict}: ${report.stats.verified} verified, ${report.stats.weak} weak, ${report.stats.failed} failed`,
+    status: report.verdict,
+  });
+
+  return {
+    artifacts: [
+      {
+        kind: 'evidence-report',
+        data: `${JSON.stringify(report, null, 2)}\n`,
+        meta: { filename: 'evidence-report.json', verdict: report.verdict },
+      },
+    ],
+    summary: `evidence ${report.verdict} (${report.stats.verified}/${report.stats.spans} spans verified)`,
+    data: { verdict: report.verdict, ...report.stats },
   };
 };

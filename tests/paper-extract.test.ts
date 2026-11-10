@@ -28,7 +28,7 @@ describe('FakeHarnessAdapter contract', () => {
         profile: 'paper-extractor',
         instruction: 'extract',
         inputs: [{ kind: 'text', name: 'a', content: 'x' }],
-        outputSchema: 'papercard-lite-v1',
+        outputSchema: 'papercard-v1',
         budget: { timeoutMs: 1000 },
         idempotencyKey: 'k1',
       }),
@@ -46,13 +46,17 @@ describe('FakeHarnessAdapter contract', () => {
         profile: 'paper-extractor',
         instruction: 'extract',
         inputs: [{ kind: 'text', name: 'a', content: 'hello' }],
-        outputSchema: 'papercard-lite-v1',
+        outputSchema: 'papercard-v1',
         budget: { timeoutMs: 1000 },
         idempotencyKey: 'k1',
       },
       (event) => events.push(event.type),
     );
-    expect(JSON.parse(result.output)).toMatchObject({ schema: 'papercard-lite-v1', call: 1 });
+    expect(JSON.parse(result.output)).toMatchObject({
+      title: 'unknown',
+      prompt_schema_version: 'papercard-v1',
+      claims: [{ evidence: [{ quote: expect.any(String) }] }],
+    });
     expect(result.runtime.kind).toBe('fake');
     expect(events).toEqual(['started', 'completed']);
     expect(harness.callCount('k1')).toBe(1);
@@ -72,7 +76,7 @@ describe('FakeHarnessAdapter contract', () => {
       profile: 'paper-extractor' as const,
       instruction: 'extract',
       inputs: [{ kind: 'text' as const, name: 'a', content: 'x' }],
-      outputSchema: 'papercard-lite-v1',
+      outputSchema: 'papercard-v1',
       budget: { timeoutMs: 1000 },
       idempotencyKey: 'k2',
     };
@@ -156,13 +160,14 @@ describe('paper.extract workflow task (fake Paper Extractor end to end)', () => 
       source: { paperName: string; inputBytes: number };
       harness: { kind: string; version: string };
       model: string;
-      card: { schema: string; profile: string };
+      card: Record<string, unknown>;
     };
     expect(card.source.paperName).toBe('attention.pdf');
     expect(card.source.inputBytes).toBe(Buffer.byteLength(PAPER, 'utf8'));
     expect(card.harness.kind).toBe('fake');
-    expect(card.card.schema).toBe('papercard-lite-v1');
-    expect(card.card.profile).toBe('paper-extractor');
+    expect(card.card.title).toBe('unknown');
+    expect(card.card.document_hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(card.card.paper_id).toMatch(/^paper-/);
     await runtime.close();
   });
 
@@ -306,7 +311,7 @@ describe('CLI: run --paper (Phase 1 end to end)', () => {
     expect(run.code).toBe(0);
     const payload = JSON.parse(run.stdout) as { status: string; tasks: Record<string, number> };
     expect(payload.status).toBe('COMPLETED');
-    expect(payload.tasks.succeeded).toBe(4);
+    expect(payload.tasks.succeeded).toBe(5); // demo 3 + extract + verify
 
     const events = await runCli(dir, ['events', '--json']);
     const stream = JSON.parse(events.stdout) as {
@@ -316,6 +321,7 @@ describe('CLI: run --paper (Phase 1 end to end)', () => {
     expect(stream.events.some((event) => event.summary.includes('paper.extract succeeded'))).toBe(
       true,
     );
+    expect(stream.events.some((event) => event.eventType === 'evidence_verdict')).toBe(true);
 
     const status = await runCli(dir, ['status', '--detail']);
     expect(status.stdout).toContain('paper.extract');
@@ -436,7 +442,7 @@ describe('CLI: PDF parse chain (--paper file.pdf)', () => {
     const payload = JSON.parse(run.stdout) as { status: string; tasks: Record<string, number> };
     expect(payload.status).toBe('COMPLETED');
     // demo.ingest + demo.analyze + demo.report + paper.parse + paper.extract
-    expect(payload.tasks.succeeded).toBe(5);
+    expect(payload.tasks.succeeded).toBe(6); // demo 3 + parse + extract + verify
 
     const events = await runCli(dir, ['events', '--json']);
     const stream = JSON.parse(events.stdout) as {
@@ -446,6 +452,9 @@ describe('CLI: PDF parse chain (--paper file.pdf)', () => {
     expect(summaries.some((line) => line.includes('parsed-paper committed'))).toBe(true);
     expect(summaries.some((line) => line.includes('paper.parse succeeded'))).toBe(true);
     expect(summaries.some((line) => line.includes('parsed 2 page(s)'))).toBe(true);
+    expect(stream.events.some((event) => event.eventType === 'evidence_verdict')).toBe(true);
+    const verdict = stream.events.find((event) => event.eventType === 'evidence_verdict');
+    expect(verdict!.summary.startsWith('pass')).toBe(true);
 
     const status = await runCli(dir, ['status', '--detail']);
     expect(status.stdout).toContain('paper.parse');

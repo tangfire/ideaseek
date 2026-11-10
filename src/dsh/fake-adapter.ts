@@ -25,6 +25,45 @@ export interface FakeHarnessOptions {
  * contract as the DSH adapter: idempotency keys, typed block errors and
  * secret-free event summaries.
  */
+
+/**
+ * Builds a validator-compliant PaperCard from the request inputs: everything
+ * unknown stays "unknown", and the single claim quotes a real line of the
+ * provided text so the deterministic Evidence Checker can verify it. The
+ * platform stamps document_hash/paper_id in the extract handler.
+ */
+function buildFakeCard(request: HarnessTaskRequest, call: number): string {
+  const content = request.inputs[0]?.content ?? '';
+  const line =
+    content
+      .split(/\r?\n/)
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate.length >= 15) ?? content.slice(0, 60).trim();
+  const card = {
+    paper_id: 'pending',
+    document_hash: `sha256:${'0'.repeat(64)}`,
+    title: 'unknown',
+    problem: 'unknown',
+    method: { summary: 'unknown', steps: [], motivation: [] },
+    datasets: [],
+    metrics: [],
+    baselines: [],
+    limitations: [],
+    claims: line
+      ? [
+          {
+            text: `fake claim derived from source text (call ${call})`,
+            evidence: [{ quote: line.slice(0, 120) }],
+          },
+        ]
+      : [],
+    unknowns: ['fake harness leaves every field it cannot know as unknown'],
+    parser_version: 'fake-1',
+    prompt_schema_version: request.outputSchema,
+  };
+  return JSON.stringify(card);
+}
+
 export class FakeHarnessAdapter implements HarnessAdapter {
   readonly kind = 'fake' as const;
   readonly version = 'fake-1';
@@ -89,13 +128,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       throw new Error(`fake harness injected failure (call ${count})`);
     }
 
-    const payload = {
-      schema: request.outputSchema,
-      profile: request.profile,
-      summary: `fake structured output for ${request.inputs.length} input(s)`,
-      inputs: request.inputs.map((input) => ({ name: input.name, length: input.content.length })),
-      call: count,
-    };
+    const payload = buildFakeCard(request, count);
     onEvent?.({
       type: 'completed',
       ts: Date.now(),
@@ -106,7 +139,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
     return {
       runId: request.runId,
       taskId: request.taskId,
-      output: JSON.stringify(payload),
+      output: payload, // buildFakeCard already returns JSON text
       usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
       model: 'fake-model',
       toolCalls: this.opts.toolCalls ?? [],

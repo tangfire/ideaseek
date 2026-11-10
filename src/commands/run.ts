@@ -336,13 +336,24 @@ async function enqueuePaperExtract(
     }
   }
 
-  await runtime.db.enqueueTask({
+  const extract = await runtime.db.enqueueTask({
     runId,
     type: 'paper.extract',
     phase: 'DEMO',
     payload: { paperName: basename(paperPath), paperText, sourcePath: relPath },
     dependsOn,
     idempotencyKey: 'paper.extract:v1',
+    maxAttempts: runtime.config.runtime.maxAttempts,
+  });
+
+  // Evidence Checker runs deterministically after extraction.
+  await runtime.db.enqueueTask({
+    runId,
+    type: 'paper.verify',
+    phase: 'DEMO',
+    payload: { sourcePath: relPath },
+    dependsOn: [extract.task.taskId],
+    idempotencyKey: 'paper.verify:v1',
     maxAttempts: runtime.config.runtime.maxAttempts,
   });
 }
