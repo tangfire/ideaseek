@@ -1,0 +1,41 @@
+# Generated/runtime/user data
+.research/
+.env
+.env.*
+!.env.example
+papers/
+datasets/
+comparisons/
+incoming/
+knowledge/
+ideas/
+reports/
+logs/
+artifacts/
+checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+coverage/
+
+# Large/private files
+*.pdf
+*.zip
+*.tar
+*.tar.gz
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.parquet
+*.sqlite
+*.db
