@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
 import type { RunResult } from '@deepseek-ai/dsh-sdk-client';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import { writeCapabilityPatch } from './capability.js';
 import {
   HarnessBlockError,
@@ -40,6 +41,8 @@ export interface DshAdapterOptions {
   capabilityPatch?: boolean;
   /** Per-request model output cap (DSH sets this at spawn; default 4096). */
   maxOutputTokens?: number;
+  /** deepseek reasoning effort: off (default) keeps output inside the JSON cap. */
+  reasoningEffort?: string;
 }
 
 /** Stable DSH LlmFailure.code → IdeaSeek handling (docs: never parse messages). */
@@ -215,6 +218,7 @@ export class DshHarnessAdapter implements HarnessAdapter {
       provider: this.opts.provider ?? 'deepseek-official',
       model: this.opts.model ?? 'deepseek-v4-flash',
       maxTokens: this.opts.maxOutputTokens ?? 8192, // spawn-time; budget.maxOutputTokens is advisory
+      reasoningEffort: ReasoningEffortId(this.opts.reasoningEffort ?? 'off'),
       initializeTimeoutMs: this.opts.initializeTimeoutMs ?? 15_000,
     });
     this.harness = harness;

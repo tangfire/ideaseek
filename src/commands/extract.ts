@@ -113,6 +113,7 @@ export function registerExtractCommand(program: Command): void {
             for (const run of runs) {
               for (const task of await runtime.db.listTasks(run.runId)) {
                 if (task.type !== 'paper.extract') continue;
+                if (['failed', 'canceled'].includes(task.status)) continue;
                 const source = task.payload.sourcePath;
                 if (typeof source === 'string' && source) extracted.add(source);
               }
