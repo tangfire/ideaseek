@@ -58,10 +58,26 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
   const card = {
     source: { paperName, inputBytes: Buffer.byteLength(paperText, 'utf8') },
     harness: result.runtime,
+    sessionId: result.sessionId ?? null,
     model: result.model,
     usage: result.usage,
+    toolCalls: result.toolCalls,
     card: JSON.parse(result.output) as unknown,
   };
+
+  // Persist an audit trail of every tool call the agent made: summaries are
+  // sanitized by the adapter (no secrets, truncated arguments).
+  for (const call of result.toolCalls) {
+    await ctx.runtime.db.appendEvent({
+      runId: ctx.run.runId,
+      phase: ctx.task.phase,
+      objectId: ctx.task.taskId,
+      role: 'paper-extractor',
+      eventType: 'harness_tool_call',
+      summary: `${call.tool}(${call.summary}) ${call.ok ? 'ok' : 'failed'}`,
+      status: call.ok ? 'ok' : 'error',
+    });
+  }
 
   return {
     artifacts: [

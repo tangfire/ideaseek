@@ -174,3 +174,32 @@ describe('DshHarnessAdapter real runtime (keyless)', () => {
     }
   }, 120_000);
 });
+
+describe('capability patch generation', () => {
+  it('writes absolute-path plugin rows, the default preset and an existing plugin file', async () => {
+    const { writeCapabilityPatch, EXTRACTOR_PRESET_ID } = await import('../src/dsh/capability.js');
+    const { access, readFile: rf } = await import('node:fs/promises');
+    const dshHome = await mkdtemp(join(tmpdir(), 'ideaseek-cap-'));
+    const patch = await writeCapabilityPatch({ dshHome });
+
+    expect(patch.patchPath.endsWith('ideaseek.cordis.yml')).toBe(true);
+    const yaml = await rf(patch.patchPath, 'utf8');
+    expect(yaml).toContain('ideaseek-research-tools');
+    expect(yaml).toContain('ideaseek-agent-preset-registry');
+    expect(yaml).toContain(`default: ${EXTRACTOR_PRESET_ID}`);
+    expect(yaml).toContain('ideaseek-preset-ideaseek-extractor');
+
+    // Plugin files must exist where the patch points (absolute paths), and the
+    // research tool plugin really registers the restricted reader.
+    await access(patch.pluginPaths.researchTools);
+    await access(patch.pluginPaths.extractorProfile);
+    const pluginSource = await rf(patch.pluginPaths.researchTools, 'utf8');
+    expect(pluginSource).toContain('project_read');
+    expect(pluginSource).toContain('IDEASEEK_WORKSPACE_ROOT');
+    expect(patch.yaml).toBe(yaml);
+
+    // Overwriting is idempotent.
+    const again = await writeCapabilityPatch({ dshHome });
+    expect(again.patchPath).toBe(patch.patchPath);
+  });
+});

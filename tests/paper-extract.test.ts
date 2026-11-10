@@ -337,3 +337,57 @@ describe('CLI: run --paper (Phase 1 end to end)', () => {
     expect(bogus.stderr).toContain('unknown harness kind');
   }, 30_000);
 });
+
+describe('tool-call audit persistence', () => {
+  it('stores tool call summaries in the card and appends harness_tool_call events', async () => {
+    const dir = await makeProjectDir();
+    const harness = new FakeHarnessAdapter({
+      toolCalls: [{ tool: 'project_read', summary: '{"path":"papers/a.pdf"}', ok: true }],
+    });
+    await harness.initialize();
+    const runtime = await openRuntime(dir, { recover: false, harness });
+    const run = await runtime.db.createRun({
+      projectId: runtime.project.id,
+      question: 'audit test',
+      config: runtime.config,
+    });
+    await runtime.db.enqueueTask({
+      runId: run.runId,
+      type: 'paper.extract',
+      phase: 'DEMO',
+      payload: { paperName: 'a.pdf', paperText: 'some text' },
+      idempotencyKey: 'paper.extract:v1',
+      maxAttempts: 3,
+    });
+
+    const exit = await new FakeWorker({
+      runtime,
+      runId: run.runId,
+      kind: 'test',
+      handlers: buildHandlers(),
+      leaseMs: 5_000,
+      heartbeatMs: 100,
+      pollMs: 10,
+    }).run();
+    expect(exit.reason).toBe('completed');
+
+    const task = (await runtime.db.listTasks(run.runId))[0]!;
+    const artifacts = await runtime.db.listArtifacts(task.taskId);
+    const card = JSON.parse(await runtime.store.readFinalText(artifacts[0]!.contentHash)) as {
+      toolCalls: { tool: string }[];
+      sessionId: string | null;
+    };
+    expect(card.toolCalls).toHaveLength(1);
+    expect(card.toolCalls[0]!.tool).toBe('project_read');
+    expect(card.sessionId).toBeNull();
+
+    const events = await runtime.db.listEvents(run.runId);
+    const audit = events.filter((event) => event.eventType === 'harness_tool_call');
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.summary).toContain('project_read');
+    expect(audit[0]!.summary).toContain('papers/a.pdf');
+    expect(audit[0]!.status).toBe('ok');
+    await runtime.close();
+    await harness.shutdown();
+  });
+});

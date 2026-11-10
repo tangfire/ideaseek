@@ -9,6 +9,8 @@ import {
 } from './adapter.js';
 
 export interface FakeHarnessOptions {
+  /** Tool-call summaries to report on successful results (audit tests). */
+  toolCalls?: { tool: string; summary: string; ok: boolean }[];
   /** Fail the first N calls of a task with a normal error. */
   failTimes?: number;
   /** Block the first N calls with an external condition. */
@@ -107,7 +109,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       output: JSON.stringify(payload),
       usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
       model: 'fake-model',
-      toolCalls: [],
+      toolCalls: this.opts.toolCalls ?? [],
       runtime: { kind: 'fake', version: this.version },
       sessionId: null,
       finishedAt: Date.now(),

@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
 import type { RunResult } from '@deepseek-ai/dsh-sdk-client';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
+import { writeCapabilityPatch } from './capability.js';
 import {
   HarnessBlockError,
   type HarnessAdapter,
@@ -27,6 +28,16 @@ export interface DshAdapterOptions {
   apiKeyEnv?: string;
   /** Handshake/launch bound; the per-task bound comes from the task budget. */
   initializeTimeoutMs?: number;
+  /**
+   * Project root exposed to tools as the sandbox workspace and to
+   * project_read as IDEASEEK_WORKSPACE_ROOT. Defaults to `cwd`.
+   */
+  workspaceRoot?: string;
+  /**
+   * Load the generated IdeaSeek capability patch (research tool + extractor
+   * preset with tool allowlist). Default true; tests may disable it.
+   */
+  capabilityPatch?: boolean;
 }
 
 /** Stable DSH LlmFailure.code → IdeaSeek handling (docs: never parse messages). */
@@ -179,10 +190,26 @@ export class DshHarnessAdapter implements HarnessAdapter {
       await this.startPromise;
       return;
     }
+    const projectRoot = this.opts.workspaceRoot ?? this.opts.cwd ?? process.cwd();
+    let patches = this.opts.patches ?? [];
+    if (this.opts.capabilityPatch !== false && patches.length === 0) {
+      const capability = await writeCapabilityPatch({ dshHome: this.opts.dshHome });
+      patches = [capability.patchPath];
+    }
+    // Child env: inherit the parent (the DSH provider reads the credential env
+    // itself) and add only non-secret policy variables. `env` replaces the
+    // whole environment, so pass a merged copy.
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      DSH_PERMISSION_MODE: 'read-only',
+      IDEASEEK_WORKSPACE_ROOT: projectRoot,
+    };
     const harness = new DeepSeekHarness({
       dshHome: this.opts.dshHome,
-      cwd: this.opts.cwd ?? process.cwd(),
-      patches: this.opts.patches ?? [],
+      cwd: projectRoot,
+      processCwd: projectRoot,
+      env: childEnv,
+      patches,
       provider: this.opts.provider ?? 'deepseek-official',
       model: this.opts.model ?? 'deepseek-v4-flash',
       initializeTimeoutMs: this.opts.initializeTimeoutMs ?? 15_000,

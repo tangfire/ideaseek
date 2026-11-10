@@ -59,6 +59,8 @@ describe('setup / doctor / config explain', () => {
     expect(byName.get('config')?.level).toBe('ok');
     expect(byName.get('node')?.level).toBe('ok');
     expect(byName.get('recovery')?.level).toBe('ok');
+    expect(byName.get('dsh')?.detail).toMatch(/pinned [0-9a-f]{12}/);
+    expect(byName.get('credentials')?.detail).toContain('DEEPSEEK_API_KEY');
 
     const text = await runCli(dir, ['doctor']);
     expect(text.code).toBe(0);

@@ -1,6 +1,8 @@
 import type { Command } from 'commander';
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DSH_SDK_VERSION } from '../dsh/dsh-adapter.js';
 import { IdeaseekError } from '../core/errors.js';
 import { findProjectRoot } from '../config/paths.js';
 import { detectEnvironment, type EnvironmentReport } from '../runtime/detect.js';
@@ -174,11 +176,34 @@ export function registerDoctorCommand(program: Command): void {
         } else {
           checks.push({ level: 'warn', name: 'disk', detail: 'could not stat filesystem' });
         }
+        const apiKeySet = Boolean(process.env.DEEPSEEK_API_KEY);
         checks.push({
-          level: 'info',
+          level: apiKeySet ? 'ok' : 'info',
           name: 'credentials',
-          detail: 'model/GitHub credentials: not configured yet (Phase 1 wires DSH providers)',
+          detail: apiKeySet
+            ? 'env DEEPSEEK_API_KEY is set (value never read or printed by IdeaSeek)'
+            : 'env DEEPSEEK_API_KEY not set — required only for real model runs, not for demo/fake tasks',
         });
+        try {
+          // runtime-lock.json pins the DSH version of this IdeaSeek install
+          // (dist/commands → repo root), not of the user's project.
+          const here = dirname(fileURLToPath(import.meta.url));
+          const lockPath = join(here, '..', '..', 'runtime-lock.json');
+          const lock = JSON.parse(await readFile(lockPath, 'utf8')) as {
+            dsh: { commit: string; gitDescribe: string };
+          };
+          checks.push({
+            level: 'ok',
+            name: 'dsh',
+            detail: `pinned ${lock.dsh.commit.slice(0, 12)} (${lock.dsh.gitDescribe}) · sdk ${DSH_SDK_VERSION} · capability patch generated on first harness task`,
+          });
+        } catch {
+          checks.push({
+            level: 'warn',
+            name: 'dsh',
+            detail: 'runtime-lock.json missing or unreadable (DSH version not pinned)',
+          });
+        }
 
         const errors = checks.filter((check) => check.level === 'error');
         const exitCode = errors.length === 0 ? 0 : 2;
