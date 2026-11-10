@@ -404,6 +404,129 @@ export function registerComparisonCommand(program: Command): void {
     );
 
   comparison
+    .command('gate')
+    .description(
+      'required-comparison gate: every required method needs a runnable result before idea generation',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const runtime = await openRuntime(root);
+        try {
+          const methods = await runtime.db.listComparisons({ required: true });
+          // Statuses that prove a runnable result under the current protocol
+          // (plan §C.10). `excluded` is an explicit, reasoned opt-out.
+          const PASSING = new Set(['smoke-tested', 'evaluated', 'validated']);
+          const skipped: { methodId: string; reason: string | null }[] = [];
+          const passed: { methodId: string; status: string; via: 'status' | 'experiment' }[] = [];
+          const blocking: { methodId: string; status: string; hint: string }[] = [];
+
+          // Experiment results covering a method also prove it runs under a
+          // recorded spec (unified ExperimentSpec/RunResult contract).
+          const experiments = await runtime.db.listExperiments();
+          const experimentCover = new Map<string, string>();
+          for (const doc of experiments) {
+            if (!doc.result) continue;
+            const result = doc.result as { status?: unknown };
+            if (result.status !== 'succeeded' && result.status !== 'partial') continue;
+            const ids = (doc.spec as { comparisonIds?: unknown }).comparisonIds;
+            if (!Array.isArray(ids)) continue;
+            for (const id of ids) {
+              if (typeof id === 'string' && !experimentCover.has(id)) {
+                experimentCover.set(id, doc.specId);
+              }
+            }
+          }
+
+          for (const method of methods) {
+            if (method.status === 'excluded') {
+              skipped.push({
+                methodId: method.methodId,
+                reason: (method.record.statusReason as string | undefined) ?? null,
+              });
+              continue;
+            }
+            if (PASSING.has(method.status)) {
+              passed.push({ methodId: method.methodId, status: method.status, via: 'status' });
+              continue;
+            }
+            const viaExperiment = experimentCover.get(method.methodId);
+            if (viaExperiment) {
+              passed.push({
+                methodId: method.methodId,
+                status: method.status,
+                via: 'experiment',
+              });
+              continue;
+            }
+            blocking.push({
+              methodId: method.methodId,
+              status: method.status,
+              hint:
+                method.status === 'blocked'
+                  ? `resolve the block or exclude with a reason: ideaseek comparison set-status ${method.methodId} excluded --reason "..."`
+                  : method.status === 'repairing' || method.status === 'implemented'
+                    ? `finish the baseline: ideaseek baseline repair --method ${method.methodId}`
+                    : `advance the method: ideaseek comparison set-status ${method.methodId} implemented`,
+            });
+          }
+
+          const ok = blocking.length === 0;
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ok,
+                required: methods.length,
+                passed,
+                skipped,
+                blocking,
+                note: methods.length === 0 ? 'no required comparisons registered' : undefined,
+              }),
+            );
+            return ok ? 0 : 2;
+          }
+          if (methods.length === 0) {
+            process.stdout.write(
+              'gate: no required comparisons registered (ideaseek comparison import <id> <url>)\n',
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `gate: ${passed.length}/${methods.length} required method(s) runnable` +
+              (skipped.length > 0 ? ` · ${skipped.length} excluded` : '') +
+              (blocking.length > 0 ? ` · ${blocking.length} blocking` : '') +
+              '\n',
+          );
+          for (const entry of passed) {
+            process.stdout.write(
+              `  PASS  ${entry.methodId}  ${entry.status}${entry.via === 'experiment' ? ' (experiment result)' : ''}\n`,
+            );
+          }
+          for (const entry of skipped) {
+            process.stdout.write(
+              `  SKIP  ${entry.methodId}  excluded (${entry.reason ?? 'no reason'})\n`,
+            );
+          }
+          for (const entry of blocking) {
+            process.stdout.write(`  FAIL  ${entry.methodId}  ${entry.status}\n`);
+            process.stdout.write(`        next: ${entry.hint}\n`);
+          }
+          if (ok) {
+            process.stdout.write('gate PASSED: all required comparisons have runnable results\n');
+          } else {
+            process.stdout.write(
+              'gate FAILED: idea generation stays blocked until every required method passes or is explicitly excluded\n',
+            );
+          }
+          return ok ? 0 : 2;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  comparison
     .command('set-status')
     .description('transition a method through the comparison state machine')
     .argument('<methodId>', 'method id')

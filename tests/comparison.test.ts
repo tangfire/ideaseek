@@ -540,3 +540,165 @@ describe('findRepoUrlMentions (DB)', () => {
     expect(await runtime.db.findRepoUrlMentions()).toEqual([]);
   });
 });
+
+describe('ideaseek comparison gate', () => {
+  let project: string;
+
+  beforeEach(async () => {
+    project = await mkdtemp(join(tmpdir(), 'ideaseek-gate-e2e-'));
+    const init = await runCli(project, ['init']);
+    expect(init.code).toBe(0);
+  }, 60_000);
+
+  async function registerWithStatus(id: string, statuses: string[]): Promise<void> {
+    const reg = await runCli(project, ['comparison', 'register', id]);
+    expect(reg.code).toBe(0);
+    for (const status of statuses) {
+      const step = await runCli(project, ['comparison', 'set-status', id, status]);
+      expect(step.code, `${id} → ${status}: ${step.stderr}`).toBe(0);
+    }
+  }
+
+  it('passes with no required methods, fails on pending, passes after smoke-tested', async () => {
+    // No methods at all → informational pass.
+    const empty = await runCli(project, ['comparison', 'gate', '--json']);
+    expect(empty.code).toBe(0);
+    expect((JSON.parse(empty.stdout) as { ok: boolean }).ok).toBe(true);
+
+    // Registered but not runnable → blocking (exit 2).
+    await registerWithStatus('fedavg', ['accepted', 'source-resolved']);
+    const pending = await runCli(project, ['comparison', 'gate', '--json']);
+    expect(pending.code).toBe(2);
+    const pendingPayload = JSON.parse(pending.stdout) as {
+      ok: boolean;
+      blocking: { methodId: string; status: string }[];
+    };
+    expect(pendingPayload.ok).toBe(false);
+    expect(pendingPayload.blocking[0]).toMatchObject({
+      methodId: 'fedavg',
+      status: 'source-resolved',
+    });
+
+    // Advance to smoke-tested (implemented hop needs no worktree for status).
+    const impl = await runCli(project, ['comparison', 'set-status', 'fedavg', 'implemented']);
+    expect(impl.code).toBe(0);
+    const smoke = await runCli(project, ['comparison', 'set-status', 'fedavg', 'smoke-tested']);
+    expect(smoke.code).toBe(0);
+
+    const passing = await runCli(project, ['comparison', 'gate']);
+    expect(passing.code).toBe(0);
+    expect(passing.stdout).toContain('gate PASSED');
+    expect(passing.stdout).toContain('PASS  fedavg');
+  }, 60_000);
+
+  it('records reasoned exclusions as SKIP and ignores reference-only methods', async () => {
+    await registerWithStatus('fedavg', ['accepted', 'source-resolved']);
+    const excluded = await runCli(project, [
+      'comparison',
+      'set-status',
+      'fedavg',
+      'excluded',
+      '--reason',
+      'license forbids use',
+    ]);
+    expect(excluded.code).toBe(0);
+
+    // Reference-only method in a non-passing state must not block the gate.
+    const ref = await runCli(project, ['comparison', 'register', 'fedproto', '--reference-only']);
+    expect(ref.code).toBe(0);
+
+    const gate = await runCli(project, ['comparison', 'gate', '--json']);
+    expect(gate.code).toBe(0);
+    const payload = JSON.parse(gate.stdout) as {
+      ok: boolean;
+      skipped: { methodId: string; reason: string | null }[];
+      passed: unknown[];
+      blocking: unknown[];
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.skipped).toEqual([{ methodId: 'fedavg', reason: 'license forbids use' }]);
+    expect(payload.passed).toEqual([]);
+    expect(payload.blocking).toEqual([]);
+
+    const plain = await runCli(project, ['comparison', 'gate']);
+    expect(plain.stdout).toContain('SKIP  fedavg  excluded (license forbids use)');
+  }, 60_000);
+
+  it('accepts a covering experiment result as a runnable result', async () => {
+    await registerWithStatus('fedavg', ['accepted', 'source-resolved']);
+
+    const spec = {
+      specId: 'exp-fedavg-gate',
+      version: 1,
+      idea: null,
+      comparisonIds: ['fedavg'],
+      codeCommit: null,
+      dataSnapshotId: 'sha256:deadbeef',
+      sliceIds: ['slice-smoke-1'],
+      environment: {},
+      command: ['python', 'train.py'],
+      metrics: [{ name: 'accuracy', direction: 'higher' }],
+      seeds: [42],
+      resources: {},
+      budget: {},
+      protocolId: null,
+      createdAt: 1,
+    };
+    const specPath = join(project, 'gate-spec.json');
+    await writeFile(specPath, JSON.stringify(spec), 'utf8');
+    const recorded = await runCli(project, ['experiment', 'spec', specPath]);
+    expect(recorded.code).toBe(0);
+
+    const result = {
+      specId: 'exp-fedavg-gate',
+      status: 'succeeded',
+      logRefs: [],
+      artifactRefs: [],
+      metrics: [{ name: 'accuracy', value: 0.9 }],
+      resourcesUsed: {},
+      failure: null,
+      startedAt: 1,
+      finishedAt: 2,
+    };
+    const resultPath = join(project, 'gate-result.json');
+    await writeFile(resultPath, JSON.stringify(result), 'utf8');
+    const attached = await runCli(project, ['experiment', 'result', resultPath]);
+    expect(attached.code).toBe(0);
+
+    const gate = await runCli(project, ['comparison', 'gate', '--json']);
+    expect(gate.code).toBe(0);
+    const payload = JSON.parse(gate.stdout) as {
+      ok: boolean;
+      passed: { methodId: string; via: string }[];
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.passed).toEqual([
+      { methodId: 'fedavg', status: 'source-resolved', via: 'experiment' },
+    ]);
+  }, 60_000);
+
+  it('blocks on a required method without a result and prints the next command', async () => {
+    await registerWithStatus('fedavg', ['accepted', 'source-resolved', 'implemented']);
+    const blocked = await runCli(project, [
+      'comparison',
+      'set-status',
+      'fedavg',
+      'blocked',
+      '--reason',
+      'missing dataset adapter',
+    ]);
+    expect(blocked.code).toBe(0);
+
+    const gate = await runCli(project, ['comparison', 'gate']);
+    expect(gate.code).toBe(2);
+    expect(gate.stdout).toContain('FAIL  fedavg  blocked');
+    expect(gate.stdout).toContain('set-status fedavg excluded');
+    expect(gate.stdout).toContain('gate FAILED');
+
+    const json = await runCli(project, ['comparison', 'gate', '--json']);
+    expect(json.code).toBe(2);
+    const payload = JSON.parse(json.stdout) as { ok: boolean; blocking: unknown[] };
+    expect(payload.ok).toBe(false);
+    expect(payload.blocking).toHaveLength(1);
+  }, 60_000);
+});
