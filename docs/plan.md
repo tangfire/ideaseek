@@ -214,7 +214,7 @@ CLI (Python Typer 或 TS Commander，选择一种主入口)
 ### 阶段 B2：数据集识别与验证准备
 
 1. 清点 `datasets/` 和配置的只读路径，识别文件格式、样本数、字段/标签、类别分布、缺失/重复值、许可信息和潜在敏感字段；解析失败时报告具体文件和原因，不猜测数据含义。
-2. 由数据分析 Worker 生成 dataset card 与数据质量报告；Protocol Synthesis Agent 再结合研究问题、论文实验范式、comparison 代码入口和领域适配器提出 `ExperimentalProtocolProposal`，覆盖验证任务、字段/样本单位、切分、泄漏检查、指标、基线、最小样本规模、smoke test、资源、消融和支持/否证判据。系统自动推断出的标签含义、样本单位、泄漏分组、指标方向等必须附来源/置信度；存在实质歧义时展示候选解释并请求用户确认，不能只从文件名/列名猜定并直接用于正式结论。
+2. 由数据分析 Worker 生成 dataset card 与数据质量报告；Protocol Synthesis Agent 再结合研究问题、论文实验范式和 comparison 代码入口提出 `ExperimentalProtocolProposal`，覆盖验证任务、字段/样本单位、切分、泄漏检查、指标、基线、最小样本规模、smoke test、资源、消融和支持/否证判据。可选领域解析器/检查器只提供必要约束。系统自动推断出的标签含义、样本单位、泄漏分组、指标方向等必须附来源/置信度；存在实质歧义时展示候选解释并请求用户确认，不能只从文件名/列名猜定并直接用于正式结论。
 3. 平台默认在原始全量数据只读的前提下创建 `smoke`/`quick`/`standard` 派生切片；不得为追求短时结果而任意丢样本或破坏类别/时间/主体分布。按领域规则选择分层、时间、组别、域、客户端或留一划分；保存切分 manifest、统计摘要和随机种子。用户后续的全量实验只通过 `handoff` 交付配置、命令和资源建议，不在 IdeaSeek 内执行。
 4. 原始数据只读。禁止把测试集反馈用于迭代调参；小数据不足以形成可靠确认集时，报告直接说明统计能力和外推局限，并可改为交叉验证、重复实验或要求补充数据。
 5. 扫描 `comparisons/` 中的方法，读取或生成方法清单：上游仓库 URL/commit、关联论文、源码入口、环境/依赖、训练与评估命令、支持的数据格式、指标和许可证。目录内每个方法默认是 required；先在隔离环境做依赖检查和 smoke test，再标记为“可运行”“需修复/适配”“不可运行/缺文件”；不能因目录存在就假设它是有效 baseline。
@@ -480,7 +480,7 @@ Windows 分三层支持：
 - [DSH Headless](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/bundle/headless) — CLI 单任务模式、JSON 事件流和 session resume。
 - [DSH SDK](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/sdk) — 进程外 JSON-RPC 驱动 DSH Runtime。
 - [DSH Safety](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md) — 官方安全边界与实验性状态说明。
-- [Pi](https://github.com/earendil-works/pi) 与 [`pi-ai`](https://github.com/earendil-works/pi/tree/main/packages/ai) — 可选的多供应商模型 API；本计划不建议把 Pi Agent Runtime 与 DSH Loop 同时叠加。
+- DSH provider 和模型适配文档 — IdeaSeek MVP 直接使用 DSH 的 provider、认证和模型路由，不引入 Pi Agent Runtime。
 
 
 
