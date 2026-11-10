@@ -72,7 +72,13 @@ export interface SourceArtifacts {
     verdict: 'pass' | 'fail';
     hashMatch: boolean | null;
     stats: { claims: number; spans: number; verified: number; weak: number; failed: number };
-    spanChecks: { claimedPage: number | null; foundPage: number | null; ok: boolean; weak: boolean; quote: string | null }[];
+    spanChecks: {
+      claimedPage: number | null;
+      foundPage: number | null;
+      ok: boolean;
+      weak: boolean;
+      quote: string | null;
+    }[];
   } | null;
 }
 
@@ -106,8 +112,9 @@ export function evaluateSource(input: SourceArtifacts): PaperEvaluation {
     base.hashBound = hashMatch;
     base.quotes = stats.spans - stats.weak;
     base.verifiedQuotes = stats.verified;
-    base.quotesWithPage = spanChecks.filter((check) => check.quote && check.claimedPage != null)
-      .length;
+    base.quotesWithPage = spanChecks.filter(
+      (check) => check.quote && check.claimedPage != null,
+    ).length;
     base.pageLocatingCorrect = spanChecks.filter(
       (check) => check.quote && check.claimedPage != null && check.ok,
     ).length;
@@ -138,12 +145,20 @@ export function aggregateEvaluations(
       processed: processed.length,
       coverage: sampled.length === 0 ? 0 : processed.length / sampled.length,
       cardValidRate:
-        processed.length === 0 ? 0 : processed.filter((item) => item.cardValid).length / processed.length,
+        processed.length === 0
+          ? 0
+          : processed.filter((item) => item.cardValid).length / processed.length,
       evidenceSupportRate: quotes === 0 ? 0 : verified / quotes,
       pageLocatingAccuracy: withPage === 0 ? 0 : pageCorrect / withPage,
-      hashBindingRate: hashed.length === 0 ? 0 : hashed.filter((item) => item.hashBound === true).length / hashed.length,
+      hashBindingRate:
+        hashed.length === 0
+          ? 0
+          : hashed.filter((item) => item.hashBound === true).length / hashed.length,
       verdictPassRate: verdicts.length === 0 ? 0 : passed.length / verdicts.length,
-      avgClaims: processed.length === 0 ? 0 : processed.reduce((sum, item) => sum + item.claims, 0) / processed.length,
+      avgClaims:
+        processed.length === 0
+          ? 0
+          : processed.reduce((sum, item) => sum + item.claims, 0) / processed.length,
     },
     missing: sampled.filter((item) => !item.processed).map((item) => item.source),
     evaluatedAt,

@@ -19,8 +19,7 @@ async function loadBySource(
   for (const artifact of await runtime.db.listArtifactsByKind(kind)) {
     try {
       const payload = JSON.parse(await runtime.store.readFinalText(artifact.contentHash)) as
-        | { source?: string }
-        | { source?: { sourcePath?: string } };
+        { source?: string } | { source?: { sourcePath?: string } };
       const source =
         kind === 'parsed-paper'
           ? (payload as { source?: string }).source

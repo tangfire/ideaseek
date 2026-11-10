@@ -3,11 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  aggregateEvaluations,
-  evaluateSource,
-  sampleSources,
-} from '../src/evaluation/papers.js';
+import { aggregateEvaluations, evaluateSource, sampleSources } from '../src/evaluation/papers.js';
 import { CLI_BIN } from './helpers.js';
 
 describe('sampleSources', () => {
@@ -116,7 +112,12 @@ describe('evaluateSource / aggregateEvaluations', () => {
   it('aggregates rates with safe division and lists missing sources', () => {
     const now = 123;
     const good = evaluateSource(fullArtifacts('papers/a.pdf'));
-    const missing = evaluateSource({ source: 'papers/b.pdf', parsed: null, card: null, report: null });
+    const missing = evaluateSource({
+      source: 'papers/b.pdf',
+      parsed: null,
+      card: null,
+      report: null,
+    });
     const evaluation = aggregateEvaluations([good, missing], now, 42);
     expect(evaluation.sampleSize).toBe(2);
     expect(evaluation.aggregates.processed).toBe(1);

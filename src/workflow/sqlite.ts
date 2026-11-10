@@ -2020,15 +2020,15 @@ export class SqliteWorkflowDb implements WorkflowDb {
     while (queue.length > 0) {
       const depId = queue.shift()!;
       const rows = this.db
-        .prepare(
-          `SELECT ${TASK_COLUMNS} FROM task WHERE run_id = ? AND status = 'queued'` ,
-        )
+        .prepare(`SELECT ${TASK_COLUMNS} FROM task WHERE run_id = ? AND status = 'queued'`)
         .all(runId) as unknown as TaskRow[];
       for (const row of rows) {
         const task = rowToTask(row);
         if (!task.dependsOn.includes(depId)) continue;
         this.db
-          .prepare(`UPDATE task SET status = 'canceled', cancel_requested = 1, finished_at = ?, updated_at = ?, error_json = ? WHERE task_id = ? AND status = 'queued'`)
+          .prepare(
+            `UPDATE task SET status = 'canceled', cancel_requested = 1, finished_at = ?, updated_at = ?, error_json = ? WHERE task_id = ? AND status = 'queued'`,
+          )
           .run(now, now, error, task.taskId);
         this.insertEvent({
           runId,
@@ -2131,7 +2131,9 @@ export class SqliteWorkflowDb implements WorkflowDb {
         for (const row of runs) {
           const runId = row.run_id;
           const dead = this.db
-            .prepare("SELECT task_id FROM task WHERE run_id = ? AND status IN ('failed', 'canceled')")
+            .prepare(
+              "SELECT task_id FROM task WHERE run_id = ? AND status IN ('failed', 'canceled')",
+            )
             .all(runId) as unknown as { task_id: string }[];
           if (dead.length === 0) continue;
           const queued = this.db
