@@ -20,10 +20,10 @@ describe('real DSH extraction (keyed integration)', () => {
     if (!HAS_KEY) return; // no credential: contract covered by fake harness tests
     const dshHome = await mkdtemp(join(tmpdir(), 'ideaseek-keyed-'));
     const adapter = new DshHarnessAdapter({
-        dshHome,
-        cwd: process.cwd(),
-        initializeTimeoutMs: 60_000, // parallel DSH boots in the shared suite
-      });
+      dshHome,
+      cwd: process.cwd(),
+      initializeTimeoutMs: 60_000, // parallel DSH boots in the shared suite
+    });
     try {
       const result = await adapter.runTask(
         {
