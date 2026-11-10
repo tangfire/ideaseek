@@ -95,9 +95,9 @@ ideaseek init
 
 实现 Mechanism Analyst、Idea Generator、Research Discussant、Novelty Challenger、Synthesis Lead、IdeaCard 机制链、DRAFT_COMPOSITION 门槛、独立 idea workspace、Code Implementer、GPU Capacity Planner、quick/standard 实验、消融、结果分析和 idea 迭代。
 
-### Phase 6：领域适配器
+### Phase 6：领域验证与可选插件扩展
 
-先选择一个具体任务族完成 gold set，再扩展图像分割、短视频、多模态早期预测、联邦学习模型异构和联邦学习域泛化。每个适配器必须从论文、comparison 代码和数据生成实验协议，不能要求用户手写全部科研规则。
+用一个具体任务族（可先用联邦学习模型异构）验证通用 Protocol Synthesis、数据切片和实验执行；只有遇到确实需要专用解析器、检查器或安全边界时才增加薄领域插件。再扩展图像分割、短视频、多模态早期预测和联邦学习域泛化。不要把领域插件当作用户手写科研规则，也不要把它作为通用 idea 生成的前置条件。
 
 ## 每个模块的完成动作
 

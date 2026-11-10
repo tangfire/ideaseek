@@ -58,7 +58,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [CONFIG_SPEC.md](CONFIG_SPEC.md)：`research.yaml`、默认值、资源边界和配置迁移。
 - [PROVENANCE_AND_CITATIONS.md](PROVENANCE_AND_CITATIONS.md)：论文证据、引用、实验数值和失效链。
 - [RESEARCH_INTEGRITY.md](RESEARCH_INTEGRITY.md)：小规模验证、数据泄漏、选择偏差和结果标签。
-- [DOMAIN_ADAPTERS.md](DOMAIN_ADAPTERS.md)：多模态、短视频、图像分割和联邦学习等方向的适配器要求。
+- [DOMAIN_ADAPTERS.md](DOMAIN_ADAPTERS.md)：多模态、短视频、图像分割和联邦学习等方向的可选解析器/检查器扩展。
 - [USER_EXPERIENCE.md](USER_EXPERIENCE.md)：小规模项目、自动模式和小白用户操作路径。
 - [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md)：可执行开发阶段、任务依赖和验收标准。
 - [PROGRESS.md](PROGRESS.md)：带 checkbox 的实际开发进度和模块交付记录。
@@ -73,6 +73,6 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 
 ## 首版边界
 
-首版正式支持 Linux；Windows 通过 WSL2 或 SSH 使用 Linux 执行环境。先选择一个具体研究任务族实现领域适配器，再扩展到其他学科。`paper-reimplementation` 必须与官方代码复现严格区分，平台不把小规模验证结果表述为已经证明创新。
+首版正式支持 Linux；Windows 通过 WSL2 或 SSH 使用 Linux 执行环境。先用一个具体研究任务族验证通用论文学习、协议综合和实验执行，再按需增加薄领域插件；领域插件不是通用 idea 生成的前置条件。`paper-reimplementation` 必须与官方代码复现严格区分，平台不把小规模验证结果表述为已经证明创新。
 
 
