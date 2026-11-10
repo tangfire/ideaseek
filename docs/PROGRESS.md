@@ -134,6 +134,14 @@ Phase 4：Comparison 完整闭环
 
 ## Phase 9：产品化验收
 
+- [ ] 自然语言 REPL 与高影响操作确认
+- [ ] `plan` dry-run、成本/资源预估和审批摘要
+- [ ] 用户级/项目级配置分层与 `config explain`
+- [ ] 多项目注册、项目锁和目录守卫
+- [ ] cleanup/archive/export 生命周期命令
+- [ ] 本地通知、可选 webhook 和无心跳检测
+- [ ] 运行中调整 idea/comparison 优先级和资源
+- [ ] 用户反馈入口和 gold set 导入
 - [ ] 运行前 `plan`、成本/资源估算和高成本确认
 - [ ] `next/status/explain` 的阻塞和决策解释
 - [ ] 任务详情、脱敏日志和本地/可选远程通知

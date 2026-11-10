@@ -13,6 +13,7 @@ ideaseek models
 ideaseek models list
 ideaseek models test --route deep
 ideaseek plan --question "..."
+ideaseek projects
 ideaseek scan
 ideaseek organize [--apply]
 ideaseek intake
@@ -26,6 +27,9 @@ ideaseek attach --run <id>
 ideaseek watch --run <id>
 ideaseek status --detail
 ideaseek explain <task|decision|artifact>
+ideaseek cleanup --dry-run
+ideaseek archive --run <id>
+ideaseek export --run <id> --to <path>
 ideaseek events --run <id> --since <seq>
 ideaseek pause [--hard]
 ideaseek resume [--run <id>]
@@ -41,6 +45,8 @@ ideaseek report [--run <id>]
 `init` 创建目录和模板，不覆盖已有文件；`start` 是小白用户的一键入口，组合轻量检测、扫描、协议草案和受限运行；`setup` 优先自动检测并只询问无法安全推断的配置；`doctor` 只做检查；`scan` 递归发现用户随手放入的论文、代码、数据和压缩包；`organize` 预览或应用对象归类，但不移动/覆盖原始文件；`config explain` 显示生效配置来源；`confirm protocol` 确认平台提出的实验协议；`next` 只给建议，不启动高成本工作；`run` 创建或恢复工作流；`attach/watch` 订阅实时事件；`pause/resume/cancel` 是可审计的控制操作。
 
 交互提示符、启动 banner、事件摘要、审批块和 plain/JSON 显示模式遵循 [TERMINAL_UX.md](TERMINAL_UX.md)。CLI UI 只显示状态和动作摘要，不显示模型隐藏推理。
+
+交互提示符同时接受 slash 命令和自然语言。自然语言只被转换成查询、建议或待审批 Decision；不能直接绕过状态机、预算、权限或数据快照。高影响请求显示变更摘要和确认选项。
 
 模型配置同时支持交互和脚本：`/models` 或 `ideaseek models` 查看 route/provider/model 状态；`models test` 只做最小连接和能力检查。API key 使用隐藏输入，写入 DSH credential store 或外部 secret manager，不写入 `research.yaml`、prompt、事件、日志或 git。`--json` 输出只包含脱敏 provider、model、route、能力和额度状态。
 
