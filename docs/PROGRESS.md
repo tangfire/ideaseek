@@ -40,6 +40,7 @@ Phase 4：Comparison 完整闭环
 - [x] Agent capability profiles
 - [x] Tool schemas、权限和审计事件
 - [x] 假 Paper Extractor 端到端任务
+- [ ] fast/balanced/deep/deterministic 模型路由和按角色覆盖
 
 ## Phase 1.5：CLI 交互与可观察性
 
