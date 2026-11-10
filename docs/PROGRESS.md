@@ -40,7 +40,7 @@
 
 ## Phase 3：数据与实验协议
 
-- [ ] Dataset Analyst 和 dataset card
+- [x] Dataset Analyst 和 dataset card
 - [ ] Protocol Synthesis Agent
 - [ ] Leakage/Validity Checker
 - [ ] ExperimentalProtocolProposal schema
@@ -113,3 +113,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 3 起步：DatasetSlice 契约+确定性种子切分（smoke/quick/standard）、CSV 解析/切片/原子写出与可重建哈希、dataset_slice 注册表（迁移 v3）、data slices/describe CLI | 5325888 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 28 files/171 vitest + 5 python 全过 | 行级切分为 rule v1（组/时间边界由领域适配器提供，limits 已记录）；Dataset Analyst 完整卡片与协议综合待后续 | 下一模块：ExperimentalProtocolProposal 契约与校验
 2026-11-10 | Phase 3 ExperimentalProtocolProposal 契约+校验（sourced 字段/来源枚举/置信度/低置信确认清单）+ 协议锁定（哈希+confirmedBy，迁移 v4）+ ideaseek confirm protocol | 89a9d51 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 29 files/180 vitest + 5 python 全过 | 协议「生成」（Protocol Synthesis Agent）需模型凭据；本模块负责契约、校验与锁定 | 下一模块：handoff manifest 或 Leakage/Validity 确定性检查
 2026-11-10 | Phase 3 Leakage/Validity 确定性检查（单快照/哈希溯源/行数边界 blocker、种子统一/嵌套 warning-info、组时间边界与协议规则 pending）并接入 confirm protocol 门禁 | d8ef880 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 30 files/186 vitest + 5 python 全过 | 语义级泄漏检查（标签/时间因果）需协议与领域适配器，已作为 pending 明示 | 下一模块：Dataset Analyst 确定性数据画像
+2026-11-10 | Phase 3 Dataset Analyst 确定性画像与 dataset card（profileCsv：缺失/重复/常量列/数值类型/label 候选 0.6 置信需确认/许可线索；knowledge/dataset-card.json+md；data describe 升级）| f6cbd07 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 31 files/190 vitest + 5 python 全过 | 仅 CSV 画像；label 语义与切分含义按契约留待用户确认；LLM 增强版分析师属于凭据解锁项 | 下一模块：Scenario/Portfolio 契约或 handoff manifest
