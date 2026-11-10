@@ -83,7 +83,7 @@ Phase 4：Comparison 完整闭环
 - [x] comparison manifest 与 required 状态
 - [x] 用户仓库导入和 upstream/worktree 隔离
 - [x] 官方代码定位和许可证记录
-- [ ] Baseline Repair Agent
+- [x] Baseline Repair Agent
 - [ ] Baseline Reproduction Agent
 - [ ] 统一 ExperimentSpec/RunResult
 - [ ] 所有 required comparison 门槛

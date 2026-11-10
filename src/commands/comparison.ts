@@ -30,7 +30,7 @@ async function openRoot(): Promise<string> {
 }
 
 /** DB is authoritative; this keeps the human-readable export in sync. */
-async function exportMethodYaml(root: string, method: ComparisonMethod): Promise<string> {
+export async function exportMethodYaml(root: string, method: ComparisonMethod): Promise<string> {
   const dir = join(root, 'comparisons', method.methodId);
   await ensureDir(dir);
   const path = join(dir, 'method.yaml');

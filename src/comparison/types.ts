@@ -49,6 +49,61 @@ export interface ComparisonHistoryEntry {
   reason: string | null;
 }
 
+/** Deterministic failure taxonomy for baseline repair (docs/plan.md §C.5). */
+export type RepairFailureKind =
+  | 'missing-dependency'
+  | 'path-error'
+  | 'syntax-error'
+  | 'permission-error'
+  | 'device-error'
+  | 'timeout'
+  | 'unknown';
+
+export interface RepairAttempt {
+  round: number;
+  at: number;
+  durationMs: number;
+  command: string[];
+  exitCode: number;
+  timedOut: boolean;
+  /** Absent when the round passed. */
+  failureKind?: RepairFailureKind;
+  /** First matching log line, redacted and truncated. */
+  failureSummary?: string;
+  fixApplied: 'none' | 'venv-install';
+  /** Result of applying the planned fix (absent when none was planned). */
+  fixOk?: boolean;
+  fixDetail?: string;
+  /** Full redacted log under .research/logs/. */
+  logPath: string;
+}
+
+export type RepairRoundOutcome =
+  'in-progress' | 'passed' | 'blocked-no-fix' | 'blocked-budget' | 'blocked-fix-failed';
+
+/** Crash-safe per-round record persisted at comparisons/<id>/repair.json. */
+export interface RepairRecord {
+  methodId: string;
+  budget: { maxRounds: number; timeoutMs: number };
+  startedAt: number;
+  updatedAt: number;
+  attempts: RepairAttempt[];
+  outcome: RepairRoundOutcome;
+}
+
+/** How the worktree diff relates to baseline trust (plan §C.7). */
+export type RepairChangeClass = 'none' | 'environment' | 'code-review';
+
+/** Summary mirrored into the method record after a repair session. */
+export interface RepairSummary {
+  outcome: 'smoke-tested' | 'blocked' | 'confirmation-required';
+  attempts: number;
+  lastFailureKind: RepairFailureKind | null;
+  patchHash: string | null;
+  changeClass: RepairChangeClass | null;
+  updatedAt: number;
+}
+
 export interface ComparisonMethod {
   methodId: string;
   /** Paper references (hashes or ids) this method answers to. */
@@ -61,6 +116,7 @@ export interface ComparisonMethod {
   status: ComparisonStatus;
   statusReason?: string;
   smoke?: ComparisonSmoke;
+  repair?: RepairSummary;
   history?: ComparisonHistoryEntry[];
   notes: string[];
   createdAt: number;
