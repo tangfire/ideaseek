@@ -1,8 +1,49 @@
 import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { IdeaseekError } from '../core/errors.js';
-import { assessIdeaCard } from '../idea/card.js';
+import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
+import {
+  IDEA_TRANSITIONS,
+  assertEngineeringRevision,
+  checkpointCode,
+  createWorkspace,
+  ideaDir,
+  listWorkspaces,
+  loadIdeaCard,
+  loadVersionRecords,
+  loadWorkspaceMeta,
+  reviseEngineering,
+  setIdeaStatus,
+  verifyWorkspace,
+  type IdeaRunStatus,
+} from '../idea/workspace.js';
+import { findProjectRoot } from '../config/paths.js';
 import { action, jsonLine } from './shared.js';
+
+async function openRoot(): Promise<string> {
+  const root = await findProjectRoot(process.cwd());
+  if (!root) {
+    throw new IdeaseekError('NOT_INITIALIZED', 'no IdeaSeek project here; run: ideaseek init');
+  }
+  return root;
+}
+
+async function readCardFile(path: string): Promise<IdeaCard> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    throw new IdeaseekError('FILE_NOT_FOUND', `cannot read ${path}: ${(error as Error).message}`);
+  }
+  try {
+    return JSON.parse(raw) as IdeaCard;
+  } catch (error) {
+    throw new IdeaseekError(
+      'PARSE_FAILED',
+      `${path} is not valid JSON: ${(error as Error).message}`,
+    );
+  }
+}
 
 /**
  * `ideaseek idea validate <file>` — IdeaCard contract + mechanism gate.
@@ -11,7 +52,9 @@ import { action, jsonLine } from './shared.js';
  * make that a failing exit, for pre-experiment checks).
  */
 export function registerIdeaCommand(program: Command): void {
-  const idea = program.command('idea').description('idea cards, versions and the mechanism gate');
+  const idea = program
+    .command('idea')
+    .description('idea cards, workspaces, versions and the mechanism gate');
 
   idea
     .command('validate')
@@ -89,6 +132,321 @@ export function registerIdeaCommand(program: Command): void {
         if (!ok) return 2;
         if (opts.requireCandidate && !gate.ok) return 2;
         return 0;
+      }),
+    );
+
+  idea
+    .command('create')
+    .description(
+      'create ideas/<id>/ workspace (card, versions, src/config/data/experiments, README)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .requiredOption('--from-card <file>', 'validated IdeaCard JSON (must be version 1)')
+    .option(
+      '--data <path>',
+      'bind an input file hash (repeatable)',
+      (v, p: string[]) => [...p, v],
+      [] as string[],
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { fromCard: string; data: string[]; json?: boolean }) => {
+        const root = await openRoot();
+        const card = await readCardFile(opts.fromCard);
+        const { meta, resumed } = await createWorkspace(root, {
+          ideaId,
+          card,
+          dataPaths: opts.data,
+        });
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              status: meta.status,
+              version: meta.currentVersion,
+              resumed,
+              workspace: ideaDir(root, ideaId),
+            }),
+          );
+        } else {
+          process.stdout.write(
+            `${resumed ? 'completed partial workspace' : 'created idea workspace'} ${ideaId} ` +
+              `(status=${meta.status}, v${meta.currentVersion})\n`,
+          );
+          process.stdout.write(`  path: ${ideaDir(root, ideaId)}\n`);
+          process.stdout.write(`next: ideaseek idea show ${ideaId}\n`);
+        }
+        return 0;
+      }),
+    );
+
+  idea
+    .command('list')
+    .description('list idea workspaces with lifecycle status and version')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const ideas = await listWorkspaces(root);
+        if (opts.json) {
+          process.stdout.write(jsonLine({ ideas }));
+          return 0;
+        }
+        if (ideas.length === 0) {
+          process.stdout.write(
+            'no idea workspaces (ideaseek idea create <id> --from-card <file>)\n',
+          );
+          return 0;
+        }
+        process.stdout.write(`${ideas.length} idea(s):\n`);
+        for (const entry of ideas) {
+          process.stdout.write(
+            `  ${entry.ideaId}  ${entry.status.padEnd(15)} v${entry.currentVersion}` +
+              `${entry.parentIdeaId ? `  ← ${entry.parentIdeaId}` : ''}` +
+              `${entry.childIdeaIds.length > 0 ? `  → ${entry.childIdeaIds.join(',')}` : ''}\n`,
+          );
+        }
+        return 0;
+      }),
+    );
+
+  idea
+    .command('show')
+    .description('show one idea workspace: status, version chain, gate and links')
+    .argument('<ideaId>', 'idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const meta = await loadWorkspaceMeta(root, ideaId);
+        const card = await loadIdeaCard(root, ideaId);
+        const versions = await loadVersionRecords(root, ideaId);
+        const assessment = assessIdeaCard(card);
+        const next = IDEA_TRANSITIONS[meta.status];
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              status: meta.status,
+              statusReason: meta.statusReason,
+              currentVersion: meta.currentVersion,
+              parentIdeaId: meta.parentIdeaId,
+              childIdeaIds: meta.childIdeaIds,
+              cardGate: assessment.gate.status,
+              cardValid: assessment.ok,
+              versions: versions.map((v) => ({
+                version: v.version,
+                parentVersion: v.parentVersion,
+                changeKind: v.changeKind,
+                codeHash: v.codeHash,
+                summary: v.summary,
+                checkpoint: v.checkpoint ?? null,
+              })),
+              nextTransitions: next,
+              history: meta.history,
+            }),
+          );
+          return 0;
+        }
+        process.stdout.write(
+          `${ideaId}  ${meta.status}  v${meta.currentVersion}  gate=${assessment.gate.status}\n`,
+        );
+        if (meta.statusReason) process.stdout.write(`  reason: ${meta.statusReason}\n`);
+        process.stdout.write(
+          `  parent: ${meta.parentIdeaId ?? 'none'}  children: ${meta.childIdeaIds.join(', ') || 'none'}\n`,
+        );
+        process.stdout.write('  versions:\n');
+        for (const v of versions) {
+          process.stdout.write(
+            `    v${v.version}  ${v.changeKind}  ${v.codeHash ?? '(no checkpoint)'}  ${v.summary}\n`,
+          );
+        }
+        process.stdout.write(`  next: ${next.length > 0 ? next.join(' | ') : '(terminal)'}\n`);
+        return 0;
+      }),
+    );
+
+  idea
+    .command('revise')
+    .description('engineering revision: bump this idea to a new version (same hypothesis)')
+    .argument('<ideaId>', 'idea id')
+    .requiredOption('--kind <kind>', 'engineering | scientific (scientific must use idea branch)')
+    .requiredOption('--summary <text>', 'what changed and why')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { kind: string; summary: string; json?: boolean }) => {
+        const root = await openRoot();
+        assertEngineeringRevision(opts.kind);
+        const { version, meta } = await reviseEngineering(root, ideaId, opts.summary);
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              version: version.version,
+              parentVersion: version.parentVersion,
+              codeHash: version.codeHash,
+              currentVersion: meta.currentVersion,
+            }),
+          );
+        } else {
+          process.stdout.write(
+            `${ideaId}: v${version.parentVersion} → v${version.version} (engineering)\n`,
+          );
+          process.stdout.write(`  summary: ${version.summary}\n`);
+          process.stdout.write(`  codeHash: ${version.codeHash ?? '(no checkpoint yet)'}\n`);
+        }
+        return 0;
+      }),
+    );
+
+  idea
+    .command('branch')
+    .description('scientific hypothesis change: new idea id linked to its parent idea')
+    .argument('<parentIdeaId>', 'existing idea id')
+    .argument('<newIdeaId>', 'new kebab-case idea id')
+    .requiredOption('--from-card <file>', 'IdeaCard for the new idea (version 1)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (
+          parentIdeaId: string,
+          newIdeaId: string,
+          opts: { fromCard: string; json?: boolean },
+        ) => {
+          const root = await openRoot();
+          if (parentIdeaId === newIdeaId) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              'branch target must differ from the parent',
+            );
+          }
+          const card = await readCardFile(opts.fromCard);
+          const { meta } = await createWorkspace(root, {
+            ideaId: newIdeaId,
+            card,
+            parentIdeaId,
+            changeKind: 'scientific-branch',
+          });
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId: newIdeaId,
+                parentIdeaId,
+                status: meta.status,
+                version: meta.currentVersion,
+              }),
+            );
+          } else {
+            process.stdout.write(
+              `branched ${newIdeaId} from ${parentIdeaId} (scientific change, v1)\n`,
+            );
+            process.stdout.write(`next: ideaseek idea show ${newIdeaId}\n`);
+          }
+          return 0;
+        },
+      ),
+    );
+
+  idea
+    .command('set-status')
+    .description('transition the idea lifecycle (PROPOSED → … → SUPPORTED/REJECTED)')
+    .argument('<ideaId>', 'idea id')
+    .argument('<status>', 'target lifecycle status')
+    .option('--reason <text>', 'required for REJECTED')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, status: string, opts: { reason?: string; json?: boolean }) => {
+        const root = await openRoot();
+        if (!(status in IDEA_TRANSITIONS)) {
+          throw new IdeaseekError(
+            'INVALID_ARGUMENT',
+            `unknown status "${status}" (valid: ${Object.keys(IDEA_TRANSITIONS).join(', ')})`,
+          );
+        }
+        const meta = await setIdeaStatus(root, ideaId, status as IdeaRunStatus, opts.reason);
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              status: meta.status,
+              statusReason: meta.statusReason,
+              nextTransitions: IDEA_TRANSITIONS[meta.status],
+            }),
+          );
+        } else {
+          process.stdout.write(
+            `${ideaId}: → ${meta.status}${meta.statusReason ? ` (${meta.statusReason})` : ''}\n`,
+          );
+          const next = IDEA_TRANSITIONS[meta.status];
+          process.stdout.write(`  next: ${next.length > 0 ? next.join(' | ') : '(terminal)'}\n`);
+        }
+        return 0;
+      }),
+    );
+
+  idea
+    .command('checkpoint')
+    .description('bind the current src/ content hash to the current idea version')
+    .argument('<ideaId>', 'idea id')
+    .requiredOption('--message <text>', 'what changed in this checkpoint')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { message: string; json?: boolean }) => {
+        const root = await openRoot();
+        const result = await checkpointCode(root, ideaId, opts.message);
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              version: result.version,
+              codeHash: result.codeHash,
+              changed: result.changed,
+              message: result.message,
+            }),
+          );
+        } else {
+          process.stdout.write(
+            `checkpoint ${ideaId} v${result.version}: ` +
+              (result.changed
+                ? `${result.codeHash ?? '(empty src/)'} recorded\n`
+                : 'unchanged (idempotent)\n'),
+          );
+        }
+        return 0;
+      }),
+    );
+
+  idea
+    .command('verify')
+    .description('verify structure, version chain, parent links and input hashes')
+    .argument('<ideaId>', 'idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const result = await verifyWorkspace(root, ideaId);
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              ok: result.ok,
+              status: result.status,
+              currentVersion: result.currentVersion,
+              cardGate: result.cardGate,
+              inputsChanged: result.inputsChanged,
+              issues: result.issues,
+            }),
+          );
+        } else {
+          process.stdout.write(
+            `verify ${ideaId}: ${result.ok ? 'OK' : `${result.issues.length} issue(s)`} ` +
+              `(${result.status}, v${result.currentVersion}, gate=${result.cardGate})\n`,
+          );
+          for (const issue of result.issues) {
+            process.stdout.write(`  ✗ [${issue.kind}] ${issue.detail}\n`);
+          }
+        }
+        return result.ok ? 0 : 2;
       }),
     );
 }
