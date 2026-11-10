@@ -42,11 +42,11 @@
 
 - [x] Dataset Analyst 和 dataset card
 - [ ] Protocol Synthesis Agent
-- [ ] Leakage/Validity Checker
-- [ ] ExperimentalProtocolProposal schema
-- [ ] 用户确认和 protocol lock
-- [ ] Scenario Planner 和实验组合 L0–L4
-- [ ] DatasetSlice `smoke/quick/standard`、handoff manifest 和晋级规则
+- [x] Leakage/Validity Checker
+- [x] ExperimentalProtocolProposal schema
+- [x] 用户确认和 protocol lock
+- [x] Scenario Planner 和实验组合 L0–L4
+- [x] DatasetSlice `smoke/quick/standard`、handoff manifest 和晋级规则
 - [ ] 数据分布保持、客户端/域/主体边界和泄漏检查
 - [ ] 首发领域验证（优先联邦学习模型异构）及人工 gold set
 
@@ -116,3 +116,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 3 Dataset Analyst 确定性画像与 dataset card（profileCsv：缺失/重复/常量列/数值类型/label 候选 0.6 置信需确认/许可线索；knowledge/dataset-card.json+md；data describe 升级）| f6cbd07 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 31 files/190 vitest + 5 python 全过 | 仅 CSV 画像；label 语义与切分含义按契约留待用户确认；LLM 增强版分析师属于凭据解锁项 | 下一模块：Scenario/Portfolio 契约或 handoff manifest
 2026-11-10 | Phase 3 Scenario/Portfolio L0–L4 契约+校验（等级枚举/重复/稳定性种子≥3/L4 外部数据门槛/晋级与停止规则）+ buildDefaultPortfolio 确定性默认组合 | a90e0de | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 32 files/196 vitest + 5 python 全过 | Experiment Designer LLM 生成与实际实验消费属凭据/Phase5 依赖；晋级执行需 idea workspace | 下一模块：handoff manifest 或收口汇报
 2026-11-10 | Phase 3 handoff manifest 契约（slice 引用+环境+命令+provenance+不执行全量训练的边界声明）与 buildHandoff 组装器 | 7a084e0 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 33 files/200 vitest + 5 python 全过 | experiment handoff CLI 命令待 idea workspace（Phase 5）接线 | Phase 3 无凭据可交付项完成
+2026-11-10 | Phase 3 checkbox 确认：Leakage/Validity Checker（确定性层+pending 明示）、ProtocolProposal schema、协议确认与锁定、Scenario L0–L4、DatasetSlice+handoff+晋级规则（CLI promote/handoff 待 Phase 5 接线）| d8ef880+89a9d51+a90e0de+5325888+7a084e0 | 各模块门禁全绿（33 files/200 vitest+5 python）| Protocol Synthesis LLM 生成需凭据；语义级检查需适配器 | 剩余：数据分布保持检查（可做）与首发领域验证（需语料）
