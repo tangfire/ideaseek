@@ -10,6 +10,7 @@ import { registerDataCommand } from './commands/data.js';
 import { registerControlCommands } from './commands/control.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerEventsCommand } from './commands/events.js';
+import { registerExtractCommand } from './commands/extract.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerIngestCommand } from './commands/ingest.js';
 import {
@@ -55,6 +56,7 @@ export function buildProgram(): Command {
   registerStartCommand(program);
   registerScanCommand(program);
   registerIngestCommand(program);
+  registerExtractCommand(program);
   registerIntakeCommand(program);
   registerOrganizeCommand(program);
   registerSetupCommand(program);

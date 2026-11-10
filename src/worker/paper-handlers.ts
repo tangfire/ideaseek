@@ -7,6 +7,9 @@ import { sha256OfFile, sha256Of } from '../core/hash.js';
 import { basename, join } from 'node:path';
 
 interface ParsedPaperArtifact {
+  source?: string;
+  sourceHash?: string;
+  parser?: string | null;
   pageCount: number;
   pages: { page: number; text: string }[];
 }
@@ -27,7 +30,43 @@ async function textFromParsedDependency(ctx: TaskContext): Promise<string> {
       .join('\n\n');
     if (text.trim()) return text;
   }
+  // Batch map extracts carry no same-run parse dependency: fall back to the
+  // globally committed parsed artifact for this source (cross-run reuse).
+  const sourcePath = typeof ctx.payload.sourcePath === 'string' ? ctx.payload.sourcePath : '';
+  const parsed = await loadParsedByPath(ctx, sourcePath);
+  if (parsed) {
+    const text = parsed.pages
+      .map((page) => `[page ${page.page}]\n${page.text.trim()}`)
+      .join('\n\n');
+    if (text.trim()) return text;
+  }
   return '';
+}
+
+/**
+ * Finds the committed parsed-paper artifact for a project-relative PDF path
+ * across all runs (content-addressed parse reuse in the batch map stage).
+ */
+async function loadParsedByPath(
+  ctx: TaskContext,
+  sourcePath: string,
+): Promise<ParsedPaperArtifact | null> {
+  if (!sourcePath || sourcePath.includes('..') || !sourcePath.toLowerCase().endsWith('.pdf')) {
+    return null;
+  }
+  const artifacts = await ctx.runtime.db.listArtifactsByKind('parsed-paper');
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const row = artifacts[index]!;
+    try {
+      const payload = JSON.parse(
+        await ctx.runtime.store.readFinalText(row.contentHash),
+      ) as ParsedPaperArtifact;
+      if (payload.source === sourcePath && Array.isArray(payload.pages)) return payload;
+    } catch {
+      continue; // unreadable artifact: keep searching older generations
+    }
+  }
+  return null;
 }
 
 /** Phase 2 ingest: PDF -> page-tagged text artifact (evidence locators kept). */
@@ -196,7 +235,11 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
   // Evidence Checker re-verifies the binding).
   const modelCard = JSON.parse(result.output) as Record<string, unknown>;
   const documentHash = await computeSourceHash(ctx);
-  const depParser = await readChainedParserVersion(ctx);
+  const sourcePathStr = typeof ctx.payload.sourcePath === 'string' ? ctx.payload.sourcePath : '';
+  let depParser = await readChainedParserVersion(ctx);
+  if (!depParser && sourcePathStr) {
+    depParser = (await loadParsedByPath(ctx, sourcePathStr))?.parser ?? null;
+  }
   const card = {
     source: {
       paperName,
@@ -338,6 +381,14 @@ export const paperVerify: TaskHandler = async (ctx: TaskContext) => {
     }
   }
   const sourcePath = extract.payload.sourcePath;
+  if (!pages && typeof sourcePath === 'string' && sourcePath.toLowerCase().endsWith('.pdf')) {
+    // Batch map: no same-run parse dependency — use the global artifact.
+    const parsed = await loadParsedByPath(ctx, sourcePath);
+    if (parsed) {
+      pages = parsed.pages;
+      independentHash ??= parsed.sourceHash ?? null;
+    }
+  }
   if (!pages) {
     if (typeof sourcePath === 'string' && sourcePath && !sourcePath.includes('..')) {
       try {

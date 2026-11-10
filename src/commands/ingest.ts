@@ -58,7 +58,7 @@ export async function collectParsedHashes(runtime: ProjectRuntime): Promise<Set<
   return hashes;
 }
 
-async function ensureActiveRun(
+export async function ensureActiveRun(
   runtime: ProjectRuntime,
 ): Promise<{ runId: string; created: boolean; resumed: boolean }> {
   const latest = await runtime.db.getLatestRun(runtime.project.id);
