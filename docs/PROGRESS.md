@@ -45,16 +45,16 @@ Phase 4：Comparison 完整闭环
 
 目标：让用户能像使用成熟 Agent CLI 一样实时看到 IdeaSeek 在做什么、为什么等待、需要什么确认，并能在 SSH 断开后重新接入。
 
-- [ ] IdeaSeek 启动 banner 和窄终端 fallback
-- [ ] `ideaseek ›` 交互提示符与 `/help`、`/status`、`/next`
-- [ ] 论文、comparison、idea、实验的实时事件摘要
-- [ ] `attach/watch/events` 事件回放与实时跟随
+- [x] IdeaSeek 启动 banner 和窄终端 fallback
+- [x] `ideaseek ›` 交互提示符与 `/help`、`/status`、`/next`
+- [x] 论文、comparison、idea、实验的实时事件摘要
+- [x] `attach/watch/events` 事件回放与实时跟随
 - [ ] protocol/experiment/权限审批交互
-- [ ] `pause/resume/continue/cancel` 交互反馈
-- [ ] `--plain` 无颜色日志输出
-- [ ] `--json` 机器可读事件和状态输出
-- [ ] 任务详情、脱敏日志和错误解释
-- [ ] 断线重连、终端尺寸变化和后台 supervisor 状态显示
+- [x] `pause/resume/continue/cancel` 交互反馈
+- [x] `--plain` 无颜色日志输出
+- [x] `--json` 机器可读事件和状态输出
+- [x] 任务详情、脱敏日志和错误解释
+- [x] 断线重连、终端尺寸变化和后台 supervisor 状态显示
 
 ## Phase 2：论文与知识库
 

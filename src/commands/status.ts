@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
+import { redactSecrets } from '../core/redact.js';
 import { isPidAlive, readDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord } from '../workflow/types.js';
@@ -106,6 +107,7 @@ export function registerStatusCommand(program: Command): void {
                   runId: run.runId,
                   status: run.status,
                   phase: run.phase,
+                  strategy: run.strategy,
                   question: run.question,
                   blockReason: run.blockReason,
                   createdAt: run.createdAt,
@@ -118,7 +120,9 @@ export function registerStatusCommand(program: Command): void {
                 failed: failed.map((task) => ({
                   taskId: task.taskId,
                   type: task.type,
-                  error: task.error,
+                  error: task.error
+                    ? { ...task.error, message: redactSecrets(task.error.message) }
+                    : null,
                 })),
                 recovery: runtime.recovery,
                 events: events.map((event) => ({
@@ -126,7 +130,7 @@ export function registerStatusCommand(program: Command): void {
                   ts: event.ts,
                   type: event.eventType,
                   object: event.objectId,
-                  summary: event.summary,
+                  summary: redactSecrets(event.summary),
                 })),
                 exitCode: exitCodeForRun(run),
               }),
@@ -158,14 +162,14 @@ export function registerStatusCommand(program: Command): void {
             process.stdout.write('失败任务：\n');
             for (const task of failed) {
               process.stdout.write(
-                `  ${task.taskId} ${task.type} ${task.error ? `${task.error.code}: ${task.error.message}` : ''}\n`,
+                `  ${task.taskId} ${task.type} ${task.error ? `${task.error.code}: ${redactSecrets(task.error.message)}` : ''}\n`,
               );
             }
           }
           process.stdout.write('最近事件：\n');
           for (const event of events) {
             process.stdout.write(
-              `  [#${event.seq}] ${timestamp(event.ts)}  ${event.eventType.padEnd(20)} ${event.summary}\n`,
+              `  [#${event.seq}] ${timestamp(event.ts)}  ${event.eventType.padEnd(20)} ${redactSecrets(event.summary)}\n`,
             );
           }
           if (opts.detail) {

@@ -97,6 +97,18 @@ export function registerConfirmCommand(program: Command): void {
           const record = proposal as { protocolId: string } as unknown as Record<string, unknown>;
           const existing = await runtime.db.getProtocolLock(lock.protocolId);
           await runtime.db.lockProtocol({ ...lock, record });
+          // Approval is an auditable decision bound to the run
+          // (docs/TERMINAL_UX: 批准动作写入 Decision/Event).
+          const lockRun = await runtime.db.getRun(chosen.runId);
+          await runtime.db.appendEvent({
+            runId: chosen.runId,
+            phase: lockRun?.phase ?? 'APPROVAL',
+            objectId: lock.protocolId,
+            role: opts.by ?? 'user',
+            eventType: 'decision',
+            summary: `approved protocol ${lock.protocolId}`,
+            status: 'approved',
+          });
 
           if (opts.json) {
             process.stdout.write(

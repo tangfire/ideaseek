@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { redactSecrets } from '../core/redact.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { followEvents } from '../workflow/follow.js';
 import type { RunEvent } from '../workflow/types.js';
@@ -7,7 +8,7 @@ import { action, jsonLine, resolveRun } from './shared.js';
 function formatEvent(event: RunEvent): string {
   const ts = new Date(event.ts).toISOString().replace('T', ' ').slice(0, 19);
   const object = event.objectId ? ` ${event.objectId}` : '';
-  return `[#${event.seq}] ${ts} ${event.eventType}${object} — ${event.summary}`;
+  return `[#${event.seq}] ${ts} ${event.eventType}${object} — ${redactSecrets(event.summary)}`;
 }
 
 function exitForRunStatus(status: string): number {
@@ -69,8 +70,10 @@ async function stream(mode: 'attach' | 'watch', opts: StreamOptions): Promise<nu
                 runId: event.runId,
                 ts: event.ts,
                 type: event.eventType,
+                phase: event.phase,
+                role: event.role,
                 object: event.objectId,
-                summary: event.summary,
+                summary: redactSecrets(event.summary),
                 status: event.status,
               }),
             );

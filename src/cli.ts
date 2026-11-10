@@ -23,6 +23,10 @@ import {
   registerScanCommand,
 } from './commands/inputs.js';
 import { registerNextCommand } from './commands/next.js';
+import { registerPapersCommand } from './commands/papers.js';
+import { registerLogsCommand } from './commands/logs.js';
+import { registerDecisionCommand } from './commands/decision.js';
+import { registerInteractiveCommand, runBareInvocation } from './commands/interactive.js';
 import { registerProtocolCommand } from './commands/protocol.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
@@ -34,6 +38,7 @@ import { registerStatusCommand } from './commands/status.js';
 import { registerStreamCommands } from './commands/stream.js';
 import { registerSuperviseCommand } from './commands/supervise.js';
 import { registerWorkerCommand } from './commands/worker.js';
+import { action } from './commands/shared.js';
 
 function readVersion(): string {
   try {
@@ -54,6 +59,9 @@ export function buildProgram(): Command {
     .description('DSH-based multi-agent research workflow platform (Phase 0: recoverable skeleton)')
     .version(readVersion())
     .showHelpAfterError()
+    // Global --plain/--json must precede the subcommand; subcommand flags
+    // (e.g. `status --json`) keep parsing as their own options.
+    .enablePositionalOptions()
     .configureOutput({
       writeErr: (text) => process.stderr.write(text),
     });
@@ -86,6 +94,21 @@ export function buildProgram(): Command {
   registerControlCommands(program);
   registerComparisonCommand(program);
   registerBaselineCommand(program);
+  registerPapersCommand(program);
+  registerLogsCommand(program);
+  registerDecisionCommand(program);
+  registerInteractiveCommand(program);
+
+  // Global display modes (docs/TERMINAL_UX 三种显示模式). They apply to the
+  // bare invocation; subcommands keep their own --json flags.
+  program.option('--plain', 'short mark, no colors, log-friendly output');
+  program.option('--json', 'machine-readable status/events snapshot (bare invocation)');
+  program.action(
+    action(async () => {
+      const opts = program.opts<{ plain?: boolean; json?: boolean }>();
+      return runBareInvocation(opts);
+    }),
+  );
   return program;
 }
 

@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256Of } from '../core/hash.js';
+import { redactSecrets } from '../core/redact.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { runGit } from './importer.js';
 import type {
@@ -28,12 +29,7 @@ export interface RepairFailure {
 }
 
 /** Strips common credential shapes from logs before they are persisted. */
-export function redactSecrets(text: string): string {
-  return text
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
-    .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1***')
-    .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)[^\s'"]+/gi, '$1***');
-}
+export { redactSecrets };
 
 /**
  * Splits an entry command string into argv, honouring single/double quotes so
