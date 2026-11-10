@@ -40,3 +40,6 @@ coverage/
 *.parquet
 *.sqlite
 *.db
+
+# config backups written by ideaseek setup
+research.yaml.bak-*
