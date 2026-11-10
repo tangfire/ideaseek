@@ -61,6 +61,33 @@ export interface BlockResult {
   run: RunRecord;
 }
 
+export interface PaperIndexEntry {
+  /** Content hash of the parsed source (sha256:<hex>) — index entry identity. */
+  paperKey: string;
+  /** Project-relative source path. */
+  source: string;
+  parser: string;
+  pageCount: number;
+  pages: { page: number; text: string }[];
+  indexedAt: number;
+}
+
+export interface PaperIndexMeta {
+  paperKey: string;
+  source: string;
+  parser: string;
+  pageCount: number;
+  indexedAt: number;
+}
+
+export interface PaperSearchHit {
+  paperKey: string;
+  source: string;
+  page: number;
+  snippet: string;
+  score: number;
+}
+
 export interface ListEventsOptions {
   since?: number;
   limit?: number;
@@ -96,6 +123,8 @@ export interface WorkflowDb {
   listTasks(runId: string): Promise<TaskRecord[]>;
   /** Artifacts of one task, `staged` rows first (they carry temp paths). */
   listArtifacts(taskId: string): Promise<ArtifactRecord[]>;
+  /** All committed artifacts of a kind across runs (knowledge indexing). */
+  listArtifactsByKind(kind: string): Promise<ArtifactRecord[]>;
   claimNextTask(runId: string, workerId: string, opts: ClaimOptions): Promise<TaskRecord | null>;
   markTaskStarted(taskId: string, workerId: string): Promise<TaskRecord>;
   heartbeat(taskId: string, workerId: string, opts: ClaimOptions): Promise<HeartbeatResult>;
@@ -124,6 +153,13 @@ export interface WorkflowDb {
   // Events
   appendEvent(event: NewRunEvent): Promise<RunEvent>;
   listEvents(runId: string, opts?: ListEventsOptions): Promise<RunEvent[]>;
+
+  // Knowledge index (FTS5, migration v2)
+  replacePaperIndex(entry: PaperIndexEntry): Promise<void>;
+  reindexPaper(entry: PaperIndexEntry): Promise<{ inserted: number }>;
+  removePaperIndex(paperKey: string): Promise<boolean>;
+  searchPapers(query: string, opts?: { limit?: number }): Promise<PaperSearchHit[]>;
+  listIndexedPapers(): Promise<PaperIndexMeta[]>;
 
   // Workers
   registerWorker(input: {

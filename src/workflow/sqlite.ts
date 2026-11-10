@@ -23,6 +23,9 @@ import type {
 import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from './types.js';
 import type {
   BeginCommitResult,
+  PaperIndexEntry,
+  PaperIndexMeta,
+  PaperSearchHit,
   BlockResult,
   CreateProjectInput,
   CreateRunInput,
@@ -120,6 +123,25 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         status TEXT NOT NULL,
         started_at INTEGER NOT NULL,
         heartbeat_at INTEGER NOT NULL
+      );
+    `,
+  },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS paper_index (
+        paper_key TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        parser TEXT NOT NULL,
+        page_count INTEGER NOT NULL,
+        indexed_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_paper_index_source ON paper_index(source);
+      CREATE VIRTUAL TABLE IF NOT EXISTS paper_fts USING fts5(
+        body,
+        page UNINDEXED,
+        paper_key UNINDEXED,
+        tokenize = 'porter unicode61'
       );
     `,
   },
@@ -320,6 +342,18 @@ function toProject(row: ProjectRow): ProjectRecord {
 
 function boolParam(value: boolean): number {
   return value ? 1 : 0;
+}
+
+/**
+ * Quotes each whitespace-separated term so arbitrary user input is a valid
+ * FTS5 MATCH expression (AND semantics, no operators injection).
+ */
+export function sanitizeFtsQuery(query: string): string {
+  const terms = query
+    .split(/\s+/)
+    .map((term) => term.replace(/"/g, '""').trim())
+    .filter(Boolean);
+  return terms.map((term) => `"${term}"`).join(' ');
 }
 
 export function relPathForHash(hash: string): string {
@@ -750,6 +784,124 @@ export class SqliteWorkflowDb implements WorkflowDb {
       .prepare(`SELECT ${TASK_COLUMNS} FROM task WHERE run_id = ? ORDER BY created_at, rowid`)
       .all(runId) as unknown as TaskRow[];
     return Promise.resolve(rows.map(rowToTask));
+  }
+
+  listArtifactsByKind(kind: string): Promise<ArtifactRecord[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM artifact WHERE kind = ? AND status = 'committed' ORDER BY created_at, rowid`,
+      )
+      .all(kind) as unknown as ArtifactRow[];
+    return Promise.resolve(rows.map(rowToArtifact));
+  }
+
+  replacePaperIndex(entry: PaperIndexEntry): Promise<void> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        this.replacePaperIndexTx(entry);
+      }),
+    );
+  }
+
+  reindexPaper(entry: PaperIndexEntry): Promise<{ inserted: number }> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        this.replacePaperIndexTx(entry);
+        return { inserted: entry.pages.length };
+      }),
+    );
+  }
+
+  removePaperIndex(paperKey: string): Promise<boolean> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const existed =
+          this.db.prepare('DELETE FROM paper_index WHERE paper_key = ?').run(paperKey).changes > 0;
+        this.db.prepare('DELETE FROM paper_fts WHERE paper_key = ?').run(paperKey);
+        return existed;
+      }),
+    );
+  }
+
+  listIndexedPapers(): Promise<PaperIndexMeta[]> {
+    const rows = this.db.prepare('SELECT * FROM paper_index ORDER BY source').all() as unknown as {
+      paper_key: string;
+      source: string;
+      parser: string;
+      page_count: number;
+      indexed_at: number;
+    }[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        paperKey: row.paper_key,
+        source: row.source,
+        parser: row.parser,
+        pageCount: row.page_count,
+        indexedAt: row.indexed_at,
+      })),
+    );
+  }
+
+  searchPapers(query: string, opts: { limit?: number } = {}): Promise<PaperSearchHit[]> {
+    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+    const match = sanitizeFtsQuery(query);
+    if (!match) return Promise.resolve([]);
+    const rows = this.db
+      .prepare(
+        `SELECT f.paper_key AS paper_key, f.page AS page,
+                snippet(paper_fts, 0, '[', ']', '…', 16) AS snippet,
+                bm25(paper_fts) AS score,
+                p.source AS source
+         FROM paper_fts f
+         JOIN paper_index p ON p.paper_key = f.paper_key
+         WHERE paper_fts MATCH ?
+         ORDER BY score
+         LIMIT ?`,
+      )
+      .all(match, limit) as unknown as {
+      paper_key: string;
+      page: number;
+      snippet: string;
+      score: number;
+      source: string;
+    }[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        paperKey: row.paper_key,
+        source: row.source,
+        page: Number(row.page),
+        snippet: row.snippet ?? '',
+        score: Number(row.score),
+      })),
+    );
+  }
+
+  private replacePaperIndexTx(entry: PaperIndexEntry): void {
+    // Drop any previous generation for this source (content may have changed)
+    // and any stale rows for this key, then insert the fresh page rows.
+    const stale = this.db
+      .prepare('SELECT paper_key FROM paper_index WHERE source = ?')
+      .all(entry.source) as unknown as { paper_key: string }[];
+    for (const row of stale) {
+      this.db.prepare('DELETE FROM paper_fts WHERE paper_key = ?').run(row.paper_key);
+      this.db.prepare('DELETE FROM paper_index WHERE paper_key = ?').run(row.paper_key);
+    }
+    this.db.prepare('DELETE FROM paper_fts WHERE paper_key = ?').run(entry.paperKey);
+    this.db
+      .prepare(
+        `INSERT INTO paper_index (paper_key, source, parser, page_count, indexed_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(paper_key) DO UPDATE SET
+           source = excluded.source, parser = excluded.parser,
+           page_count = excluded.page_count, indexed_at = excluded.indexed_at`,
+      )
+      .run(entry.paperKey, entry.source, entry.parser, entry.pageCount, entry.indexedAt);
+    const insertFts = this.db.prepare(
+      'INSERT INTO paper_fts (body, page, paper_key) VALUES (?, ?, ?)',
+    );
+    for (const page of entry.pages) {
+      if (page.text.trim()) insertFts.run(page.text, page.page, entry.paperKey);
+    }
   }
 
   listArtifacts(taskId: string): Promise<ArtifactRecord[]> {

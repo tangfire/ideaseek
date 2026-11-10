@@ -17,6 +17,7 @@ import { registerNextCommand } from './commands/next.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerSearchCommand } from './commands/search.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerStreamCommands } from './commands/stream.js';
@@ -59,6 +60,7 @@ export function buildProgram(): Command {
   registerStatusCommand(program);
   registerNextCommand(program);
   registerEventsCommand(program);
+  registerSearchCommand(program);
   registerStreamCommands(program);
   registerSuperviseCommand(program);
   registerReportCommand(program);
