@@ -4,19 +4,19 @@
 
 ## Phase 0：项目骨架与恢复
 
-- [ ] `ideaseek init` 幂等创建项目目录和模板
+- [x] `ideaseek init` 幂等创建项目目录和模板
 - [ ] `ideaseek start` 小白用户一键入口和规模自适应策略
 - [ ] `ideaseek setup/doctor/config explain`
 - [ ] 自动检测 Python/Node/容器/CUDA/GPU/磁盘
 - [ ] `scan/intake/organize` 与 InputManifest
 - [ ] `starter/standard/research` 运行策略和报告措辞
 - [ ] 配置 schema、迁移和 ResolvedConfig 快照
-- [ ] Workflow DB 与 artifact store 接口
-- [ ] Task lease、heartbeat、重试、取消和幂等提交
-- [ ] RunEvent 持久化、`status/next`
+- [x] Workflow DB 与 artifact store 接口
+- [x] Task lease、heartbeat、重试、取消和幂等提交
+- [x] RunEvent 持久化、`status/next`
 - [ ] 后台 supervisor、`attach/watch/events`
-- [ ] `pause/resume/continue/cancel`
-- [ ] 故障注入和 checkpoint 恢复
+- [x] `pause/resume/continue/cancel`
+- [x] 故障注入和 checkpoint 恢复
 
 ## Phase 1：DSH 集成
 
@@ -90,4 +90,8 @@
 
 ```text
 YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
+```
+
+```text
+2026-11-10 | Phase 0 可恢复垂直切片（init/status/next/events、Workflow DB、lease/heartbeat/重试/取消/幂等两阶段提交、RunEvent 回放、Artifact Store hash+原子提交、pause/resume/continue/cancel、假 Worker、故障注入与重启恢复） | 07f3cae | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 7 files / 50 tests passed（含 Worker 崩溃、重复提交、租约过期、输出写入中断、进程重启、quota 阻塞、CLI e2e 退出码） | Windows 下 SIGINT 无法投递给子进程，Ctrl-C 语义只做了进程内测试；后台 supervisor/attach/watch 未实现；scan/intake/organize、setup/doctor、start 未实现；配置无迁移器；DSH 未接入 | 下一模块：ideaseek setup/doctor/config explain + 自动环境检测（依赖本切片的 config 抽象）
 ```
