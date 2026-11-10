@@ -9,6 +9,12 @@ import {
   type ComparisonMethod,
 } from '../src/comparison/types.js';
 import { importComparisonRepo, upstreamHeadIntact } from '../src/comparison/importer.js';
+import {
+  buildCandidates,
+  classifyLicense,
+  extractRepoUrls,
+  normalizeRepoUrl,
+} from '../src/comparison/discover.js';
 import type { ProjectRuntime } from '../src/workflow/runtime.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
 import { spawn } from 'node:child_process';
@@ -384,4 +390,153 @@ describe('ideaseek comparison CLI end-to-end', () => {
     expect(badSource.code).not.toBe(0);
     expect(badSource.stderr).toContain('--source must be');
   }, 60_000);
+
+  it('register → import without url walks legal hops with history', async () => {
+    const registered = await runCli(project, [
+      'comparison',
+      'register',
+      'fedprox',
+      '--repo',
+      fixture,
+      '--paper',
+      'paper-9',
+      '--json',
+    ]);
+    expect(registered.code).toBe(0);
+    const regPayload = JSON.parse(registered.stdout) as { status: string };
+    expect(regPayload.status).toBe('candidate');
+
+    // Import without a url falls back to the registered repo.
+    const imported = await runCli(project, ['comparison', 'import', 'fedprox', '--json']);
+    expect(imported.code).toBe(0);
+    const impPayload = JSON.parse(imported.stdout) as {
+      status: string;
+      licenseKind: string;
+    };
+    expect(impPayload.status).toBe('source-resolved');
+    expect(impPayload.licenseKind).toBe('permissive');
+
+    const yaml = await readFile(join(project, 'comparisons', 'fedprox', 'method.yaml'), 'utf8');
+    expect(yaml).toContain('paper-9');
+    expect(yaml).toContain('candidate');
+    expect(yaml).toContain('accepted');
+    // Duplicate registration is refused.
+    const again = await runCli(project, ['comparison', 'register', 'fedprox', '--repo', fixture]);
+    expect(again.code).not.toBe(0);
+    expect(again.stderr).toContain('already registered');
+  }, 60_000);
+
+  it('discover reports empty corpus without crashing', async () => {
+    const discovered = await runCli(project, ['comparison', 'discover', '--json']);
+    expect(discovered.code).toBe(0);
+    const payload = JSON.parse(discovered.stdout) as {
+      mentionCount: number;
+      candidates: unknown[];
+    };
+    expect(payload.mentionCount).toBe(0);
+    expect(payload.candidates).toEqual([]);
+    const file = await readFile(join(project, 'knowledge', 'comparison-candidates.json'), 'utf8');
+    expect(JSON.parse(file)).toMatchObject({ mentionCount: 0 });
+  }, 60_000);
+});
+
+describe('extractRepoUrls / normalizeRepoUrl', () => {
+  it('normalizes scheme, www, .git suffix and deep paths', () => {
+    expect(normalizeRepoUrl('https://github.com/facebookresearch/fedlab.git')).toBe(
+      'https://github.com/facebookresearch/fedlab',
+    );
+    expect(normalizeRepoUrl('www.github.com/org/repo/tree/main/src')).toBe(
+      'https://github.com/org/repo',
+    );
+    expect(normalizeRepoUrl('github.com/org/repo')).toBe('https://github.com/org/repo');
+    expect(normalizeRepoUrl('https://gitlab.com/org/repo.git/')).toBe(
+      'https://gitlab.com/org/repo',
+    );
+  });
+
+  it('rejects reserved owners and non-repo paths', () => {
+    expect(normalizeRepoUrl('https://github.com/topics/federated')).toBeNull();
+    expect(normalizeRepoUrl('https://github.com/settings/tokens')).toBeNull();
+    expect(normalizeRepoUrl('not a url at all')).toBeNull();
+  });
+
+  it('extracts unique urls in order and skips trailing punctuation', () => {
+    const text =
+      'Code at https://github.com/a/b, also github.com/c/d. See github.com/a/b again and https://github.com/topics/x.';
+    expect(extractRepoUrls(text)).toEqual(['https://github.com/a/b', 'https://github.com/c/d']);
+  });
+});
+
+describe('classifyLicense', () => {
+  it('classifies common license heads', () => {
+    expect(classifyLicense('MIT License\n\nPermission is hereby granted')).toBe('permissive');
+    expect(classifyLicense('Apache License Version 2.0')).toBe('permissive');
+    expect(classifyLicense('GNU GENERAL PUBLIC LICENSE Version 3')).toBe('copyleft');
+    expect(classifyLicense('GNU AFFERO GENERAL PUBLIC LICENSE Version 3')).toBe('copyleft');
+    expect(classifyLicense('GNU LESSER GENERAL PUBLIC LICENSE Version 3')).toBe('weak-copyleft');
+    expect(classifyLicense('Mozilla Public License Version 2.0')).toBe('weak-copyleft');
+    expect(classifyLicense('All rights reserved.')).toBe('unknown');
+    expect(classifyLicense(null)).toBe('none');
+  });
+});
+
+describe('buildCandidates', () => {
+  it('groups mentions per repo with paper provenance and counts', () => {
+    const candidates = buildCandidates([
+      { paperKey: 'p2', source: 'papers/b.pdf', page: 3, url: 'https://github.com/x/y' },
+      { paperKey: 'p1', source: 'papers/a.pdf', page: 1, url: 'https://github.com/x/y' },
+      { paperKey: 'p1', source: 'papers/a.pdf', page: 5, url: 'https://github.com/x/y' },
+      { paperKey: 'p1', source: 'papers/a.pdf', page: 2, url: 'https://github.com/m/n' },
+    ]);
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]).toMatchObject({
+      repoUrl: 'https://github.com/x/y',
+      mentions: 3,
+      paperRefs: ['p1', 'p2'],
+    });
+    expect(candidates[0]!.pages.p1).toEqual([1, 5]);
+    expect(candidates[1]!.repoUrl).toBe('https://github.com/m/n');
+  });
+});
+
+describe('findRepoUrlMentions (DB)', () => {
+  let runtime: ProjectRuntime;
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await makeProjectDir();
+    runtime = await openRuntime(dir);
+  });
+
+  afterEach(async () => {
+    await runtime.close();
+  });
+
+  it('finds normalized repo urls in indexed paper pages', async () => {
+    await runtime.db.replacePaperIndex({
+      paperKey: 'sha256:aaa',
+      source: 'papers/fed.pdf',
+      parser: 'pdf',
+      pageCount: 2,
+      indexedAt: 1,
+      pages: [
+        { page: 1, text: 'We build on FedAvg; code at https://github.com/google/fedavg.' },
+        { page: 2, text: 'Baseline: github.com/facebookresearch/fedlab and github.com/topics/ml' },
+      ],
+    });
+    const mentions = await runtime.db.findRepoUrlMentions();
+    expect(mentions.map((m) => m.url).sort()).toEqual([
+      'https://github.com/facebookresearch/fedlab',
+      'https://github.com/google/fedavg',
+    ]);
+    expect(mentions.find((m) => m.url.includes('fedavg'))).toMatchObject({
+      paperKey: 'sha256:aaa',
+      page: 1,
+      source: 'papers/fed.pdf',
+    });
+
+    // Empty corpus → no mentions.
+    await runtime.db.removePaperIndex('sha256:aaa');
+    expect(await runtime.db.findRepoUrlMentions()).toEqual([]);
+  });
 });

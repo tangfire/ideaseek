@@ -23,6 +23,7 @@ import type {
 import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from './types.js';
 import { assertTransition } from '../comparison/types.js';
 import type { ComparisonStatus } from '../comparison/types.js';
+import { extractRepoUrls } from '../comparison/discover.js';
 import type {
   BeginCommitResult,
   ComparisonDoc,
@@ -33,6 +34,7 @@ import type {
   PaperIndexEntry,
   PaperIndexMeta,
   PaperSearchHit,
+  RepoUrlMention,
   BlockResult,
   CreateProjectInput,
   CreateRunInput,
@@ -903,6 +905,44 @@ export class SqliteWorkflowDb implements WorkflowDb {
         indexedAt: row.indexed_at,
       })),
     );
+  }
+
+  findRepoUrlMentions(): Promise<RepoUrlMention[]> {
+    // Cheap LIKE prefilter over indexed pages; URL normalization and
+    // reserved-owner filtering happen in comparison/discover.
+    const rows = this.db
+      .prepare(
+        `SELECT f.paper_key AS paper_key, f.page AS page, f.body AS body, p.source AS source
+         FROM paper_fts f
+         JOIN paper_index p ON p.paper_key = f.paper_key
+         WHERE f.body LIKE '%github.com%'
+            OR f.body LIKE '%gitlab.com%'
+            OR f.body LIKE '%bitbucket.org%'
+            OR f.body LIKE '%gitee.com%'
+         ORDER BY p.source, f.page`,
+      )
+      .all() as unknown as {
+      paper_key: string;
+      page: number;
+      body: string;
+      source: string;
+    }[];
+    const seen = new Set<string>();
+    const out: RepoUrlMention[] = [];
+    for (const row of rows) {
+      for (const url of extractRepoUrls(row.body)) {
+        const key = `${row.paper_key} ${row.page} ${url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          paperKey: row.paper_key,
+          source: row.source,
+          page: Number(row.page),
+          url,
+        });
+      }
+    }
+    return Promise.resolve(out);
   }
 
   upsertSlice(slice: DatasetSliceRecord): Promise<void> {

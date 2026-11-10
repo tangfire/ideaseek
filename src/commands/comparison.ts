@@ -5,6 +5,7 @@ import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { findProjectRoot } from '../config/paths.js';
 import { stringify } from 'yaml';
 import { importComparisonRepo } from '../comparison/importer.js';
+import { buildCandidates } from '../comparison/discover.js';
 import {
   COMPARISON_TRANSITIONS,
   assertTransition,
@@ -52,7 +53,10 @@ export function registerComparisonCommand(program: Command): void {
       'anonymous-clone a public repo into comparisons/<id> with upstream/worktree isolation',
     )
     .argument('<methodId>', 'kebab-case method id')
-    .argument('<url>', 'public HTTPS git URL (credentials are never provided)')
+    .argument(
+      '[url]',
+      'public HTTPS git URL (credentials are never provided; defaults to the registered --repo url)',
+    )
     .option('--branch <branch>', 'branch/tag to shallow-clone')
     .option('--reference-only', 'register as reference-only (default is required for the gate)')
     .option(
@@ -67,7 +71,7 @@ export function registerComparisonCommand(program: Command): void {
       action(
         async (
           methodId: string,
-          url: string,
+          url: string | undefined,
           opts: {
             branch?: string;
             referenceOnly?: boolean;
@@ -83,28 +87,86 @@ export function registerComparisonCommand(program: Command): void {
               '--source must be user | official-code | paper-reimplementation',
             );
           }
+          const rt = await openRuntime(root);
+          let existing: Awaited<ReturnType<typeof rt.db.getComparison>> = null;
+          try {
+            existing = await rt.db.getComparison(methodId);
+          } finally {
+            await rt.close();
+          }
+          const cloneUrl = url ?? (existing?.record.repo as { url?: unknown } | undefined)?.url;
+          if (typeof cloneUrl !== 'string' || !cloneUrl) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              'no repository url: pass one or register first (ideaseek comparison register <id> --repo <url>)',
+            );
+          }
+          // Status discipline: a registered candidate/accepted record advances
+          // through its legal hops to source-resolved; later-stage methods must
+          // be moved back explicitly via set-status (no silent re-imports).
+          if (existing && !['candidate', 'accepted', 'source-resolved'].includes(existing.status)) {
+            throw new IdeaseekError(
+              'INVALID_STATE',
+              `cannot import ${methodId} from status ${existing.status}; use: ideaseek comparison set-status ${methodId} source-resolved`,
+            );
+          }
           const imported = await importComparisonRepo(root, {
             methodDir: `comparisons/${methodId}`,
-            url,
+            url: cloneUrl,
             branch: opts.branch,
           });
           const now = Date.now();
+          const history: ComparisonMethod['history'] = existing
+            ? [...((existing.record.history as ComparisonMethod['history']) ?? [])]
+            : [];
+          const from: ComparisonStatus = (existing?.status as ComparisonStatus) ?? 'candidate';
+          // Record the legal hops a fresh/registered method walks on import.
+          if (from === 'candidate') {
+            history.push({
+              at: now,
+              from: 'candidate',
+              to: 'accepted',
+              reason: 'import approved',
+            });
+            history.push({
+              at: now,
+              from: 'accepted',
+              to: 'source-resolved',
+              reason: 'imported with upstream + worktree',
+            });
+          } else if (from === 'accepted') {
+            history.push({
+              at: now,
+              from: 'accepted',
+              to: 'source-resolved',
+              reason: 'imported with upstream + worktree',
+            });
+          }
+          const existingMethod = existing ? toMethod(existing.record) : null;
           const method: ComparisonMethod = {
             methodId,
-            paperRefs: opts.paper ?? [],
-            required: opts.referenceOnly !== true,
-            sourceKind: opts.source as ComparisonMethod['sourceKind'],
+            paperRefs: [...new Set([...(existingMethod?.paperRefs ?? []), ...(opts.paper ?? [])])],
+            required: existingMethod?.required ?? opts.referenceOnly !== true,
+            sourceKind:
+              existingMethod?.sourceKind ?? (opts.source as ComparisonMethod['sourceKind']),
             repo: {
-              url,
-              branch: opts.branch,
+              url: cloneUrl,
+              branch: opts.branch ?? existingMethod?.repo?.branch,
               commit: imported.commit,
               license: imported.license,
+              licenseKind: imported.licenseKind,
               clonedAt: now,
             },
             status: 'source-resolved',
             statusReason: 'imported with upstream + worktree isolation',
-            notes: ['cloned anonymously; upstream is read-only, edits go to worktree/'],
-            createdAt: now,
+            notes: [
+              ...new Set([
+                ...(existingMethod?.notes ?? []),
+                'cloned anonymously; upstream is read-only, edits go to worktree/',
+              ]),
+            ],
+            history,
+            createdAt: existingMethod?.createdAt ?? now,
             updatedAt: now,
           };
           const errors = validateComparisonMethod(method);
@@ -115,9 +177,9 @@ export function registerComparisonCommand(program: Command): void {
             );
           }
           const record = method as unknown as Record<string, unknown>;
-          const rt = await openRuntime(root);
+          const rt2 = await openRuntime(root);
           try {
-            await rt.db.upsertComparison({
+            await rt2.db.upsertComparison({
               methodId,
               status: method.status,
               required: method.required,
@@ -125,7 +187,7 @@ export function registerComparisonCommand(program: Command): void {
               updatedAt: now,
             });
           } finally {
-            await rt.close();
+            await rt2.close();
           }
           const yamlPath = await exportMethodYaml(root, method);
           if (opts.json) {
@@ -135,6 +197,7 @@ export function registerComparisonCommand(program: Command): void {
                 status: method.status,
                 commit: imported.commit,
                 license: imported.license,
+                licenseKind: imported.licenseKind,
                 upstream: imported.upstreamDir,
                 worktree: imported.worktreeDir,
                 methodYaml: yamlPath,
@@ -146,13 +209,161 @@ export function registerComparisonCommand(program: Command): void {
             );
             process.stdout.write(`  upstream: ${imported.upstreamDir} (read-only)\n`);
             process.stdout.write(`  worktree: ${imported.worktreeDir} (edits go here)\n`);
-            process.stdout.write(`  license: ${imported.license ?? 'none found'}\n`);
+            process.stdout.write(
+              `  license: ${imported.license ?? 'none found'} (${imported.licenseKind})\n`,
+            );
             process.stdout.write(`  method: ${yamlPath}\n`);
             process.stdout.write('next: ideaseek comparison smoke ' + methodId + '\n');
           }
           return 0;
         },
       ),
+    );
+
+  comparison
+    .command('register')
+    .description('register a candidate method without cloning (from discovery or user input)')
+    .argument('<methodId>', 'kebab-case method id')
+    .option('--repo <url>', 'recorded repository url (cloned later by comparison import)')
+    .option(
+      '--paper <ref>',
+      'paper reference (repeatable)',
+      (value, prev: string[]) => [...prev, value],
+      [] as string[],
+    )
+    .option('--source <kind>', 'user | official-code | paper-reimplementation', 'official-code')
+    .option('--reference-only', 'reference-only (default is required for the gate)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (
+          methodId: string,
+          opts: {
+            repo?: string;
+            paper?: string[];
+            source?: string;
+            referenceOnly?: boolean;
+            json?: boolean;
+          },
+        ) => {
+          const root = await openRoot();
+          if (!['user', 'official-code', 'paper-reimplementation'].includes(opts.source ?? '')) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              '--source must be user | official-code | paper-reimplementation',
+            );
+          }
+          const now = Date.now();
+          const method: ComparisonMethod = {
+            methodId,
+            paperRefs: opts.paper ?? [],
+            required: opts.referenceOnly !== true,
+            sourceKind: opts.source as ComparisonMethod['sourceKind'],
+            ...(opts.repo ? { repo: { url: opts.repo } } : {}),
+            status: 'candidate',
+            notes: ['registered without clone; next: comparison import ' + methodId],
+            createdAt: now,
+            updatedAt: now,
+          };
+          const errors = validateComparisonMethod(method);
+          if (!errors.ok) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              `invalid method: ${errors.errors.join('; ')}`,
+            );
+          }
+          const rt = await openRuntime(root);
+          try {
+            const existingDoc = await rt.db.getComparison(methodId);
+            if (existingDoc) {
+              throw new IdeaseekError(
+                'ALREADY_INITIALIZED',
+                `comparison ${methodId} already registered (status ${existingDoc.status})`,
+              );
+            }
+            await rt.db.upsertComparison({
+              methodId,
+              status: method.status,
+              required: method.required,
+              record: method as unknown as Record<string, unknown>,
+              updatedAt: now,
+            });
+          } finally {
+            await rt.close();
+          }
+          const yamlPath = await exportMethodYaml(root, method);
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                methodId,
+                status: method.status,
+                required: method.required,
+                repo: opts.repo ?? null,
+                methodYaml: yamlPath,
+              }),
+            );
+          } else {
+            process.stdout.write(
+              `registered ${methodId} (candidate${method.required ? ', required' : ', reference-only'})\n`,
+            );
+            process.stdout.write(`  method: ${yamlPath}\n`);
+            process.stdout.write(
+              `next: ideaseek comparison import ${methodId}${opts.repo ? '' : ' <url>'}\n`,
+            );
+          }
+          return 0;
+        },
+      ),
+    );
+
+  comparison
+    .command('discover')
+    .description('scan indexed papers for repository urls (deterministic official-code candidates)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const rt = await openRuntime(root);
+        let mentions: Awaited<ReturnType<typeof rt.db.findRepoUrlMentions>>;
+        try {
+          mentions = await rt.db.findRepoUrlMentions();
+        } finally {
+          await rt.close();
+        }
+        const candidates = buildCandidates(mentions);
+        const payload = {
+          generatedAt: Date.now(),
+          mentionCount: mentions.length,
+          candidates,
+        };
+        const outPath = join(root, 'knowledge', 'comparison-candidates.json');
+        await ensureDir(join(root, 'knowledge'));
+        await writeFileAtomic(outPath, `${JSON.stringify(payload, null, 2)}\n`);
+        if (opts.json) {
+          process.stdout.write(jsonLine(payload));
+          return 0;
+        }
+        if (candidates.length === 0) {
+          process.stdout.write(
+            'no repository urls found in indexed papers (run ideaseek ingest first)\n',
+          );
+          process.stdout.write(`  candidates: ${outPath}\n`);
+          return 0;
+        }
+        process.stdout.write(
+          `${candidates.length} candidate repo(s) from ${mentions.length} mention(s):\n`,
+        );
+        for (const candidate of candidates.slice(0, 20)) {
+          process.stdout.write(
+            `  ${candidate.repoUrl}  papers=${candidate.paperRefs.length} mentions=${candidate.mentions}\n`,
+          );
+        }
+        process.stdout.write(`  candidates: ${outPath}\n`);
+        process.stdout.write(
+          'next: ideaseek comparison register <id> --repo <url> --paper <ref>\n',
+        );
+        return 0;
+      }),
     );
 
   comparison

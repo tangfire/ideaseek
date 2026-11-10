@@ -54,7 +54,7 @@
 
 - [x] comparison manifest 与 required 状态
 - [x] 用户仓库导入和 upstream/worktree 隔离
-- [ ] 官方代码定位和许可证记录
+- [x] 官方代码定位和许可证记录
 - [ ] Baseline Repair Agent
 - [ ] Baseline Reproduction Agent
 - [ ] 统一 ExperimentSpec/RunResult
@@ -131,3 +131,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | 外部只读数据集接入（用户决定1）：inputs.readonly_datasets + Python npz 联邦画像（全检查表）+ data describe dataset-manifest.json + 联邦切片规则 v2（选择清单、零拷贝）+ data slices 自动6切片 | 81311b0 | 门禁 44 files/261 vitest+9 python 全绿 | 真实 FedPF mnist 实测：20 clients/52,492 train/17,508 test、x=[N,1,28,28]f32、labels0-9、tvMean=0.7348（强 non-IID）、rootHash sha256:20da58b6…、只读指纹前后一致、staged 无数据文件 | research.yaml 仅含路径（已提交）；.npz 需 allow_pickle 已处理
 2026-11-10 | 用户决定2落地：本地 embedding（fastembed0.9.1+MiniLM-L6-v2/Apache-2.0，共享缓存+指纹 manifest）、迁移v5向量表、增量嵌入、FTS-first RRF 混合检索+全失败回退、setup/doctor --install-embeddings、证据免责输出 | 591cb11 | 门禁 45 files/266 vitest+9 python 全绿 | 真实74篇：首搜嵌入1357页(8m13一次性)/hybrid融合40+40；复搜增量0嵌入3s；无外部 embedding API | Phase 2 checkbox 全部完成
 2026-11-10 | Phase 4 起步：ComparisonMethod 契约+状态机（合法迁移/excluded·blocked·partial 必须带 reason）、迁移v6 comparison 注册表（upsert/get/list/transition+history）、匿名 git 导入器（GIT_TERMINAL_PROMPT=0、upstream 只读+worktree 隔离、commit/license 溯源、重复导入拒绝）、ideaseek comparison import/list/set-status/smoke（smoke 结果按状态机落库、method.yaml 同步导出） | 160a865 | 门禁 46 files/281 vitest+9 python 全绿（含本地 git fixture 导入/隔离/状态机 e2e）| 官方代码自动定位（从论文找 repo）未做；smoke 默认 entry 为 `python --version` 占位；Baseline Repair/Reproduction Agent 未做 | 下一模块：官方代码定位与许可证记录或 Baseline Repair Agent
+2026-11-10 | Phase 4 官方代码定位与许可证记录：确定性 repo URL 发现（paper_fts LIKE 预筛+归一化/保留 owner 过滤、comparison discover → knowledge/comparison-candidates.json）、comparison register 候选注册（不 clone、candidate 状态入状态机）、import 免 url 回退已注册 repo 并记录 candidate→accepted→source-resolved 跳跃历史、许可证读取+classifyLicense 分类（permissive/weak-copyleft/copyleft/unknown/none 入 repo.licenseKind） | 待提交 | 门禁 46 files/289 vitest+9 python 全绿（URL 归一化/许可证分类/候选聚合/DB 发现/register→import 无 url 回退 e2e）| LLM 从实验表格发现候选（Phase 6）、GitHub API 元数据检索、许可证策略门禁（allowlist 拒绝）未做 | 下一模块：Baseline Repair Agent 或统一 ExperimentSpec/RunResult

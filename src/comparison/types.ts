@@ -1,4 +1,5 @@
 import { IdeaseekError } from '../core/errors.js';
+import type { LicenseKind } from './discover.js';
 
 /**
  * ComparisonMethod contract (docs/DATA_CONTRACTS.md §ComparisonMethod,
@@ -27,6 +28,8 @@ export interface ComparisonRepo {
   /** Exact commit recorded at import (provenance). */
   commit?: string;
   license?: string | null;
+  /** Coarse license class for provenance/gating (see discover.classifyLicense). */
+  licenseKind?: LicenseKind;
   clonedAt?: number;
 }
 

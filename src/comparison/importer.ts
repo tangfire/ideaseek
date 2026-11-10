@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { access, mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
+import { classifyLicense, type LicenseKind } from './discover.js';
 
 export interface GitResult {
   code: number;
@@ -91,6 +92,7 @@ export interface ImportRepoResult {
   worktreeDir: string;
   commit: string;
   license: string | null;
+  licenseKind: LicenseKind;
   remoteUrl: string;
 }
 
@@ -134,6 +136,7 @@ export async function importComparisonRepo(
 
   const commit = await gitHeadCommit(upstreamDir);
   const license = await readLicense(upstreamDir);
+  const licenseKind = classifyLicense(license);
 
   const worktree = await runGit(['worktree', 'add', worktreeDir, 'HEAD'], {
     cwd: upstreamDir,
@@ -146,7 +149,7 @@ export async function importComparisonRepo(
     );
   }
 
-  return { upstreamDir, worktreeDir, commit, license, remoteUrl: input.url };
+  return { upstreamDir, worktreeDir, commit, license, licenseKind, remoteUrl: input.url };
 }
 
 /** Verifies upstream was not modified (read-only contract helper for tests). */

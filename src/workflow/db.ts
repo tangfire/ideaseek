@@ -136,6 +136,14 @@ export interface PaperSearchHit {
   score: number;
 }
 
+/** A repository url mentioned on a page of an indexed paper. */
+export interface RepoUrlMention {
+  paperKey: string;
+  source: string;
+  page: number;
+  url: string;
+}
+
 export interface ListEventsOptions {
   since?: number;
   limit?: number;
@@ -208,6 +216,8 @@ export interface WorkflowDb {
   removePaperIndex(paperKey: string): Promise<boolean>;
   searchPapers(query: string, opts?: { limit?: number }): Promise<PaperSearchHit[]>;
   listIndexedPapers(): Promise<PaperIndexMeta[]>;
+  /** Deterministic official-code discovery: repo urls found in indexed papers. */
+  findRepoUrlMentions(): Promise<RepoUrlMention[]>;
 
   // Dataset slice registry (migration v3)
   upsertSlice(slice: DatasetSliceRecord): Promise<void>;
