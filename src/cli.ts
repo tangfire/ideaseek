@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
+import { registerConfigCommand } from './commands/config.js';
 import { registerControlCommands } from './commands/control.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 import { registerEventsCommand } from './commands/events.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerNextCommand } from './commands/next.js';
 import { registerRunCommand } from './commands/run.js';
+import { registerSetupCommand } from './commands/setup.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerWorkerCommand } from './commands/worker.js';
 
@@ -35,6 +38,9 @@ export function buildProgram(): Command {
     });
 
   registerInitCommand(program);
+  registerSetupCommand(program);
+  registerDoctorCommand(program);
+  registerConfigCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

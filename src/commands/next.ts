@@ -20,6 +20,16 @@ async function liveWorkersOf(runtime: ProjectRuntime, runId: string): Promise<nu
 }
 
 async function advise(runtime: ProjectRuntime, run: RunRecord | null): Promise<NextAdvice> {
+  if (runtime.configLoad.errors.length > 0) {
+    return {
+      stage: 'CONFIG_INVALID',
+      blockers: runtime.configLoad.errors,
+      done: `项目 ${runtime.project.name} 已初始化`,
+      suggestion: 'research.yaml 有阻塞问题，run/worker 已拒绝启动；逐项修复',
+      command: 'ideaseek config explain',
+      exitCode: 2,
+    };
+  }
   if (!run) {
     const question = runtime.config.research.question;
     return {

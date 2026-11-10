@@ -4,6 +4,7 @@ import { ProjectRuntime } from '../workflow/runtime.js';
 import { demoHandlers } from '../worker/handlers.js';
 import {
   action,
+  assertConfigUsable,
   isBlockedRun,
   isTerminalRun,
   jsonLine,
@@ -26,6 +27,7 @@ export function registerWorkerCommand(program: Command): void {
         async (opts: { run?: string; maxTasks?: number; idleExit?: number; json?: boolean }) => {
           const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           try {
+            assertConfigUsable(runtime.configLoad);
             const run = await resolveRun(runtime, opts.run);
             if (isTerminalRun(run.status)) {
               if (opts.json) {

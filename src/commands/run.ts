@@ -4,6 +4,7 @@ import { ProjectRuntime } from '../workflow/runtime.js';
 import { demoHandlers } from '../worker/handlers.js';
 import {
   action,
+  assertConfigUsable,
   countByStatus,
   enqueueDemoPipeline,
   isBlockedRun,
@@ -35,6 +36,7 @@ export function registerRunCommand(program: Command): void {
         }) => {
           const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           try {
+            assertConfigUsable(runtime.configLoad);
             const faults = parseFaultSpec(opts.fault);
             const db = runtime.db;
             let run = opts.run

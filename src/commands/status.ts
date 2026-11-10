@@ -1,7 +1,8 @@
 import type { Command } from 'commander';
+import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord } from '../workflow/types.js';
-import { action, countByStatus, formatTaskLine, jsonLine, resolveRun } from './shared.js';
+import { action, countByStatus, formatTaskLine, jsonLine } from './shared.js';
 
 /** Exit codes reflect run state (docs/CLI_SPEC.md). */
 export function exitCodeForRun(run: RunRecord | null): number {
@@ -38,7 +39,35 @@ export function registerStatusCommand(program: Command): void {
       action(async (opts: { run?: string; detail?: boolean; json?: boolean }) => {
         const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
         try {
-          const run = await resolveRun(runtime, opts.run);
+          const run = opts.run
+            ? await runtime.db.getRun(opts.run)
+            : await runtime.db.getLatestRun(runtime.project.id);
+          if (!run) {
+            // A project without runs is a valid, reportable state.
+            if (opts.run) {
+              throw new IdeaseekError('RUN_NOT_FOUND', `run ${opts.run} not found`);
+            }
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  project: runtime.project.name,
+                  run: null,
+                  tasks: {},
+                  total: 0,
+                  liveWorkers: 0,
+                  failed: [],
+                  recovery: runtime.recovery,
+                  events: [],
+                  exitCode: 0,
+                }),
+              );
+            } else {
+              process.stdout.write(`项目：${runtime.project.name}\n`);
+              process.stdout.write('Run：尚无\n');
+              process.stdout.write('下一条命令：ideaseek run --question "你的研究问题"\n');
+            }
+            return 0;
+          }
           const tasks = await runtime.db.listTasks(run.runId);
           const counts = countByStatus(tasks);
           const workers = await runtime.db.listWorkers(run.runId);

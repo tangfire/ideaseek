@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { IdeaseekError, exitCodeForError } from '../core/errors.js';
+import type { LoadedConfig } from '../config/config.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord, TaskRecord, RunStatus } from '../workflow/types.js';
 import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from '../workflow/types.js';
@@ -24,6 +25,20 @@ export function action<Args extends unknown[]>(
       }
     }
   };
+}
+
+/**
+ * `run`/`worker` must not start on a broken research.yaml (CONFIG_SPEC:
+ * unknown or invalid fields warn and refuse to run instead of becoming
+ * silent defaults).
+ */
+export function assertConfigUsable(config: LoadedConfig): void {
+  if (config.errors.length > 0) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      `research.yaml has ${config.errors.length} blocking problem(s); run: ideaseek config explain — first: ${config.errors[0]}`,
+    );
+  }
 }
 
 export async function resolveRun(runtime: ProjectRuntime, runArg?: string): Promise<RunRecord> {

@@ -21,6 +21,7 @@ const WORKSPACE_DIRS = [
 function researchYaml(name: string): string {
   return `# IdeaSeek project configuration (docs/CONFIG_SPEC.md).
 # Configuration expresses intent and resource bounds. Never store secrets here.
+config_version: 1
 project:
   name: ${name}
   domain: ""
