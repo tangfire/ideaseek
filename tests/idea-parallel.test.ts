@@ -1,0 +1,224 @@
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { IdeaCard } from '../src/idea/card.js';
+import { CLI_BIN } from './helpers.js';
+
+function makeCard(ideaId: string): IdeaCard {
+  return {
+    ideaId,
+    version: 1,
+    parentVersion: null,
+    status: 'CANDIDATE',
+    hypothesis: { statement: `hypothesis for ${ideaId}`, targetProblem: 't' },
+    paperEvidence: [{ paperRef: 'p', statement: 's', evidence: 'e' }],
+    contradictions: ['c'],
+    novelty: { claim: 'c', uncertainty: 'u', whyNotRestatement: 'w' },
+    mechanismChain: {
+      designPrincipleLink: 'l',
+      steps: [
+        { kind: 'observation', text: 'a' },
+        { kind: 'hypothesis', text: 'b' },
+        { kind: 'intervention', text: 'c' },
+        { kind: 'expected-change', text: 'd' },
+        { kind: 'baseline-difference', text: 'e' },
+        { kind: 'falsifier', text: 'f' },
+      ],
+    },
+    nearestComparisons: [{ methodId: 'fedavg', difference: 'd', evidence: 'e' }],
+    componentNecessity: [{ component: 'c', role: 'necessary-mechanism', removeEffect: 'r' }],
+    competingExplanations: ['x'],
+    boundaryConditions: ['x'],
+    risks: ['x'],
+    minimalExperiment: {
+      code: 'src/train.py',
+      data: 'd',
+      baselines: ['fedavg'],
+      metrics: ['m'],
+      ablations: ['a'],
+    },
+    falsification: { conditions: ['f'] },
+    budget: { maxRounds: 1, maxGpuMinutes: 10 },
+    stopConditions: ['s'],
+    createdAt: 1,
+  } as IdeaCard;
+}
+
+interface CliResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+function runCli(cwd: string, args: string[], timeoutMs = 90_000): Promise<CliResult> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [CLI_BIN, ...args], {
+      cwd,
+      env: { ...process.env, IDEASEEK_CLI: '1' },
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`cli ${args.join(' ')} timed out; stderr=${stderr}`));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => (stdout += String(chunk)));
+    child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolvePromise({ code: code ?? -1, stdout, stderr });
+    });
+  });
+}
+
+describe('ideaseek idea run-ready (multi-idea parallel)', () => {
+  let project: string;
+
+  /** create → IMPLEMENTING → scaffold → check (→ SMOKE_TESTED). */
+  async function makeReady(id: string): Promise<void> {
+    const cardPath = join(project, `${id}.json`);
+    await writeFile(cardPath, JSON.stringify(makeCard(id)), 'utf8');
+    expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
+    expect((await runCli(project, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
+    expect((await runCli(project, ['idea', 'scaffold', id])).code).toBe(0);
+    const check = await runCli(project, ['idea', 'check', id, '--json']);
+    expect(check.code, check.stdout + check.stderr).toBe(0);
+  }
+
+  beforeEach(async () => {
+    project = await mkdtemp(join(tmpdir(), 'ideaseek-par-'));
+    const init = await runCli(project, ['init']);
+    expect(init.code).toBe(0);
+  }, 60_000);
+
+  it('runs two ready ideas concurrently and records both results', async () => {
+    await makeReady('alpha-idea');
+    await makeReady('beta-idea');
+
+    const run = await runCli(project, ['idea', 'run-ready', '--json']);
+    expect(run.code, run.stdout + run.stderr).toBe(0);
+    const payload = JSON.parse(run.stdout) as {
+      admitted: string[];
+      queued: unknown[];
+      allOk: boolean;
+      outcomes: { ideaId: string; ok: boolean; resultStatus: string; statusAfter: string }[];
+    };
+    expect(payload.admitted.sort()).toEqual(['alpha-idea', 'beta-idea']);
+    expect(payload.queued).toEqual([]);
+    expect(payload.allOk).toBe(true);
+    expect(payload.outcomes).toHaveLength(2);
+    for (const outcome of payload.outcomes) {
+      expect(outcome.ok).toBe(true);
+      expect(outcome.resultStatus).toBe('succeeded');
+      expect(outcome.statusAfter).toBe('ANALYZING');
+    }
+
+    // Both specs exist independently in the unified registry.
+    for (const specId of ['idea-alpha-idea', 'idea-beta-idea']) {
+      const shown = await runCli(project, ['experiment', 'show', specId, '--json']);
+      expect(shown.code).toBe(0);
+      expect((JSON.parse(shown.stdout) as { status: string }).status).toBe('succeeded');
+    }
+
+    // Workspaces did not cross-contaminate.
+    const alpha = await readFile(
+      join(project, 'ideas', 'alpha-idea', 'experiments', 'idea-alpha-idea-v1.json'),
+      'utf8',
+    );
+    expect(JSON.parse(alpha)).toHaveProperty('spec');
+    await expect(
+      readFile(
+        join(project, 'ideas', 'alpha-idea', 'experiments', 'idea-beta-idea-v1.json'),
+        'utf8',
+      ),
+    ).rejects.toThrow();
+  }, 180_000);
+
+  it('queues excess ideas when max_parallel_ideas limits concurrency', async () => {
+    await makeReady('alpha-idea');
+    await makeReady('beta-idea');
+
+    // Tighten the user ceiling in research.yaml.
+    const configPath = join(project, 'research.yaml');
+    const config = await readFile(configPath, 'utf8');
+    await writeFile(
+      configPath,
+      config.replace('max_parallel_ideas: 2', 'max_parallel_ideas: 1'),
+      'utf8',
+    );
+
+    const run = await runCli(project, ['idea', 'run-ready', '--json']);
+    expect(run.code, run.stdout + run.stderr).toBe(0);
+    const payload = JSON.parse(run.stdout) as {
+      admitted: string[];
+      queued: { ideaId: string; reason: string }[];
+      allOk: boolean;
+    };
+    // Deterministic tie-break: equal createdAt → alphabetical → alpha first.
+    expect(payload.admitted).toEqual(['alpha-idea']);
+    expect(payload.queued).toHaveLength(1);
+    expect(payload.queued[0]!.ideaId).toBe('beta-idea');
+    expect(payload.queued[0]!.reason).toContain('max_parallel_ideas=1');
+    expect(payload.allOk).toBe(true);
+
+    // The queued idea never left SMOKE_TESTED.
+    const beta = await runCli(project, ['idea', 'show', 'beta-idea', '--json']);
+    expect((JSON.parse(beta.stdout) as { status: string }).status).toBe('SMOKE_TESTED');
+
+    // The admitted one completed.
+    const alpha = await runCli(project, ['idea', 'show', 'alpha-idea', '--json']);
+    expect((JSON.parse(alpha.stdout) as { status: string }).status).toBe('ANALYZING');
+  }, 180_000);
+
+  it('is a clean no-op when nothing is ready', async () => {
+    const run = await runCli(project, ['idea', 'run-ready', '--json']);
+    expect(run.code).toBe(0);
+    const payload = JSON.parse(run.stdout) as {
+      admitted: string[];
+      queued: unknown[];
+      outcomes: unknown[];
+    };
+    expect(payload.admitted).toEqual([]);
+    expect(payload.queued).toEqual([]);
+    expect(payload.outcomes).toEqual([]);
+
+    const plain = await runCli(project, ['idea', 'run-ready']);
+    expect(plain.stdout).toContain('no SMOKE_TESTED ideas');
+  }, 60_000);
+
+  it('isolates a failing idea without blocking the parallel sibling', async () => {
+    await makeReady('alpha-idea');
+    await makeReady('beta-idea');
+
+    // Sabotage beta AFTER its check passed → its experiment hits a stale
+    // check report while alpha still runs.
+    await writeFile(
+      join(project, 'ideas', 'beta-idea', 'src', 'smoke.py'),
+      'raise SystemExit("broken after check")\n',
+      'utf8',
+    );
+
+    const run = await runCli(project, ['idea', 'run-ready', '--json']);
+    expect(run.code).toBe(1); // beta failed, alpha unaffected
+    const payload = JSON.parse(run.stdout) as {
+      allOk: boolean;
+      outcomes: { ideaId: string; ok: boolean; error?: string; resultStatus?: string }[];
+    };
+    expect(payload.allOk).toBe(false);
+    const alpha = payload.outcomes.find((entry) => entry.ideaId === 'alpha-idea')!;
+    const beta = payload.outcomes.find((entry) => entry.ideaId === 'beta-idea')!;
+    expect(alpha.ok).toBe(true);
+    expect(alpha.resultStatus).toBe('succeeded');
+    expect(beta.ok).toBe(false);
+    expect(beta.error).toContain('stale');
+
+    // Alpha reached ANALYZING; beta is untouched (still SMOKE_TESTED).
+    const alphaStatus = await runCli(project, ['idea', 'show', 'alpha-idea', '--json']);
+    expect((JSON.parse(alphaStatus.stdout) as { status: string }).status).toBe('ANALYZING');
+    const betaStatus = await runCli(project, ['idea', 'show', 'beta-idea', '--json']);
+    expect((JSON.parse(betaStatus.stdout) as { status: string }).status).toBe('SMOKE_TESTED');
+  }, 180_000);
+});

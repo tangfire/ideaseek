@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
 import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
-import { runIdeaExperiment, type IdeaScale } from '../idea/experiment.js';
+import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/experiment.js';
 import {
   IDEA_TRANSITIONS,
   assertEngineeringRevision,
@@ -583,6 +583,93 @@ export function registerIdeaCommand(program: Command): void {
             );
           }
           return outcome.exitCode;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  idea
+    .command('run-ready')
+    .description(
+      'admit all SMOKE_TESTED ideas through the capacity planner and run their experiments in parallel',
+    )
+    .option('--scale <scale>', 'smoke | quick (never full training)', 'smoke')
+    .option('--timeout <ms>', 'per-idea run timeout', (value) => Number(value), 120_000)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { scale: string; timeout: number; json?: boolean }) => {
+        const root = await openRoot();
+        if (opts.scale !== 'smoke' && opts.scale !== 'quick') {
+          throw new IdeaseekError('INVALID_ARGUMENT', '--scale must be smoke | quick');
+        }
+        if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
+          throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
+        }
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root });
+        try {
+          const result = await runReadyExperiments(
+            root,
+            {
+              scale: opts.scale as IdeaScale,
+              timeoutMs: opts.timeout,
+              maxParallelIdeas: runtime.config.resources.maxParallelIdeas,
+            },
+            runtime,
+            runtime.db,
+          );
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                scale: opts.scale,
+                admitted: result.admitted,
+                queued: result.queued,
+                constraints: result.constraints,
+                allOk: result.allOk,
+                outcomes: result.outcomes.map((entry) => ({
+                  ideaId: entry.ideaId,
+                  ok: entry.ok,
+                  error: entry.error ?? null,
+                  resultStatus: entry.outcome?.resultStatus ?? null,
+                  alreadyRecorded: entry.outcome?.alreadyRecorded ?? false,
+                  metrics: entry.outcome?.metrics ?? [],
+                  statusAfter: entry.outcome?.statusAfter ?? null,
+                })),
+              }),
+            );
+          } else {
+            if (result.admitted.length === 0 && result.queued.length === 0) {
+              process.stdout.write('run-ready: no SMOKE_TESTED ideas waiting\n');
+            } else {
+              process.stdout.write(
+                `run-ready: ${result.admitted.length} admitted · ${result.queued.length} queued` +
+                  `${result.constraints.length > 0 ? ` (${result.constraints.join(' · ')})` : ''}\n`,
+              );
+            }
+            for (const entry of result.outcomes) {
+              if (entry.error) {
+                process.stdout.write(`  FAIL ${entry.ideaId}  ${entry.error}\n`);
+              } else {
+                const outcome = entry.outcome!;
+                process.stdout.write(
+                  `  ${entry.ok ? 'ok  ' : 'FAIL'} ${outcome.specId} v${outcome.version}  ` +
+                    `${outcome.alreadyRecorded ? 'already recorded' : outcome.resultStatus}` +
+                    `${outcome.failure ? ` (${outcome.failure.category}: ${outcome.failure.summary})` : ''}\n`,
+                );
+                for (const metric of outcome.metrics) {
+                  process.stdout.write(`        ${metric.name} = ${metric.value}\n`);
+                }
+              }
+            }
+            for (const entry of result.queued) {
+              process.stdout.write(`  WAIT ${entry.ideaId}  ${entry.reason}\n`);
+            }
+            if (result.admitted.length > 0 && result.allOk) {
+              process.stdout.write('next: ideaseek idea list   (results await analysis)\n');
+            }
+          }
+          return result.allOk ? 0 : 1;
         } finally {
           await runtime.close();
         }

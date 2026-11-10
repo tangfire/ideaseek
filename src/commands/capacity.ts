@@ -4,6 +4,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { computeAdmission, probeCapacity, type CapacityRequest } from '../runtime/capacity.js';
 import { listWorkspaces } from '../idea/workspace.js';
+import { ideaResourceRequest } from '../idea/experiment.js';
 import { action, jsonLine } from './shared.js';
 
 async function openRoot(): Promise<string> {
@@ -13,34 +14,6 @@ async function openRoot(): Promise<string> {
     throw new IdeaseekError('NOT_INITIALIZED', 'no IdeaSeek project here; run: ideaseek init');
   }
   return root;
-}
-
-interface TrainConfig {
-  resources?: { gpus?: unknown; memoryGiB?: unknown };
-}
-
-async function requestForIdea(
-  root: string,
-  ideaId: string,
-  createdAt: number,
-): Promise<CapacityRequest> {
-  let gpus = 0;
-  let memoryGiB = 1;
-  try {
-    const { readFile } = await import('node:fs/promises');
-    const cfg = JSON.parse(
-      await readFile(join(root, 'ideas', ideaId, 'config', 'train.json'), 'utf8'),
-    ) as TrainConfig;
-    if (typeof cfg.resources?.gpus === 'number' && cfg.resources.gpus >= 0) {
-      gpus = Math.floor(cfg.resources.gpus);
-    }
-    if (typeof cfg.resources?.memoryGiB === 'number' && cfg.resources.memoryGiB > 0) {
-      memoryGiB = cfg.resources.memoryGiB;
-    }
-  } catch {
-    // no config yet — conservative CPU-only default
-  }
-  return { ideaId, gpus, memoryGiB, createdAt };
 }
 
 /**
@@ -69,16 +42,7 @@ export function registerCapacityCommand(program: Command): void {
           const ready = workspaces.filter((idea) => idea.status === 'SMOKE_TESTED');
           const requests: CapacityRequest[] = [];
           for (const idea of ready) {
-            requests.push(await requestForIdea(root, idea.ideaId, 0));
-          }
-          // Stable order: workspace creation time via card createdAt fallback.
-          for (const request of requests) {
-            try {
-              const { loadIdeaCard } = await import('../idea/workspace.js');
-              request.createdAt = (await loadIdeaCard(root, request.ideaId)).createdAt;
-            } catch {
-              request.createdAt = 0;
-            }
+            requests.push(await ideaResourceRequest(root, idea.ideaId));
           }
 
           const plan = computeAdmission(probe, requests, { maxParallelIdeas });

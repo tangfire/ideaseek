@@ -193,6 +193,35 @@ const KIND_TO_FAILURE: Record<string, RunFailureCategory> = {
   unknown: 'unknown',
 };
 
+/** Per-idea resource request from config/train.json (conservative default). */
+export async function ideaResourceRequest(
+  projectRoot: string,
+  ideaId: string,
+): Promise<{ ideaId: string; gpus: number; memoryGiB: number; createdAt: number }> {
+  let gpus = 0;
+  let memoryGiB = 1;
+  let createdAt = 0;
+  try {
+    const cfg = JSON.parse(
+      await readFile(join(ideaDir(projectRoot, ideaId), 'config', 'train.json'), 'utf8'),
+    ) as { resources?: { gpus?: unknown; memoryGiB?: unknown } };
+    if (typeof cfg.resources?.gpus === 'number' && cfg.resources.gpus >= 0) {
+      gpus = Math.floor(cfg.resources.gpus);
+    }
+    if (typeof cfg.resources?.memoryGiB === 'number' && cfg.resources.memoryGiB > 0) {
+      memoryGiB = cfg.resources.memoryGiB;
+    }
+  } catch {
+    // no config yet — conservative CPU-only default
+  }
+  try {
+    createdAt = (await loadIdeaCard(projectRoot, ideaId)).createdAt;
+  } catch {
+    createdAt = 0;
+  }
+  return { ideaId, gpus, memoryGiB, createdAt };
+}
+
 export interface IdeaExperimentOutcome {
   specId: string;
   version: number;
@@ -472,5 +501,90 @@ export async function runIdeaExperiment(
     failure: succeeded ? null : { category: failureCategory, summary: failureSummary },
     exitCode: succeeded ? 0 : 1,
     statusAfter,
+  };
+}
+
+export interface ReadyRunRequest {
+  scale: IdeaScale;
+  timeoutMs: number;
+  /** User ceiling from config (resources.max_parallel_ideas). */
+  maxParallelIdeas: number;
+}
+
+export interface ReadyRunOutcome {
+  ideaId: string;
+  ok: boolean;
+  /** Present when the experiment executed (or was already recorded). */
+  outcome?: IdeaExperimentOutcome;
+  /** Set when the per-idea run threw (gate violation, IO, …). */
+  error?: string;
+}
+
+export interface ReadyRunResult {
+  admitted: string[];
+  queued: { ideaId: string; reason: string }[];
+  constraints: string[];
+  outcomes: ReadyRunOutcome[];
+  /** False when any admitted run failed or errored. */
+  allOk: boolean;
+}
+
+/**
+ * Multi-idea parallel runner (plan §E): discovers SMOKE_TESTED ideas, admits
+ * them through the capacity planner (user limit + live probe, never
+ * over-assigning GPUs), then executes the admitted experiments CONCURRENTLY.
+ * Queued ideas are reported, not started; each idea keeps its own workspace,
+ * spec and result — nothing crosses idea boundaries.
+ */
+export async function runReadyExperiments(
+  projectRoot: string,
+  opts: ReadyRunRequest,
+  runtime: Parameters<typeof metricDirections>[0],
+  db: Parameters<typeof runIdeaExperiment>[4],
+): Promise<ReadyRunResult> {
+  const { probeCapacity, computeAdmission } = await import('../runtime/capacity.js');
+  const { listWorkspaces } = await import('./workspace.js');
+
+  const probe = await probeCapacity(projectRoot);
+  const workspaces = await listWorkspaces(projectRoot);
+  const ready = workspaces.filter((idea) => idea.status === 'SMOKE_TESTED');
+  const requests = [];
+  for (const idea of ready) {
+    requests.push(await ideaResourceRequest(projectRoot, idea.ideaId));
+  }
+
+  const plan = computeAdmission(probe, requests, { maxParallelIdeas: opts.maxParallelIdeas });
+
+  const outcomes: ReadyRunOutcome[] = await Promise.all(
+    plan.admitted.map(async (entry) => {
+      try {
+        const outcome = await runIdeaExperiment(
+          projectRoot,
+          entry.ideaId,
+          { scale: opts.scale, timeoutMs: opts.timeoutMs },
+          runtime,
+          db,
+        );
+        return {
+          ideaId: entry.ideaId,
+          ok: outcome.exitCode === 0 || outcome.alreadyRecorded,
+          outcome,
+        };
+      } catch (error) {
+        return {
+          ideaId: entry.ideaId,
+          ok: false,
+          error: (error as Error).message,
+        };
+      }
+    }),
+  );
+
+  return {
+    admitted: plan.admitted.map((entry) => entry.ideaId),
+    queued: plan.queued,
+    constraints: plan.constraints,
+    outcomes,
+    allOk: outcomes.every((entry) => entry.ok),
   };
 }
