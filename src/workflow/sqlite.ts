@@ -21,8 +21,11 @@ import type {
   WorkerRecord,
 } from './types.js';
 import { BLOCKED_RUN_STATUSES, TERMINAL_RUN_STATUSES } from './types.js';
+import { assertTransition } from '../comparison/types.js';
+import type { ComparisonStatus } from '../comparison/types.js';
 import type {
   BeginCommitResult,
+  ComparisonDoc,
   DatasetSliceRecord,
   EmbeddingRow,
   EmbeddingRowInput,
@@ -191,6 +194,18 @@ const MIGRATIONS: { version: number; sql: string }[] = [
         PRIMARY KEY (source_hash, provider, model_id, page)
       );
       CREATE INDEX IF NOT EXISTS idx_embedding_lookup ON paper_embedding(provider, model_id);
+    `,
+  },
+  {
+    version: 6,
+    sql: `
+      CREATE TABLE IF NOT EXISTS comparison (
+        method_id TEXT PRIMARY KEY,
+        doc_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        required INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `,
   },
 ];
@@ -2226,6 +2241,123 @@ export class SqliteWorkflowDb implements WorkflowDb {
       .prepare('SELECT COUNT(*) AS n FROM paper_embedding WHERE provider = ? AND model_id = ?')
       .get(provider, modelId) as { n: number };
     return Promise.resolve(Number(row.n));
+  }
+
+  upsertComparison(method: ComparisonDoc): Promise<void> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        this.db
+          .prepare(
+            'INSERT INTO comparison (method_id, doc_json, status, required, updated_at) VALUES (?, ?, ?, ?, ?) ' +
+              'ON CONFLICT(method_id) DO UPDATE SET doc_json = excluded.doc_json, status = excluded.status, required = excluded.required, updated_at = excluded.updated_at',
+          )
+          .run(
+            method.methodId,
+            JSON.stringify(method.record),
+            method.status,
+            method.required ? 1 : 0,
+            method.updatedAt,
+          );
+      }),
+    );
+  }
+
+  getComparison(methodId: string): Promise<ComparisonDoc | null> {
+    const row = this.db.prepare('SELECT * FROM comparison WHERE method_id = ?').get(methodId) as
+      | {
+          method_id: string;
+          doc_json: string;
+          status: string;
+          required: number;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return Promise.resolve(null);
+    return Promise.resolve({
+      methodId: row.method_id,
+      status: row.status,
+      required: row.required === 1,
+      record: parseJson<Record<string, unknown>>(row.doc_json, {}),
+      updatedAt: row.updated_at,
+    });
+  }
+
+  listComparisons(filter: { required?: boolean } = {}): Promise<ComparisonDoc[]> {
+    let sql = 'SELECT * FROM comparison';
+    const params: number[] = [];
+    if (filter.required !== undefined) {
+      sql += ' WHERE required = ?';
+      params.push(filter.required ? 1 : 0);
+    }
+    sql += ' ORDER BY method_id';
+    const rows = this.db.prepare(sql).all(...params) as unknown as {
+      method_id: string;
+      doc_json: string;
+      status: string;
+      required: number;
+      updated_at: number;
+    }[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        methodId: row.method_id,
+        status: row.status,
+        required: row.required === 1,
+        record: parseJson<Record<string, unknown>>(row.doc_json, {}),
+        updatedAt: row.updated_at,
+      })),
+    );
+  }
+
+  transitionComparison(methodId: string, to: string, reason?: string): Promise<ComparisonDoc> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const current = this.requireComparison(methodId);
+        const from = current.status as ComparisonStatus;
+        assertTransition(from, to as ComparisonStatus, reason);
+        const now = this.clock.now();
+        const history = Array.isArray(current.record.history)
+          ? (current.record.history as {
+              at: number;
+              from: string;
+              to: string;
+              reason: string | null;
+            }[])
+          : [];
+        history.push({ at: now, from, to, reason: reason ?? null });
+        const record = {
+          ...current.record,
+          status: to,
+          statusReason: reason ?? null,
+          history,
+          updatedAt: now,
+        };
+        this.db
+          .prepare(
+            'UPDATE comparison SET status = ?, doc_json = ?, updated_at = ? WHERE method_id = ?',
+          )
+          .run(to, JSON.stringify(record), now, methodId);
+        return this.requireComparison(methodId);
+      }),
+    );
+  }
+  private requireComparison(methodId: string): ComparisonDoc {
+    const row = this.db.prepare('SELECT * FROM comparison WHERE method_id = ?').get(methodId) as
+      | {
+          method_id: string;
+          doc_json: string;
+          status: string;
+          required: number;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${methodId} not found`);
+    return {
+      methodId: row.method_id,
+      status: row.status,
+      required: row.required === 1,
+      record: parseJson<Record<string, unknown>>(row.doc_json, {}),
+      updatedAt: row.updated_at,
+    };
   }
 
   close(): Promise<void> {

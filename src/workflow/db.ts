@@ -91,6 +91,15 @@ export interface ProtocolLockRecord {
   record: Record<string, unknown>;
 }
 
+export interface ComparisonDoc {
+  methodId: string;
+  status: string;
+  required: boolean;
+  /** Full ComparisonMethod record (docs/DATA_CONTRACTS.md). */
+  record: Record<string, unknown>;
+  updatedAt: number;
+}
+
 export interface DatasetSliceRecord {
   sliceId: string;
   datasetSnapshotId: string;
@@ -204,6 +213,12 @@ export interface WorkflowDb {
   upsertSlice(slice: DatasetSliceRecord): Promise<void>;
   getSlice(sliceId: string): Promise<DatasetSliceRecord | null>;
   listSlices(opts?: { datasetSnapshotId?: string; scale?: string }): Promise<DatasetSliceRecord[]>;
+
+  // Comparison registry (migration v6)
+  upsertComparison(method: ComparisonDoc): Promise<void>;
+  getComparison(methodId: string): Promise<ComparisonDoc | null>;
+  listComparisons(filter?: { required?: boolean }): Promise<ComparisonDoc[]>;
+  transitionComparison(methodId: string, to: string, reason?: string): Promise<ComparisonDoc>;
 
   // Protocol locks (migration v4)
   lockProtocol(lock: ProtocolLockRecord): Promise<void>;

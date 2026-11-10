@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { loadLocalEnv } from './core/env.js';
+import { registerComparisonCommand } from './commands/comparison.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerConfirmCommand } from './commands/confirm.js';
 import { registerDataCommand } from './commands/data.js';
@@ -80,6 +81,7 @@ export function buildProgram(): Command {
   registerSuperviseCommand(program);
   registerReportCommand(program);
   registerControlCommands(program);
+  registerComparisonCommand(program);
   return program;
 }
 
