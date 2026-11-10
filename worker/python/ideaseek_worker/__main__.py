@@ -13,6 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from .federated import profile_dataset
 from .pdf_parse import PdfParseError, parse_pdf
 from .minipdf import build_minimal_pdf
 
@@ -173,6 +174,22 @@ def cmd_ocr(args: argparse.Namespace) -> int:
     })
     return 0
 
+
+def cmd_dataset(args) -> int:
+    """Emit the read-only dataset profile JSON (checklist for data describe)."""
+    root = Path(args.root)
+    try:
+        profile = profile_dataset(root)
+    except FileNotFoundError as exc:
+        return _fail("FILE_NOT_FOUND", str(exc))
+    except ValueError as exc:
+        return _fail("DATASET_LAYOUT", str(exc))
+    except Exception as exc:  # noqa: BLE001 - normalize loader failures
+        return _fail("PARSE_FAILED", f"cannot profile dataset: {exc}")
+    _emit(profile)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -190,6 +207,10 @@ def main(argv: list[str] | None = None) -> int:
     ocr_cmd = sub.add_parser("ocr", help="image-based OCR fallback for scanned PDFs")
     ocr_cmd.add_argument("path")
     ocr_cmd.set_defaults(func=cmd_ocr)
+
+    ds_cmd = sub.add_parser("dataset", help="profile an external federated dataset (read-only)")
+    ds_cmd.add_argument("root")
+    ds_cmd.set_defaults(func=cmd_dataset)
 
     tables_cmd = sub.add_parser("tables", help="extract table grids from a PDF")
     tables_cmd.add_argument("path")

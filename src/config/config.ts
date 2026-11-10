@@ -17,7 +17,13 @@ export interface ResolvedConfig {
     ideaLimit: number;
     externalSearch: boolean;
   };
-  inputs: { papersDir: string; datasetsDir: string; comparisonsDir: string };
+  inputs: {
+    papersDir: string;
+    datasetsDir: string;
+    comparisonsDir: string;
+    /** Absolute external dataset roots mounted read-only (never copied, never written). */
+    readonlyDatasets: string[];
+  };
   runtime: {
     profile: string;
     modelRoute: string;
@@ -68,7 +74,12 @@ export function defaultConfig(projectName: string): ResolvedConfig {
     configVersion: CONFIG_VERSION,
     project: { name: projectName, domain: '' },
     research: { question: '', mode: 'auto', ideaLimit: 1, externalSearch: false },
-    inputs: { papersDir: 'papers', datasetsDir: 'datasets', comparisonsDir: 'comparisons' },
+    inputs: {
+      papersDir: 'papers',
+      datasetsDir: 'datasets',
+      comparisonsDir: 'comparisons',
+      readonlyDatasets: [],
+    },
     runtime: {
       profile: 'headless',
       modelRoute: 'default',
@@ -100,7 +111,7 @@ export function defaultConfig(projectName: string): ResolvedConfig {
 const SHAPE: Record<string, readonly string[]> = {
   project: ['name', 'domain'],
   research: ['question', 'mode', 'idea_limit', 'external_search'],
-  inputs: ['papers_dir', 'datasets_dir', 'comparisons_dir'],
+  inputs: ['papers_dir', 'datasets_dir', 'comparisons_dir', 'readonly_datasets'],
   runtime: [
     'profile',
     'model_route',
@@ -358,6 +369,19 @@ export async function loadConfig(
     coerceBoolean,
   );
 
+  const readonlyRaw = sections.inputs.readonly_datasets;
+  if (readonlyRaw === undefined) {
+    sources['inputs.readonly_datasets'] = 'default';
+  } else if (
+    Array.isArray(readonlyRaw) &&
+    readonlyRaw.every((item) => typeof item === 'string' && item.length > 0)
+  ) {
+    sources['inputs.readonly_datasets'] = 'file';
+    resolved.inputs.readonlyDatasets = readonlyRaw as string[];
+  } else {
+    sources['inputs.readonly_datasets'] = 'file';
+    errors.push('inputs.readonly_datasets must be an array of non-empty absolute paths');
+  }
   resolved.inputs.papersDir = take('inputs', 'papers_dir', resolved.inputs.papersDir, coerceString);
   resolved.inputs.datasetsDir = take(
     'inputs',

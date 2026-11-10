@@ -20,11 +20,14 @@ function printExplain(config: LoadedConfig): void {
     const leaves = Object.keys(config.sources)
       .filter((key) => key.startsWith(`${section}.`))
       .sort();
+    const resolvedSection = (config.resolved as unknown as Record<string, Record<string, unknown>>)[
+      section
+    ];
     for (const key of leaves) {
       const shortKey = key.slice(section.length + 1);
-      const value = (config.resolved as unknown as Record<string, Record<string, unknown>>)[
-        section
-      ]?.[shortKey];
+      // research.yaml uses snake_case; ResolvedConfig uses camelCase.
+      const camelKey = shortKey.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+      const value = resolvedSection?.[shortKey] ?? resolvedSection?.[camelKey];
       const source = config.sources[key];
       process.stdout.write(
         `  ${key} = ${JSON.stringify(value)}${source === 'file' ? '  [file]' : '  [default]'}\n`,

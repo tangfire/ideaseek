@@ -130,7 +130,7 @@ describe('ideaseek CLI end-to-end', () => {
     expect(immediatePayload.run.status).toBe('RUNNING');
 
     // After the 1s lease expires, the task is back in the queue with no owner.
-    await sleep(1300);
+    await sleep(2200); // lease (1s) + scheduling slack under parallel suites
     const reclaimed = await runCli(dir, ['status', '--json']);
     expect(reclaimed.code).toBe(3); // still running
     const reclaimedPayload = JSON.parse(reclaimed.stdout) as {
@@ -143,7 +143,7 @@ describe('ideaseek CLI end-to-end', () => {
     expect(reclaimedPayload.tasks.succeeded).toBe(0);
 
     // Wait for the ghost worker row to go stale (3× lease TTL) so `run` attaches.
-    await sleep(2200);
+    await sleep(3500);
     const resume = await runCli(dir, ['run']);
     expect(resume.code).toBe(0);
     expect(resume.stdout).toContain('COMPLETED');

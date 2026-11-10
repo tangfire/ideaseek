@@ -26,6 +26,7 @@ function toFileShape(config: LoadedConfig['resolved']): Record<string, unknown> 
       papers_dir: config.inputs.papersDir,
       datasets_dir: config.inputs.datasetsDir,
       comparisons_dir: config.inputs.comparisonsDir,
+      readonly_datasets: config.inputs.readonlyDatasets,
     },
     runtime: {
       profile: config.runtime.profile,

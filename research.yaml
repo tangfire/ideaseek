@@ -13,6 +13,9 @@ inputs:
   papers_dir: papers
   datasets_dir: datasets
   comparisons_dir: comparisons
+  # External read-only dataset roots (never copied, never written by the platform)
+  readonly_datasets:
+    - D:/FedLab04/FedPF/dataset/mnist
 runtime:
   profile: headless
   model_route: default
