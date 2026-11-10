@@ -1,18 +1,19 @@
-# Generated/runtime/user data
-.research/
+# Generated/runtime/user data (project workspace at repo root only —
+# anchored so source directories like src/knowledge/ stay tracked)
+/.research/
 .env
 .env.*
 !.env.example
-papers/
-datasets/
-comparisons/
-incoming/
-knowledge/
-ideas/
-reports/
-logs/
-artifacts/
-checkpoints/
+/papers/
+/datasets/
+/comparisons/
+/incoming/
+/knowledge/
+/ideas/
+/reports/
+/logs/
+/artifacts/
+/checkpoints/
 
 # Python
 __pycache__/

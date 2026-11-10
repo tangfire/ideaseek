@@ -8,6 +8,11 @@ import { registerControlCommands } from './commands/control.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerEventsCommand } from './commands/events.js';
 import { registerInitCommand } from './commands/init.js';
+import {
+  registerIntakeCommand,
+  registerOrganizeCommand,
+  registerScanCommand,
+} from './commands/inputs.js';
 import { registerNextCommand } from './commands/next.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
@@ -38,6 +43,9 @@ export function buildProgram(): Command {
     });
 
   registerInitCommand(program);
+  registerScanCommand(program);
+  registerIntakeCommand(program);
+  registerOrganizeCommand(program);
   registerSetupCommand(program);
   registerDoctorCommand(program);
   registerConfigCommand(program);
