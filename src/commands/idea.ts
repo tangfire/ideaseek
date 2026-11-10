@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
+import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
 import {
   IDEA_TRANSITIONS,
   assertEngineeringRevision,
@@ -413,6 +414,107 @@ export function registerIdeaCommand(program: Command): void {
           );
         }
         return 0;
+      }),
+    );
+
+  idea
+    .command('scaffold')
+    .description(
+      'write the Code Implementer starter skeleton (train/check_data/check_metrics/smoke/tests; never overwrites)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const result = await scaffoldIdea(root, ideaId);
+        if (opts.json) {
+          process.stdout.write(jsonLine({ ideaId, ...result }));
+        } else {
+          process.stdout.write(
+            `scaffold ${ideaId}: ${result.created.length} file(s) created, ${result.skipped.length} kept\n`,
+          );
+          for (const file of result.created) process.stdout.write(`  + ${file}\n`);
+          if (result.skipped.length > 0) {
+            process.stdout.write(`  kept (existing): ${result.skipped.join(', ')}\n`);
+          }
+          process.stdout.write(`next: ideaseek idea check ${ideaId}\n`);
+        }
+        return 0;
+      }),
+    );
+
+  idea
+    .command('check')
+    .description(
+      'Code Implementer gate: static + unit tests + data/metrics interface + smoke micro-run',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--timeout <ms>', 'per-phase command timeout', (value) => Number(value), 60_000)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { timeout: number; json?: boolean }) => {
+        const root = await openRoot();
+        if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
+          throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
+        }
+        const report = await runIdeaChecks(root, ideaId, { timeoutMs: opts.timeout });
+        const reportPath = await saveCheckReport(root, report);
+
+        // Queue discipline: a full pass from IMPLEMENTING advances to
+        // SMOKE_TESTED (plan §E.3). Failures keep the status — implementation
+        // errors are fixed and re-checked, not treated as hypothesis failures.
+        let status = (await loadWorkspaceMeta(root, ideaId)).status;
+        if (report.outcome === 'passed' && status === 'IMPLEMENTING') {
+          status = (await setIdeaStatus(root, ideaId, 'SMOKE_TESTED')).status;
+        }
+
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              outcome: report.outcome,
+              status,
+              version: report.version,
+              codeHash: report.codeHash,
+              reportPath,
+              phases: report.phases.map((phase) => ({
+                phase: phase.phase,
+                ok: phase.ok,
+                skipped: phase.skipped,
+                failureKind: phase.failureKind ?? null,
+                summary: phase.summary ?? null,
+              })),
+            }),
+          );
+        } else {
+          process.stdout.write(
+            `check ${ideaId} v${report.version}: ${report.outcome.toUpperCase()} (status=${status})\n`,
+          );
+          for (const phase of report.phases) {
+            const mark = phase.skipped ? 'skip' : phase.ok ? 'ok  ' : 'FAIL';
+            process.stdout.write(
+              `  ${mark} ${phase.phase.padEnd(11)} ${phase.durationMs}ms` +
+                `${phase.failureKind ? `  ${phase.failureKind}` : ''}` +
+                `${phase.summary && !phase.ok ? `  ${phase.summary}` : ''}\n`,
+            );
+          }
+          process.stdout.write(`  report: ${reportPath}\n`);
+          if (report.outcome === 'failed') {
+            process.stdout.write(
+              `next: fix the failing phase, then rerun: ideaseek idea check ${ideaId}\n`,
+            );
+          } else if (report.outcome === 'smoke-missing') {
+            process.stdout.write(
+              `next: write src/smoke.py (or ideaseek idea scaffold ${ideaId}) to reach SMOKE_TESTED\n`,
+            );
+          } else {
+            process.stdout.write(
+              `next: ideaseek idea set-status ${ideaId} RUNNING   (experiments stay quick/standard)\n`,
+            );
+          }
+        }
+        return report.outcome === 'failed' ? 1 : 0;
       }),
     );
 
