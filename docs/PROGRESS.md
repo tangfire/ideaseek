@@ -31,7 +31,7 @@
 ## Phase 2：论文与知识库
 
 - [ ] PDF/LaTeX/OCR/表格/图表解析
-- [ ] PaperCard schema 和证据定位
+- [x] PaperCard schema 和证据定位
 - [ ] 去重、全文/向量检索和增量处理
 - [ ] Paper Extractor 并行 map 阶段
 - [x] Evidence Checker
@@ -118,3 +118,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 3 handoff manifest 契约（slice 引用+环境+命令+provenance+不执行全量训练的边界声明）与 buildHandoff 组装器 | 7a084e0 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 33 files/200 vitest + 5 python 全过 | experiment handoff CLI 命令待 idea workspace（Phase 5）接线 | Phase 3 无凭据可交付项完成
 2026-11-10 | Phase 3 checkbox 确认：Leakage/Validity Checker（确定性层+pending 明示）、ProtocolProposal schema、协议确认与锁定、Scenario L0–L4、DatasetSlice+handoff+晋级规则（CLI promote/handoff 待 Phase 5 接线）| d8ef880+89a9d51+a90e0de+5325888+7a084e0 | 各模块门禁全绿（33 files/200 vitest+5 python）| Protocol Synthesis LLM 生成需凭据；语义级检查需适配器 | 剩余：数据分布保持检查（可做）与首发领域验证（需语料）
 2026-11-10 | Phase 3 数据分布保持检查（类别 top-share 漂移 warning/blocker、数值 σ 均值漂移、slice.distributionCheck 记录与构建时打印）| 22b4938 | pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 34 files/205 vitest + 5 python 全过 | 客户端/域/主体边界对通用 CSV 以 pending 明示（领域适配器负责）；标签无关漂移检测 | Phase 3 剩余仅凭据依赖项（Protocol Synthesis LLM）与语料依赖项（首发领域 gold set）
+2026-11-10 | 真实语料+真实凭据验证批次：.env 安全加载（679cdc3）、74 篇增量扫描/解析全通+坏PDF失败隔离（2af9b9a）、capability guard 关闭原生工具逃逸+keyed 真实模型集成测试（3025170）、引文排版归一化（508f32e）| 全部见各 commit | 门禁：pnpm format:check && pnpm lint && pnpm typecheck && pnpm test → 36 files/217 vitest+5 python（含真实模型 keyed 测试）；真实证据核验13/13与8/8 pass；增量证据：冷扫描reused=0→热30→wave2 new44/skip30→74/74 indexed | 论文/数据/.env 均被 gitignore 排除且 staged 无 secret；并行 map、向量检索、LaTeX/OCR、gold set 仍未做 | 下一模块：Paper Extractor 并行 map 阶段（extract --parallel 批量抽取）
