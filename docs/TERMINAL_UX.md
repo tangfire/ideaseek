@@ -4,22 +4,21 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 
 ## Logo
 
-默认启动 banner 使用大号 ASCII IdeaSeek 字标。它直接显示项目名称，适合交互式终端；不在每条事件中重复显示。窄终端或 `--plain` 模式使用短标识。
+默认启动 banner 使用轻量线稿标识和字距文字，不使用厚重的 block 字符。它表达检索、Agent 网络和 idea 生成，适合长期运行的科研工具；不在每条事件中重复显示。窄终端或 `--plain` 模式使用短标识。
 
 ```text
-#####  ####   #####   ###   ####   #####  #####  #   #
-  #    #   #  #      #   #  #   #  #      #      ##  #
-  #    ####   ####   #####  ####   ####   ####   # # #
-  #    #   #  #      #   #  #  #   #      #      #  ##
-#####  ####   #####  #   #  #####  #####  #####  #   #
+        ◇────⌕────◇
+       ╱     ✦     ╲
+      ◇───╲     ╱───◇
 
-IdeaSeek · Research from evidence
+        I D E A S E E K
+        research from evidence
 ```
 
 窄终端、`--plain` 或不支持 Unicode 的环境使用：
 
 ```text
-[IS] IdeaSeek · Research from evidence
+[IS]  IdeaSeek  ·  research from evidence
 ```
 
 颜色是增强项，不得影响纯文本和 JSON 输出：IdeaSeek 字标使用亮白或青色，idea 使用黄色，检索/Agent 使用青色，成功使用绿色，阻塞/等待使用黄色，错误使用红色。启动时如果终端宽度不足，自动使用短标识，不强行换行。
