@@ -387,7 +387,7 @@ def main(argv=None):
         "idea_id": cfg.get("idea_id", "${card.ideaId}"),
         "status": "scaffold-not-implemented",
         "scale": cfg.get("data_scale", "smoke"),
-        "metrics": [m["name"] for m in cfg.get("metrics", [])],
+        "metrics": [m["name"] if isinstance(m, dict) else str(m) for m in cfg.get("metrics", [])],
     }))
     return 0
 
