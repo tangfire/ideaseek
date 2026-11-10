@@ -63,6 +63,8 @@ export interface HarnessTaskResult {
   toolCalls: HarnessToolCallSummary[];
   /** Adapter-level provenance: which runtime executed the call. */
   runtime: { kind: 'dsh' | 'fake'; version: string };
+  /** DSH session id when the runtime kept one (null for the fake adapter). */
+  sessionId?: string | null;
   finishedAt: number;
 }
 

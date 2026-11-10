@@ -109,6 +109,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       model: 'fake-model',
       toolCalls: [],
       runtime: { kind: 'fake', version: this.version },
+      sessionId: null,
       finishedAt: Date.now(),
     };
   }

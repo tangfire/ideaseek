@@ -322,7 +322,7 @@ describe('CLI: run --paper (Phase 1 end to end)', () => {
     expect(status.stdout).toContain('策略：starter');
   }, 40_000);
 
-  it('rejects a missing --paper file and an unwired dsh harness', async () => {
+  it('rejects a missing --paper file and an unknown harness kind', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-paper-'));
     expect((await runCli(dir, ['init'])).code).toBe(0);
 
@@ -330,8 +330,10 @@ describe('CLI: run --paper (Phase 1 end to end)', () => {
     expect(missing.code).toBe(2);
     expect(missing.stderr).toContain('cannot read --paper file');
 
-    const dsh = await runCli(dir, ['run', '--question', 'x', '--harness', 'dsh', '--json']);
-    expect(dsh.code).toBe(2);
-    expect(dsh.stderr).toContain('--harness fake');
+    // Demo-only runs accept --harness dsh lazily (no spawn without a harness
+    // task); a bogus kind fails fast before any work starts.
+    const bogus = await runCli(dir, ['run', '--question', 'x', '--harness', 'telepathy', '--json']);
+    expect(bogus.code).toBe(2);
+    expect(bogus.stderr).toContain('unknown harness kind');
   }, 30_000);
 });

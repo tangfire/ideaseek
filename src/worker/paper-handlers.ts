@@ -26,6 +26,10 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
     throw error;
   }
 
+  // Idempotent: DshHarnessAdapter spawns its runtime here on first use;
+  // FakeHarnessAdapter arms its guard.
+  await harness.initialize();
+
   const paperName = typeof ctx.payload.paperName === 'string' ? ctx.payload.paperName : 'paper';
   const paperText = typeof ctx.payload.paperText === 'string' ? ctx.payload.paperText : '';
   if (!paperText.trim()) {

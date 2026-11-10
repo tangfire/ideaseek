@@ -94,7 +94,8 @@ export class ProjectRuntime {
       tmpDir: paths.artifactTmpDir,
       staleTempMs: opts.staleTempMs ?? 60_000,
     });
-    if (opts.harness) await opts.harness.initialize();
+    // Harness startup is lazy: only harness-backed tasks spawn the runtime,
+    // so demo-only commands never pay for a DSH subprocess.
     const runtime = new ProjectRuntime({
       paths,
       configLoad,

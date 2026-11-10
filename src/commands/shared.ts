@@ -3,6 +3,9 @@ import { IdeaseekError, exitCodeForError } from '../core/errors.js';
 import type { LoadedConfig } from '../config/config.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import { FakeHarnessAdapter } from '../dsh/fake-adapter.js';
+import { DshHarnessAdapter } from '../dsh/dsh-adapter.js';
+import { projectPaths } from '../config/paths.js';
+import { join } from 'node:path';
 import { withPaperExtract } from '../worker/handlers.js';
 import { paperExtract } from '../worker/paper-handlers.js';
 import type { TaskHandler } from '../worker/types.js';
@@ -200,10 +203,11 @@ export function buildHarness(kind: string | undefined): HarnessAdapter {
   const selected = kind ?? 'fake';
   if (selected === 'fake') return new FakeHarnessAdapter();
   if (selected === 'dsh') {
-    throw new IdeaseekError(
-      'INVALID_ARGUMENT',
-      'dsh harness adapter is not wired yet; use --harness fake (Phase 1 embedding in progress)',
-    );
+    const researchDir = projectPaths(process.cwd()).researchDir;
+    return new DshHarnessAdapter({
+      dshHome: join(researchDir, 'dsh-home'),
+      cwd: process.cwd(),
+    });
   }
   throw new IdeaseekError('INVALID_ARGUMENT', `unknown harness kind: ${selected}`);
 }
