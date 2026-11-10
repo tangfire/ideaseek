@@ -23,6 +23,7 @@ import { registerNextCommand } from './commands/next.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerSynthesizeCommand } from './commands/synthesize.js';
 import { registerSearchCommand } from './commands/search.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -59,6 +60,7 @@ export function buildProgram(): Command {
   registerIngestCommand(program);
   registerExtractCommand(program);
   registerEvaluateCommand(program);
+  registerSynthesizeCommand(program);
   registerIntakeCommand(program);
   registerOrganizeCommand(program);
   registerSetupCommand(program);

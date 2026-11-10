@@ -32,6 +32,35 @@ export interface FakeHarnessOptions {
  * provided text so the deterministic Evidence Checker can verify it. The
  * platform stamps document_hash/paper_id in the extract handler.
  */
+/**
+ * Schema-aware deterministic outputs so workflow e2e (including synthesis)
+ * runs end to end against the fake harness without a model.
+ */
+function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
+  if (request.outputSchema === 'topic-synthesis-v1') {
+    return JSON.stringify({
+      topic: 'fake topic synthesis',
+      papers: [{ paperId: 'pending', title: 'unknown' }],
+      methodLineage: ['fake lineage from verified cards'],
+      keyFindings: [{ text: 'fake finding', source: 'fake.pdf', page: null, quote: null }],
+      conflicts: [],
+      mechanisms: [
+        { name: 'fake-mechanism', principle: 'synthetic principle', conditions: 'unit tests' },
+      ],
+      openQuestions: ['none'],
+    });
+  }
+  if (request.outputSchema === 'research-map-v1') {
+    return JSON.stringify({
+      landscape: 'fake research landscape produced by the fake harness',
+      lineages: [{ name: 'fake-lineage', summary: 'synthetic summary' }],
+      conflicts: [],
+      gaps: ['none recorded'],
+      citations: [{ source: 'fake.pdf', title: 'Fake Paper' }],
+    });
+  }
+  return buildFakeCard(request, call);
+}
 function buildFakeCard(request: HarnessTaskRequest, call: number): string {
   const content = request.inputs[0]?.content ?? '';
   const line =
@@ -128,7 +157,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       throw new Error(`fake harness injected failure (call ${count})`);
     }
 
-    const payload = buildFakeCard(request, count);
+    const payload = buildFakeOutput(request, count);
     onEvent?.({
       type: 'completed',
       ts: Date.now(),
@@ -139,7 +168,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
     return {
       runId: request.runId,
       taskId: request.taskId,
-      output: payload, // buildFakeCard already returns JSON text
+      output: payload, // buildFakeOutput already returns JSON text
       usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
       model: 'fake-model',
       toolCalls: this.opts.toolCalls ?? [],
