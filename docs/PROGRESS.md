@@ -41,7 +41,7 @@
 ## Phase 3：数据与实验协议
 
 - [x] Dataset Analyst 和 dataset card
-- [ ] Protocol Synthesis Agent
+- [x] Protocol Synthesis Agent
 - [x] Leakage/Validity Checker
 - [x] ExperimentalProtocolProposal schema
 - [x] 用户确认和 protocol lock
@@ -126,3 +126,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 2 LaTeX 源解析：parseLatex（注释/命令/章节/标题/转义）+paper.latex 任务（统一 parsed-paper 形状）+ingest .tex 增量 | d6bde51 | 门禁 41 files/248 vitest+7 python 全绿（含 .tex→FTS 检索 e2e）| OCR 仍缺 tesseract；向量检索待 embed 提供方决策 | Phase 2 可做项全部完成，剩 OCR（环境）与向量（架构决策）
 2026-11-10 | Phase 2 OCR：worker ocr 命令（pypdfium2+rapidocr≤20页）+隔离 venv 锁定依赖（系统 onnxruntime 段错误→ort1.19.2 锁定）+paper.parse NO_TEXT_LAYER 自动回退（失败信息含 OCR 尝试证明）| 183e3f9 | 门禁 42 files/250 vitest+9 python 全绿（venv real OCR roundtrip + 无文本 PDF 永久标记）| 扫描件正向 e2e 依赖带图 fixture（现有夹具均为文本层）；OCR 每页1-3s 属 opt-in 成本 | 向量检索仍需 embed 提供方决策（DeepSeek 无 embeddings 端点，404 已验证）
 2026-11-10 | checkbox「PDF/LaTeX/OCR/表格/图表解析」完成确认：PDF 文本(74/74)、LaTeX(paper.latex)、OCR(venv rapidocr 回退)、表格(pdfplumber opt-in)均落地并测试；图表的文本/题注已随页文本覆盖，图内数值提取属视觉模型扩展（未做，如实注明）| 汇总 2d4ee1d 系列 commit | 门禁 42 files/250 vitest+9 python | 该 checkbox 按用户规则（实现+测试+commit）打勾
+2026-11-10 | Phase 3 Protocol Synthesis Agent：buildProtocolInput（语料+数据画像、无数据集时强制低置信标注）+protocol.propose 任务（内嵌 schema/平台盖章/校验门/哈希复用）+ ideaseek protocol propose 接入 confirm 锁定闭环 | b53340f | 门禁 43 files/254 vitest+9 python 全绿（propose→confirm→lock e2e + proposal-current 幂等）| 真实模型版协议提案可用 --harness dsh（伪输出已过校验器；真跑待数据集语义确认更有意义）| Phase 3 余：数据分布已做、领域验证需用户数据集
