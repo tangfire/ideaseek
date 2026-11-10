@@ -20,6 +20,7 @@ import {
   registerScanCommand,
 } from './commands/inputs.js';
 import { registerNextCommand } from './commands/next.js';
+import { registerProtocolCommand } from './commands/protocol.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
@@ -61,6 +62,7 @@ export function buildProgram(): Command {
   registerExtractCommand(program);
   registerEvaluateCommand(program);
   registerSynthesizeCommand(program);
+  registerProtocolCommand(program);
   registerIntakeCommand(program);
   registerOrganizeCommand(program);
   registerSetupCommand(program);

@@ -15,6 +15,7 @@ import {
   paperVerify,
 } from '../worker/paper-handlers.js';
 import { synthMap, synthTopic } from '../worker/synthesis-handlers.js';
+import { protocolPropose } from '../worker/protocol-handlers.js';
 import type { TaskHandler } from '../worker/types.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord, TaskRecord, RunStatus } from '../workflow/types.js';
@@ -230,6 +231,7 @@ export function buildHandlers(): Record<string, TaskHandler> {
     'paper.latex': paperLatex,
     'synth.topic': synthTopic,
     'synth.map': synthMap,
+    'protocol.propose': protocolPropose,
   };
 }
 

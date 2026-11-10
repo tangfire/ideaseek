@@ -59,6 +59,32 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       citations: [{ source: 'fake.pdf', title: 'Fake Paper' }],
     });
   }
+  if (request.outputSchema === 'protocol-proposal-v1') {
+    const sourced = { source: 'agent-inference', confidence: 0.6 };
+    return JSON.stringify({
+      taskDefinition: { value: 'classify the research task from corpus', ...sourced },
+      sampleUnit: { value: 'one sample row', ...sourced },
+      labelSemantics: { value: 'unconfirmed semantics', source: 'user', confidence: 0.6 },
+      splitRules: { value: ['70/15/15 split'], ...sourced },
+      leakageChecks: ['no test-set feedback during iteration'],
+      preprocessing: ['fit transforms on train only'],
+      baselineEntries: [
+        { methodId: 'baseline', entry: 'run baseline', source: 'code', confidence: 0.8 },
+      ],
+      primaryMetrics: [
+        { name: 'accuracy', direction: 'higher', source: 'paper-evidence', confidence: 0.8 },
+      ],
+      secondaryMetrics: [],
+      statisticalSummary: ['mean over 3 seeds'],
+      smokeTest: { value: 'small slice run', ...sourced },
+      resourceEstimate: { value: 'cpu-only estimate', ...sourced },
+      ablations: ['w/o core component'],
+      supportCriteria: ['primary metric beats baseline'],
+      refuteCriteria: ['no gain across seeds'],
+      invalidRunCriteria: ['metrics produced NaN'],
+      stopConditions: ['budget exhausted'],
+    });
+  }
   return buildFakeCard(request, call);
 }
 function buildFakeCard(request: HarnessTaskRequest, call: number): string {
