@@ -2,7 +2,7 @@
 
 ## 发布前
 
-- DSH、Node、Python、容器和领域适配器版本已锁定；升级影响有说明。
+- DSH、Node、Python、容器和已启用插件版本已锁定；升级影响有说明。
 - 数据库迁移可前滚/回滚，迁移前有备份；旧 run 可读。
 - 配置、PaperCard、Comparison、Idea、ExperimentSpec 和 RunEvent schema 有版本号。
 - `main` 可安装、`ideaseek init/doctor/next` 可用，最小流程通过。

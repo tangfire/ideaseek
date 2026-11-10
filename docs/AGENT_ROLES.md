@@ -9,7 +9,7 @@
 | Evidence Checker | PaperCard 和证据片段 | 核验结果/纠错任务 | 只读论文和卡片；不能改原文 |
 | Synthesis Analyst | PaperCard、检索结果 | 主题综合/研究地图片段 | 写 `knowledge/` 版本 |
 | Mechanism Analyst | PaperCard、主题综合、失败边界 | 机制/设计原则/矛盾图谱 | 不能把相关性当因果机制 |
-| Protocol Synthesis | 论文实验、comparison 代码、dataset card、领域适配器 | `ExperimentalProtocolProposal` | 必须为每项规则附来源/置信度；不能隐藏假设 |
+| Protocol Synthesis | 论文实验、comparison 代码、dataset card、可选插件输出 | `ExperimentalProtocolProposal` | 必须为每项规则附来源/置信度；不能隐藏假设 |
 | Leakage/Validity Checker | 数据探测、协议草案、任务定义 | 泄漏风险、统计/公平性检查 | 发现关键歧义时阻塞正式实验 |
 | Comparison Discovery | 研究地图、实验表格、允许的外部元数据 | ComparisonCandidate | 可查询白名单网络；只能写候选区 |
 | Baseline Repair | `upstream/`、失败日志、环境规格 | patch、测试结果、状态 | 只写 `worktree/`；不能写上游和系统环境 |

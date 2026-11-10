@@ -15,7 +15,7 @@ IdeaSeek 的定位是快速科研发现、idea 验证和代码交付，不是替
 
 ## 切片原则
 
-切片不是任意取前 N 个样本。Dataset/Scenario Planner 根据领域适配器和 dataset card 生成 split manifest，尽量保留：
+切片不是任意取前 N 个样本。Dataset/Scenario Planner 根据论文协议、dataset card 和已启用的可选插件生成 split manifest，尽量保留：
 
 - 标签/类别分布和长尾；
 - 主体、用户、视频、患者或客户端分组边界；

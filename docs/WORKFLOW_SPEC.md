@@ -32,7 +32,7 @@ INIT
 - `CALIBRATING`：小批论文产生校准报告，用户确认研究范围或无人值守策略允许继续。
 - `PAPER_ANALYSIS`：论文卡片 schema 和证据校验通过；失败论文被标记而不是丢失。
 - `DATA_READY`：dataset card、数据质量、切分规则和指标方向已确认。
-- `PROTOCOL_PROPOSED`：平台根据论文、comparison 代码、数据集和领域适配器生成 `ExperimentalProtocolProposal`，覆盖字段/样本单位、切分、泄漏检查、baseline 入口、指标、smoke test、资源、消融和支持/否证判据。
+- `PROTOCOL_PROPOSED`：平台根据论文、comparison 代码、数据集和可选插件输出生成 `ExperimentalProtocolProposal`，覆盖字段/样本单位、切分、泄漏检查、baseline 入口、指标、smoke test、资源、消融和支持/否证判据。
 - `PROTOCOL_REVIEW`：证据、泄漏、可行性和公平比较检查通过；只有关键科学歧义需要用户确认，协议锁定后才能进入 comparison 运行。
 - `COMPARISON_REPRODUCTION`：所有 required comparison 都有来源和实现计划。
 - `BASELINE_VALIDATED`：所有 required comparison 有可运行结果并通过合理性检查；官方代码、兼容修复和论文重实现分别标记。
