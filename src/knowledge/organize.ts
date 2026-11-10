@@ -160,7 +160,9 @@ export async function clearOrganizeIndex(projectRoot: string): Promise<void> {
 
 export async function loadIndexManifest(projectRoot: string): Promise<IndexManifest | null> {
   try {
-    return JSON.parse(await readFile(join(projectRoot, INDEX_DIR, 'sources.json'), 'utf8')) as IndexManifest;
+    return JSON.parse(
+      await readFile(join(projectRoot, INDEX_DIR, 'sources.json'), 'utf8'),
+    ) as IndexManifest;
   } catch {
     return null;
   }

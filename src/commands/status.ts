@@ -116,7 +116,9 @@ export function registerStatusCommand(program: Command): void {
           }
 
           process.stdout.write(`项目：${runtime.project.name}\n`);
-          process.stdout.write(`Run：${run.runId}  状态：${run.status}  阶段：${run.phase}\n`);
+          process.stdout.write(
+            `Run：${run.runId}  状态：${run.status}  阶段：${run.phase}  策略：${run.strategy}\n`,
+          );
           process.stdout.write(
             `任务：${done}/${total} 完成 · 排队 ${counts.queued ?? 0} · 执行中 ${(counts.leased ?? 0) + (counts.running ?? 0) + (counts.committing ?? 0)} · 失败 ${counts.failed ?? 0} · 取消 ${counts.canceled ?? 0}\n`,
           );

@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { demoHandlers } from '../worker/handlers.js';
+import { countInputs, resolveStrategy } from '../workflow/strategy.js';
 import {
   action,
   assertConfigUsable,
@@ -74,11 +75,16 @@ export function registerRunCommand(program: Command): void {
                   'no active run; pass --question "..." to create one (or set research.question in research.yaml)',
                 );
               }
+              const counts = await countInputs(runtime.paths.root, {
+                papers: runtime.config.inputs.papersDir,
+                datasets: runtime.config.inputs.datasetsDir,
+                comparisons: runtime.config.inputs.comparisonsDir,
+              });
               run = await db.createRun({
                 projectId: runtime.project.id,
                 question,
                 config: runtime.config,
-                strategy: runtime.config.research.mode,
+                strategy: resolveStrategy(runtime.config.research.mode, counts),
               });
               await enqueueDemoPipeline(runtime, run, question, faults);
               actions.push('created run with demo pipeline');

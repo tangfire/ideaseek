@@ -9,14 +9,7 @@ export const SCAN_PARSER_VERSION = 'ideaseek-scan-1';
 /** Files larger than this are classified but not hashed (hash recorded as null). */
 export const MAX_HASH_BYTES = 256 * 1024 * 1024;
 
-export type FileRole =
-  | 'paper'
-  | 'paper-source'
-  | 'code'
-  | 'data'
-  | 'archive'
-  | 'doc'
-  | 'unknown';
+export type FileRole = 'paper' | 'paper-source' | 'code' | 'data' | 'archive' | 'doc' | 'unknown';
 
 export interface ManifestFile {
   /** Absolute source path (read-only; never moved or modified). */
@@ -204,7 +197,10 @@ function normalizeStem(fileName: string): string {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-async function hashFile(path: string, bytes: number): Promise<{ sha256: string | null; hashStatus: ManifestFile['hashStatus'] }> {
+async function hashFile(
+  path: string,
+  bytes: number,
+): Promise<{ sha256: string | null; hashStatus: ManifestFile['hashStatus'] }> {
   if (bytes > MAX_HASH_BYTES) return { sha256: null, hashStatus: 'skipped-too-large' };
   try {
     const hash = await new Promise<string>((resolve, reject) => {
@@ -364,8 +360,9 @@ function buildGroups(files: ManifestFile[]): CandidateGroup[] {
     const confidence =
       bucket.kind === 'unknown'
         ? 0.5
-        : Math.round((members.reduce((sum, file) => sum + file.confidence, 0) / members.length) * 100) /
-          100;
+        : Math.round(
+            (members.reduce((sum, file) => sum + file.confidence, 0) / members.length) * 100,
+          ) / 100;
     groups.push({
       groupId: `grp-${Buffer.from(key).toString('hex').slice(0, 16)}`,
       kind: bucket.kind,
