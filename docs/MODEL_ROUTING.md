@@ -74,6 +74,37 @@ models:
 
 用户可以按 provider/model 覆盖路由，但不能让高成本路由绕过项目预算。一个任务的实际模型、provider、prompt/schema 版本、token、成本和 fallback 都写入 task metadata。
 
+## 用户交互
+
+交互终端中使用：
+
+```text
+/models
+/models list
+/models use fast
+/models use deep
+/models test --route deep
+```
+
+`/models` 显示：
+
+- `fast`、`balanced`、`deep` 当前绑定的 provider/model；
+- 是否支持工具调用、结构化输出和长上下文；
+- 凭据是否存在（只显示 configured/missing/invalid，不显示 key）；
+- 最近连接测试、额度/限速状态和成本累计；
+- 当前项目哪些角色使用该 route。
+
+配置 provider 时使用隐藏输入或 DSH credential store：
+
+```text
+Provider: deepseek
+API key: ********
+Save to: DSH credential store
+Test connection? [Y/n]
+```
+
+模型切换只影响新任务和未开始的步骤；正在运行的任务保留其 run snapshot。切换 provider、model 或 route 会记录 Decision/Event，并让需要新模型能力的下游任务产生明确版本变化。
+
 ## 路由规则
 
 - `fast` 失败时可以有限 fallback 到 `balanced`；不能把所有失败无限升级到 `deep`。

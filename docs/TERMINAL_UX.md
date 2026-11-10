@@ -51,6 +51,7 @@ ideaseek ›
 
 ```text
 /status       当前阶段、任务、资源和预算
+/models       查看和配置模型 route/provider
 /next         下一步和阻塞解释
 /papers       论文进度和失败解析
 /comparisons  comparison 状态、来源和阻塞
