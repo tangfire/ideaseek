@@ -207,4 +207,6 @@ export interface WorkflowDb {
   listInterruptedCommits(runId?: string): Promise<TaskRecord[]>;
   recoverInterruptedCommit(taskId: string, outcome: 'finalize' | 'requeue'): Promise<TaskRecord>;
   stopStaleWorkers(maxIdleMs: number): Promise<string[]>;
+  /** Cancels queued tasks whose dependencies are terminal-dead, then settles idle runs. */
+  recoverStrandedRuns(): Promise<{ settled: string[] }>;
 }

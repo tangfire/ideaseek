@@ -84,9 +84,13 @@ describe('fake worker', () => {
     const ingest = tasks.find((task) => task.type === 'demo.ingest');
     expect(ingest?.status).toBe('failed');
     expect(ingest?.attempt).toBe(3); // default max_attempts from config
-    // Dependent tasks never run.
+    // Dependents are flagged, not stranded: cascaded to canceled with
+    // DEPENDENCY_FAILED (they can never run once their dependency failed).
     const analyze = tasks.find((task) => task.type === 'demo.analyze');
-    expect(analyze?.status).toBe('queued');
+    expect(analyze?.status).toBe('canceled');
+    expect(analyze?.error?.code).toBe('DEPENDENCY_FAILED');
+    const report = tasks.find((task) => task.type === 'demo.report');
+    expect(report?.status).toBe('canceled');
     expect((await runtime.db.getRun(run.runId))?.status).toBe('FAILED');
   });
 

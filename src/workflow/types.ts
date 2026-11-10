@@ -182,6 +182,8 @@ export interface RecoveryReport {
   resumedCommits: string[];
   abandonedCommits: string[];
   stoppedWorkers: string[];
+  /** Runs un-stranded on open (dead-dependency tasks canceled, run settled). */
+  settledRuns: string[];
   staleTempsRemoved: string[];
   eventsAppended: number;
 }
@@ -194,6 +196,7 @@ export function emptyRecoveryReport(): RecoveryReport {
     resumedCommits: [],
     abandonedCommits: [],
     stoppedWorkers: [],
+    settledRuns: [],
     staleTempsRemoved: [],
     eventsAppended: 0,
   };

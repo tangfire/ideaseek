@@ -1423,7 +1423,10 @@ export class SqliteWorkflowDb implements WorkflowDb {
           summary: `${task.type} failed (${error.code}): ${willRetry ? 'will retry' : 'no retries left'}`,
           status: willRetry ? 'queued' : 'failed',
         });
-        if (!willRetry) this.settleAfterTerminalFailure(task.runId, task);
+        if (!willRetry) {
+          this.cascadeUnrunnableDependents(task.runId, taskId);
+          this.settleAfterTerminalFailure(task.runId, task);
+        }
         return { task: this.requireTask(taskId), willRetry };
       }),
     );
@@ -1746,6 +1749,7 @@ export class SqliteWorkflowDb implements WorkflowDb {
         summary: `${task.type} failed: commit interrupted and attempts exhausted`,
         status: 'failed',
       });
+      this.cascadeUnrunnableDependents(task.runId, task.taskId);
       this.settleAfterTerminalFailure(task.runId, task);
       return this.requireTask(task.taskId);
     }
@@ -1944,6 +1948,7 @@ export class SqliteWorkflowDb implements WorkflowDb {
           summary: `${task.type} lease expired and attempts exhausted`,
           status: 'failed',
         });
+        this.cascadeUnrunnableDependents(task.runId, task.taskId);
         this.settleAfterTerminalFailure(task.runId, task);
         continue;
       }
@@ -1998,6 +2003,46 @@ export class SqliteWorkflowDb implements WorkflowDb {
    * ingest) must not stop sibling tasks: the run only turns FAILED once
    * nothing remains claimable. Regular failures keep immediate semantics.
    */
+  /**
+   * Queued dependents of a terminal task can never run: cancel them with
+   * DEPENDENCY_FAILED (flagged, not lost) so runs settle instead of stranding
+   * queued work whose preconditions are gone (docs: 失败被标记而不是丢失).
+   */
+  private cascadeUnrunnableDependents(runId: string, terminalTaskId: string): void {
+    const now = this.clock.now();
+    const error = JSON.stringify({
+      code: 'DEPENDENCY_FAILED',
+      message: `dependency ${terminalTaskId} no longer runnable`,
+      retryable: false,
+      at: now,
+    });
+    const queue = [terminalTaskId];
+    while (queue.length > 0) {
+      const depId = queue.shift()!;
+      const rows = this.db
+        .prepare(
+          `SELECT ${TASK_COLUMNS} FROM task WHERE run_id = ? AND status = 'queued'` ,
+        )
+        .all(runId) as unknown as TaskRow[];
+      for (const row of rows) {
+        const task = rowToTask(row);
+        if (!task.dependsOn.includes(depId)) continue;
+        this.db
+          .prepare(`UPDATE task SET status = 'canceled', cancel_requested = 1, finished_at = ?, updated_at = ?, error_json = ? WHERE task_id = ? AND status = 'queued'`)
+          .run(now, now, error, task.taskId);
+        this.insertEvent({
+          runId,
+          phase: task.phase,
+          objectId: task.taskId,
+          eventType: 'task_canceled',
+          summary: `${task.type} canceled: dependency no longer runnable`,
+          status: 'canceled',
+        });
+        queue.push(task.taskId);
+      }
+    }
+  }
+
   private settleAfterTerminalFailure(runId: string, task: TaskRecord): void {
     if (task.payload.nonBlocking !== true) {
       this.checkRunFailure(runId);
@@ -2074,6 +2119,37 @@ export class SqliteWorkflowDb implements WorkflowDb {
       }
     }
     return { status: 'duplicate', task, artifactIds: rows.map((row) => row.artifact_id) };
+  }
+
+  recoverStrandedRuns(): Promise<{ settled: string[] }> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const runs = this.db
+          .prepare("SELECT run_id FROM run WHERE status NOT IN ('FAILED', 'CANCELED', 'COMPLETED')")
+          .all() as unknown as { run_id: string }[];
+        const settled: string[] = [];
+        for (const row of runs) {
+          const runId = row.run_id;
+          const dead = this.db
+            .prepare("SELECT task_id FROM task WHERE run_id = ? AND status IN ('failed', 'canceled')")
+            .all(runId) as unknown as { task_id: string }[];
+          if (dead.length === 0) continue;
+          const queued = this.db
+            .prepare("SELECT task_id FROM task WHERE run_id = ? AND status = 'queued'")
+            .all(runId) as unknown as { task_id: string }[];
+          const deadIds = new Set(dead.map((entry) => entry.task_id));
+          const stranded = queued.filter((entry) =>
+            this.requireTask(entry.task_id).dependsOn.some((dep) => deadIds.has(dep)),
+          );
+          if (stranded.length === 0) continue;
+          for (const entry of dead) this.cascadeUnrunnableDependents(runId, entry.task_id);
+          this.settleIdleRun(runId);
+          const after = this.requireRun(runId);
+          if (['FAILED', 'COMPLETED', 'CANCELED'].includes(after.status)) settled.push(runId);
+        }
+        return { settled };
+      }),
+    );
   }
 
   close(): Promise<void> {

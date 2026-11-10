@@ -133,6 +133,12 @@ export class ProjectRuntime {
 
     report.staleTempsRemoved = await this.store.cleanupStaleTemps(this.clock.now());
 
+    const stranded = await this.db.recoverStrandedRuns();
+    for (const runId of stranded.settled) {
+      affectedRuns.add(runId);
+      report.settledRuns.push(runId);
+    }
+
     const interrupted = await this.db.listInterruptedCommits();
     for (const task of interrupted) {
       affectedRuns.add(task.runId);
