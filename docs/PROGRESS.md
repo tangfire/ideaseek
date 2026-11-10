@@ -30,7 +30,7 @@
 
 ## Phase 2：论文与知识库
 
-- [ ] PDF/LaTeX/OCR/表格/图表解析
+- [x] PDF/LaTeX/OCR/表格/图表解析
 - [x] PaperCard schema 和证据定位
 - [ ] 去重、全文/向量检索和增量处理
 - [x] Paper Extractor 并行 map 阶段
@@ -125,3 +125,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-10 | Phase 2 表格解析：pdfplumber tables 命令+extractTables 桥+paper.tables 任务+ingest --tables（增量、opt-in）| be5a3bc | 门禁 40 files/242 vitest+7 python 全绿；真实 FL 论文在管线内抽出2个表格 | OCR 仍缺 tesseract（环境阻塞）；LaTeX 源解析与向量检索待决策 | 下一模块：LaTeX 源解析（无阻塞）
 2026-11-10 | Phase 2 LaTeX 源解析：parseLatex（注释/命令/章节/标题/转义）+paper.latex 任务（统一 parsed-paper 形状）+ingest .tex 增量 | d6bde51 | 门禁 41 files/248 vitest+7 python 全绿（含 .tex→FTS 检索 e2e）| OCR 仍缺 tesseract；向量检索待 embed 提供方决策 | Phase 2 可做项全部完成，剩 OCR（环境）与向量（架构决策）
 2026-11-10 | Phase 2 OCR：worker ocr 命令（pypdfium2+rapidocr≤20页）+隔离 venv 锁定依赖（系统 onnxruntime 段错误→ort1.19.2 锁定）+paper.parse NO_TEXT_LAYER 自动回退（失败信息含 OCR 尝试证明）| 183e3f9 | 门禁 42 files/250 vitest+9 python 全绿（venv real OCR roundtrip + 无文本 PDF 永久标记）| 扫描件正向 e2e 依赖带图 fixture（现有夹具均为文本层）；OCR 每页1-3s 属 opt-in 成本 | 向量检索仍需 embed 提供方决策（DeepSeek 无 embeddings 端点，404 已验证）
+2026-11-10 | checkbox「PDF/LaTeX/OCR/表格/图表解析」完成确认：PDF 文本(74/74)、LaTeX(paper.latex)、OCR(venv rapidocr 回退)、表格(pdfplumber opt-in)均落地并测试；图表的文本/题注已随页文本覆盖，图内数值提取属视觉模型扩展（未做，如实注明）| 汇总 2d4ee1d 系列 commit | 门禁 42 files/250 vitest+9 python | 该 checkbox 按用户规则（实现+测试+commit）打勾
