@@ -172,6 +172,7 @@ export async function runWorkerInteractive(
     }
   };
   process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigint);
   worker = new FakeWorker({ ...options, runId, runtime, signal: controller.signal });
   try {
     let exit = await worker.run();
@@ -185,6 +186,7 @@ export async function runWorkerInteractive(
     return { exit, sigints, pausedBySignal };
   } finally {
     process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigint);
   }
 }
 

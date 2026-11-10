@@ -19,6 +19,8 @@ import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
+import { registerStreamCommands } from './commands/stream.js';
+import { registerSuperviseCommand } from './commands/supervise.js';
 import { registerWorkerCommand } from './commands/worker.js';
 
 function readVersion(): string {
@@ -57,6 +59,8 @@ export function buildProgram(): Command {
   registerStatusCommand(program);
   registerNextCommand(program);
   registerEventsCommand(program);
+  registerStreamCommands(program);
+  registerSuperviseCommand(program);
   registerReportCommand(program);
   registerControlCommands(program);
   return program;

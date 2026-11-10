@@ -1,5 +1,11 @@
 import type { Command } from 'commander';
+import { closeSync, openSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { ensureDir } from '../core/atomic.js';
 import { IdeaseekError } from '../core/errors.js';
+import { projectPaths } from '../config/paths.js';
+import { readCliVersion, writeDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { demoHandlers } from '../worker/handlers.js';
 import { countInputs, resolveStrategy } from '../workflow/strategy.js';
@@ -22,6 +28,7 @@ export function registerRunCommand(program: Command): void {
     .option('-q, --question <text>', 'research question (required when creating a run)')
     .option('--run <runId>', 'operate on a specific run instead of the latest')
     .option('--enqueue-only', 'create/adopt the run and enqueue tasks without executing')
+    .option('--detach', 'start a background supervisor and return immediately')
     .option('--fault <json>', 'fault injection map, e.g. \'{"demo.analyze":{"crash":true}}\'')
     .option('--force', 'attach even if another live worker holds this run')
     .option('--json', 'machine-readable output')
@@ -31,6 +38,7 @@ export function registerRunCommand(program: Command): void {
           question?: string;
           run?: string;
           enqueueOnly?: boolean;
+          detach?: boolean;
           fault?: string;
           force?: boolean;
           json?: boolean;
@@ -110,6 +118,59 @@ export function registerRunCommand(program: Command): void {
                 process.stdout.write(
                   'next: ideaseek worker   (or ideaseek run to execute inline)\n',
                 );
+              }
+              return 0;
+            }
+
+            if (opts.detach) {
+              const script = process.argv[1];
+              if (!script) {
+                throw new IdeaseekError(
+                  'INTERNAL',
+                  'cannot resolve ideaseek script path for --detach',
+                );
+              }
+              const paths = projectPaths(process.cwd());
+              await ensureDir(paths.logsDir);
+              const logPath = join(paths.logsDir, `${run.runId}.log`);
+              const fd = openSync(logPath, 'a');
+              const child = spawn(process.execPath, [script, 'supervise', '--run', run.runId], {
+                cwd: process.cwd(),
+                detached: true,
+                stdio: ['ignore', fd, fd],
+              });
+              closeSync(fd);
+              if (!child.pid) {
+                throw new IdeaseekError('INTERNAL', 'failed to spawn background supervisor');
+              }
+              child.unref();
+              writeDaemonInfo(paths.researchDir, {
+                runId: run.runId,
+                pid: child.pid,
+                startedAt: Date.now(),
+                heartbeatAt: Date.now(),
+                logPath,
+                version: readCliVersion(),
+              });
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    runId: run.runId,
+                    detached: true,
+                    pid: child.pid,
+                    logPath,
+                    tasks: countByStatus(await db.listTasks(run.runId)),
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `detached supervisor started for run ${run.runId} (pid ${child.pid})
+`,
+                );
+                process.stdout.write(`  log: ${logPath}
+`);
+                process.stdout.write(`next: ideaseek attach --run ${run.runId}
+`);
               }
               return 0;
             }

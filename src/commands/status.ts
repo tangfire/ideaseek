@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
+import { isPidAlive, readDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord } from '../workflow/types.js';
 import { action, countByStatus, formatTaskLine, jsonLine } from './shared.js';
@@ -26,6 +27,23 @@ export function exitCodeForRun(run: RunRecord | null): number {
 
 function timestamp(ms: number): string {
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+interface DaemonSummary {
+  pid: number;
+  state: string;
+  logPath: string;
+}
+
+function describeDaemon(researchDir: string, runId: string): DaemonSummary | null {
+  const info = readDaemonInfo(researchDir);
+  if (!info || info.runId !== runId) return null;
+  const state = info.exitedAt
+    ? `exited(${info.reason ?? 'unknown'})`
+    : isPidAlive(info.pid)
+      ? 'running'
+      : 'process gone (recovery takes over after lease expiry)';
+  return { pid: info.pid, state, logPath: info.logPath };
 }
 
 export function registerStatusCommand(program: Command): void {
@@ -96,6 +114,7 @@ export function registerStatusCommand(program: Command): void {
                 tasks: counts,
                 total,
                 liveWorkers: liveWorkers.length,
+                daemon: describeDaemon(runtime.paths.researchDir, run.runId),
                 failed: failed.map((task) => ({
                   taskId: task.taskId,
                   type: task.type,
@@ -123,6 +142,12 @@ export function registerStatusCommand(program: Command): void {
             `任务：${done}/${total} 完成 · 排队 ${counts.queued ?? 0} · 执行中 ${(counts.leased ?? 0) + (counts.running ?? 0) + (counts.committing ?? 0)} · 失败 ${counts.failed ?? 0} · 取消 ${counts.canceled ?? 0}\n`,
           );
           process.stdout.write(`活动 Worker：${liveWorkers.length}\n`);
+          const daemon = describeDaemon(runtime.paths.researchDir, run.runId);
+          if (daemon) {
+            process.stdout.write(
+              `daemon supervisor: pid ${daemon.pid} ${daemon.state}${daemon.logPath ? ` log=${daemon.logPath}` : ''}\n`,
+            );
+          }
           if (run.blockReason) process.stdout.write(`阻塞原因：${run.blockReason}\n`);
           if (runtime.recovery.resumedCommits.length || runtime.recovery.reclaimedLeases.length) {
             process.stdout.write(
