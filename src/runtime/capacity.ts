@@ -63,6 +63,12 @@ export interface AdmissionOptions {
   coresPerIdea?: number;
   /** GiB kept free per idea (host safety headroom). */
   headroomGiB?: number;
+  /**
+   * Disk floor (GiB): below it NO new idea runs are admitted — long-running
+   * policy pauses new tasks instead of filling the disk with checkpoints.
+   * Default 5 GiB; set higher for production hosts.
+   */
+  minDiskFreeGiB?: number;
 }
 
 function runQuery(args: string[], timeoutMs: number): Promise<string | null> {
@@ -142,6 +148,26 @@ export function computeAdmission(
   const sorted = [...requests].sort(
     (a, b) => a.createdAt - b.createdAt || a.ideaId.localeCompare(b.ideaId),
   );
+
+  const minDiskFreeGiB = opts.minDiskFreeGiB ?? 5;
+  // Disk floor: pause ALL new admissions when free space crosses the
+  // threshold (LONG_RUNNING_WORKFLOWS 磁盘阈值 — never fill the disk).
+  if (
+    probe.diskFreeGiB !== null &&
+    Number.isFinite(probe.diskFreeGiB) &&
+    probe.diskFreeGiB < minDiskFreeGiB
+  ) {
+    return {
+      parallelLimit: maxParallel,
+      effectiveN: 0,
+      admitted: [],
+      queued: sorted.map((request) => ({
+        ideaId: request.ideaId,
+        reason: `disk threshold: ${probe.diskFreeGiB} GiB free < ${minDiskFreeGiB} GiB minimum — new runs paused until space is freed`,
+      })),
+      constraints: [`disk threshold (< ${minDiskFreeGiB} GiB free)`],
+    };
+  }
 
   const admitted: AdmittedIdea[] = [];
   const queued: QueuedIdea[] = [];
