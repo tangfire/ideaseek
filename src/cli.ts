@@ -30,6 +30,7 @@ import { registerWikiCommand } from './commands/wiki.js';
 import { registerRenderCommand } from './commands/render.js';
 import { registerWatchdogCommand } from './commands/watchdog.js';
 import { registerQueueCommand } from './commands/queue.js';
+import { registerMonitorCommand } from './commands/monitor.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -111,6 +112,7 @@ export function buildProgram(): Command {
   registerRenderCommand(program);
   registerWatchdogCommand(program);
   registerQueueCommand(program);
+  registerMonitorCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

@@ -25,6 +25,7 @@ export const VENDORED_SKILLS: readonly string[] = [
   'idea-creator',
   'idea-discovery',
   'integrity-forensics',
+  'monitor-experiment',
   'novelty-check',
   'prior-art-search',
   'render-html',
@@ -142,6 +143,10 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
   {
     path: 'skills/integrity-forensics/SKILL.md',
     sha256: '33cdf3f4fd2a8dea073a73e2cba870576c576b1d201efa3d0a4bde2e7e7256ed',
+  },
+  {
+    path: 'skills/monitor-experiment/SKILL.md',
+    sha256: '0527977308bb7b26139ffb56cd2d45ecc72a9dd2961073ad51fac4aac106961d',
   },
   {
     path: 'skills/novelty-check/SKILL.md',
