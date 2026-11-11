@@ -4,6 +4,8 @@ import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
 import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
 import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/experiment.js';
+import { runAblations } from '../idea/ablation.js';
+import { runAnalysis } from '../idea/analyze.js';
 import {
   IDEA_TRANSITIONS,
   assertEngineeringRevision,
@@ -670,6 +672,104 @@ export function registerIdeaCommand(program: Command): void {
             }
           }
           return result.allOk ? 0 : 1;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  idea
+    .command('ablate')
+    .description(
+      'run the mechanism-chain ablation matrix (each ablation bound to idea version + spec + code hash)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--scale <scale>', 'smoke | quick', 'smoke')
+    .option('--timeout <ms>', 'per-ablation timeout', (value) => Number(value), 120_000)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { scale: string; timeout: number; json?: boolean }) => {
+        const root = await openRoot();
+        if (opts.scale !== 'smoke' && opts.scale !== 'quick') {
+          throw new IdeaseekError('INVALID_ARGUMENT', '--scale must be smoke | quick');
+        }
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root });
+        try {
+          const result = await runAblations(
+            root,
+            ideaId,
+            { scale: opts.scale as IdeaScale, timeoutMs: opts.timeout },
+            runtime,
+            runtime.db,
+          );
+          if (opts.json) {
+            process.stdout.write(jsonLine(result));
+          } else {
+            process.stdout.write(
+              `ablate ${ideaId} v${result.ideaVersion}: ${result.entries.length} entr(ies) · ` +
+                `${result.allOk ? 'all ok' : 'some failed'}\n`,
+            );
+            for (const entry of result.entries) {
+              process.stdout.write(
+                `  ${entry.exitCode === 0 ? 'ok  ' : 'FAIL'} ${entry.specId} v${entry.version}  ` +
+                  `${entry.alreadyRecorded ? 'already recorded' : entry.resultStatus}` +
+                  `${entry.failure ? ` (${entry.failure.category})` : ''}  ${entry.label}\n`,
+              );
+              for (const metric of entry.metrics) {
+                process.stdout.write(`        ${metric.name} = ${metric.value}\n`);
+              }
+            }
+            if (result.allOk) {
+              process.stdout.write(`next: ideaseek idea analyze ${ideaId}\n`);
+            }
+          }
+          return result.allOk ? 0 : 1;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  idea
+    .command('analyze')
+    .description(
+      'Result Analyst: verdict from baselines + main run + ablations + coverage (crash ≠ hypothesis failure)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root });
+        try {
+          const { analysis, paths } = await runAnalysis(root, ideaId, runtime.db);
+          if (opts.json) {
+            process.stdout.write(jsonLine({ analysis, paths }));
+            return 0;
+          }
+          process.stdout.write(
+            `analysis ${ideaId} v${analysis.ideaVersion}: ${analysis.verdict.toUpperCase()}` +
+              `${analysis.failureClass !== 'none' ? ` (failure class: ${analysis.failureClass})` : ''}\n`,
+          );
+          process.stdout.write(
+            `  coverage: scales=[${analysis.coverage.scales.join(', ')}] ` +
+              `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds}` +
+              `${analysis.coverage.missing.length > 0 ? ` · missing: ${analysis.coverage.missing.join('; ')}` : ''}\n`,
+          );
+          if (analysis.primaryDelta !== null) {
+            process.stdout.write(`  primary delta vs best baseline: ${analysis.primaryDelta}\n`);
+          }
+          for (const reason of analysis.reasons) process.stdout.write(`  reason: ${reason}\n`);
+          for (const failure of analysis.failures) {
+            process.stdout.write(
+              `  failure kept: ${failure.specId} ${failure.category ?? '?'} → ${failure.class}\n`,
+            );
+          }
+          for (const step of analysis.nextSteps) process.stdout.write(`  next: ${step}\n`);
+          process.stdout.write(`  written: ${paths.join(', ')}\n`);
+          return 0;
         } finally {
           await runtime.close();
         }

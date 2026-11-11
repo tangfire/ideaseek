@@ -69,6 +69,9 @@ async function metricDirections(runtime: {
  * nearest comparisons, code binding via src hash + idea version notes,
  * seeds/budget from the card and config, protocol linkage when present.
  */
+/** Runtime handle the spec builder needs (project store + artifact reads). */
+export type IdeaRuntime = Parameters<typeof metricDirections>[0];
+
 export async function buildIdeaSpec(
   projectRoot: string,
   ideaId: string,
@@ -77,6 +80,12 @@ export async function buildIdeaSpec(
     runtime: Parameters<typeof metricDirections>[0];
     /** Retry ordinal; baked into environment.notes so retries hash differently. */
     attempt?: number;
+    /** Registry key override (ablations use idea-<id>-abl-<slug>). */
+    specIdOverride?: string;
+    /** Extra environment notes (ablation bindings, parent spec, …). */
+    extraNotes?: string[];
+    /** Appended to the run command (e.g. --ablate <id>). */
+    commandSuffix?: string[];
   },
 ): Promise<BuildIdeaSpecResult> {
   const meta = await loadWorkspaceMeta(projectRoot, ideaId);
@@ -111,7 +120,7 @@ export async function buildIdeaSpec(
   const attempt = opts.attempt ?? 1;
 
   const spec: ExperimentSpec = {
-    specId: `idea-${ideaId}`,
+    specId: opts.specIdOverride ?? `idea-${ideaId}`,
     version: 1, // caller rewrites after hash comparison
     idea: { ideaId, version: meta.currentVersion },
     comparisonIds: card.nearestComparisons.map((item) => item.methodId),
@@ -125,9 +134,10 @@ export async function buildIdeaSpec(
         `idea-v:${meta.currentVersion}`,
         `idea-code:${codeHash ?? 'empty'}`,
         `attempt:${attempt}`,
+        ...(opts.extraNotes ?? []),
       ],
     },
-    command: commandFor(config, opts.scale),
+    command: [...commandFor(config, opts.scale), ...(opts.commandSuffix ?? [])],
     metrics,
     seeds: Array.isArray(config.seeds)
       ? config.seeds.filter((s): s is number => typeof s === 'number' && Number.isInteger(s))
@@ -152,7 +162,7 @@ export async function buildIdeaSpec(
   return { spec, attempt };
 }
 
-interface ExperimentDocLike {
+export interface ExperimentDocLike {
   version: number;
   specHash: string;
   spec: Record<string, unknown>;
@@ -240,6 +250,222 @@ export interface RunIdeaExperimentOptions {
   timeoutMs: number;
 }
 
+/** The subset of WorkflowDb the spec lifecycle needs (main runs + ablations). */
+export interface RegistryPort {
+  getExperiment(specId: string): Promise<ExperimentDocLike | null>;
+  upsertExperiment(doc: {
+    specId: string;
+    version: number;
+    specHash: string;
+    status: 'planned' | 'succeeded' | 'failed' | 'partial' | 'invalid';
+    spec: Record<string, unknown>;
+    result: Record<string, unknown> | null;
+    updatedAt: number;
+  }): Promise<void>;
+  attachExperimentResult(
+    specId: string,
+    result: Record<string, unknown>,
+    status: 'succeeded' | 'failed' | 'partial' | 'invalid',
+  ): Promise<unknown>;
+}
+
+/** A failed latest result is retried as a new attempt; succeeded ⇒ idempotent. */
+export function resolveAttempt(existing: ExperimentDocLike | null): number {
+  const latestFailed =
+    existing?.result != null && (existing.result as { status?: unknown }).status !== 'succeeded';
+  return latestFailed && existing ? existing.version + 1 : 1;
+}
+
+export interface PreparedSpecRecording {
+  spec: ExperimentSpec;
+  specHash: string;
+  nextVersion: number;
+  /** Same spec already has a result — skip execution. */
+  alreadyRecorded: boolean;
+}
+
+/**
+ * Validates and normalizes a spec for recording (stable version/createdAt so
+ * hashing is deterministic). Does NOT write — callers run the status guard
+ * first, then recordPlannedSpec. Shared by main experiments and ablations so
+ * version/idempotency rules cannot drift.
+ */
+export async function prepareSpecRecording(
+  baseSpec: ExperimentSpec,
+  existing: ExperimentDocLike | null,
+): Promise<PreparedSpecRecording> {
+  const { computeSpecHash, validateExperimentSpec } = await import('../experiment/spec.js');
+  const spec: ExperimentSpec = {
+    ...baseSpec,
+    environment: { ...baseSpec.environment, notes: [...(baseSpec.environment.notes ?? [])] },
+  };
+  const validation = validateExperimentSpec(spec);
+  if (!validation.ok) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `built experiment spec failed validation: ${validation.errors.join('; ')}`,
+    );
+  }
+  // Hash stability: compare at the CURRENT version with the original createdAt.
+  spec.version = existing ? existing.version : 1;
+  const existingCreatedAt = (existing?.spec as { createdAt?: unknown } | null)?.createdAt;
+  if (typeof existingCreatedAt === 'number') {
+    spec.createdAt = existingCreatedAt;
+  }
+  const specHash = computeSpecHash(spec);
+  const hashChanged = existing !== null && existing.specHash !== specHash;
+  const nextVersion = existing ? (hashChanged ? existing.version + 1 : existing.version) : 1;
+  spec.version = nextVersion;
+  const finalHash = computeSpecHash(spec);
+
+  const alreadyRecorded = Boolean(existing && existing.specHash === finalHash && existing.result);
+  return { spec, specHash: finalHash, nextVersion, alreadyRecorded };
+}
+
+/** Writes the prepared spec as planned (preserving a same-hash result). */
+export async function recordPlannedSpec(
+  db: RegistryPort,
+  prepared: PreparedSpecRecording,
+  existing: ExperimentDocLike | null,
+): Promise<void> {
+  await db.upsertExperiment({
+    specId: prepared.spec.specId,
+    version: prepared.nextVersion,
+    specHash: prepared.specHash,
+    status: 'planned',
+    spec: prepared.spec as unknown as Record<string, unknown>,
+    result: existing && existing.specHash === prepared.specHash ? existing.result : null,
+    updatedAt: Date.now(),
+  });
+}
+
+export interface SpecExecResult {
+  succeeded: boolean;
+  metrics: { name: string; value: number }[];
+  failure: { category: RunFailureCategory; summary: string } | null;
+  startedAt: number;
+  finishedAt: number;
+  logRef: string;
+}
+
+/**
+ * Executes a spec's command in the idea workspace with a bounded timeout,
+ * parses the {"metrics": …} line and classifies failures. Shared by main
+ * experiments and ablations (scale=smoke/quick only — never full training).
+ */
+export async function executeSpecRun(
+  projectRoot: string,
+  logTag: string,
+  spec: ExperimentSpec,
+  timeoutMs: number,
+): Promise<SpecExecResult> {
+  const workspace = join(
+    projectRoot,
+    'ideas',
+    (spec.idea as { ideaId: string } | null)?.ideaId ?? '',
+  );
+  const command = spec.command;
+  const startedAt = Date.now();
+  const run = await runRepairCommand(command, workspace, timeoutMs);
+  const logName = `idea-${logTag}.log`;
+  await writeRepairLog(projectRoot, logName, command, run.exitCode, run.out);
+  const logRef = `.research/logs/${logName}`;
+
+  const { metrics, parseFailure } = parseMetricsOutput(run.out, run.exitCode, run.timedOut, spec);
+  const succeeded = run.exitCode === 0 && !run.timedOut && parseFailure === null;
+  const failureCategory: RunFailureCategory = succeeded
+    ? 'unknown'
+    : run.timedOut
+      ? 'timeout'
+      : parseFailure
+        ? 'invalid-result'
+        : (KIND_TO_FAILURE[classifyRepairFailure(run.out, run.exitCode, run.timedOut).kind] ??
+          'unknown');
+  const failureSummary = succeeded
+    ? ''
+    : run.timedOut
+      ? `timed out after ${timeoutMs}ms`
+      : (parseFailure ??
+        classifyRepairFailure(run.out, run.exitCode, run.timedOut).summary.slice(0, 300));
+
+  return {
+    succeeded,
+    metrics,
+    failure: succeeded ? null : { category: failureCategory, summary: failureSummary },
+    startedAt,
+    finishedAt: Date.now(),
+    logRef,
+  };
+}
+
+/** Parses the last {"metrics": {...}} JSON line against the spec metric list. */
+export function parseMetricsOutput(
+  out: string,
+  exitCode: number,
+  timedOut: boolean,
+  spec: ExperimentSpec,
+): { metrics: { name: string; value: number }[]; parseFailure: string | null } {
+  const metrics: { name: string; value: number }[] = [];
+  if (exitCode !== 0 || timedOut) return { metrics, parseFailure: null };
+  const lines = out.split(/\r?\n/).filter((line) => line.trim());
+  let parsed: { metrics?: Record<string, unknown> } | null = null;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      const candidate = JSON.parse(lines[i]!) as { metrics?: Record<string, unknown> };
+      if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
+        parsed = candidate;
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+  const metricMap = parsed?.metrics ?? {};
+  if (!parsed || Object.keys(metricMap).length === 0) {
+    return { metrics, parseFailure: 'entry produced no {"metrics": {...}} JSON line' };
+  }
+  const missing: string[] = [];
+  for (const expected of spec.metrics) {
+    const value = metricMap[expected.name];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      missing.push(expected.name);
+      continue;
+    }
+    metrics.push({ name: expected.name, value });
+  }
+  if (missing.length > 0) {
+    return { metrics, parseFailure: `metrics missing or non-finite: ${missing.join(', ')}` };
+  }
+  return { metrics, parseFailure: null };
+}
+
+/** Builds and attaches the unified RunResult for an executed spec. */
+export async function attachSpecResult(
+  db: RegistryPort,
+  spec: ExperimentSpec,
+  exec: SpecExecResult,
+  explanation: string,
+): Promise<RunResult> {
+  const result: RunResult = {
+    specId: spec.specId,
+    status: exec.succeeded ? 'succeeded' : 'failed',
+    logRefs: [exec.logRef],
+    artifactRefs: [],
+    metrics: exec.metrics,
+    resourcesUsed: {},
+    failure: exec.failure,
+    startedAt: exec.startedAt,
+    finishedAt: exec.finishedAt,
+    explanation,
+  };
+  await db.attachExperimentResult(
+    spec.specId,
+    result as unknown as Record<string, unknown>,
+    exec.succeeded ? 'succeeded' : 'failed',
+  );
+  return result;
+}
+
 /**
  * Gate → build → (idempotent | run) → attach RunResult. The check-report must
  * be passing AND current (version + code hash) before any experiment runs.
@@ -310,41 +536,17 @@ export async function runIdeaExperiment(
 
   const specId = `idea-${ideaId}`;
   const existing = await db.getExperiment(specId);
+  const attempt = resolveAttempt(existing);
 
-  // Retry failed attempts as a new version; succeeded ones stay idempotent.
-  const latestFailed =
-    existing?.result != null && (existing.result as { status?: unknown }).status !== 'succeeded';
-  const attempt = latestFailed && existing ? existing.version + 1 : 1;
-
-  const { spec: specWithAttempt } = await buildIdeaSpec(projectRoot, ideaId, {
+  const { spec: baseSpec } = await buildIdeaSpec(projectRoot, ideaId, {
     scale: opts.scale,
     runtime,
     attempt,
   });
-
-  const { computeSpecHash, validateExperimentSpec } = await import('../experiment/spec.js');
-  const validation = validateExperimentSpec(specWithAttempt);
-  if (!validation.ok) {
-    throw new IdeaseekError(
-      'INVALID_ARGUMENT',
-      `built experiment spec failed validation: ${validation.errors.join('; ')}`,
-    );
-  }
-  // Hash stability: compare at the CURRENT version with the original
-  // createdAt (wall-clock in the hash would make every run look changed).
-  specWithAttempt.version = existing ? existing.version : 1;
-  const existingCreatedAt = (existing?.spec as { createdAt?: unknown } | null)?.createdAt;
-  if (typeof existingCreatedAt === 'number') {
-    specWithAttempt.createdAt = existingCreatedAt;
-  }
-  const specHash = computeSpecHash(specWithAttempt);
-  const hashChanged = existing !== null && existing.specHash !== specHash;
-  const nextVersion = existing ? (hashChanged ? existing.version + 1 : existing.version) : 1;
-  specWithAttempt.version = nextVersion;
-  const finalHash = computeSpecHash(specWithAttempt);
+  const prepared = await prepareSpecRecording(baseSpec, existing);
 
   // Idempotent: same spec already has a recorded result → do not re-run.
-  if (existing && existing.specHash === finalHash && existing.result) {
+  if (prepared.alreadyRecorded && existing) {
     const status = (existing.result as { status?: string }).status ?? 'unknown';
     const after = await import('./workspace.js').then((m) =>
       m.loadWorkspaceMeta(projectRoot, ideaId),
@@ -383,102 +585,32 @@ export async function runIdeaExperiment(
     await setIdeaStatus(projectRoot, ideaId, 'RUNNING');
   }
 
-  await db.upsertExperiment({
-    specId,
-    version: nextVersion,
-    specHash: finalHash,
-    status: 'planned',
-    spec: specWithAttempt as unknown as Record<string, unknown>,
-    result: existing && existing.specHash === finalHash ? existing.result : null,
-    updatedAt: Date.now(),
-  });
+  await recordPlannedSpec(db, prepared, existing);
 
   // --- execute the bounded run (smoke/quick only; never full training).
-  const command = specWithAttempt.command;
-  const startedAt = Date.now();
-  const run = await runRepairCommand(command, workspace, opts.timeoutMs);
-  const logName = `idea-${ideaId}-experiment-${opts.scale}.log`;
-  await writeRepairLog(projectRoot, logName, command, run.exitCode, run.out);
-  const logRef = `.research/logs/${logName}`;
-
-  // Parse {"metrics": {...}} (last JSON line).
-  const metrics: { name: string; value: number }[] = [];
-  let parseFailure: string | null = null;
-  const lines = run.out.split(/\r?\n/).filter((line) => line.trim());
-  let parsed: { metrics?: Record<string, unknown> } | null = null;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    try {
-      const candidate = JSON.parse(lines[i]!) as { metrics?: Record<string, unknown> };
-      if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
-        parsed = candidate;
-        break;
-      }
-    } catch {
-      continue;
-    }
-  }
-  const metricMap = parsed?.metrics ?? {};
-  if (run.exitCode === 0 && !run.timedOut) {
-    if (!parsed || Object.keys(metricMap).length === 0) {
-      parseFailure = 'entry produced no {"metrics": {...}} JSON line';
-    } else {
-      const missing: string[] = [];
-      for (const expected of specWithAttempt.metrics) {
-        const value = metricMap[expected.name];
-        if (typeof value !== 'number' || !Number.isFinite(value)) {
-          missing.push(expected.name);
-          continue;
-        }
-        metrics.push({ name: expected.name, value });
-      }
-      if (missing.length > 0) {
-        parseFailure = `metrics missing or non-finite: ${missing.join(', ')}`;
-      }
-    }
-  }
-
-  const succeeded = run.exitCode === 0 && !run.timedOut && parseFailure === null;
-  const failureCategory: RunFailureCategory = succeeded
-    ? 'unknown'
-    : run.timedOut
-      ? 'timeout'
-      : parseFailure
-        ? 'invalid-result'
-        : (KIND_TO_FAILURE[classifyRepairFailure(run.out, run.exitCode, run.timedOut).kind] ??
-          'unknown');
-  const failureSummary = succeeded
-    ? ''
-    : run.timedOut
-      ? `timed out after ${opts.timeoutMs}ms`
-      : (parseFailure ??
-        classifyRepairFailure(run.out, run.exitCode, run.timedOut).summary.slice(0, 300));
-
-  const result: RunResult = {
-    specId,
-    status: succeeded ? 'succeeded' : 'failed',
-    logRefs: [logRef],
-    artifactRefs: [],
-    metrics,
-    resourcesUsed: {},
-    failure: succeeded ? null : { category: failureCategory, summary: failureSummary },
-    startedAt,
-    finishedAt: Date.now(),
-    explanation: `idea ${ideaId} v${meta.currentVersion} scale=${opts.scale} attempt=${attempt}`,
-  };
-  await db.attachExperimentResult(
-    specId,
-    result as unknown as Record<string, unknown>,
-    succeeded ? 'succeeded' : 'failed',
+  const exec = await executeSpecRun(
+    projectRoot,
+    `idea-${ideaId}-experiment-${opts.scale}`,
+    prepared.spec,
+    opts.timeoutMs,
   );
+  const result = await attachSpecResult(
+    db,
+    prepared.spec,
+    exec,
+    `idea ${ideaId} v${meta.currentVersion} scale=${opts.scale} attempt=${attempt}`,
+  );
+  const succeeded = exec.succeeded;
 
   // Mirror spec+result into the idea workspace (own directory only).
   const { assertIdeaWorkspacePath } = await import('./workspace.js');
-  const mirrorPath = join(workspace, 'experiments', `${specId}-v${nextVersion}.json`);
+  const mirrorPath = join(workspace, 'experiments', `${specId}-v${prepared.nextVersion}.json`);
   assertIdeaWorkspacePath(projectRoot, ideaId, mirrorPath);
   await ensureDir(join(workspace, 'experiments'));
   await writeFileAtomic(
     mirrorPath,
-    `${JSON.stringify({ spec: specWithAttempt, result }, null, 2)}\n`,
+    `${JSON.stringify({ spec: prepared.spec, result }, null, 2)}
+`,
   );
 
   // Lifecycle: a SUCCEEDED run moves RUNNING → ANALYZING (Result Analyst
@@ -493,12 +625,12 @@ export async function runIdeaExperiment(
 
   return {
     specId,
-    version: nextVersion,
+    version: prepared.nextVersion,
     attempt,
     alreadyRecorded: false,
     resultStatus: succeeded ? 'succeeded' : 'failed',
-    metrics,
-    failure: succeeded ? null : { category: failureCategory, summary: failureSummary },
+    metrics: exec.metrics,
+    failure: exec.failure,
     exitCode: succeeded ? 0 : 1,
     statusAfter,
   };
