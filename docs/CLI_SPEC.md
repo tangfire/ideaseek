@@ -61,7 +61,7 @@ ideaseek report [--run <id>]
 
 模型配置同时支持交互和脚本：`/models` 或 `ideaseek models` 查看 route/provider/model 状态；`models test` 只做最小连接和能力检查。API key 使用隐藏输入，写入 DSH credential store 或外部 secret manager，不写入 `research.yaml`、prompt、事件、日志或 git。`--json` 输出只包含脱敏 provider、model、route、能力和额度状态。
 
-`scan` 默认扫描 `papers/`、`datasets/`、`comparisons/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、`ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
+`scan` 默认扫描 `papers/`、`datasets/`、`comparisons/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、`ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。代码仓库允许任意目录结构；Codebase Analyst 通过 README、依赖、测试和源码检查生成候选入口/数据接口说明，不要求用户改成固定模板。自动识别必须给出依据和置信度；有歧义时先确认，再在隔离副本中 smoke test。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
 
 如果运行因 token/API 额度、GitHub 限额或 provider 余额暂停，状态为 `QUOTA_EXHAUSTED` 或 `AUTH_REQUIRED`。用户补充额度/凭据后执行 `ideaseek doctor`，再执行 `ideaseek continue`；它从最近 checkpoint 继续，不重做已经成功的任务。
 

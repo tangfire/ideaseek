@@ -98,6 +98,7 @@ Phase 4：Comparison 完整闭环
 - [x] Baseline Reproduction Agent
 - [x] 统一 ExperimentSpec/RunResult
 - [x] 所有 required comparison 门槛
+- [ ] 任意结构代码仓库的 Codebase Analyst、入口发现和 wrapper/smoke 流程
 
 ## Phase 5：Idea 生成与实验闭环
 
