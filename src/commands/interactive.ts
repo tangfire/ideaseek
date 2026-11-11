@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { IdeaseekError } from '../core/errors.js';
 import { startInteractive } from '../cli/repl.js';
 import { runCli } from '../cli/runner.js';
 import { action } from './shared.js';
@@ -7,15 +8,35 @@ import { action } from './shared.js';
  * `ideaseek interactive` — forces the REPL even when stdin is not a TTY
  * (pipes/tests). Bare `ideaseek` starts it only on a real terminal; with
  * `--json` bare invocation prints a machine-readable snapshot instead.
+ * `--mode research|agent` sets the session mode before the UI starts
+ * (docs/MODES.md).
  */
 export function registerInteractiveCommand(program: Command): void {
   program
     .command('interactive')
     .description('start the interactive UI: banner, prompt, live events, approvals')
     .option('--plain', 'short mark, no colors, log-friendly output')
+    .option('--mode <mode>', 'session mode for this project: research | agent')
     .action(
-      action(async (opts: { plain?: boolean }) => {
+      action(async (opts: { plain?: boolean; mode?: string }) => {
         const global = program.opts<{ plain?: boolean }>();
+        if (opts.mode) {
+          const { parseSessionMode, readSessionMode, writeSessionMode } =
+            await import('../session/mode.js');
+          const mode = parseSessionMode(opts.mode);
+          if (!mode) {
+            throw new IdeaseekError('INVALID_ARGUMENT', 'mode must be one of: research | agent');
+          }
+          const { findProjectRoot } = await import('../config/paths.js');
+          const root = await findProjectRoot(process.cwd());
+          if (!root) {
+            throw new IdeaseekError(
+              'NOT_INITIALIZED',
+              'no IdeaSeek project here; run: ideaseek init',
+            );
+          }
+          if ((await readSessionMode(root)) !== mode) await writeSessionMode(root, mode);
+        }
         return startInteractive({ plain: opts.plain === true || global.plain === true });
       }),
     );

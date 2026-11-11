@@ -47,8 +47,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: '/mode',
-    usage: '/mode [research-mode]',
-    description: 'show or change the research mode',
+    usage: '/mode [research|agent]',
+    description: 'show mode, project and permissions; switch session mode',
   },
   { name: '/open', usage: '/open [name]', description: 'list or open knowledge/report documents' },
   {

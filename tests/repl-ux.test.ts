@@ -295,26 +295,63 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
 });
 
 describe('new slash commands and NL routing (CLI)', () => {
-  it('/mode shows and changes the research mode with confirmation', async () => {
+  it('/mode shows mode, project and permissions and switches research↔agent', async () => {
     const project = await makeProjectDir();
     const repl = startTtyRepl(project);
     await repl.waitFor(/ideaseek ›/);
 
     repl.write('/mode\r');
-    await repl.waitFor(/research mode: auto/);
+    await repl.waitFor(/session mode : research/);
+    await repl.waitFor(/permissions {2}:/);
+    await repl.waitFor(/read-only inputs/);
+
+    repl.write('/mode agent\r');
+    await repl.waitFor(/session mode: research → agent/);
+    await repl.waitFor(/tools: DSH Agent session/);
+
+    repl.write('/mode\r');
+    await repl.waitFor(/session mode : agent/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('unknown command: /mode');
+    // The non-interactive CLI reads the same persisted session state.
+    const shown = await runCli(project, ['mode', '--json']);
+    expect(JSON.parse(shown.stdout)).toMatchObject({
+      sessionMode: 'agent',
+      project: 'test-project',
+    });
+  }, 90_000);
+
+  it('interactive --mode agent starts the session in agent mode', async () => {
+    const project = await makeProjectDir();
+    const repl = startTtyRepl(project, ['--mode', 'agent']);
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('/mode\r');
+    await repl.waitFor(/session mode : agent/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+  }, 60_000);
+
+  it('/mode --strategy changes the research strategy with confirmation', async () => {
+    const project = await makeProjectDir();
+    const repl = startTtyRepl(project);
+    await repl.waitFor(/ideaseek ›/);
+
+    repl.write('/mode\r');
+    await repl.waitFor(/research strategy: auto/);
     // Guided change needs --confirm.
-    repl.write('/mode starter\r');
+    repl.write('/mode --strategy starter\r');
     await repl.waitFor(/--confirm/);
     // With confirmation it applies (no run yet → decision not recorded note).
-    repl.write('/mode starter --confirm\r');
-    await repl.waitFor(/research mode: auto → starter/);
+    repl.write('/mode --strategy starter --confirm\r');
+    await repl.waitFor(/research strategy: auto → starter/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
     const yaml = await readFile(join(project, 'research.yaml'), 'utf8');
     expect(yaml).toContain('mode: starter');
     // Direct CLI form shares the same use-case.
     const shown = await runCli(project, ['mode', '--json']);
-    expect(JSON.parse(shown.stdout)).toMatchObject({ researchMode: 'starter' });
+    expect(JSON.parse(shown.stdout)).toMatchObject({ strategy: 'starter' });
   }, 90_000);
 
   it('/open lists and opens knowledge documents read-only', async () => {

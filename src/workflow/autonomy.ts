@@ -138,8 +138,11 @@ export function assertAutonomy(
   return check;
 }
 
+/** Audit-only actions: recorded as Decisions but not gated by checkAutonomy. */
+export type AuditAction = AutonomyAction | 'change-session-mode';
+
 export interface DecisionInput {
-  action: AutonomyAction;
+  action: AuditAction;
   target: string;
   mode: AutonomyMode;
   reason?: string;
