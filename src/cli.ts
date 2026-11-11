@@ -27,6 +27,7 @@ import {
 import { registerNextCommand } from './commands/next.js';
 import { registerPlanCommand } from './commands/plan.js';
 import { registerExplainCommand } from './commands/explain.js';
+import { registerModelsCommand } from './commands/models.js';
 import { registerPapersCommand } from './commands/papers.js';
 import { registerLogsCommand } from './commands/logs.js';
 import { registerDecisionCommand } from './commands/decision.js';
@@ -93,6 +94,7 @@ export function buildProgram(): Command {
   registerNextCommand(program);
   registerPlanCommand(program);
   registerExplainCommand(program);
+  registerModelsCommand(program);
   registerEventsCommand(program);
   registerSearchCommand(program);
   registerStreamCommands(program);

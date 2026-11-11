@@ -47,6 +47,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/continue', usage: '/continue', description: 'continue a run blocked on quota/auth' },
   { name: '/cancel', usage: '/cancel', description: 'cancel the run (artifacts and events kept)' },
   { name: '/report', usage: '/report', description: 'write the factual run report' },
+  {
+    name: '/models',
+    usage: '/models',
+    description: 'model tier routes, roles, credential presence',
+  },
   { name: '/quit', usage: '/quit', description: 'exit the UI (background runs keep going)' },
 ];
 
@@ -367,6 +372,9 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
         return 'continue';
       case '/report':
         await relay(['report']);
+        return 'continue';
+      case '/models':
+        await relay(['models']);
         return 'continue';
       default:
         println(`unknown command: ${name} — try /help`);

@@ -18,6 +18,7 @@ export type ProtectedAction =
   | 'change-data-usage'
   | 'change-required-comparison'
   | 'change-hypothesis'
+  | 'change-model-route'
   | 'finalize-handoff';
 
 /** Actions that write code or launch runs (blocked outright in review-only). */
@@ -58,6 +59,7 @@ const PROTECTED: ReadonlySet<string> = new Set<ProtectedAction>([
   'change-data-usage',
   'change-required-comparison',
   'change-hypothesis',
+  'change-model-route',
   'finalize-handoff',
 ]);
 
