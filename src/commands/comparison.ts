@@ -583,48 +583,20 @@ export function registerComparisonCommand(program: Command): void {
               : ['python', '--version'];
           const timeoutMs = Number.isFinite(opts.timeout) ? (opts.timeout as number) : 120_000;
 
-          const { spawn } = await import('node:child_process');
-          const started = Date.now();
-          const outcome = await new Promise<{ code: number; out: string }>((resolve, reject) => {
-            let child;
-            try {
-              child = spawn(command[0]!, command.slice(1), {
-                cwd: worktreeDir,
-                stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-              });
-            } catch (error) {
-              reject(new IdeaseekError('ENV_UNSUPPORTED', String(error)));
-              return;
-            }
-            let out = '';
-            child.stdout?.on('data', (chunk) => (out += String(chunk)));
-            child.stderr?.on('data', (chunk) => (out += String(chunk)));
-            const timer = setTimeout(() => {
-              child.kill('SIGKILL');
-              resolve({ code: -1, out: `${out}\n[smoke timed out after ${timeoutMs}ms]` });
-            }, timeoutMs);
-            child.on('error', (error) => {
-              clearTimeout(timer);
-              resolve({ code: -1, out: `${out}\n[spawn failed: ${error.message}]` });
-            });
-            child.on('close', (code) => {
-              clearTimeout(timer);
-              resolve({ code: code ?? -1, out });
-            });
-          });
-
-          const durationMs = Date.now() - started;
-          const passed = outcome.code === 0;
+          // Reuse the shared bounded runner (same path as baseline repair) —
+          // commands never hand-roll subprocess handling (ADR-006).
+          const { runRepairCommand, writeRepairLog } = await import('../comparison/repair.js');
+          const outcome = await runRepairCommand(command, worktreeDir, timeoutMs);
+          const durationMs = outcome.durationMs;
+          const passed = outcome.exitCode === 0 && !outcome.timedOut;
           const tail = outcome.out.slice(-1500);
-          const { ensureDir } = await import('../core/atomic.js');
-          const { writeFile } = await import('node:fs/promises');
-          const logPath = join(root, '.research', 'logs', `smoke-${methodId}.log`);
-          await ensureDir(join(root, '.research', 'logs'));
-          await writeFile(
-            logPath,
-            `$ ${command.join(' ')}\n(exit ${outcome.code})\n\n${outcome.out}`,
-            'utf8',
+          const logPath = `.research/logs/smoke-${methodId}.log`;
+          await writeRepairLog(
+            root,
+            `smoke-${methodId}.log`,
+            command,
+            outcome.exitCode,
+            outcome.out,
           );
 
           const smoke = {
@@ -648,7 +620,7 @@ export function registerComparisonCommand(program: Command): void {
             : from === 'smoke-tested'
               ? 'repairing'
               : from;
-          const failReason = `smoke failed (exit ${outcome.code}); log: ${logPath}`;
+          const failReason = `smoke failed (exit ${outcome.exitCode}); log: ${logPath}`;
           if (to !== from) {
             assertTransition(from, to, passed ? undefined : failReason);
           }
@@ -686,7 +658,7 @@ export function registerComparisonCommand(program: Command): void {
               jsonLine({
                 methodId,
                 passed,
-                exitCode: outcome.code,
+                exitCode: outcome.exitCode,
                 durationMs,
                 status: record.status,
                 logPath,
@@ -694,7 +666,7 @@ export function registerComparisonCommand(program: Command): void {
             );
           } else {
             process.stdout.write(
-              `smoke ${methodId}: ${passed ? 'PASSED' : 'FAILED'} (exit ${outcome.code}, ${durationMs}ms) → status ${record.status}\n`,
+              `smoke ${methodId}: ${passed ? 'PASSED' : 'FAILED'} (exit ${outcome.exitCode}, ${durationMs}ms) → status ${record.status}\n`,
             );
             process.stdout.write(`  log: ${logPath}\n`);
           }
