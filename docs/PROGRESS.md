@@ -116,13 +116,13 @@ Phase 4：Comparison 复现与统一评测
 - [x] `ablation-planner` 接入机制链和消融矩阵
 - [x] `novelty-check`/`prior-art-search` 接入 PaperCard 和 evidence
 - [x] fresh-context independent reviewer 接入 Review artifact/Decision
-- [ ] `experiment-audit`/integrity workflow 接入结果门禁
-- [ ] ARIS skill 失败时的回退、权限和 checkpoint 测试
+- [x] `experiment-audit`/integrity workflow 接入结果门禁
+- [x] ARIS skill 失败时的回退、权限和 checkpoint 测试
 - [x] 审计 IdeaSeek 已有同类实现与 ARIS 能力差异
-- [ ] 将更成熟的 idea/experiment/ablation/review/audit backend 迁移到 ARIS
-- [ ] 旧重复实现降级为兼容 fallback 或移除默认入口
-- [ ] ARIS capability conformance/regression tests
-- [ ] ARIS 迁移通过后删除旧重复实现、入口和重复配置
+- [x] 将更成熟的 idea/experiment/ablation/review/audit backend 迁移到 ARIS
+- [x] 旧重复实现降级为兼容 fallback 或移除默认入口
+- [x] ARIS capability conformance/regression tests
+- [x] ARIS 迁移通过后删除旧重复实现、入口和重复配置
 
 ## Phase 4.5B：ARIS P1 研究记忆与长任务增强
 
@@ -308,3 +308,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-11 | Phase 4.5 capability 3 ablation-planner → 机制链+消融矩阵：src/idea/ablation-plan（ablation-plan-v1 契约：entries[kind/target/whatItTests/expectedOutcome/priority1-5]+coverage/unnecessary/suggestedOrder/估算，紧贴 vendored ARIS ablation-planner；target 对卡片校验——component∈componentNecessity、card-ablation∈minimalExperiment.ablations、hyperparameter/design 必须 null→deferred 只报告不丢弃；ablation-plan.json 原子写+inputHash 复用）、ideaseek idea ablation-plan <ideaId> [--harness] [--force] [--json]（技能完整性先于模型调用、额度阻塞 exit2 零写入、ablation_plan RunEvent、诚实复用）、runAblations 联动：当前 plan 按 priority 重排派生队列（测试证明与派生顺序相反）、每个 spec notes 追加 ablation-plan:<hash> 与 expect:<预测结果>、结果带 coverage/deferred/unmatched 供 CLI 汇总；stale plan 顺序与 notes 原样不动、fake harness 由卡片出条目 + IDEASEEK_FAKE_ABLATION_PLAN_OUTPUT 钩子| 0dba8ce | 门禁全绿：79 files/580 vitest + 9 python（ablation-plan 6 条：生成→重排→notes 注解、stale 中性、幂等复用不重复事件、非法 target 拒绝、坏输出零写入、额度阻塞恢复）| 推导/绑定/执行仍归 IdeaSeek（ADR-009）；hyperparameter/design 类条目需自定义代码，deferred 明示；dsh 真实调用待凭据 | 下一模块：novelty-check/prior-art-search 接入 PaperCard 和 evidence
 2026-11-11 | Phase 4.5 capability 4 novelty-check/prior-art-search → PaperCard+evidence：src/idea/novelty（novelty-check-v1 契约同时渲染 vendored novelty-check 与 prior-art-search 两个 skill；closestPaperRef 必须来自对卡片 claim/hypothesis/targetProblem 的 FTS 实取候选——防编造，ARIS verify_papers 纪律；ABANDON 要求每条 claim 点名具体候选论文；专利条目要真实号+HIGH/MEDIUM/LOW；priorArtDegraded 明示无 web 工具的本地降级）、ideaseek idea novelty <ideaId> [--harness] [--force] [--json]（候选 top12 去重、最新 round 的 noveltyConstraints 入上下文、novelty_verdict 事件、按 verdict 给 next、额度阻塞 exit2 零写入）、实验门禁：当前 ABANDON 拒绝 idea experiment（USER_INPUT_REQUIRED），--waive-novelty <reason> 先记 novelty-waived Decision 再放行，stale 报告中性；fake 输出回显 ideaId/cardVersion + IDEASEEK_FAKE_NOVELTY_OUTPUT 钩子| 9d564b6 | 门禁全绿：80 files/587 vitest + 9 python（novelty 7 条：降级判定+事件、索引论文绑定、编造引用拒绝、ABANDON 点名规则、阻塞→豁免→Decision、stale 中性、复用+额度阻塞）| prior-art 的联网专利检索待 DSH WebSearch 工具面（当前 degraded 明示）；dsh 真实调用待凭据 | 下一模块：fresh-context independent reviewer 接入 Review artifact/Decision
 2026-11-11 | Phase 4.5 capability 5 fresh-context independent reviewer → Review artifact/Decision：src/idea/review（idea-review-v1 契约渲染 vendored auto-review-loop；每轮都是新 harness 任务且 instruction 只含原始 artifact bundle——card/check report/experiment/plan/novelty/ablations，绝不含执行者自述或上一轮推理；evidenceDigest 绑定评审所见；reviewerModel 从 HarnessTaskResult.model 盖章（绝不信模型自报）；ARIS STOP=score≥6 且 ready/almost）、ideaseek idea review <ideaId> [--harness] [--force] [--json]（ideas/<id>/reviews/round-N.json、证据未变复用最新轮、--force 开新独立轮且 idempotencyKey 按轮、idea_review 事件、额度阻塞 exit2 零写入）、实验门禁：当前失败轮拒绝 idea experiment，--waive-review <reason> 先记 review-waived Decision 再放行、stale 轮中性；fake 确定性通过评审 + IDEASEEK_FAKE_REVIEW_OUTPUT 钩子| e9fa089 | 门禁全绿：81 files/593 vitest + 9 python（idea-review 6 条：新轮+盖章+事件、复用 vs --force 第2轮、阻塞→豁免→Decision、stale 中性、坏输出零写入、额度恢复）| Review 以 workspace 文件+RunEvent 落地（DB Artifact 行随 worker 任务机后续迁移）；handoff 门禁联动与多后端可选 reviewer 留 Backlog；dsh 真实调用待凭据 | 下一模块：experiment-audit/integrity workflow 接入结果门禁
+2026-11-11 | Phase 4.5A 收官：capability 6 experiment-audit/integrity → 结果门禁（src/idea/evidence 统一原始 artifact bundle 收集器——review/audit 共用一份实现；experiment-audit-v1 契约渲染 vendored experiment-audit+analyze-results；checks 必须给出查看位置（字段路径引证，ARIS file:line 纪律）、check id 唯一且属 A-F 家族、overallVerdict 必须等于最差 check（禁止洗白）、claims impact+summary；ideaseek idea audit [--harness] [--force] [--json] → experiments/audit.json+experiment_audit 事件+复用+额度阻塞零写入；handoff 门禁：当前 FAIL 阻断 HANDOFF_READY 并带 summary、WARN 可见不阻断、stale 忽略——computeHandoffLevel 保持纯函数可测）+ 4.5A 其余勾选项汇总验收| d12fda9 | 门禁全绿：82 files/599 vitest + 9 python（experiment-audit 6 条：审计+事件+复用、FAIL 阻断 handoff、WARN 不阻断、stale 中性、判定矛盾拒绝、额度恢复；P0 conformance 合计 7 个测试文件 49 条：aris-skill 9/generate 8/plan 7/ablation-plan 6/novelty 7/review 6/audit 6——覆盖篡改拒绝、额度/权限阻塞零写入、坏输出零写入、幂等复用与恢复）| 单次模型调用无中途 checkpoint（恢复=幂等重跑，已在各能力测试验证）；无旧平行默认实现可删（原为占位），确定性 ladder/失败分类/门禁为契约层保留而非重复；integrity-forensics 的 pinned upstream 扫描属论文侧、随 4.5C；dsh 真实调用待凭据 | Phase 4.5A 全部完成；下一模块：Phase 4.5B research-wiki
