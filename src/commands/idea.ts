@@ -6,6 +6,7 @@ import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
 import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/experiment.js';
 import { runAblations } from '../idea/ablation.js';
 import { runAnalysis } from '../idea/analyze.js';
+import { buildIdeaHandoff } from '../idea/handoff.js';
 import {
   IDEA_TRANSITIONS,
   assertEngineeringRevision,
@@ -769,6 +770,59 @@ export function registerIdeaCommand(program: Command): void {
           }
           for (const step of analysis.nextSteps) process.stdout.write(`  next: ${step}\n`);
           process.stdout.write(`  written: ${paths.join(', ')}\n`);
+          return 0;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  idea
+    .command('handoff')
+    .description(
+      'build the full-scale reproduction package (config/split/lock/commands/provenance) behind the HANDOFF_READY gate',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root });
+        try {
+          const result = await buildIdeaHandoff(root, ideaId, runtime.db);
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                level: result.gate.level,
+                handoffReady: result.gate.handoffReady,
+                blockers: result.gate.blockers,
+                analysisVerdict: result.analysisVerdict,
+                dir: result.dir,
+                files: result.files,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `handoff ${ideaId}: ${result.gate.level}` +
+              `${result.gate.handoffReady ? ' (HANDOFF_READY)' : ''}\n`,
+          );
+          process.stdout.write(`  dir: ${result.dir}\n`);
+          for (const file of result.files) process.stdout.write(`  + ${file}\n`);
+          for (const blocker of result.gate.blockers) {
+            process.stdout.write(`  blocker: ${blocker}\n`);
+          }
+          if (result.gate.handoffReady) {
+            process.stdout.write(
+              'next: confirm delivery (guided gate) — the package is ready for your full-scale run\n',
+            );
+          } else {
+            process.stdout.write(
+              'next: clear the blockers above, then rerun ideaseek idea handoff\n',
+            );
+          }
           return 0;
         } finally {
           await runtime.close();

@@ -6,6 +6,7 @@ import { findProjectRoot } from '../config/paths.js';
 import { stringify } from 'yaml';
 import { importComparisonRepo } from '../comparison/importer.js';
 import { buildCandidates } from '../comparison/discover.js';
+import { evaluateComparisonGate } from '../comparison/gate.js';
 import {
   COMPARISON_TRANSITIONS,
   assertTransition,
@@ -414,98 +415,29 @@ export function registerComparisonCommand(program: Command): void {
         const root = await openRoot();
         const runtime = await openRuntime(root);
         try {
-          const methods = await runtime.db.listComparisons({ required: true });
-          // Statuses that prove a runnable result under the current protocol
-          // (plan §C.10). `excluded` is an explicit, reasoned opt-out.
-          const PASSING = new Set(['smoke-tested', 'evaluated', 'validated']);
-          const skipped: { methodId: string; reason: string | null }[] = [];
-          const passed: {
-            methodId: string;
-            status: string;
-            via: 'status' | 'experiment';
-            algorithmModified?: boolean;
-          }[] = [];
-          const blocking: { methodId: string; status: string; hint: string }[] = [];
-
-          // Experiment results covering a method also prove it runs under a
-          // recorded spec (unified ExperimentSpec/RunResult contract).
-          const experiments = await runtime.db.listExperiments();
-          const experimentCover = new Map<string, string>();
-          for (const doc of experiments) {
-            if (!doc.result) continue;
-            const result = doc.result as { status?: unknown };
-            if (result.status !== 'succeeded' && result.status !== 'partial') continue;
-            const ids = (doc.spec as { comparisonIds?: unknown }).comparisonIds;
-            if (!Array.isArray(ids)) continue;
-            for (const id of ids) {
-              if (typeof id === 'string' && !experimentCover.has(id)) {
-                experimentCover.set(id, doc.specId);
-              }
-            }
-          }
-
-          for (const method of methods) {
-            if (method.status === 'excluded') {
-              skipped.push({
-                methodId: method.methodId,
-                reason: (method.record.statusReason as string | undefined) ?? null,
-              });
-              continue;
-            }
-            if (PASSING.has(method.status)) {
-              const repro = method.record.reproduction as
-                { algorithmModified?: boolean } | undefined;
-              passed.push({
-                methodId: method.methodId,
-                status: method.status,
-                via: 'status',
-                ...(repro?.algorithmModified ? { algorithmModified: true } : {}),
-              });
-              continue;
-            }
-            const viaExperiment = experimentCover.get(method.methodId);
-            if (viaExperiment) {
-              passed.push({
-                methodId: method.methodId,
-                status: method.status,
-                via: 'experiment',
-              });
-              continue;
-            }
-            blocking.push({
-              methodId: method.methodId,
-              status: method.status,
-              hint:
-                method.status === 'blocked'
-                  ? `resolve the block or exclude with a reason: ideaseek comparison set-status ${method.methodId} excluded --reason "..."`
-                  : method.status === 'repairing' || method.status === 'implemented'
-                    ? `finish the baseline: ideaseek baseline repair --method ${method.methodId}`
-                    : `advance the method: ideaseek comparison set-status ${method.methodId} implemented`,
-            });
-          }
-
-          const ok = blocking.length === 0;
+          const gate = await evaluateComparisonGate(runtime.db);
+          const { ok, required, passed, skipped, blocking, note } = gate;
           if (opts.json) {
             process.stdout.write(
               jsonLine({
                 ok,
-                required: methods.length,
+                required,
                 passed,
                 skipped,
                 blocking,
-                note: methods.length === 0 ? 'no required comparisons registered' : undefined,
+                note,
               }),
             );
             return ok ? 0 : 2;
           }
-          if (methods.length === 0) {
+          if (required === 0) {
             process.stdout.write(
               'gate: no required comparisons registered (ideaseek comparison import <id> <url>)\n',
             );
             return 0;
           }
           process.stdout.write(
-            `gate: ${passed.length}/${methods.length} required method(s) runnable` +
+            `gate: ${passed.length}/${required} required method(s) runnable` +
               (skipped.length > 0 ? ` · ${skipped.length} excluded` : '') +
               (blocking.length > 0 ? ` · ${blocking.length} blocking` : '') +
               '\n',
