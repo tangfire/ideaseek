@@ -170,6 +170,10 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 多数据集/多场景实验组合扩展
 - [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter
 - [ ] 其他研究方向的回归验证和专用插件
+- [ ] ARIS-style skill adapter（idea/experiment/review）
+- [ ] 独立 reviewer/fresh-context review adapter
+- [ ] research wiki 和 HTML artifact renderer
+- [ ] experiment audit/integrity workflow
 ## 模块交付记录
 
 每个完成模块追加一行：
