@@ -102,6 +102,25 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'idea-review-v1') {
+    const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
+    if (override != null) return override;
+    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+      ideaId?: string;
+      cardVersion?: number;
+      round?: number;
+    };
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      round: context.round ?? 1,
+      score: 7,
+      verdict: 'ready',
+      summary: 'artifacts are consistent: metrics match the plan primary metric',
+      weaknesses: [{ severity: 'minor', text: 'single seed — widen before claiming' }],
+      questions: [],
+    });
+  }
   if (request.outputSchema === 'novelty-check-v1') {
     const override = process.env.IDEASEEK_FAKE_NOVELTY_OUTPUT;
     if (override != null) return override;

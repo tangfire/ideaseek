@@ -964,6 +964,257 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('review')
+    .description(
+      "fresh-context independent review of an idea's artifacts (ARIS auto-review-loop backend)",
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'start a NEW review round instead of reusing the latest one')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const meta = await loadWorkspaceMeta(root, ideaId);
+          const card = await loadIdeaCard(root, ideaId);
+          const { loadArisSkill } = await import('../aris/skill.js');
+          const skill = await loadArisSkill('auto-review-loop');
+          const {
+            buildReviewRequest,
+            evidenceDigest,
+            isReviewPassing,
+            latestReviewRound,
+            parseReviewOutput,
+            readReviewRound,
+            reviewRoundPath,
+            writeReviewRound,
+          } = await import('../idea/review.js');
+          const { readPlan } = await import('../idea/plan.js');
+          const { readNoveltyReport } = await import('../idea/novelty.js');
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+
+          // Evidence bundle: raw artifacts only — the reviewer never sees an
+          // executor summary (fresh-context independence, ARIS).
+          const gather = await ProjectRuntime.open({ cwd: root, recover: false });
+          let bundle: {
+            card: unknown;
+            checkReport: unknown;
+            experiment: unknown;
+            plan: unknown;
+            novelty: unknown;
+            ablations: unknown;
+          };
+          let latest = 0;
+          try {
+            const { readFile } = await import('node:fs/promises');
+            const { join: joinPath } = await import('node:path');
+            let checkReport: unknown = null;
+            try {
+              checkReport = JSON.parse(
+                await readFile(
+                  joinPath(root, 'ideas', ideaId, 'experiments', 'check-report.json'),
+                  'utf8',
+                ),
+              );
+            } catch {
+              checkReport = null;
+            }
+            const mainExperiment = await gather.db.getExperiment(`idea-${ideaId}`);
+            const ablations = (await gather.db.listExperiments()).filter((doc) =>
+              doc.specId.startsWith(`idea-${ideaId}-abl-`),
+            );
+            bundle = {
+              card,
+              checkReport,
+              experiment: mainExperiment,
+              plan: await readPlan(root, ideaId),
+              novelty: await readNoveltyReport(root, ideaId),
+              ablations,
+            };
+            latest = await latestReviewRound(root, ideaId);
+          } finally {
+            await gather.close();
+          }
+
+          const nextRound = latest + 1;
+          const request = buildReviewRequest(skill, {
+            ideaId,
+            cardVersion: meta.currentVersion,
+            round: opts.force ? nextRound : Math.max(latest, 1),
+            bundle,
+          });
+
+          // Reuse the latest round when the evidence digest is unchanged.
+          if (!opts.force && latest > 0) {
+            const existing = await readReviewRound(root, ideaId, latest);
+            if (existing && existing.inputHash === request.inputHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    ideaId,
+                    reused: true,
+                    round: existing.round,
+                    score: existing.score,
+                    verdict: existing.verdict,
+                    reviewerModel: existing.reviewerModel,
+                    passing: isReviewPassing(existing),
+                    path: `ideas/${ideaId}/reviews/round-${existing.round}.json`,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `reused review round ${existing.round} for ${ideaId}: ` +
+                    `${existing.verdict} (score ${existing.score}/10, reviewer ${existing.reviewerModel ?? 'unknown'})\n`,
+                );
+                process.stdout.write(
+                  isReviewPassing(existing)
+                    ? 'next: ideaseek idea experiment <ideaId>\n'
+                    : 'next: address the weaknesses, then ideaseek idea review <ideaId> --force\n',
+                );
+              }
+              return 0;
+            }
+          }
+
+          const round = nextRound;
+          const { buildHarness } = await import('./shared.js');
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const kind =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+          const harness = buildHarness(kind);
+          await harness.initialize();
+          let output: string;
+          let runtimeKind = kind;
+          let reviewerModel: string | null = null;
+          try {
+            const result = await harness.runTask({
+              runId: `idea:${ideaId}`,
+              taskId: `idea-review-${ideaId}-r${round}`,
+              profile: 'idea-generator',
+              instruction: request.instruction,
+              inputs: [
+                {
+                  kind: 'text',
+                  name: 'evidence_bundle',
+                  content: JSON.stringify({
+                    ideaId,
+                    cardVersion: meta.currentVersion,
+                    round,
+                    evidenceDigest: evidenceDigest(bundle),
+                  }),
+                },
+              ],
+              outputSchema: 'idea-review-v1',
+              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
+              idempotencyKey: request.idempotencyKey,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+            reviewerModel = result.model;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'HarnessBlockError') {
+              const block = (error as { block?: string }).block ?? 'BLOCKED';
+              if (opts.json) {
+                process.stdout.write(jsonLine({ ideaId, blocked: block, written: false }));
+              } else {
+                process.stderr.write(
+                  `idea review blocked [${block}]: ${(error as Error).message}\n` +
+                    'nothing was written — restore quota/auth/network and rerun the same command\n',
+                );
+              }
+              return 2;
+            }
+            throw error;
+          } finally {
+            await harness.shutdown().catch(() => undefined);
+          }
+
+          const review = parseReviewOutput(
+            output,
+            { ideaId, cardVersion: meta.currentVersion, round },
+            {
+              inputHash: request.inputHash,
+              skill: { name: skill.name, sha256: skill.sha256 },
+              harnessRuntime: runtimeKind,
+              reviewerModel,
+              evidenceDigest: evidenceDigest(bundle),
+            },
+          );
+          await writeReviewRound(root, review);
+
+          let eventSeq: number | null = null;
+          const audit = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await audit.db.getLatestRun(audit.project.id);
+            if (run) {
+              const event = await audit.db.appendEvent({
+                runId: run.runId,
+                phase: 'ANALYZING',
+                objectId: ideaId,
+                role: 'reviewer',
+                eventType: 'idea_review',
+                summary:
+                  `review round ${review.round} for ${ideaId}: ${review.verdict} ` +
+                  `(score ${review.score}/10, reviewer ${review.reviewerModel ?? 'unknown'})`,
+                status: review.verdict === 'not ready' ? 'changes-requested' : review.verdict,
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await audit.close();
+          }
+
+          const passing = isReviewPassing(review);
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                reused: false,
+                round: review.round,
+                score: review.score,
+                verdict: review.verdict,
+                passing,
+                reviewerModel: review.reviewerModel,
+                weaknesses: review.weaknesses.length,
+                evidenceDigest: review.evidenceDigest,
+                path: `ideas/${ideaId}/reviews/round-${review.round}.json`,
+                eventSeq,
+              }),
+            );
+            return 0;
+          }
+
+          process.stdout.write(
+            `review ${ideaId} round ${review.round}: ${review.verdict} ` +
+              `(score ${review.score}/10) · reviewer ${review.reviewerModel ?? 'unknown'} ` +
+              `(ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)}, fresh context)\n`,
+          );
+          process.stdout.write(`  ${review.summary}\n`);
+          for (const weakness of review.weaknesses) {
+            process.stdout.write(`  [${weakness.severity}] ${weakness.text}\n`);
+          }
+          process.stdout.write(
+            `  file: ${reviewRoundPath(root, ideaId, review.round).replace(`${root}/`, '')}\n`,
+          );
+          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+          if (passing) {
+            process.stdout.write('next: ideaseek idea experiment <ideaId>\n');
+          } else {
+            process.stdout.write(
+              `next: address the weaknesses, then ideaseek idea review ${ideaId} --force ` +
+                '(a fresh independent round) · experiments are blocked meanwhile\n',
+            );
+          }
+          return 0;
+        },
+      ),
+    );
+
+  idea
     .command('create')
     .description(
       'create ideas/<id>/ workspace (card, versions, src/config/data/experiments, README)',
@@ -1391,6 +1642,10 @@ export function registerIdeaCommand(program: Command): void {
       '--waive-novelty <reason>',
       'proceed despite a current ABANDON novelty verdict (records a Decision/Event)',
     )
+    .option(
+      '--waive-review <reason>',
+      'proceed despite a current failing independent review (records a Decision/Event)',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
@@ -1401,6 +1656,7 @@ export function registerIdeaCommand(program: Command): void {
             timeout: number;
             resume?: boolean;
             waiveNovelty?: string;
+            waiveReview?: string;
             json?: boolean;
           },
         ) => {
@@ -1419,32 +1675,52 @@ export function registerIdeaCommand(program: Command): void {
               'start-experiment',
             );
 
-            // Audited novelty waiver: record the Decision BEFORE running so
-            // an ABANDON bypass is always visible in the event trail.
+            // Audited novelty/review waivers: record the Decision BEFORE
+            // running so any gate bypass is visible in the event trail.
             let waiverSeq: number | null = null;
-            if (opts.waiveNovelty) {
+            if (opts.waiveNovelty || opts.waiveReview) {
               const { readNoveltyReport } = await import('../idea/novelty.js');
+              const { readLatestReview, isReviewPassing } = await import('../idea/review.js');
               const { loadWorkspaceMeta } = await import('../idea/workspace.js');
               const metaW = await loadWorkspaceMeta(root, ideaId);
-              const report = await readNoveltyReport(root, ideaId);
+              const run = await runtime.db.getLatestRun(runtime.project.id);
+              const report = opts.waiveNovelty ? await readNoveltyReport(root, ideaId) : null;
               if (
+                run &&
                 report &&
                 report.cardVersion === metaW.currentVersion &&
                 report.verdict === 'ABANDON'
               ) {
-                const run = await runtime.db.getLatestRun(runtime.project.id);
-                if (run) {
-                  const event = await runtime.db.appendEvent({
-                    runId: run.runId,
-                    phase: 'DECISION',
-                    objectId: ideaId,
-                    role: 'user',
-                    eventType: 'decision',
-                    summary: `novelty-waived: ${ideaId} ABANDON (score ${report.score}) — ${opts.waiveNovelty}`,
-                    status: 'confirmed',
-                  });
-                  waiverSeq = event.seq;
-                }
+                const event = await runtime.db.appendEvent({
+                  runId: run.runId,
+                  phase: 'DECISION',
+                  objectId: ideaId,
+                  role: 'user',
+                  eventType: 'decision',
+                  summary: `novelty-waived: ${ideaId} ABANDON (score ${report.score}) — ${opts.waiveNovelty}`,
+                  status: 'confirmed',
+                });
+                waiverSeq = event.seq;
+              }
+              const review = opts.waiveReview ? await readLatestReview(root, ideaId) : null;
+              if (
+                run &&
+                review &&
+                review.cardVersion === metaW.currentVersion &&
+                !isReviewPassing(review)
+              ) {
+                const event = await runtime.db.appendEvent({
+                  runId: run.runId,
+                  phase: 'DECISION',
+                  objectId: ideaId,
+                  role: 'user',
+                  eventType: 'decision',
+                  summary:
+                    `review-waived: ${ideaId} round ${review.round} ${review.verdict} ` +
+                    `(score ${review.score}) — ${opts.waiveReview}`,
+                  status: 'confirmed',
+                });
+                waiverSeq = event.seq;
               }
             }
 
@@ -1456,6 +1732,7 @@ export function registerIdeaCommand(program: Command): void {
                 timeoutMs: opts.timeout,
                 resume: opts.resume,
                 waiveNovelty: opts.waiveNovelty,
+                waiveReview: opts.waiveReview,
               },
               runtime,
               runtime.db,
@@ -1497,9 +1774,11 @@ export function registerIdeaCommand(program: Command): void {
               );
             }
             if (waiverSeq !== null && !opts.json) {
-              process.stdout.write(
-                `novelty ABANDON waived: ${opts.waiveNovelty} (decision event #${waiverSeq})\n`,
-              );
+              const parts = [
+                opts.waiveNovelty ? `novelty ABANDON waived: ${opts.waiveNovelty}` : null,
+                opts.waiveReview ? `failing review waived: ${opts.waiveReview}` : null,
+              ].filter(Boolean);
+              process.stdout.write(`${parts.join(' · ')} (decision event #${waiverSeq})\n`);
             }
             if (!outcome.alreadyRecorded) {
               const expMode = parseAutonomyMode(runtime.config.policy.autonomyMode);

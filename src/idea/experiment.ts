@@ -12,6 +12,7 @@ import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './work
 import type { IdeaCheckReport } from './check.js';
 import { assertPlanMatchesSpec, readPlan } from './plan.js';
 import { assertNoveltyClear, readNoveltyReport } from './novelty.js';
+import { assertReviewClear, readLatestReview } from './review.js';
 
 /**
  * ExperimentSpec/RunResult wiring for ideas (plan §E, DATA_CONTRACTS): every
@@ -299,6 +300,8 @@ export interface RunIdeaExperimentOptions {
   resume?: boolean;
   /** Audited reason to proceed despite a current ABANDON novelty verdict. */
   waiveNovelty?: string;
+  /** Audited reason to proceed despite a current failing review round. */
+  waiveReview?: string;
 }
 
 /** The subset of WorkflowDb the spec lifecycle needs (main runs + ablations). */
@@ -710,6 +713,17 @@ export async function runIdeaExperiment(
     novelty,
     { ideaId, cardVersion: meta.currentVersion },
     { waiveNovelty: opts.waiveNovelty },
+  );
+
+  // Independent-review gate (capability 5): a CURRENT failing review round
+  // stops the run unless waived with an audited reason (CLI records it).
+  const review = await readLatestReview(projectRoot, ideaId);
+  assertReviewClear(
+    review,
+    { ideaId, cardVersion: meta.currentVersion },
+    {
+      waiveReview: opts.waiveReview,
+    },
   );
 
   // A real (re-)run needs the pre-analysis part of the graph: ANALYZING ideas
