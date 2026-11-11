@@ -10,6 +10,7 @@ import type { RunFailureCategory } from '../experiment/spec.js';
 import { assessIdeaCard } from './card.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import type { IdeaCheckReport } from './check.js';
+import { assertPlanMatchesSpec, readPlan } from './plan.js';
 
 /**
  * ExperimentSpec/RunResult wiring for ideas (plan §E, DATA_CONTRACTS): every
@@ -140,6 +141,12 @@ export async function buildIdeaSpec(
   const protocolId = await latestProtocolId(opts.runtime);
   const attempt = opts.attempt ?? 1;
 
+  // ARIS plan binding: a CURRENT plan's hash travels with the spec so every
+  // RunResult stays traceable to the claim map that promised it.
+  const plan = await readPlan(projectRoot, ideaId);
+  const planNote =
+    plan && plan.cardVersion === meta.currentVersion ? `plan:${plan.inputHash.slice(7, 19)}` : null;
+
   // Silent 主指标 change guard: when a protocol exists, its FIRST primary
   // metric (the 主指标) must appear in the spec. Secondary metrics and
   // auxiliary primaries (e.g. communication rounds, meaningless for an
@@ -168,6 +175,7 @@ export async function buildIdeaSpec(
         `idea-v:${meta.currentVersion}`,
         `idea-code:${codeHash ?? 'empty'}`,
         `attempt:${attempt}`,
+        ...(planNote ? [planNote] : []),
         ...(opts.extraNotes ?? []),
       ],
     },
@@ -656,6 +664,7 @@ export async function runIdeaExperiment(
     runtime,
     attempt,
   });
+
   const prepared = await prepareSpecRecording(baseSpec, existing);
 
   // Idempotent: same spec already has a recorded result → do not re-run.
@@ -680,6 +689,16 @@ export async function runIdeaExperiment(
       statusAfter: after.status,
     };
   }
+
+  // Claim→metric accountability (runs only when a real execution happens —
+  // an already-recorded spec reports its result without re-litigating plans):
+  // a current plan's primaryMetric must be answered by this spec or the run
+  // is refused before any compute is spent.
+  const plan = await readPlan(projectRoot, ideaId);
+  assertPlanMatchesSpec(plan, baseSpec.metrics, {
+    ideaId,
+    cardVersion: meta.currentVersion,
+  });
 
   // A real (re-)run needs the pre-analysis part of the graph: ANALYZING ideas
   // walk NEEDS_REVISION → IMPLEMENTING → check first; SMOKE_TESTED enters

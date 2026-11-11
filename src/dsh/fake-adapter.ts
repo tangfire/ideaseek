@@ -102,6 +102,45 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'experiment-plan-v1') {
+    const override = process.env.IDEASEEK_FAKE_PLAN_OUTPUT;
+    if (override != null) return override;
+    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+      ideaId?: string;
+      cardVersion?: number;
+    };
+    const card = JSON.parse(request.inputs[1]?.content ?? '{}') as {
+      minimalExperiment?: { metrics?: string[] };
+    };
+    const metrics =
+      Array.isArray(card.minimalExperiment?.metrics) && card.minimalExperiment.metrics.length > 0
+        ? card.minimalExperiment.metrics
+        : ['loss'];
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      primaryMetric: metrics[0],
+      claimMap: [
+        {
+          claim: 'the intervention improves the primary metric against the baseline',
+          evidence: 'IdeaCard mechanismChain + paperEvidence',
+        },
+      ],
+      blocks: [
+        {
+          name: 'main smoke',
+          scale: 'smoke',
+          metrics,
+          successCriteria: 'primary metric improves across seeds',
+          failureModes: ['no improvement across seeds', 'variance explosion'],
+        },
+      ],
+      runOrder: ['M0 smoke', 'M1 quick'],
+      computeBudget: { gpuMinutes: 10 },
+      risks: ['seed variance'],
+      checklist: ['idea check passed'],
+    });
+  }
   return buildFakeCard(request, call);
 }
 
