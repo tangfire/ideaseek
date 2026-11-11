@@ -103,7 +103,21 @@ export async function collectAnalysisInput(
   // latest failed one so invalid-run verdicts still see the crash.
   const mainMirrors = mirrors.filter((m) => m.spec.specId === `idea-${ideaId}`);
   const succeededMains = mainMirrors.filter((m) => m.result?.status === 'succeeded');
+  // Same-scale pairing: when a registered baseline exists, prefer the main
+  // result recorded at the BASELINE's scale — cross-scale deltas would be a
+  // methodological error (e.g. quick idea vs smoke baseline).
+  let baselineScale: string | null = null;
+  for (const doc of all) {
+    if (!doc.specId.startsWith('repro-') || !doc.result) continue;
+    if (asResult(doc.result).status !== 'succeeded') continue;
+    baselineScale = scaleOf(asSpec(doc.spec));
+    break;
+  }
+  const sameScaleMains = baselineScale
+    ? succeededMains.filter((m) => scaleOf(m.spec) === baselineScale)
+    : [];
   const mainPick =
+    sameScaleMains[sameScaleMains.length - 1] ??
     succeededMains[succeededMains.length - 1] ??
     [...mainMirrors].reverse().find((m) => m.result) ??
     null;

@@ -63,6 +63,26 @@ async function metricDirections(runtime: {
   return directions;
 }
 
+/** Names of the locked protocol's primary metrics (in declared order). */
+async function primaryMetricNames(runtime: {
+  db: { listArtifactsByKind(kind: string): Promise<{ contentHash: string }[]> };
+  store: { readFinalText(hash: string): Promise<string> };
+}): Promise<string[]> {
+  try {
+    const artifacts = await runtime.db.listArtifactsByKind('protocol-proposal');
+    const chosen = artifacts[artifacts.length - 1];
+    if (!chosen) return [];
+    const proposal = JSON.parse(await runtime.store.readFinalText(chosen.contentHash)) as {
+      primaryMetrics?: { name?: unknown }[];
+    };
+    return (proposal.primaryMetrics ?? [])
+      .map((m) => (typeof m.name === 'string' ? m.name : ''))
+      .filter((name) => name);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Builds the unified ExperimentSpec for the idea's current version:
  * specId `idea-<id>` (versions bump in place), comparisonIds from the card's
@@ -119,14 +139,17 @@ export async function buildIdeaSpec(
   const protocolId = await latestProtocolId(opts.runtime);
   const attempt = opts.attempt ?? 1;
 
-  // Silent 主指标 change guard: when a protocol exists, every protocol
-  // metric must still be present in the spec (align config to re-lock).
-  if (protocolId && directions.size > 0) {
-    const { assertMetricsMatchProtocol } = await import('../workflow/autonomy.js');
-    assertMetricsMatchProtocol(
-      metrics,
-      [...directions.keys()].map((name) => ({ name })),
-    );
+  // Silent 主指标 change guard: when a protocol exists, its FIRST primary
+  // metric (the 主指标) must appear in the spec. Secondary metrics and
+  // auxiliary primaries (e.g. communication rounds, meaningless for an
+  // evaluation-only sanity run) are reported when available but not forced —
+  // re-lock the protocol to deliberately change the primary metric.
+  if (protocolId) {
+    const primaryNames = await primaryMetricNames(opts.runtime);
+    if (primaryNames.length > 0) {
+      const { assertMetricsMatchProtocol } = await import('../workflow/autonomy.js');
+      assertMetricsMatchProtocol(metrics, [{ name: primaryNames[0]! }]);
+    }
   }
 
   const spec: ExperimentSpec = {
@@ -199,8 +222,12 @@ function commandFor(config: Record<string, unknown>, scale: IdeaScale): string[]
   if (Array.isArray(config.command) && config.command.every((c) => typeof c === 'string')) {
     return config.command as string[];
   }
-  // smoke uses the micro-run entry; quick runs the training entry.
-  return scale === 'smoke' ? ['python', 'src/smoke.py'] : ['python', 'src/train.py'];
+  // smoke uses the micro-run entry; quick runs the training entry. The scale
+  // is ALWAYS passed explicitly so entries cannot silently evaluate the
+  // default scale under a different label.
+  return scale === 'smoke'
+    ? ['python', 'src/smoke.py', '--scale', 'smoke']
+    : ['python', 'src/train.py', '--scale', 'quick'];
 }
 
 const KIND_TO_FAILURE: Record<string, RunFailureCategory> = {

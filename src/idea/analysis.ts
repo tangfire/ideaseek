@@ -175,6 +175,12 @@ export interface IdeaAnalysis {
   generatedAt: number;
 }
 
+/** Scale declared in a spec's environment notes ('scale:smoke', …). */
+function specScale(spec: ExperimentSpec): string {
+  const note = (spec.environment.notes ?? []).find((n) => n.startsWith('scale:'));
+  return note ? note.slice('scale:'.length) : 'unknown';
+}
+
 function primaryOf(spec: ExperimentSpec): { name: string; direction: 'higher' | 'lower' } | null {
   const first = spec.metrics[0];
   return first ? { name: first.name, direction: first.direction } : null;
@@ -315,7 +321,7 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
   const untested = declaredNecessary.filter(
     (component) =>
       !evidence.some(
-        (item) => item.removeComponent === component.component && item.ablationValue !== null,
+        (item) => item.removeComponent === component.component && item.supports !== null,
       ),
   );
   if (declaredNecessary.length > 0 && untested.length > 0) {
@@ -433,11 +439,21 @@ function mechanismEvidence(
     input.main && input.main.result.status === 'succeeded'
       ? metricValue(input.main.result, primary.name)
       : null;
+  const mainScale = input.main ? specScale(input.main.spec) : null;
   return input.ablations.map((entry) => {
     const ablationValue =
       entry.result.status === 'succeeded' ? metricValue(entry.result, primary.name) : null;
     let supports: boolean | null = null;
-    if (entry.removeComponent !== null && mainValue !== null && ablationValue !== null) {
+    // Only same-scale observations count as mechanism evidence — comparing a
+    // quick main run against a smoke ablation would be a methodological error.
+    const ablationScale = specScale(entry.spec);
+    if (
+      entry.removeComponent !== null &&
+      mainValue !== null &&
+      ablationValue !== null &&
+      mainScale !== null &&
+      ablationScale === mainScale
+    ) {
       // Component is necessary iff REMOVING it makes the metric worse
       // (direction-adjusted drop > 0).
       const drop = adjustedDelta(mainValue, ablationValue, primary.direction);
