@@ -28,6 +28,7 @@ import { registerNextCommand } from './commands/next.js';
 import { registerPlanCommand } from './commands/plan.js';
 import { registerExplainCommand } from './commands/explain.js';
 import { registerModelsCommand } from './commands/models.js';
+import { registerMaintenanceCommands } from './commands/maintenance.js';
 import { registerPapersCommand } from './commands/papers.js';
 import { registerLogsCommand } from './commands/logs.js';
 import { registerDecisionCommand } from './commands/decision.js';
@@ -104,6 +105,7 @@ export function buildProgram(): Command {
   registerComparisonCommand(program);
   registerBaselineCommand(program);
   registerCapacityCommand(program);
+  registerMaintenanceCommands(program);
   registerPapersCommand(program);
   registerLogsCommand(program);
   registerDecisionCommand(program);

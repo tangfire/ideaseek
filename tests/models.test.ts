@@ -34,7 +34,7 @@ function runCli(cwd: string, args: string[], timeoutMs = 60_000): Promise<CliRes
   });
 }
 
-const KEY_SHAPE = /sk-[A-Za-z0-9_-]{16,}/;
+const KEY_SHAPE = /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}/;
 
 describe('model routing registry (unit)', () => {
   afterEach(() => {

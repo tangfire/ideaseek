@@ -66,7 +66,7 @@ export function registerModelsCommand(program: Command): void {
         };
         if (opts.json) {
           // Redaction belt: never emit a key-shaped value, whatever happens upstream.
-          if (/sk-[A-Za-z0-9_-]{16,}/.test(JSON.stringify(payload))) {
+          if (/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}/.test(JSON.stringify(payload))) {
             throw new IdeaseekError('INTERNAL', 'refusing to emit a key-shaped value');
           }
           process.stdout.write(jsonLine(payload));

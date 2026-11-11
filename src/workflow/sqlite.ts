@@ -882,6 +882,22 @@ export class SqliteWorkflowDb implements WorkflowDb {
     return Promise.resolve(row ? rowToArtifact(row) : null);
   }
 
+  listArtifactsByRun(runId: string): Promise<ArtifactRecord[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM artifact WHERE run_id = ? AND status = 'committed' ORDER BY created_at, rowid`,
+      )
+      .all(runId) as unknown as ArtifactRow[];
+    return Promise.resolve(rows.map(rowToArtifact));
+  }
+
+  listStagedTempPaths(): Promise<(string | null)[]> {
+    const rows = this.db
+      .prepare(`SELECT temp_path FROM artifact WHERE status = 'staged'`)
+      .all() as unknown as { temp_path: string | null }[];
+    return Promise.resolve(rows.map((row) => row.temp_path));
+  }
+
   replacePaperIndex(entry: PaperIndexEntry): Promise<void> {
     return Promise.resolve().then(() =>
       this.tx(() => {

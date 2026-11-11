@@ -6,7 +6,7 @@
  */
 export function redactSecrets(text: string): string {
   return text
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replace(/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
     .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, '$1***')
     .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)[^\s'"]+/gi, '$1***');
 }

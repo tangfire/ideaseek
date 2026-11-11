@@ -198,6 +198,10 @@ export interface WorkflowDb {
   listArtifactsByKind(kind: string): Promise<ArtifactRecord[]>;
   /** Single artifact by id (explain/provenance lookups). */
   getArtifact(artifactId: string): Promise<ArtifactRecord | null>;
+  /** All artifacts committed for a run (export/archival bundles). */
+  listArtifactsByRun(runId: string): Promise<ArtifactRecord[]>;
+  /** Temp paths of still-staged artifacts (cleanup must keep these). */
+  listStagedTempPaths(): Promise<(string | null)[]>;
   claimNextTask(runId: string, workerId: string, opts: ClaimOptions): Promise<TaskRecord | null>;
   markTaskStarted(taskId: string, workerId: string): Promise<TaskRecord>;
   heartbeat(taskId: string, workerId: string, opts: ClaimOptions): Promise<HeartbeatResult>;
