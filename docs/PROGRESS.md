@@ -129,9 +129,10 @@ Phase 4：Comparison 复现与统一评测
 - [x] research-wiki：Paper/Idea/Experiment/Claim 图谱和 typed edges
 - [x] render-html：IDEA_REPORT、review、wiki 和审计 artifact 阅读视图
 - [x] watchdog：只检测 stalled/dead/stale，不做质量裁决
-- [ ] experiment-queue：wave、depends_on、OOM retry、stale cleanup 和公平排队
+- [x] experiment-queue：wave、depends_on、OOM retry、stale cleanup 和公平排队
 - [ ] monitor-experiment：心跳、日志、资源和等待原因
 - [ ] session recovery：跨会话恢复上下文摘要和 artifact 引用
+- [ ] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入
 
 ## Phase 4.5C：ARIS P2 论文与发表交付
 
@@ -212,16 +213,6 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 多数据集/多场景实验组合扩展
 - [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter
 - [ ] 其他研究方向的回归验证和专用插件
-- [ ] P0 capability：idea discovery/idea creator（优先复用 ARIS）
-- [ ] P0 capability：experiment bridge（优先复用 ARIS）
-- [ ] P0 capability：ablation planner（优先复用 ARIS）
-- [ ] P0 capability：novelty check + fresh-context independent reviewer（优先复用 ARIS）
-- [ ] P0 capability：experiment audit/integrity（优先复用 ARIS）
-- [ ] P0 capability：selectable fresh-context reviewer 和 result-to-claim gate
-- [ ] P1 capability：research wiki 和 HTML artifact renderer（优先复用 ARIS）
-- [ ] P1 capability：watchdog/experiment queue/session recovery workflow
-- [ ] P2 capability：claim/citation audit、paper writing/rebuttal/slides workflow
-- [ ] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入
 ## 模块交付记录
 
 每个完成模块追加一行：
