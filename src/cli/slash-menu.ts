@@ -29,7 +29,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'recorded experiment specs and results',
   },
   { name: '/logs', usage: '/logs <task-id>', description: 'task detail with redacted logs' },
-  { name: '/approve', usage: '/approve', description: 'confirm the pending protocol proposal' },
+  {
+    name: '/pending',
+    usage: '/pending',
+    description: 'approvals waiting for you (protocol, code revisions, requests)',
+  },
+  {
+    name: '/approve',
+    usage: '/approve [n]',
+    description: 'approve the pending item (or item n from /pending)',
+  },
   {
     name: '/reject',
     usage: '/reject <reason>',

@@ -150,6 +150,18 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     expect(done.stdout).not.toContain('unknown input');
   }, 60_000);
 
+  it('keeps the typed slash input visible while filtering the menu', async () => {
+    const dir = await makeProjectDir();
+    const repl = startTtyRepl(dir);
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('/model');
+    await repl.waitFor(/ideaseek › \/model/);
+    const output = repl.output();
+    expect(output).toContain('/models');
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+  }, 60_000);
+
   it('arrow keys select a command and Enter runs it', async () => {
     const dir = await makeProjectDir();
     const repl = startTtyRepl(dir);

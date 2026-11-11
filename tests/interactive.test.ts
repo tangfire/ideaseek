@@ -275,7 +275,7 @@ describe('ideaseek interactive (CLI)', () => {
     const repl = startRepl(dir);
     await repl.waitFor(/ideaseek ›/);
     repl.write('/approve\n');
-    await repl.waitFor(/no protocol proposal/);
+    await repl.waitFor(/nothing waiting for approval/);
     repl.write('/reject dataset unit unclear\n');
     await repl.waitFor(/recorded rejection/);
     const done = await repl.quit();

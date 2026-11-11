@@ -24,6 +24,7 @@ import { registerIdeateCommands } from './commands/ideate.js';
 import { registerAskCommand } from './commands/ask.js';
 import { registerModeCommand } from './commands/mode.js';
 import { registerOpenCommand } from './commands/open.js';
+import { registerPendingCommand } from './commands/pending.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -99,6 +100,7 @@ export function buildProgram(): Command {
   registerAskCommand(program);
   registerModeCommand(program);
   registerOpenCommand(program);
+  registerPendingCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

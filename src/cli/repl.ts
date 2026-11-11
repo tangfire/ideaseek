@@ -4,6 +4,7 @@ import { resolve as resolvePath } from 'node:path';
 import readline from 'node:readline';
 import { detectEnvironment } from '../runtime/detect.js';
 import { renderSessionSummary, type SessionSummary } from '../session/mode.js';
+import { renderApprovalBlock, type PendingApproval } from '../approval/pending.js';
 import { renderBanner, renderHeader, type HeaderContext } from './banner.js';
 import { formatEventLine, paint, type PaintOptions } from './format.js';
 import { cliEntryPath, runCli, runCliJson } from './runner.js';
@@ -151,6 +152,16 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     `${paint('type / for the menu · Tab completes · /quit exits (runs keep going)', 'dim', paintOpts)}\n`,
   );
 
+  // Approval block at startup (TERMINAL_UX: 需要用户决定时显示确认块).
+  const startupPending = await runCliJson<{ items?: PendingApproval[] }>(['pending', '--json'])
+    .catch(() => null)
+    .then((res) => res?.data?.items ?? []);
+  if (startupPending.length > 0) {
+    for (const line of renderApprovalBlock(startupPending, process.stdout.columns ?? 80)) {
+      process.stdout.write(`${line}\n`);
+    }
+  }
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -165,19 +176,24 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
   let menu: MenuState = closeMenu();
   let menuLines: string[] = [];
   let menuColumns = process.stdout.columns ?? 80;
+  // Items behind the last confirmation block — a bare number at the prompt
+  // selects one (TERMINAL_UX: "Type a number"). Always re-fetched on use.
+  let pendingItems: PendingApproval[] = startupPending;
 
   const showPrompt = (): void => {
     rl.prompt();
     promptShown = true;
   };
 
-  /** Removes previously drawn menu rows below the prompt (ANSI only). */
+  /** Removes the prompt-adjacent menu block (ANSI only). */
   const eraseMenu = (): void => {
     if (menuLines.length === 0 || !tty || plain) {
       menuLines = [];
       return;
     }
-    process.stdout.write(`\x1b[${menuLines.length}A\r\x1b[J`);
+    // Keep the input line as the anchor. Clear only the region below it; do
+    // not move upward by menu height because filtered menus change height.
+    process.stdout.write('\x1b[s\n\x1b[J\x1b[u');
     menuLines = [];
   };
 
@@ -186,8 +202,18 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     if (!menu.open || !tty) return;
     const rows = renderMenu(menu, { columns: menuColumns, keyHints: !plain });
     if (rows.length === 0) return;
-    process.stdout.write(`${rows.join('\n')}\n`);
+    // Save the current input cursor, draw below it, then restore the exact
+    // input position. The prompt never moves when the menu is filtered.
+    let frame = '\x1b[s';
+    if (menuLines.length > 0) frame += '\n\x1b[J\x1b[u';
+    frame += `\n${rows.join('\n')}\n\x1b[u`;
+    process.stdout.write(frame);
     menuLines = rows;
+  };
+
+  /** Redraws the prompt and menu as one terminal frame to avoid flicker. */
+  const redrawMenuFrame = (): void => {
+    drawMenu();
   };
 
   /**
@@ -210,6 +236,13 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
    * cursor (event floods preserve in-progress input — TERMINAL_UX).
    */
   const println = (text: string): void => {
+    // Shutdown race: /quit closes readline while the event stream may still
+    // be flushing — prompting a closed interface would throw and take the
+    // whole process down with exit 1. Plain write, no prompt.
+    if (quitting) {
+      process.stdout.write(`${text}\n`);
+      return;
+    }
     const hadMenu = menuLines.length > 0;
     eraseMenu();
     if (!promptShown) {
@@ -250,6 +283,59 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       const text = result.stderr.endsWith('\n') ? result.stderr.slice(0, -1) : result.stderr;
       for (const line of text.split(/\r?\n/)) println(paint(line, 'error', paintOpts));
     }
+  };
+
+  const fetchPending = async (): Promise<PendingApproval[]> => {
+    const res = await runCliJson<{ items?: PendingApproval[] }>(['pending', '--json']).catch(
+      () => null,
+    );
+    return res?.data?.items ?? [];
+  };
+
+  const showApprovalBlock = (items: PendingApproval[]): void => {
+    pendingItems = items;
+    for (const line of renderApprovalBlock(items, menuColumns)) println(line);
+  };
+
+  /**
+   * `/approve [n]` and bare-number selection from the confirmation block:
+   * relays the item's EXISTING CLI command; decision items are review-only
+   * and never execute an unreviewed request.
+   */
+  const approvePending = async (choice?: number): Promise<void> => {
+    const items = await fetchPending();
+    pendingItems = items;
+    if (items.length === 0) {
+      println('nothing waiting for approval — /pending lists what needs a decision');
+      return;
+    }
+    let index: number;
+    if (choice !== undefined) {
+      if (!Number.isInteger(choice) || choice < 1 || choice > items.length) {
+        println(`no item ${String(choice)} — /pending lists ${items.length} waiting`);
+        return;
+      }
+      index = choice - 1;
+    } else if (items.length === 1) {
+      index = 0;
+    } else {
+      showApprovalBlock(items);
+      println(paint('pick one: /approve <n> (or type the number)', 'dim', paintOpts));
+      return;
+    }
+    const item = items[index]!;
+    if (!item.approve) {
+      println(`[${item.kind}] ${item.summary}`);
+      println(
+        paint(
+          'review-only: nothing changes on approve — apply the recorded request with the equivalent command + --confirm, or /reject <reason>',
+          'warn',
+          paintOpts,
+        ),
+      );
+      return;
+    }
+    await relay(item.approve.cliArgs);
   };
 
   const stopStream = (): void => {
@@ -302,6 +388,14 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const text = String(chunk).trim();
       if (text) println(paint(`event stream: ${text}`, 'warn', paintOpts));
+    });
+    // Spawn can fail under process pressure (EAGAIN); an unhandled 'error'
+    // event would crash the REPL with exit 1 — degrade to a warning instead.
+    child.on('error', (error) => {
+      streamChild = null;
+      if (!quitting) {
+        println(paint(`event stream: ${error.message}`, 'warn', paintOpts));
+      }
     });
     child.on('close', (code) => {
       streamChild = null;
@@ -361,9 +455,24 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
         await relay(['reject', rest]);
         return 'continue';
       }
-      case '/approve':
-        await relay(['confirm', 'protocol', '--by', 'user']);
+      case '/pending': {
+        const items = await fetchPending();
+        if (items.length === 0) {
+          pendingItems = [];
+          println('nothing waiting for approval');
+        } else {
+          showApprovalBlock(items);
+        }
         return 'continue';
+      }
+      case '/approve': {
+        if (rest && !/^\d+$/.test(rest)) {
+          println('usage: /approve [n] — /pending lists the items');
+          return 'continue';
+        }
+        await approvePending(rest ? Number(rest) : undefined);
+        return 'continue';
+      }
       case '/status':
         await relay(['status']);
         return 'continue';
@@ -494,23 +603,21 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       }
 
       if (menu.open && (key.name === 'up' || key.name === 'down')) {
-        eraseMenu();
         menu = moveSelection(menu, key.name === 'up' ? -1 : 1);
         const selected = selectedCommand(menu);
         if (selected) {
           clearInputLine();
           rl.write(selected.name);
         }
-        drawMenu();
+        redrawMenuFrame();
         return;
       }
 
       // Live refresh while the user is still typing a slash word.
       const slashWord = line.startsWith('/') && !line.includes(' ');
       if (slashWord && line.length <= 24) {
-        eraseMenu();
         menu = openMenu(line);
-        drawMenu();
+        redrawMenuFrame();
         return;
       }
       if (menu.open && !slashWord) {
@@ -538,8 +645,7 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     const onResize = (): void => {
       menuColumns = process.stdout.columns ?? menuColumns;
       if (menu.open && menuLines.length > 0) {
-        eraseMenu();
-        drawMenu();
+        redrawMenuFrame();
       }
     };
     process.stdout.on('resize', onResize);
@@ -563,6 +669,10 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
             for (const row of renderMenu(menu, { columns: menuColumns })) println(row);
           }
           return;
+        } else if (/^\d+$/.test(input) && pendingItems.length > 0) {
+          // Confirmation-block shortcut: a bare number picks that item
+          // (TERMINAL_UX: "Type a number, /details, or /reject <reason>").
+          await approvePending(Number(input));
         } else if (!input.startsWith('/')) {
           // Plain text → `ideaseek ask`: queries answer from state, high-impact
           // requests become pending Decisions, everything else goes to the
