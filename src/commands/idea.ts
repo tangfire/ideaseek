@@ -8,6 +8,13 @@ import { runAblations } from '../idea/ablation.js';
 import { runAnalysis } from '../idea/analyze.js';
 import { buildIdeaHandoff } from '../idea/handoff.js';
 import {
+  assertAutonomy,
+  checkAutonomy,
+  getAutonomyMode,
+  parseAutonomyMode,
+  recordDecision,
+} from '../workflow/autonomy.js';
+import {
   IDEA_TRANSITIONS,
   assertEngineeringRevision,
   checkpointCode,
@@ -281,6 +288,7 @@ export function registerIdeaCommand(program: Command): void {
     .action(
       action(async (ideaId: string, opts: { kind: string; summary: string; json?: boolean }) => {
         const root = await openRoot();
+        assertAutonomy(await getAutonomyMode(root), 'write-code');
         assertEngineeringRevision(opts.kind);
         const { version, meta } = await reviseEngineering(root, ideaId, opts.summary);
         if (opts.json) {
@@ -310,13 +318,17 @@ export function registerIdeaCommand(program: Command): void {
     .argument('<parentIdeaId>', 'existing idea id')
     .argument('<newIdeaId>', 'new kebab-case idea id')
     .requiredOption('--from-card <file>', 'IdeaCard for the new idea (version 1)')
+    .option(
+      '--confirm',
+      'guided-mode confirmation for the hypothesis change (Decision/Event recorded)',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (
           parentIdeaId: string,
           newIdeaId: string,
-          opts: { fromCard: string; json?: boolean },
+          opts: { fromCard: string; confirm?: boolean; json?: boolean },
         ) => {
           const root = await openRoot();
           if (parentIdeaId === newIdeaId) {
@@ -325,6 +337,11 @@ export function registerIdeaCommand(program: Command): void {
               'branch target must differ from the parent',
             );
           }
+          // Protected change: a new scientific hypothesis needs the mode's
+          // approval BEFORE any workspace is created (no partial side effects).
+          const mode = await getAutonomyMode(root);
+          assertAutonomy(mode, 'change-hypothesis', { confirmed: opts.confirm });
+
           const card = await readCardFile(opts.fromCard);
           const { meta } = await createWorkspace(root, {
             ideaId: newIdeaId,
@@ -332,6 +349,24 @@ export function registerIdeaCommand(program: Command): void {
             parentIdeaId,
             changeKind: 'scientific-branch',
           });
+
+          // Branches always leave a Decision/Event (every mode — never silent).
+          let decision: { seq: number } | null = null;
+          {
+            const { ProjectRuntime } = await import('../workflow/runtime.js');
+            const runtime = await ProjectRuntime.open({ cwd: root });
+            try {
+              decision = await recordDecision(runtime.db, runtime.project.id, {
+                action: 'change-hypothesis',
+                target: `${parentIdeaId} → ${newIdeaId}`,
+                mode,
+                reason: 'scientific branch (new idea id)',
+              });
+            } finally {
+              await runtime.close();
+            }
+          }
+
           if (opts.json) {
             process.stdout.write(
               jsonLine({
@@ -339,12 +374,15 @@ export function registerIdeaCommand(program: Command): void {
                 parentIdeaId,
                 status: meta.status,
                 version: meta.currentVersion,
+                decisionSeq: decision?.seq ?? null,
               }),
             );
           } else {
             process.stdout.write(
               `branched ${newIdeaId} from ${parentIdeaId} (scientific change, v1)\n`,
             );
+            if (decision) process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+            else process.stdout.write('  decision not recorded (no run exists yet)\n');
             process.stdout.write(`next: ideaseek idea show ${newIdeaId}\n`);
           }
           return 0;
@@ -398,6 +436,7 @@ export function registerIdeaCommand(program: Command): void {
     .action(
       action(async (ideaId: string, opts: { message: string; json?: boolean }) => {
         const root = await openRoot();
+        assertAutonomy(await getAutonomyMode(root), 'write-code');
         const result = await checkpointCode(root, ideaId, opts.message);
         if (opts.json) {
           process.stdout.write(
@@ -431,6 +470,7 @@ export function registerIdeaCommand(program: Command): void {
     .action(
       action(async (ideaId: string, opts: { json?: boolean }) => {
         const root = await openRoot();
+        assertAutonomy(await getAutonomyMode(root), 'write-code');
         const result = await scaffoldIdea(root, ideaId);
         if (opts.json) {
           process.stdout.write(jsonLine({ ideaId, ...result }));
@@ -543,6 +583,7 @@ export function registerIdeaCommand(program: Command): void {
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
         try {
+          assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'start-experiment');
           const outcome = await runIdeaExperiment(
             root,
             ideaId,
@@ -585,6 +626,21 @@ export function registerIdeaCommand(program: Command): void {
               `next: fix and re-check, then walk back: ideaseek idea set-status ${ideaId} NEEDS_REVISION\n`,
             );
           }
+          if (!outcome.alreadyRecorded) {
+            const expMode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+            const expCheck = checkAutonomy(expMode, 'start-experiment');
+            if (expCheck.needsDecision) {
+              const decision = await recordDecision(runtime.db, runtime.project.id, {
+                action: 'start-experiment',
+                target: `${ideaId} ${opts.scale}`,
+                mode: expMode,
+              });
+              if (decision && !opts.json) {
+                process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+              }
+            }
+          }
+          return outcome.exitCode;
           return outcome.exitCode;
         } finally {
           await runtime.close();
@@ -612,6 +668,7 @@ export function registerIdeaCommand(program: Command): void {
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
         try {
+          assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'start-experiment');
           const result = await runReadyExperiments(
             root,
             {
@@ -672,6 +729,20 @@ export function registerIdeaCommand(program: Command): void {
               process.stdout.write('next: ideaseek idea list   (results await analysis)\n');
             }
           }
+          if (result.admitted.length > 0) {
+            const rrMode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+            const rrCheck = checkAutonomy(rrMode, 'start-experiment');
+            if (rrCheck.needsDecision) {
+              const decision = await recordDecision(runtime.db, runtime.project.id, {
+                action: 'start-experiment',
+                target: `run-ready(${result.admitted.join(',')}) ${opts.scale}`,
+                mode: rrMode,
+              });
+              if (decision && !opts.json) {
+                process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+              }
+            }
+          }
           return result.allOk ? 0 : 1;
         } finally {
           await runtime.close();
@@ -697,6 +768,7 @@ export function registerIdeaCommand(program: Command): void {
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
         try {
+          assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'start-experiment');
           const result = await runAblations(
             root,
             ideaId,
@@ -723,6 +795,20 @@ export function registerIdeaCommand(program: Command): void {
             }
             if (result.allOk) {
               process.stdout.write(`next: ideaseek idea analyze ${ideaId}\n`);
+            }
+          }
+          if (result.entries.some((entry) => !entry.alreadyRecorded)) {
+            const abMode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+            const abCheck = checkAutonomy(abMode, 'start-experiment');
+            if (abCheck.needsDecision) {
+              const decision = await recordDecision(runtime.db, runtime.project.id, {
+                action: 'start-experiment',
+                target: `ablate ${ideaId}`,
+                mode: abMode,
+              });
+              if (decision && !opts.json) {
+                process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+              }
             }
           }
           return result.allOk ? 0 : 1;
@@ -783,14 +869,44 @@ export function registerIdeaCommand(program: Command): void {
       'build the full-scale reproduction package (config/split/lock/commands/provenance) behind the HANDOFF_READY gate',
     )
     .argument('<ideaId>', 'idea id')
+    .option('--confirm', 'accept a HANDOFF_READY delivery (guided mode; Decision/Event recorded)')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (ideaId: string, opts: { json?: boolean }) => {
+      action(async (ideaId: string, opts: { confirm?: boolean; json?: boolean }) => {
         const root = await openRoot();
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
         try {
+          const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+          if (mode === 'review-only') {
+            // Review-only never delivers packages (analysis only).
+            assertAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
+          }
           const result = await buildIdeaHandoff(root, ideaId, runtime.db);
+          if (result.gate.handoffReady) {
+            const check = checkAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
+            if (!check.allowed) {
+              process.stdout.write(
+                `handoff ${ideaId}: package written (${result.files.length} files) but ` +
+                  'the HANDOFF_READY delivery is NOT accepted yet\n',
+              );
+              process.stdout.write(`  reason: ${check.reason ?? ''}\n`);
+              process.stdout.write(
+                `next: ideaseek idea handoff ${ideaId} --confirm   (records a Decision/Event)\n`,
+              );
+              return 2;
+            }
+            if (check.needsDecision) {
+              const decision = await recordDecision(runtime.db, runtime.project.id, {
+                action: 'finalize-handoff',
+                target: `${ideaId} ${result.gate.level}`,
+                mode,
+              });
+              if (decision) {
+                process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+              }
+            }
+          }
           if (opts.json) {
             process.stdout.write(
               jsonLine({

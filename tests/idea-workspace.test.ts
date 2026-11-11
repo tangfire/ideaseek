@@ -491,6 +491,7 @@ describe('ideaseek idea workspace (CLI)', () => {
       'calib-reweight-v2',
       '--from-card',
       childCardPath,
+      '--confirm', // guided-mode confirmation for a hypothesis change
       '--json',
     ]);
     expect(branch.code, branch.stderr).toBe(0);

@@ -55,6 +55,7 @@ policy:
   require_user_confirmation_before_experiments: true
   allow_paper_reimplementation: true
   auto_accept_discovered_comparisons: false
+  autonomy_mode: guided
 `;
 }
 

@@ -119,6 +119,16 @@ export async function buildIdeaSpec(
   const protocolId = await latestProtocolId(opts.runtime);
   const attempt = opts.attempt ?? 1;
 
+  // Silent 主指标 change guard: when a protocol exists, every protocol
+  // metric must still be present in the spec (align config to re-lock).
+  if (protocolId && directions.size > 0) {
+    const { assertMetricsMatchProtocol } = await import('../workflow/autonomy.js');
+    assertMetricsMatchProtocol(
+      metrics,
+      [...directions.keys()].map((name) => ({ name })),
+    );
+  }
+
   const spec: ExperimentSpec = {
     specId: opts.specIdOverride ?? `idea-${ideaId}`,
     version: 1, // caller rewrites after hash comparison

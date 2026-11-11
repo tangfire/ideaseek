@@ -50,6 +50,8 @@ export interface ResolvedConfig {
     requireUserConfirmationBeforeExperiments: boolean;
     allowPaperReimplementation: boolean;
     autoAcceptDiscoveredComparisons: boolean;
+    /** guided (default) | autonomous | review-only — docs/AUTONOMY_POLICY.md */
+    autonomyMode: string;
   };
 }
 
@@ -108,6 +110,7 @@ export function defaultConfig(projectName: string): ResolvedConfig {
       requireUserConfirmationBeforeExperiments: true,
       allowPaperReimplementation: true,
       autoAcceptDiscoveredComparisons: false,
+      autonomyMode: 'guided',
     },
   };
 }
@@ -142,6 +145,7 @@ const SHAPE: Record<string, readonly string[]> = {
     'require_user_confirmation_before_experiments',
     'allow_paper_reimplementation',
     'auto_accept_discovered_comparisons',
+    'autonomy_mode',
   ],
 };
 
@@ -150,6 +154,7 @@ const TOP_LEVEL = ['config_version', ...Object.keys(SHAPE)];
 const ENUMS: Record<string, readonly string[]> = {
   'research.mode': ['auto', 'starter', 'standard', 'research'],
   'runtime.default_data_scale': ['smoke', 'quick', 'standard'],
+  'policy.autonomy_mode': ['guided', 'autonomous', 'review-only'],
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -528,6 +533,21 @@ export async function loadConfig(
     'auto_accept_discovered_comparisons',
     resolved.policy.autoAcceptDiscoveredComparisons,
     coerceBoolean,
+  );
+  resolved.policy.autonomyMode = take(
+    'policy',
+    'autonomy_mode',
+    resolved.policy.autonomyMode,
+    (path, raw) => {
+      const base = coerceString(path, raw);
+      if (!base.ok) return base;
+      return ENUMS['policy.autonomy_mode']!.includes(base.value)
+        ? base
+        : {
+            ok: false,
+            message: `${path} must be one of: ${ENUMS['policy.autonomy_mode']!.join(', ')}`,
+          };
+    },
   );
 
   resolved.configVersion = CONFIG_VERSION;

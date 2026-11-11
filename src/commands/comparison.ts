@@ -7,8 +7,10 @@ import { stringify } from 'yaml';
 import { importComparisonRepo } from '../comparison/importer.js';
 import { buildCandidates } from '../comparison/discover.js';
 import { evaluateComparisonGate } from '../comparison/gate.js';
+import { assertAutonomy, parseAutonomyMode, recordDecision } from '../workflow/autonomy.js';
 import {
   COMPARISON_TRANSITIONS,
+  REASON_REQUIRED,
   assertTransition,
   validateComparisonMethod,
   type ComparisonMethod,
@@ -478,10 +480,15 @@ export function registerComparisonCommand(program: Command): void {
     .argument('<methodId>', 'method id')
     .argument('<status>', 'target status')
     .option('--reason <text>', 'required for excluded/blocked/partial')
+    .option('--confirm', 'guided-mode confirmation for protected changes (Decision/Event recorded)')
     .option('--json', 'machine-readable output')
     .action(
       action(
-        async (methodId: string, status: string, opts: { reason?: string; json?: boolean }) => {
+        async (
+          methodId: string,
+          status: string,
+          opts: { reason?: string; confirm?: boolean; json?: boolean },
+        ) => {
           const root = await openRoot();
           if (!(status in COMPARISON_TRANSITIONS)) {
             throw new IdeaseekError(
@@ -495,6 +502,35 @@ export function registerComparisonCommand(program: Command): void {
             if (!before) {
               throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${methodId} not found`);
             }
+            // State-machine rule first: reason-required statuses fail fast
+            // before any policy confirmation is considered.
+            if (
+              REASON_REQUIRED.includes(status as ComparisonStatus) &&
+              !(opts.reason && opts.reason.trim())
+            ) {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `status ${status} requires --reason (no silent skips; docs: EXCLUDED 必须有用户或配置原因)`,
+                { status },
+              );
+            }
+            // Protected change: excluding a REQUIRED method needs the mode's
+            // approval and always leaves a Decision/Event (AUTONOMY_POLICY).
+            let decision: { seq: number } | null = null;
+            if (status === 'excluded' && before.required) {
+              const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+              const check = assertAutonomy(mode, 'change-required-comparison', {
+                confirmed: opts.confirm,
+              });
+              if (check.needsDecision) {
+                decision = await recordDecision(runtime.db, runtime.project.id, {
+                  action: 'change-required-comparison',
+                  target: methodId,
+                  mode,
+                  reason: opts.reason ?? undefined,
+                });
+              }
+            }
             const after = await runtime.db.transitionComparison(methodId, status, opts.reason);
             // Keep the directory export in sync with the authoritative record.
             await exportMethodYaml(root, toMethod(after.record));
@@ -505,12 +541,17 @@ export function registerComparisonCommand(program: Command): void {
                   from: before.status,
                   to: after.status,
                   reason: opts.reason ?? null,
+                  decisionSeq: decision?.seq ?? null,
                 }),
               );
             } else {
               process.stdout.write(
                 `${methodId}: ${before.status} → ${after.status}${opts.reason ? ` (${opts.reason})` : ''}\n`,
               );
+              if (decision) process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+              else if (status === 'excluded' && before.required) {
+                process.stdout.write('  decision not recorded (no run exists yet)\n');
+              }
             }
             return 0;
           } finally {

@@ -26,6 +26,7 @@ import type {
   ReproductionSummary,
 } from '../comparison/types.js';
 import { exportMethodYaml } from './comparison.js';
+import { assertAutonomy, parseAutonomyMode } from '../workflow/autonomy.js';
 import { action, jsonLine } from './shared.js';
 
 async function openRuntime(root: string) {
@@ -108,6 +109,7 @@ export function registerBaselineCommand(program: Command): void {
           }
           const runtime = await openRuntime(root);
           try {
+            assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'write-code');
             const doc = await runtime.db.getComparison(opts.method);
             if (!doc) {
               throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${opts.method} not found`);
@@ -372,6 +374,7 @@ export function registerBaselineCommand(program: Command): void {
           }
           const runtime = await openRuntime(root);
           try {
+            assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'write-code');
             const prepared = await prepareReproduction(root, runtime, opts);
             return await executeReproduction(root, runtime, opts, prepared);
           } finally {

@@ -600,6 +600,7 @@ describe('ideaseek comparison gate', () => {
       'excluded',
       '--reason',
       'license forbids use',
+      '--confirm', // guided-mode confirmation for a required-method exclusion
     ]);
     expect(excluded.code).toBe(0);
 
