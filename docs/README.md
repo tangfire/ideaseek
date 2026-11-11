@@ -41,6 +41,8 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 ## 开发原则
 
 - DSH 负责 Agent Runtime、插件、工具调用和会话；科研平台负责持久化工作流、论文知识、comparison、idea、实验和 checkpoint。
+- 开发遵循复用优先：DSH/ARIS 已有能力优先通过 provider/plugin/skill/adapter 接入，不在 IdeaSeek 核心重复实现。
+- ARIS 的核心科研能力在产品上是必备的；“可选”只指实现来源和安装方式。IdeaSeek 不应因为未接入 ARIS 而缺少独立评审、消融、novelty check 或 experiment audit。
 - Agent 的能力由角色 profile 显式授予；工具、路径、网络和资源权限最小化。
 - 所有重要事实、代码、实验和报告都必须可追溯到输入哈希、版本、运行 ID 和证据。
 - 原始论文、数据和上游 comparison 仓库保持只读；自动修改发生在工作副本或 idea 专属目录。

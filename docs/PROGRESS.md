@@ -147,6 +147,7 @@ Phase 4：Comparison 复现与统一评测
 - [ ] `incoming/ideas/<name>/` 投递、扫描、intake 确认和已有 Idea 改进闭环
 - [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
 - [ ] Application/domain/adapter 分层硬化与 composition root
+- [ ] Build-vs-reuse 审查：优先接入 DSH/ARIS，避免重复实现
 
 ## Phase 8：发布与文档
 
@@ -170,10 +171,12 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 多数据集/多场景实验组合扩展
 - [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter
 - [ ] 其他研究方向的回归验证和专用插件
-- [ ] ARIS-style skill adapter（idea/experiment/review）
-- [ ] 独立 reviewer/fresh-context review adapter
-- [ ] research wiki 和 HTML artifact renderer
-- [ ] experiment audit/integrity workflow
+- [ ] P0 capability：idea discovery/idea creator（优先复用 ARIS）
+- [ ] P0 capability：experiment bridge（优先复用 ARIS）
+- [ ] P0 capability：ablation planner（优先复用 ARIS）
+- [ ] P0 capability：novelty check + fresh-context independent reviewer（优先复用 ARIS）
+- [ ] P0 capability：experiment audit/integrity（优先复用 ARIS）
+- [ ] P1 capability：research wiki 和 HTML artifact renderer（优先复用 ARIS）
 - [ ] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入
 ## 模块交付记录
 

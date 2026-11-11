@@ -23,3 +23,17 @@ IdeaSeek 内部运行 smoke/quick/standard，快速筛选和迭代 idea；通过
 ## ADR-006：多界面共享应用用例
 
 交互 REPL、非交互 CLI、JSON 输出和后台控制都调用同一 application use-case，不能各自实现一套状态、门禁或权限逻辑。
+
+## ADR-007：复用优先，重复实现例外
+
+开发任何科研 workflow、Agent 工具或模型能力前，先检查 DSH 原生能力和 ARIS skill/plugin 是否已经满足需求。
+
+- DSH 已提供的 Agent Runtime、Session、Tool、Subagent、provider、上下文和权限不重复实现；
+- ARIS 已提供且可接入的 idea discovery、experiment bridge、reviewer、ablation、audit、research wiki、HTML/render 和写作 workflow 不在 IdeaSeek 核心重写；
+- IdeaSeek 只实现 ARIS/DSH 没有的持久化项目状态、输入/dataset snapshot、comparison 状态机、资源准入、checkpoint、权限边界、handoff 和适配层；
+- 复用通过 adapter/plugin/skill contract 完成，不能复制第二套 Agent Loop 或第二个任务数据库；
+- 只有当现有能力不满足可恢复性、安全性、结构化契约或实验公平性时，才实现薄的 IdeaSeek wrapper，并记录原因。
+
+## ADR-008：能力必须，来源可替换
+
+ARIS 的 P0 科研能力是 IdeaSeek 的产品验收要求，而不是用户可选项：idea discovery、experiment bridge、ablation、novelty/independent review 和 experiment audit 都必须存在。优先通过 ARIS skill/plugin 实现；若外部版本、许可证、运行环境或接口不适合，使用兼容 adapter 或等价实现满足相同 capability contract。用户不应因为没有安装某个外部仓库而得到一个缺核心科研质量控制的降级平台，除非运行在明确的 review-only/探索性模式并显示限制。
