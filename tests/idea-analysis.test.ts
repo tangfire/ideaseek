@@ -270,6 +270,50 @@ describe('analyzeIdea verdict ladder', () => {
     expect(analysis.nextSteps.join(' ')).toContain('SUPPORTED');
   });
 
+  it('demotes to inconclusive when another covered scale shows no gain (mixed-scale)', () => {
+    const analysis = analyzeIdea(
+      baseInput({
+        main: {
+          spec: spec(),
+          result: result({ metrics: [{ name: 'rare-class recall', value: 53 }] }),
+        },
+        ideaByScale: { smoke: 53, quick: 4 },
+        baselines: [
+          { methodId: 'fedavg', value: 1, scale: 'smoke' },
+          { methodId: 'fedavg', value: 4, scale: 'quick' },
+        ],
+        // necessary-component ablation still supports at the paired scale
+        ablations: [
+          {
+            ablationId: 'w-o-calibration-probe',
+            label: 'w/o calibration probe',
+            removeComponent: 'calibration probe',
+            spec: spec({ specId: 'idea-x-abl-w-o-calibration-probe' }),
+            result: result({ metrics: [{ name: 'rare-class recall', value: 1 }] }),
+          },
+        ],
+      }),
+    );
+    expect(analysis.verdict).toBe('inconclusive');
+    expect(analysis.reasons.join(' ')).toContain('mixed-scale evidence');
+    expect(analysis.reasons.join(' ')).toContain('quick');
+    const quickEntry = analysis.baselineComparison.find(
+      (c) => c.scale === 'quick' && c.delta !== null,
+    );
+    expect(quickEntry?.delta).toBe(0);
+    expect(quickEntry?.ideaValue).toBe(4);
+  });
+
+  it('stays inconclusive without any same-scale baseline', () => {
+    const analysis = analyzeIdea(
+      baseInput({
+        baselines: [{ methodId: 'fedavg', value: 7, scale: 'quick' }], // main is smoke
+      }),
+    );
+    expect(analysis.verdict).toBe('inconclusive');
+    expect(analysis.reasons.join(' ')).toContain('no same-scale baseline');
+  });
+
   it('keeps every failure observation with its class', () => {
     const analysis = analyzeIdea(
       baseInput({

@@ -112,6 +112,8 @@ export interface BaselineComparison {
   ideaValue: number | null;
   /** Positive = idea better (direction-adjusted). null when unknown. */
   delta: number | null;
+  /** Scale this baseline value was recorded at (smoke/quick/…). */
+  scale?: string;
 }
 
 export interface FailureObservation {
@@ -137,7 +139,9 @@ export interface AnalysisInput {
     result: RunResult;
   }[];
   /** Primary-metric values from baseline/reproduction runs (null = unknown). */
-  baselines: { methodId: string; value: number | null }[];
+  baselines: { methodId: string; value: number | null; scale?: string }[];
+  /** Primary-metric value of the idea per scale (succeeded mirrors only). */
+  ideaByScale?: Record<string, number>;
   /** Distinct scales with a succeeded idea result (smoke/quick/…). */
   scalesRun: string[];
   /** Distinct dataset snapshot ids with a succeeded idea result. */
@@ -257,14 +261,21 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
   const comparisons: BaselineComparison[] = [];
   let bestDelta: number | null = null;
   const knownBaselines = input.baselines.filter((b) => b.value !== null);
+  const mainScale = input.main ? specScale(input.main.spec) : null;
   for (const baseline of input.baselines) {
+    // Only same-scale baselines count toward the primary delta — a quick
+    // idea run may never be compared against a smoke baseline.
+    const sameScale = baseline.scale === undefined || baseline.scale === mainScale;
     const delta =
-      baseline.value === null ? null : adjustedDelta(ideaValue, baseline.value, primary.direction);
+      baseline.value === null || !sameScale
+        ? null
+        : adjustedDelta(ideaValue, baseline.value, primary.direction);
     comparisons.push({
       methodId: baseline.methodId,
       baselineValue: baseline.value,
       ideaValue,
       delta,
+      ...(baseline.scale !== undefined ? { scale: baseline.scale } : {}),
     });
     if (delta !== null && (bestDelta === null || delta > bestDelta)) bestDelta = delta;
   }
@@ -305,6 +316,66 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
       'effect-insufficient',
       comparisons,
       bestDelta,
+      mechanismEvidence(input, primary),
+      reasons,
+      nextSteps,
+      missing,
+    );
+  }
+
+  // --- mixed-scale evidence: winning at the paired scale is NOT enough if
+  // any other covered scale shows no gain (expected-change must hold where
+  // both sides are registered — found by live FL-direction validation).
+  if (input.ideaByScale) {
+    const mixed: string[] = [];
+    for (const baseline of input.baselines) {
+      if (!baseline.scale || baseline.scale === mainScale || baseline.value === null) continue;
+      const ideaAt = input.ideaByScale[baseline.scale];
+      if (ideaAt === undefined) continue;
+      const d = adjustedDelta(ideaAt, baseline.value, primary.direction);
+      comparisons.push({
+        methodId: baseline.methodId,
+        baselineValue: baseline.value,
+        ideaValue: ideaAt,
+        delta: d,
+        scale: baseline.scale,
+      });
+      if (d <= 0) mixed.push(`${baseline.scale} (${ideaAt} vs baseline ${baseline.value})`);
+    }
+    if (mixed.length > 0) {
+      reasons.push(
+        `mixed-scale evidence: no gain at ${mixed.join(', ')} — expected-change not met on every covered scale`,
+      );
+      nextSteps.push(
+        'narrow the claim to the scale that works, or rework the estimator for the failing scale',
+      );
+      nextSteps.push(`rerun analysis: ideaseek idea analyze ${input.ideaId}`);
+      return finish(
+        input,
+        'inconclusive',
+        'none',
+        comparisons,
+        bestDelta,
+        mechanismEvidence(input, primary),
+        reasons,
+        nextSteps,
+        missing,
+      );
+    }
+  }
+
+  // Without a same-scale baseline nothing can claim superiority.
+  if (bestDelta === null) {
+    reasons.push('no same-scale baseline comparison available');
+    nextSteps.push(
+      'record a baseline result at this scale (repro-<methodId> spec with a matching scale note)',
+    );
+    return finish(
+      input,
+      'inconclusive',
+      'none',
+      comparisons,
+      null,
       mechanismEvidence(input, primary),
       reasons,
       nextSteps,

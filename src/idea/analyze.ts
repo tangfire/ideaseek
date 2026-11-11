@@ -129,7 +129,12 @@ export async function collectAnalysisInput(
   const plan = deriveAblations(card);
   const ablationById = new Map<string, AnalysisInput['ablations'][number]>();
   const ablationPrefix = `idea-${ideaId}-abl-`;
+  const freshForCurrentVersion = (spec: ExperimentSpec): boolean =>
+    (spec.environment.notes ?? []).some((n) => n === `idea-v:${meta.currentVersion}`);
   const pushAblation = (ablationId: string, spec: ExperimentSpec, result: RunResult): void => {
+    // Only ablations recorded against the CURRENT idea version count as
+    // mechanism evidence — stale-code ablations must not support a new version.
+    if (!freshForCurrentVersion(spec)) return;
     const planned = plan.find((item) => item.ablationId === ablationId);
     const existing = ablationById.get(ablationId);
     if (existing && existing.spec.version >= spec.version) return;
@@ -154,17 +159,28 @@ export async function collectAnalysisInput(
   );
 
   // Baselines for the nearest comparisons (primary metric values).
-  const baselines: { methodId: string; value: number | null }[] = [];
+  // Primary-metric value of the idea at each covered scale (latest wins).
+  const ideaByScale: Record<string, number> = {};
+  if (primary) {
+    for (const mirror of succeededMains) {
+      const value = metricOf(mirror.result!, primary);
+      if (value !== null) ideaByScale[scaleOf(mirror.spec)] = value;
+    }
+  }
+
+  const baselines: { methodId: string; value: number | null; scale?: string }[] = [];
   const seenMethods = new Set<string>();
   for (const nearest of card.nearestComparisons) {
     if (seenMethods.has(nearest.methodId)) continue;
     seenMethods.add(nearest.methodId);
     let value: number | null = null;
+    let valueScale: string | undefined;
     const repro = await db.getExperiment(`repro-${nearest.methodId}`);
     if (repro?.result) {
       const result = asResult(repro.result);
       if (result.status === 'succeeded') {
         value = metricOf(result, primary ?? primaryName(asSpec(repro.spec)));
+        valueScale = scaleOf(asSpec(repro.spec));
       }
     }
     if (value === null) {
@@ -179,11 +195,28 @@ export async function collectAnalysisInput(
         const candidate = metricOf(result, primary ?? primaryName(spec));
         if (candidate !== null) {
           value = candidate;
+          valueScale = scaleOf(spec);
           break;
         }
       }
     }
-    baselines.push({ methodId: nearest.methodId, value });
+    baselines.push({
+      methodId: nearest.methodId,
+      value,
+      ...(valueScale !== undefined ? { scale: valueScale } : {}),
+    });
+    // Additional per-scale registered baselines: repro-<methodId>-<scale>.
+    for (const doc of all) {
+      if (!doc.specId.startsWith(`repro-${nearest.methodId}-`) || !doc.result) continue;
+      const result = asResult(doc.result);
+      if (result.status !== 'succeeded') continue;
+      const spec = asSpec(doc.spec);
+      const extraScale = scaleOf(spec);
+      if (extraScale === valueScale) continue;
+      const extraValue = metricOf(result, primary ?? primaryName(spec));
+      if (extraValue === null) continue;
+      baselines.push({ methodId: nearest.methodId, value: extraValue, scale: extraScale });
+    }
   }
 
   // Coverage + resources + failures across the FULL mirror history.
@@ -246,6 +279,7 @@ export async function collectAnalysisInput(
     main,
     ablations,
     baselines,
+    ideaByScale,
     scalesRun: [...scales].sort(),
     datasetsRun: [...datasets].sort(),
     seedsCount: main && main.result.status === 'succeeded' ? (main.spec.seeds ?? []).length : 0,
