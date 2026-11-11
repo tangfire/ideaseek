@@ -161,7 +161,7 @@ describe('banner and event formatting (unit)', () => {
   it('falls back to the short mark when plain or narrow', () => {
     expect(renderBanner({ plain: true })).toBe(PLAIN_MARK);
     expect(renderBanner({ columns: 40 })).toBe(PLAIN_MARK);
-    expect(BLOCK_BANNER).toContain('██╗    ██████╗');
+    expect(BLOCK_BANNER).toContain('██╗  ██████╗');
     const previousTerm = process.env.TERM;
     delete process.env.TERM;
     try {
@@ -171,7 +171,7 @@ describe('banner and event formatting (unit)', () => {
       else process.env.TERM = previousTerm;
     }
     expect(BLOCK_BANNER.split('\n')).toHaveLength(6);
-    expect(BLOCK_BANNER.split('\n')[0]).toContain('    ███████╗    ███████╗');
+    expect(BLOCK_BANNER.split('\n')[0]).toContain('  ███████╗  █████╗');
   });
 
   it('paints nothing in plain mode or non-TTY output', () => {
