@@ -32,6 +32,7 @@ import { registerWatchdogCommand } from './commands/watchdog.js';
 import { registerQueueCommand } from './commands/queue.js';
 import { registerMonitorCommand } from './commands/monitor.js';
 import { registerContextCommand } from './commands/context.js';
+import { registerNotifyCommand } from './commands/notify.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -115,6 +116,7 @@ export function buildProgram(): Command {
   registerQueueCommand(program);
   registerMonitorCommand(program);
   registerContextCommand(program);
+  registerNotifyCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

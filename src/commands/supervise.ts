@@ -74,6 +74,19 @@ export function registerSuperviseCommand(program: Command): void {
                 reason: exit.reason,
               });
             }
+            // Notification entry (Phase 7): the background supervisor is the
+            // process that knows the run reached a terminal state. Delivery
+            // never breaks the exit path (notifyUser never throws).
+            try {
+              const { notifyUser } = await import('../runtime/notify.js');
+              await notifyUser(process.cwd(), {
+                kind: exit.reason,
+                title: `run ${run.runId}: ${exit.reason}`,
+                summary: `supervisor finished with ${exit.reason} (status ${exit.runStatus ?? 'unknown'})`,
+              });
+            } catch {
+              // best-effort only
+            }
             switch (exit.reason) {
               case 'completed':
                 return 0;
