@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
+import { resolve as resolvePath } from 'node:path';
 import readline from 'node:readline';
 import { detectEnvironment } from '../runtime/detect.js';
+import { renderSessionSummary, type SessionSummary } from '../session/mode.js';
 import { renderBanner, renderHeader, type HeaderContext } from './banner.js';
 import { formatEventLine, paint, type PaintOptions } from './format.js';
 import { cliEntryPath, runCli, runCliJson } from './runner.js';
@@ -63,6 +65,13 @@ interface StatusPayload {
 interface PapersPayload {
   indexed: number;
 }
+
+/** `ideaseek open --json` payloads the REPL acts on (project switch vs document). */
+type OpenPayload =
+  | { kind: 'switch-target'; name: string; root: string; summary: SessionSummary }
+  | { kind: 'project'; name: string; root: string; summary: SessionSummary }
+  | { kind: 'document'; path: string; bytes: number; head: string }
+  | { kind: 'overview'; projects: unknown[]; documents: string[] };
 
 async function buildHeader(plain: boolean): Promise<string> {
   const paintOpts: PaintOptions = { plain };
@@ -391,9 +400,45 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       case '/mode':
         await relay(['mode', ...restArgs]);
         return 'continue';
-      case '/open':
-        await relay(['open', ...restArgs]);
+      case '/open': {
+        if (!rest) {
+          await relay(['open']);
+          return 'continue';
+        }
+        // Project targets are two-step (TERMINAL_UX: switch only after a
+        // confirmation so control commands never hit the wrong directory):
+        // preview target + mode/project/permission summary, then --confirm
+        // chdirs the session, restarts the event stream and reprints the
+        // header for the new project.
+        const res = await runCliJson<OpenPayload>(['open', ...restArgs, '--json']);
+        const payload = res.data;
+        if (payload?.kind === 'switch-target') {
+          println(`switch target : ${payload.name}  (${payload.root})`);
+          for (const line of renderSessionSummary(payload.summary)) println(line);
+          println(paint(`confirm: /open ${restArgs.join(' ')} --confirm`, 'dim', paintOpts));
+          return 'continue';
+        }
+        if (payload?.kind === 'project') {
+          if (resolvePath(payload.root) !== resolvePath(process.cwd())) {
+            process.chdir(payload.root);
+            stopStream(); // events were bound to the previous project
+            startStream();
+            println(paint(`session → ${payload.root}`, 'dim', paintOpts));
+            println(await buildHeader(plain));
+          }
+          for (const line of renderSessionSummary(payload.summary)) println(line);
+          return 'continue';
+        }
+        if (res.code === 0) {
+          // Document / overview: render through the same use-case.
+          await relay(['open', ...restArgs]);
+          return 'continue';
+        }
+        for (const line of res.stderr.split(/\r?\n/)) {
+          if (line.trim()) println(paint(line, 'error', paintOpts));
+        }
         return 'continue';
+      }
       case '/rounds':
         await relay(['rounds', ...restArgs]);
         return 'continue';

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolve } from 'node:path';
 
 /**
  * Runs this same CLI in a child process so slash commands reuse the exact
@@ -12,10 +13,14 @@ export interface CliRunResult {
   stderr: string;
 }
 
+// Resolved once at module load (original cwd): the REPL may chdir when the
+// session switches projects, so a relative argv[1] must not be re-resolved
+// against the new working directory on the next relay spawn.
+const ENTRY_AT_START = process.argv[1] ? resolve(process.argv[1]) : null;
+
 export function cliEntryPath(): string {
-  const entry = process.argv[1];
-  if (!entry) throw new Error('cannot locate ideaseek entry script');
-  return entry;
+  if (!ENTRY_AT_START) throw new Error('cannot locate ideaseek entry script');
+  return ENTRY_AT_START;
 }
 
 export function runCli(

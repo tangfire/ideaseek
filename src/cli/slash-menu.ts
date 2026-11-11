@@ -50,7 +50,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: '/mode [research|agent]',
     description: 'show mode, project and permissions; switch session mode',
   },
-  { name: '/open', usage: '/open [name]', description: 'list or open knowledge/report documents' },
+  {
+    name: '/open',
+    usage: '/open [project]',
+    description: 'switch the session project (confirm with --confirm) or read a document',
+  },
   {
     name: '/rounds',
     usage: '/rounds [list|show <id>]',

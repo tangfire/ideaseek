@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
+import { IdeaseekError, exitCodeForError } from './core/errors.js';
 import { loadLocalEnv } from './core/env.js';
 import { registerBaselineCommand } from './commands/baseline.js';
 import { registerCapacityCommand } from './commands/capacity.js';
@@ -134,16 +135,61 @@ export function buildProgram(): Command {
   return program;
 }
 
+/**
+ * Global `--project <path>` (docs/CLI_SPEC, USER_GUIDE): selects the
+ * project for this process before any command resolves paths, in any argv
+ * position (before or after the subcommand). Extracted here so every
+ * command gains it without per-command flags; commands that already
+ * resolve from cwd keep working unchanged.
+ */
+async function extractProjectOverride(argv: string[]): Promise<string[]> {
+  const out = [...argv];
+  for (let i = 2; i < out.length; i++) {
+    const arg = out[i]!;
+    let value: string | null = null;
+    if (arg === '--project') {
+      const next = out[i + 1];
+      if (!next || next.startsWith('-')) {
+        throw new IdeaseekError('INVALID_ARGUMENT', '--project requires a path');
+      }
+      value = next;
+      out.splice(i, 2);
+      i--; // the element after the value shifted onto i
+    } else if (arg.startsWith('--project=')) {
+      value = arg.slice('--project='.length);
+      out.splice(i, 1);
+      i--;
+    }
+    if (value === null) continue;
+    if (!value.trim()) {
+      throw new IdeaseekError('INVALID_ARGUMENT', '--project requires a path');
+    }
+    const { resolve } = await import('node:path');
+    const { stat } = await import('node:fs/promises');
+    const target = resolve(value);
+    const info = await stat(target).catch(() => null);
+    if (!info?.isDirectory()) {
+      throw new IdeaseekError('FILE_NOT_FOUND', `--project path not found: ${value}`);
+    }
+    process.chdir(target);
+  }
+  return out;
+}
+
 export async function runCli(argv: string[]): Promise<number> {
   loadLocalEnv(); // names-only, never overrides host env, never logs values
   try {
-    await buildProgram().parseAsync(argv);
+    await buildProgram().parseAsync(await extractProjectOverride(argv));
     const code = process.exitCode;
     return typeof code === 'number' ? code : 0;
   } catch (error) {
     if (error instanceof CommanderError) {
       // Help/version requests exit 0; misuse exits with commander's code.
       return typeof error.exitCode === 'number' ? error.exitCode : 1;
+    }
+    if (error instanceof IdeaseekError) {
+      process.stderr.write(`error: [${error.code}] ${error.message}\n`);
+      return exitCodeForError(error);
     }
     process.stderr.write(`error: ${(error as Error).stack ?? String(error)}\n`);
     return 1;

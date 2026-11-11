@@ -369,10 +369,32 @@ describe('new slash commands and NL routing (CLI)', () => {
     repl.write('/open sample-note\r');
     await repl.waitFor(/first line of the note/);
     repl.write('/open does-not-exist\r');
-    await repl.waitFor(/no document matches/);
+    await repl.waitFor(/no project or document matches/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
     expect(done.stdout).not.toContain('unknown command: /open');
+  }, 90_000);
+
+  it('/open previews then switches the session project with --confirm', async () => {
+    const alpha = await makeProjectDir('alpha');
+    const beta = await makeProjectDir('beta');
+    const repl = startTtyRepl(alpha);
+    await repl.waitFor(/ideaseek ›/);
+
+    // Step 1: preview — target plus mode/project/permission summary.
+    repl.write(`/open "${beta}"\r`);
+    await repl.waitFor(/switch target : beta/);
+    await repl.waitFor(/session mode : research/);
+    await repl.waitFor(/confirm: \/open .*--confirm/);
+
+    // Step 2: --confirm chdirs the session and reprints the new context.
+    repl.write(`/open "${beta}" --confirm\r`);
+    await repl.waitFor(/session → /);
+    await repl.waitFor(/project\s+: beta/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('unknown command: /open');
+    expect(done.stdout).not.toContain('unknown input');
   }, 90_000);
 
   it('/rounds /ideate /feedback relay to their CLI use-cases', async () => {
