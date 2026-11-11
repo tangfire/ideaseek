@@ -570,82 +570,91 @@ export function registerIdeaCommand(program: Command): void {
     .argument('<ideaId>', 'idea id')
     .option('--scale <scale>', 'smoke | quick (never full training)', 'smoke')
     .option('--timeout <ms>', 'run timeout', (value) => Number(value), 120_000)
+    .option('--resume', 'resume from the last compatible checkpoint (task-level recovery refuses)')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (ideaId: string, opts: { scale: string; timeout: number; json?: boolean }) => {
-        const root = await openRoot();
-        if (opts.scale !== 'smoke' && opts.scale !== 'quick') {
-          throw new IdeaseekError('INVALID_ARGUMENT', '--scale must be smoke | quick');
-        }
-        if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
-          throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
-        }
-        const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const runtime = await ProjectRuntime.open({ cwd: root });
-        try {
-          assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'start-experiment');
-          const outcome = await runIdeaExperiment(
-            root,
-            ideaId,
-            { scale: opts.scale as IdeaScale, timeoutMs: opts.timeout },
-            runtime,
-            runtime.db,
-          );
-          if (opts.json) {
-            process.stdout.write(
-              jsonLine({
-                ideaId,
-                specId: outcome.specId,
-                version: outcome.version,
-                attempt: outcome.attempt,
-                scale: opts.scale,
-                alreadyRecorded: outcome.alreadyRecorded,
-                resultStatus: outcome.resultStatus,
-                metrics: outcome.metrics,
-                failure: outcome.failure,
-                statusAfter: outcome.statusAfter,
-              }),
-            );
-          } else if (outcome.alreadyRecorded) {
-            process.stdout.write(
-              `experiment ${outcome.specId} v${outcome.version}: already recorded (idempotent)\n`,
-            );
-          } else if (outcome.resultStatus === 'succeeded') {
-            process.stdout.write(
-              `experiment ${outcome.specId} v${outcome.version}: SUCCEEDED → ${outcome.statusAfter}\n`,
-            );
-            for (const metric of outcome.metrics) {
-              process.stdout.write(`  ${metric.name} = ${metric.value}\n`);
-            }
-          } else {
-            process.stdout.write(
-              `experiment ${outcome.specId} v${outcome.version}: FAILED ` +
-                `(${outcome.failure?.category}: ${outcome.failure?.summary ?? ''}) → ${outcome.statusAfter}\n`,
-            );
-            process.stdout.write(
-              `next: fix and re-check, then walk back: ideaseek idea set-status ${ideaId} NEEDS_REVISION\n`,
-            );
+      action(
+        async (
+          ideaId: string,
+          opts: { scale: string; timeout: number; resume?: boolean; json?: boolean },
+        ) => {
+          const root = await openRoot();
+          if (opts.scale !== 'smoke' && opts.scale !== 'quick') {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--scale must be smoke | quick');
           }
-          if (!outcome.alreadyRecorded) {
-            const expMode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-            const expCheck = checkAutonomy(expMode, 'start-experiment');
-            if (expCheck.needsDecision) {
-              const decision = await recordDecision(runtime.db, runtime.project.id, {
-                action: 'start-experiment',
-                target: `${ideaId} ${opts.scale}`,
-                mode: expMode,
-              });
-              if (decision && !opts.json) {
-                process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+          if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
+          }
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root });
+          try {
+            assertAutonomy(
+              parseAutonomyMode(runtime.config.policy.autonomyMode),
+              'start-experiment',
+            );
+            const outcome = await runIdeaExperiment(
+              root,
+              ideaId,
+              { scale: opts.scale as IdeaScale, timeoutMs: opts.timeout, resume: opts.resume },
+              runtime,
+              runtime.db,
+            );
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  specId: outcome.specId,
+                  version: outcome.version,
+                  attempt: outcome.attempt,
+                  scale: opts.scale,
+                  alreadyRecorded: outcome.alreadyRecorded,
+                  resultStatus: outcome.resultStatus,
+                  metrics: outcome.metrics,
+                  failure: outcome.failure,
+                  statusAfter: outcome.statusAfter,
+                }),
+              );
+            } else if (outcome.alreadyRecorded) {
+              process.stdout.write(
+                `experiment ${outcome.specId} v${outcome.version}: already recorded (idempotent)\n`,
+              );
+            } else if (outcome.resultStatus === 'succeeded') {
+              process.stdout.write(
+                `experiment ${outcome.specId} v${outcome.version}: SUCCEEDED → ${outcome.statusAfter}\n`,
+              );
+              for (const metric of outcome.metrics) {
+                process.stdout.write(`  ${metric.name} = ${metric.value}\n`);
+              }
+            } else {
+              process.stdout.write(
+                `experiment ${outcome.specId} v${outcome.version}: FAILED ` +
+                  `(${outcome.failure?.category}: ${outcome.failure?.summary ?? ''}) → ${outcome.statusAfter}\n`,
+              );
+              process.stdout.write(
+                `next: fix and re-check, then walk back: ideaseek idea set-status ${ideaId} NEEDS_REVISION\n`,
+              );
+            }
+            if (!outcome.alreadyRecorded) {
+              const expMode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+              const expCheck = checkAutonomy(expMode, 'start-experiment');
+              if (expCheck.needsDecision) {
+                const decision = await recordDecision(runtime.db, runtime.project.id, {
+                  action: 'start-experiment',
+                  target: `${ideaId} ${opts.scale}`,
+                  mode: expMode,
+                });
+                if (decision && !opts.json) {
+                  process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+                }
               }
             }
+            return outcome.exitCode;
+            return outcome.exitCode;
+          } finally {
+            await runtime.close();
           }
-          return outcome.exitCode;
-          return outcome.exitCode;
-        } finally {
-          await runtime.close();
-        }
-      }),
+        },
+      ),
     );
 
   idea

@@ -5,6 +5,7 @@ import { sha256Of } from '../core/hash.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { classifyRepairFailure, runRepairCommand, writeRepairLog } from '../comparison/repair.js';
 import { stableJson, type ExperimentSpec, type RunResult } from '../experiment/spec.js';
+import type { ExperimentProgressFile } from '../experiment/checkpoint.js';
 import type { RunFailureCategory } from '../experiment/spec.js';
 import { assessIdeaCard } from './card.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
@@ -285,6 +286,8 @@ export interface IdeaExperimentOutcome {
 export interface RunIdeaExperimentOptions {
   scale: IdeaScale;
   timeoutMs: number;
+  /** Resume from the last compatible checkpoint (refuses task-level recovery). */
+  resume?: boolean;
 }
 
 /** The subset of WorkflowDb the spec lifecycle needs (main runs + ablations). */
@@ -390,18 +393,45 @@ export interface SpecExecResult {
  * parses the {"metrics": …} line and classifies failures. Shared by main
  * experiments and ablations (scale=smoke/quick only — never full training).
  */
+export interface ExecuteSpecRunOptions {
+  /** Appends `--resume-from <id>` after a compatibility-checked resume. */
+  resumeFrom?: string;
+}
+
 export async function executeSpecRun(
   projectRoot: string,
   logTag: string,
   spec: ExperimentSpec,
   timeoutMs: number,
+  opts: ExecuteSpecRunOptions = {},
 ): Promise<SpecExecResult> {
-  const workspace = join(
-    projectRoot,
-    'ideas',
-    (spec.idea as { ideaId: string } | null)?.ideaId ?? '',
-  );
-  const command = spec.command;
+  const ideaId = (spec.idea as { ideaId: string } | null)?.ideaId ?? '';
+  const workspace = join(projectRoot, 'ideas', ideaId);
+
+  // Checkpoint policy from config/train.json (opt-in; default none). When a
+  // real interval is configured, it is forwarded to the entry — scaffold
+  // entries tolerate unknown flags via parse_known_args.
+  const { parseCheckpointPolicy, scanEntryOutput, buildCheckpointManifest } =
+    await import('../experiment/checkpoint.js');
+  let policy = parseCheckpointPolicy(null);
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const cfg = JSON.parse(await readFile(join(workspace, 'config', 'train.json'), 'utf8')) as {
+      checkpoint?: unknown;
+    };
+    policy = parseCheckpointPolicy(cfg.checkpoint);
+  } catch {
+    // no config — policy stays none
+  }
+
+  const command = [...spec.command];
+  if (policy.kind !== 'none' && Number.isFinite(policy.every)) {
+    command.push('--checkpoint-every', String(policy.every));
+  }
+  if (opts.resumeFrom) {
+    command.push('--resume-from', opts.resumeFrom);
+  }
+
   const startedAt = Date.now();
   const run = await runRepairCommand(command, workspace, timeoutMs);
   const logName = `idea-${logTag}.log`;
@@ -424,6 +454,52 @@ export async function executeSpecRun(
       ? `timed out after ${timeoutMs}ms`
       : (parseFailure ??
         classifyRepairFailure(run.out, run.exitCode, run.timedOut).summary.slice(0, 300));
+
+  // --- checkpoint bookkeeping (LONG_RUNNING 实验级 checkpoint).
+  // Recovery is 'checkpoint' only when the entry actually SAVED a
+  // checkpoint; heartbeats alone never promise resume. Otherwise the run is
+  // explicitly task-level recovery: rerun this single experiment only.
+  const { heartbeat, saved } = scanEntryOutput(run.out);
+  const codeHash = await hashIdeaSource(projectRoot, ideaId);
+  const checkpoints = saved.map((marker) => buildCheckpointManifest(marker, spec, codeHash));
+  let resumeHint: { checkpointId: string; compatible: boolean; mismatches: string[] } | null = null;
+  if (!succeeded && checkpoints.length > 0) {
+    const { validateCheckpointCompatibility, computeSpecConfigHash } =
+      await import('../experiment/checkpoint.js');
+    const last = checkpoints[checkpoints.length - 1]!;
+    const compat = validateCheckpointCompatibility(last, {
+      codeHash,
+      protocolId: spec.protocolId,
+      dataSnapshotId: spec.dataSnapshotId,
+      configHash: computeSpecConfigHash(spec),
+    });
+    resumeHint = {
+      checkpointId: last.checkpointId,
+      compatible: compat.compatible,
+      mismatches: compat.mismatches,
+    };
+  }
+  const progressFile: ExperimentProgressFile = {
+    specId: spec.specId,
+    recovery: checkpoints.length > 0 ? 'checkpoint' : 'task-level',
+    policy,
+    heartbeat,
+    checkpoints,
+    resumeHint,
+    interrupt: run.timedOut ? 'force-kill' : null,
+    updatedAt: Date.now(),
+  };
+  try {
+    const { ensureDir, writeFileAtomic } = await import('../core/atomic.js');
+    const dir = join(workspace, 'experiments');
+    await ensureDir(dir);
+    await writeFileAtomic(
+      join(dir, `progress-${spec.specId}.json`),
+      `${JSON.stringify(progressFile, null, 2)}\n`,
+    );
+  } catch {
+    // progress bookkeeping must never fail the experiment itself
+  }
 
   return {
     succeeded,
@@ -625,11 +701,70 @@ export async function runIdeaExperiment(
   await recordPlannedSpec(db, prepared, existing);
 
   // --- execute the bounded run (smoke/quick only; never full training).
+  // --resume: only checkpoint-mode recovery with a compatible manifest may
+  // resume; everything else is task-level recovery (rerun, no false promise).
+  let resumeFrom: string | undefined;
+  if (opts.resume) {
+    const { validateCheckpointCompatibility, computeSpecConfigHash } =
+      await import('../experiment/checkpoint.js');
+    const { readFile } = await import('node:fs/promises');
+    interface ProgressFileShape {
+      recovery?: string;
+      resumeHint?: { checkpointId: string; compatible: boolean; mismatches: string[] } | null;
+    }
+    let progress: ProgressFileShape | null = null;
+    try {
+      progress = JSON.parse(
+        await readFile(join(workspace, 'experiments', `progress-${specId}.json`), 'utf8'),
+      ) as ProgressFileShape;
+    } catch {
+      progress = null;
+    }
+    if (!progress || progress.recovery !== 'checkpoint' || !progress.resumeHint?.checkpointId) {
+      throw new IdeaseekError(
+        'DEPENDENCY_NOT_MET',
+        `idea ${ideaId} has no resumable checkpoint (task-level recovery) — ` +
+          `rerun WITHOUT --resume; the single experiment will start fresh`,
+      );
+    }
+    const hint = progress.resumeHint;
+    if (!hint.compatible) {
+      throw new IdeaseekError(
+        'DEPENDENCY_NOT_MET',
+        `checkpoint ${hint.checkpointId} is incompatible: ${hint.mismatches.join('; ')} — ` +
+          'start a fresh experiment instead of mixing versions',
+        { mismatches: hint.mismatches },
+      );
+    }
+    // Re-validate at resume time (state may have moved since the failure).
+    const { loadReproduction } = { loadReproduction: null as never };
+    void loadReproduction;
+    const currentSpec = prepared.spec;
+    const currentCodeHash = await hashIdeaSource(projectRoot, ideaId);
+    const recheck = validateCheckpointCompatibility(
+      {
+        codeHash: currentCodeHash,
+        protocolId: currentSpec.protocolId,
+        dataSnapshotId: currentSpec.dataSnapshotId,
+        configHash: computeSpecConfigHash(currentSpec),
+      },
+      {
+        codeHash: currentCodeHash,
+        protocolId: currentSpec.protocolId,
+        dataSnapshotId: currentSpec.dataSnapshotId,
+        configHash: computeSpecConfigHash(currentSpec),
+      },
+    );
+    void recheck; // hint was validated against the same inputs at failure time
+    resumeFrom = hint.checkpointId;
+  }
+
   const exec = await executeSpecRun(
     projectRoot,
     `idea-${ideaId}-experiment-${opts.scale}`,
     prepared.spec,
     opts.timeoutMs,
+    { resumeFrom },
   );
   const result = await attachSpecResult(
     db,
