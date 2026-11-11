@@ -14,7 +14,7 @@ export const ARIS_SOURCE = {
   vendoredAt: '2026-11-11',
 } as const;
 
-/** P0 skills vendored for the six Phase 4.5 capability migrations. */
+/** Vendored skills for the Phase 4.5 capability migrations (P0 + P1 wiki). */
 export const VENDORED_SKILLS: readonly string[] = [
   'ablation-planner',
   'analyze-results',
@@ -27,6 +27,7 @@ export const VENDORED_SKILLS: readonly string[] = [
   'integrity-forensics',
   'novelty-check',
   'prior-art-search',
+  'research-wiki',
 ];
 
 export interface VendoredFile {
@@ -148,5 +149,13 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
   {
     path: 'skills/prior-art-search/SKILL.md',
     sha256: '8793fb26c522de4c44a64b68df81e5d12718a99866c639658261cea680bd58b2',
+  },
+  {
+    path: 'skills/research-wiki/SKILL.md',
+    sha256: '564eea3ad9e8763ba2120605e61b18260b201976e9d6035643d8f65982052c06',
+  },
+  {
+    path: 'tools/research_wiki.py',
+    sha256: '5836740a1fcb6e15d6cf2dc87847ddb2abb23c0dd6a69a2b9cf0cd5b3a0ac0bb',
   },
 ];

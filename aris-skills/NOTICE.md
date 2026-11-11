@@ -9,8 +9,9 @@ on the machine.
 - License: MIT — see `LICENSE` in this directory (Copyright (c) 2026 wanshuiyin)
 - Vendored: 2026-11-11
 
-Contents: the 11 P0 skill definitions (`skills/<name>/SKILL.md`) and the
-`shared-references/*.md` files those skills link to.
+Contents: 12 skill definitions (`skills/<name>/SKILL.md`), the
+`shared-references/*.md` files those skills link to, and the pure-stdlib
+`tools/research_wiki.py` helper used by the research-wiki skill.
 
 Integrity: every vendored file's SHA-256 is recorded in
 `src/aris/manifest.ts` and verified by `ideaseek aris` (and by
