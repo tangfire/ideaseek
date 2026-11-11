@@ -146,6 +146,7 @@ Phase 4：Comparison 完整闭环
 - [ ] 本地通知、可选 webhook 和无心跳检测
 - [ ] 运行中调整 idea/comparison 优先级和资源
 - [ ] 用户反馈入口和 gold set 导入
+- [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
 - [ ] 运行前 `plan`、成本/资源估算和高成本确认
 - [ ] `next/status/explain` 的阻塞和决策解释
 - [ ] 任务详情、脱敏日志和本地/可选远程通知
