@@ -25,6 +25,7 @@ import {
   registerScanCommand,
 } from './commands/inputs.js';
 import { registerNextCommand } from './commands/next.js';
+import { registerPlanCommand } from './commands/plan.js';
 import { registerPapersCommand } from './commands/papers.js';
 import { registerLogsCommand } from './commands/logs.js';
 import { registerDecisionCommand } from './commands/decision.js';
@@ -89,6 +90,7 @@ export function buildProgram(): Command {
   registerWorkerCommand(program);
   registerStatusCommand(program);
   registerNextCommand(program);
+  registerPlanCommand(program);
   registerEventsCommand(program);
   registerSearchCommand(program);
   registerStreamCommands(program);
