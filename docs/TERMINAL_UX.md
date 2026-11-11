@@ -32,6 +32,7 @@ IdeaSeek · Research from evidence
 ```text
 [IS] IdeaSeek · Research from evidence
 Project : fl-model-heterogeneity
+Path    : ~/research/fl-model-heterogeneity
 Question: heterogeneous models in federated learning
 Mode    : starter
 Run     : run-20261110-001
@@ -64,6 +65,7 @@ ideaseek ›
 /resume       恢复
 /report       生成中间报告
 /projects     查看已注册项目
+/open <path>  切换当前交互会话的项目
 /cleanup      预览可清理缓存
 /help         查看命令
 /quit         退出交互界面，不取消后台 run
@@ -72,6 +74,8 @@ ideaseek ›
 每个斜杠命令都有等价的非交互 CLI 命令，方便脚本和 SSH 使用。
 
 提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言先由 Supervisor 转成查询、建议或待审批 Decision；高影响操作必须显示摘要并确认。
+
+交互提示符始终显示当前项目名和路径。切换项目后要求二次确认，避免用户把控制命令发到错误的研究目录。
 
 ## 实时事件
 

@@ -17,6 +17,29 @@
 - 用户能看到一个 demo/fixture 入口，不必先准备真实论文；
 - `next` 给出下一条可复制命令。
 
+## 项目上下文
+
+IdeaSeek 采用“当前目录就是项目”的默认模型，类似 Claude Code：
+
+```bash
+cd ~/research/fl-model-heterogeneity
+ideaseek
+ideaseek status
+```
+
+CLI 从当前目录向上查找 `.research/` 项目标识；`/status`、`/next`、`/papers`、`/ideas` 和交互中的自然语言默认只作用于当前项目。没有项目上下文时，命令不猜测最近项目，而是提示 `ideaseek init`、`ideaseek projects` 或显式指定项目。
+
+用户也可以从任意目录查看和打开历史项目：
+
+```bash
+ideaseek projects
+ideaseek open ~/research/fl-model-heterogeneity
+ideaseek status --project ~/research/fl-model-heterogeneity
+ideaseek attach --project ~/research/fl-model-heterogeneity --run <run-id>
+```
+
+`open` 只切换当前 CLI 的项目上下文，不复制或移动项目文件；交互 REPL 中显示当前项目路径和 project ID，避免把命令发到错误项目。后台 run 继续绑定创建它的项目目录，不能因为用户从另一个目录 attach 就改变其输入根。
+
 ## Journey B：模型配置
 
 ```text

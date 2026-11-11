@@ -14,6 +14,7 @@ ideaseek models list
 ideaseek models test --route deep
 ideaseek plan --question "..."
 ideaseek projects
+ideaseek open <project-path>
 ideaseek scan
 ideaseek organize [--apply]
 ideaseek intake
@@ -92,5 +93,11 @@ ideaseek report [--run <id>]
 ## 后台约束
 
 同一项目默认只允许一个活动 run。后台 supervisor 保存 PID、版本、心跳和日志；SSH 断开不影响运行。第二个 run 必须显式使用独立 workspace 或用户确认。
+
+## 项目上下文
+
+默认项目是当前目录或其父目录中最近的 `.research/`。项目本地命令（`status`、`next`、`papers`、`ideas`、`report` 和 REPL slash 命令）只读取当前项目。没有项目上下文时返回可执行提示，不自动选择历史项目。
+
+`ideaseek projects` 从用户级项目注册表列出已知项目、路径、最后运行、阶段和状态；`ideaseek open <path>` 为当前 CLI 会话选择项目；所有命令也支持 `--project <path>` 覆盖当前目录。项目注册表只保存路径和脱敏摘要，不保存论文、数据或 secret。路径失效时标记 unavailable，不删除项目记录。
 
 

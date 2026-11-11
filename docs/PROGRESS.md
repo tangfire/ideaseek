@@ -145,6 +145,7 @@ Phase 4：Comparison 完整闭环
 - [ ] `plan` dry-run、成本/资源预估和审批摘要
 - [ ] 用户级/项目级配置分层与 `config explain`
 - [ ] 多项目注册、项目锁和目录守卫
+- [ ] 当前目录项目上下文、`projects/open` 和 `--project` 覆盖
 - [ ] cleanup/archive/export 生命周期命令
 - [ ] 本地通知、可选 webhook 和无心跳检测
 - [ ] 运行中调整 idea/comparison 优先级和资源
