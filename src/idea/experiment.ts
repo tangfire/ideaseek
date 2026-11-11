@@ -110,6 +110,8 @@ export async function buildIdeaSpec(
     extraNotes?: string[];
     /** Appended to the run command (e.g. --ablate <id>). */
     commandSuffix?: string[];
+    /** Seeds locked by the ARIS experiment plan, when available. */
+    planSeeds?: number[];
   },
 ): Promise<BuildIdeaSpecResult> {
   const meta = await loadWorkspaceMeta(projectRoot, ideaId);
@@ -183,9 +185,12 @@ export async function buildIdeaSpec(
     },
     command: [...commandFor(config, opts.scale), ...(opts.commandSuffix ?? [])],
     metrics,
-    seeds: Array.isArray(config.seeds)
-      ? config.seeds.filter((s): s is number => typeof s === 'number' && Number.isInteger(s))
-      : [42],
+    seeds:
+      opts.planSeeds && opts.planSeeds.length > 0
+        ? opts.planSeeds
+        : Array.isArray(config.seeds)
+          ? config.seeds.filter((s): s is number => typeof s === 'number' && Number.isInteger(s))
+          : [42],
     resources: (() => {
       const res = (config.resources ?? {}) as { gpus?: unknown; memoryGiB?: unknown };
       return {
