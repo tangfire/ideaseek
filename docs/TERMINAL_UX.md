@@ -53,6 +53,7 @@ ideaseek ›
 ```text
 /status       当前阶段、任务、资源和预算
 /models       查看和配置模型 route/provider
+/mode         查看/切换 Research 和 Agent 模式
 /next         下一步和阻塞解释
 /papers       论文进度和失败解析
 /comparisons  comparison 状态、来源和阻塞
@@ -73,7 +74,7 @@ ideaseek ›
 
 每个斜杠命令都有等价的非交互 CLI 命令，方便脚本和 SSH 使用。
 
-提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言先由 Supervisor 转成查询、建议或待审批 Decision；高影响操作必须显示摘要并确认。
+提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言先由当前模式的 Agent/Supervisor 转成查询、建议或待审批 Decision；高影响操作必须显示摘要并确认。
 
 交互提示符始终显示当前项目名和路径。切换项目后要求二次确认，避免用户把控制命令发到错误的研究目录。
 

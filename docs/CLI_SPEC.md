@@ -12,6 +12,9 @@ ideaseek doctor
 ideaseek models
 ideaseek models list
 ideaseek models test --route deep
+ideaseek interactive --mode research
+ideaseek interactive --mode agent
+ideaseek mode show
 ideaseek plan --question "..."
 ideaseek projects
 ideaseek open <project-path>
@@ -49,7 +52,7 @@ ideaseek report [--run <id>]
 
 `init` 创建目录和模板，不覆盖已有文件；`start` 是小白用户的一键入口，组合轻量检测、扫描、协议草案和受限运行；`setup` 优先自动检测并只询问无法安全推断的配置；`doctor` 只做检查；`scan` 递归发现用户随手放入的论文、代码、数据和压缩包；`organize` 预览或应用对象归类，但不移动/覆盖原始文件；`config explain` 显示生效配置来源；`confirm protocol` 确认平台提出的实验协议；`next` 只给建议，不启动高成本工作；`run` 创建或恢复工作流；`attach/watch` 订阅实时事件；`pause/resume/cancel` 是可审计的控制操作。
 
-交互提示符、启动 banner、事件摘要、审批块和 plain/JSON 显示模式遵循 [TERMINAL_UX.md](TERMINAL_UX.md)。CLI UI 只显示状态和动作摘要，不显示模型隐藏推理。
+交互提示符、启动 banner、事件摘要、审批块和 plain/JSON 显示模式遵循 [TERMINAL_UX.md](TERMINAL_UX.md)。CLI UI 只显示状态和动作摘要，不显示模型隐藏推理。`research` 是默认模式；`agent` 复用 DSH 做受限项目代码/日志/测试协助。
 
 交互提示符同时接受 slash 命令和自然语言。自然语言只被转换成查询、建议或待审批 Decision；不能直接绕过状态机、预算、权限或数据快照。高影响请求显示变更摘要和确认选项。
 
