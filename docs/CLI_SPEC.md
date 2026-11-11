@@ -48,6 +48,9 @@ ideaseek cancel --run <id>
 ideaseek continue --run <id>
 ideaseek data describe
 ideaseek data slices
+ideaseek datasets discover --question "..."
+ideaseek datasets list
+ideaseek datasets explain <candidate-id>
 ideaseek experiment promote --idea <id> --to standard
 ideaseek experiment handoff --idea <id>
 ideaseek report [--run <id>]

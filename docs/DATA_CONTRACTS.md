@@ -36,6 +36,10 @@
 
 记录用户仓库的任意结构分析结果：source snapshot/hash、语言、依赖清单、候选训练/评估/测试入口、配置文件、数据加载/输出接口、指标实现、README 说明、识别证据、置信度、未解决问题和用户确认。入口和命令不能只凭常见文件名猜定；自动运行前先在隔离副本做静态检查和 smoke test。
 
+## DatasetCandidate
+
+必须包含名称、来源 URL/索引 ID、相关论文、任务/字段说明、规模、许可证/访问限制、发现时间、查询/证据、与当前研究问题的关联理由、置信度和状态（`recommended`/`needs-access`/`user-provided`/`validated`/`rejected`）。推荐不等于已下载或已验证；只有用户提供/授权并建立 DatasetSnapshot 后才能进入实验。
+
 ## ComparisonMethod
 
 必须包含 `method_id`、论文引用、`required`、代码来源（`user`/`official-code`/`paper-reimplementation`）、来源 URL/commit、许可证、入口、依赖、数据接口、指标、patch hash、复现置信度和状态。原始仓库、修复 worktree 和论文重实现不能混为一个路径。

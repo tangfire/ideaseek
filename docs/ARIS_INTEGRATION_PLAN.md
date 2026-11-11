@@ -12,6 +12,7 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 - `experiment-bridge`：实验代码、配置、结果和下一步之间的桥接；
 - `analyze-results` / `experiment-audit`：从结果、日志和失败实验生成结构化分析；
 - `ablation-planner`：由机制链生成区分性消融。
+- `research-lit` / `openalex` / `semantic-scholar` 风格的数据集与相关工作检索；结果先进入候选清单，不自动成为实验输入。
 
 ### P1：独立评审和质量控制
 
@@ -26,6 +27,12 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 - `render-html`：把 Markdown/JSON artifact 渲染成用户更容易阅读的 HTML；
 - `monitor-experiment` / `experiment-queue`：长实验监控、队列和等待原因；
 - `paper-write` / `rebuttal`：作为 handoff 之后的可选写作 workflow。
+
+### P1：数据集发现
+
+加入 `Dataset Discovery Agent`：从论文、表格、代码 README、数据集论文和允许的学术索引中发现常用数据集，输出 `DatasetCandidate`：名称、来源、用途、字段/任务、规模、许可证、下载/申请方式、相关论文、与当前问题的关联和置信度。
+
+默认只发现和推荐，不自动下载大型或受限数据。用户显式授权后，平台可以下载公开元数据或小型 fixture；真正训练数据仍由用户提供/挂载，进入新的 dataset snapshot 后才参与实验。
 
 ## IdeaSeek 与 ARIS 的职责
 
@@ -67,4 +74,5 @@ ARIS 仓库为 MIT 许可。IdeaSeek 可以借鉴其公开方法，也可以在�
 - reviewer 输出能回到 PaperCard、ExperimentRun、Artifact 和代码 commit；
 - reviewer 失败、外部 provider 不可用或额度耗尽不破坏主 ResearchRun；
 - skills 不会绕过权限、预算、checkpoint 和 required comparison gate；
+- 数据集发现结果有来源/许可证/获取时间和置信度，不能把推荐数据当成已验证输入；
 - 研究者可以只安装需要的 skills，不因 ARIS 全量依赖增加安装负担。

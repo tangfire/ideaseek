@@ -85,6 +85,17 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       stopConditions: ['budget exhausted'],
     });
   }
+  if (request.outputSchema === 'supervisor-intent-v1') {
+    // Deterministic supervisor stand-in: unclassified text becomes a pending
+    // action (never an execution), so tests can assert the audit path.
+    return JSON.stringify({
+      kind: 'pending-action',
+      answer: '',
+      cliArgs: null,
+      reason: 'fake-supervisor',
+      summary: `supervisor classified: ${(request.inputs[0]?.content ?? '').slice(0, 120)}`,
+    });
+  }
   return buildFakeCard(request, call);
 }
 function buildFakeCard(request: HarnessTaskRequest, call: number): string {

@@ -208,10 +208,15 @@ describe('ideaseek interactive (CLI)', () => {
     await repl.waitFor(/Ideaseek commands/);
     repl.write('/bogus\n');
     await repl.waitFor(/unknown command: \/bogus/);
+    // Plain text routes to the supervisor (fake harness in tests) — the
+    // REPL must never print "unknown input".
+    const enqueued = await runCli(dir, ['run', '--question', 'nl route', '--enqueue-only']);
+    expect(enqueued.code).toBe(0);
     repl.write('plain text input\n');
-    await repl.waitFor(/not sure how to handle that/);
+    await repl.waitFor(/recorded pending-approval decision/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('unknown input');
     expect(done.stdout).toContain('/status');
     expect(done.stdout).toContain('/quit');
     expect(done.stdout).toContain('try /help');
@@ -460,13 +465,18 @@ describe('natural language in the REPL (Journey E)', () => {
     ).rejects.toThrow();
   }, 60_000);
 
-  it('guides unknown text instead of failing', async () => {
+  it('routes unclassifiable text to the supervisor — never "unknown input"', async () => {
     const dir = await makeProjectDir();
+    const enqueued = await runCli(dir, ['run', '--question', 'nl route', '--enqueue-only']);
+    expect(enqueued.code).toBe(0);
     const repl = startRepl(dir);
     await repl.waitFor(/ideaseek ›/);
     repl.write('xyzzy random gibberish\n');
-    await repl.waitFor(/not sure how to handle that/);
+    // Fake supervisor classifies it as a pending action → decision propose.
+    await repl.waitFor(/recorded pending-approval decision/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('unknown input');
+    expect(done.stdout).toContain('nothing was changed');
   }, 60_000);
 });

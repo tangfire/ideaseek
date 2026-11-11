@@ -19,6 +19,7 @@ export type ProtectedAction =
   | 'change-required-comparison'
   | 'change-hypothesis'
   | 'change-model-route'
+  | 'change-research-mode'
   | 'finalize-handoff';
 
 /** Actions that write code or launch runs (blocked outright in review-only). */
@@ -60,6 +61,7 @@ const PROTECTED: ReadonlySet<string> = new Set<ProtectedAction>([
   'change-required-comparison',
   'change-hypothesis',
   'change-model-route',
+  'change-research-mode',
   'finalize-handoff',
 ]);
 

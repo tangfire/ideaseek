@@ -174,6 +174,7 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 独立 reviewer/fresh-context review adapter
 - [ ] research wiki 和 HTML artifact renderer
 - [ ] experiment audit/integrity workflow
+- [ ] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入
 ## 模块交付记录
 
 每个完成模块追加一行：

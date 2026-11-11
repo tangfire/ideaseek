@@ -6,6 +6,7 @@
 |---|---|---|---|
 | Paper Extractor | 当前 PDF/章节和任务 schema | `PaperCard` | 读原始论文；写知识 artifact；不能任意 shell |
 | Workspace Intake | 项目文件树、文件元数据、用户规则 | input manifest、候选分组、待确认项 | 只读扫描；不能移动/删除/覆盖原始文件 |
+| Dataset Discovery | 论文、数据集论文、代码 README、允许的学术索引 | `DatasetCandidate`、推荐清单和获取说明 | 只能发现/推荐；不能把未授权数据当实验输入或默认下载大型数据 |
 | Codebase Analyst | 用户提供的任意结构仓库、README、依赖/配置/测试 | `RepositoryUnderstanding`（入口、环境、数据接口、指标、证据和置信度） | 只读分析；不能假设固定目录/入口，也不能执行仓库代码 |
 | Evidence Checker | PaperCard 和证据片段 | 核验结果/纠错任务 | 只读论文和卡片；不能改原文 |
 | Synthesis Analyst | PaperCard、检索结果 | 主题综合/研究地图片段 | 写 `knowledge/` 版本 |

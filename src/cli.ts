@@ -20,6 +20,9 @@ import { registerInitCommand } from './commands/init.js';
 import { registerIngestCommand } from './commands/ingest.js';
 import { registerIdeaCommand } from './commands/idea.js';
 import { registerIdeateCommands } from './commands/ideate.js';
+import { registerAskCommand } from './commands/ask.js';
+import { registerModeCommand } from './commands/mode.js';
+import { registerOpenCommand } from './commands/open.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -92,6 +95,9 @@ export function buildProgram(): Command {
   registerExperimentCommand(program);
   registerIdeaCommand(program);
   registerIdeateCommands(program);
+  registerAskCommand(program);
+  registerModeCommand(program);
+  registerOpenCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

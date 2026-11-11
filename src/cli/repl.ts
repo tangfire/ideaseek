@@ -4,8 +4,21 @@ import readline from 'node:readline';
 import { detectEnvironment } from '../runtime/detect.js';
 import { renderBanner, renderHeader, type HeaderContext } from './banner.js';
 import { formatEventLine, paint, type PaintOptions } from './format.js';
-import { interpretInput } from './nl.js';
 import { cliEntryPath, runCli, runCliJson } from './runner.js';
+import { tokenizeArgs } from './tokens.js';
+import {
+  SLASH_COMMANDS,
+  slashCompleter,
+  resolveSlash,
+  helpText,
+  openMenu,
+  closeMenu,
+  moveSelection,
+  selectedCommand,
+  renderMenu,
+  truncateForWidth,
+  type MenuState,
+} from './slash-menu.js';
 
 /**
  * Interactive REPL (docs/TERMINAL_UX.md). Every slash command is a thin
@@ -14,85 +27,22 @@ import { cliEntryPath, runCli, runCliJson } from './runner.js';
  * RunEvents then follows live ones; quitting never cancels the run.
  */
 
-export interface SlashCommand {
-  name: string;
-  usage: string;
-  description: string;
-}
-
-export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/help', usage: '/help', description: 'show this help' },
-  { name: '/status', usage: '/status', description: 'run state, tasks, workers, recent events' },
-  { name: '/next', usage: '/next', description: 'state-aware suggestion for the next command' },
-  { name: '/papers', usage: '/papers', description: 'paper indexing progress and parse failures' },
-  {
-    name: '/comparisons',
-    usage: '/comparisons',
-    description: 'comparison methods, sources and blockers',
-  },
-  { name: '/ideas', usage: '/ideas', description: 'idea status and versions (Phase 5)' },
-  {
-    name: '/experiments',
-    usage: '/experiments',
-    description: 'recorded experiment specs and results',
-  },
-  { name: '/logs', usage: '/logs <task-id>', description: 'task detail with redacted logs' },
-  { name: '/approve', usage: '/approve', description: 'confirm the pending protocol proposal' },
-  {
-    name: '/reject',
-    usage: '/reject <reason>',
-    description: 'reject the pending proposal with a reason',
-  },
-  { name: '/pause', usage: '/pause', description: 'stop claiming new tasks (safe pause)' },
-  { name: '/resume', usage: '/resume', description: 'resume a paused run' },
-  { name: '/continue', usage: '/continue', description: 'continue a run blocked on quota/auth' },
-  { name: '/cancel', usage: '/cancel', description: 'cancel the run (artifacts and events kept)' },
-  { name: '/report', usage: '/report', description: 'write the factual run report' },
-  {
-    name: '/models',
-    usage: '/models',
-    description: 'model tier routes, roles, credential presence',
-  },
-  { name: '/quit', usage: '/quit', description: 'exit the UI (background runs keep going)' },
-];
-
-/** Readline Tab completer: prefix filter over slash commands. */
-export function slashCompleter(line: string): [string[], string] {
-  if (!line.startsWith('/')) return [[], line];
-  const matches = SLASH_COMMANDS.map((cmd) => cmd.name).filter((name) => name.startsWith(line));
-  return [matches, line];
-}
-
-export type SlashResolution =
-  | { kind: 'exact'; name: string }
-  | { kind: 'prefix'; name: string }
-  | { kind: 'ambiguous'; candidates: string[] }
-  | { kind: 'unknown' };
-
-/** Exact match, else unique-prefix match (e.g. `/sta` → `/status`). */
-export function resolveSlash(input: string): SlashResolution {
-  const names = SLASH_COMMANDS.map((cmd) => cmd.name);
-  if (names.includes(input)) return { kind: 'exact', name: input };
-  const candidates = names.filter((name) => name.startsWith(input));
-  if (candidates.length === 1) return { kind: 'prefix', name: candidates[0]! };
-  if (candidates.length > 1) return { kind: 'ambiguous', candidates };
-  return { kind: 'unknown' };
-}
-
-function helpText(): string {
-  const lines = ['Ideaseek commands:'];
-  for (const cmd of SLASH_COMMANDS) {
-    lines.push(`  ${cmd.usage.padEnd(22)} ${cmd.description}`);
-  }
-  lines.push('');
-  lines.push('Tab completes; a unique prefix works too (e.g. /sta → /status).');
-  lines.push('Natural language: queries like "为什么 method-x 还没通过" answer from state;');
-  lines.push(
-    'high-impact requests ("优先验证 idea-001") become pending-approval Decisions — never silent.',
-  );
-  lines.push('Every command has an equivalent non-interactive CLI form.');
-  return lines.join('\n');
-}
+export {
+  SLASH_COMMANDS,
+  slashCompleter,
+  resolveSlash,
+  helpText,
+  openMenu,
+  closeMenu,
+  moveSelection,
+  selectedCommand,
+  renderMenu,
+  menuHelpLines,
+  truncateForWidth,
+  type SlashCommand,
+  type SlashResolution,
+  type MenuState,
+} from './slash-menu.js';
 
 interface StatusPayload {
   project: string;
@@ -178,14 +128,18 @@ interface AttachEventJson {
 export async function startInteractive(opts: InteractiveOptions = {}): Promise<number> {
   const plain = opts.plain === true;
   const paintOpts: PaintOptions = { plain };
-  const tty = process.stdin.isTTY === true && process.stdout.isTTY === true;
+  // IDEASEEK_FORCE_TTY=1 forces terminal key handling (menus, arrows, Tab)
+  // for piped test runs; production uses the real TTY detection.
+  const tty =
+    (process.stdin.isTTY === true && process.stdout.isTTY === true) ||
+    process.env.IDEASEEK_FORCE_TTY === '1';
 
   const banner = renderBanner({ plain });
   process.stdout.write(`${paint(banner, 'brand', paintOpts)}\n`);
   const header = await buildHeader(plain);
   process.stdout.write(`${header}\n`);
   process.stdout.write(
-    `${paint('type /help for commands · Tab completes · /quit exits (runs keep going)', 'dim', paintOpts)}\n`,
+    `${paint('type / for the menu · Tab completes · /quit exits (runs keep going)', 'dim', paintOpts)}\n`,
   );
 
   const rl = readline.createInterface({
@@ -193,21 +147,65 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     output: process.stdout,
     prompt: paint('ideaseek › ', 'brand', paintOpts),
     completer: slashCompleter,
+    terminal: tty,
   });
 
   let promptShown = false;
   let quitting = false;
   let streamChild: ChildProcess | null = null;
+  let menu: MenuState = closeMenu();
+  let menuLines: string[] = [];
+  let menuColumns = process.stdout.columns ?? 80;
 
   const showPrompt = (): void => {
     rl.prompt();
     promptShown = true;
   };
 
-  /** Writes a line above the prompt without losing the typed buffer. */
+  /** Removes previously drawn menu rows below the prompt (ANSI only). */
+  const eraseMenu = (): void => {
+    if (menuLines.length === 0 || !tty || plain) {
+      menuLines = [];
+      return;
+    }
+    process.stdout.write(`\x1b[${menuLines.length}A\r\x1b[J`);
+    menuLines = [];
+  };
+
+  /** Draws the current menu under the prompt (width-aware for resize). */
+  const drawMenu = (): void => {
+    if (!menu.open || !tty) return;
+    const rows = renderMenu(menu, { columns: menuColumns, keyHints: !plain });
+    if (rows.length === 0) return;
+    process.stdout.write(`${rows.join('\n')}\n`);
+    menuLines = rows;
+  };
+
+  /**
+   * Clears the current input buffer and repaints the prompt. Direct
+   * line/cursor assignment — readline's ctrl-u binding is unreliable for
+   * piped/forced-TTY streams (Esc must truly dismiss the line).
+   */
+  const clearInputLine = (): void => {
+    const editable = rl as unknown as { line: string; cursor: number };
+    editable.line = '';
+    editable.cursor = 0;
+    if (tty) {
+      process.stdout.write('\r\x1b[K');
+      rl.prompt(true);
+    }
+  };
+
+  /**
+   * Writes a line above the prompt without losing the typed buffer or
+   * cursor (event floods preserve in-progress input — TERMINAL_UX).
+   */
   const println = (text: string): void => {
+    const hadMenu = menuLines.length > 0;
+    eraseMenu();
     if (!promptShown) {
       process.stdout.write(`${text}\n`);
+      if (hadMenu) drawMenu();
       return;
     }
     if (tty && !plain) {
@@ -219,11 +217,18 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
         const back = rl.line.length - (rl.cursor ?? rl.line.length);
         if (back > 0) process.stdout.write(`\x1b[${back}D`);
       }
+      if (hadMenu) drawMenu();
       return;
     }
     // Piped / plain: orphan the old prompt line, keep output line-oriented.
     promptShown = false;
     process.stdout.write(`\n${text}\n`);
+    if (hadMenu && menu.open) {
+      const rows = renderMenu(menu, { columns: menuColumns, keyHints: false });
+      process.stdout.write(`${rows.join('\n')}\n`);
+      menuLines = rows;
+      showPrompt();
+    }
   };
 
   const relay = async (args: string[]): Promise<void> => {
@@ -319,13 +324,15 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       return 'continue';
     }
     const name = resolution.name;
+    const restArgs = tokenizeArgs(rest);
 
     switch (name) {
       case '/help':
         println(helpText());
         return 'continue';
       case '/ideas':
-        println('no ideas recorded yet — idea generation lands in Phase 5');
+        // Real idea state from the workspace registry (no placeholder).
+        await relay(['idea', 'list']);
         return 'continue';
       case '/quit':
         return 'quit';
@@ -334,7 +341,7 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
           println('usage: /logs <task-id>');
           return 'continue';
         }
-        await relay(['logs', ...rest.split(/\s+/)]);
+        await relay(['logs', ...tokenizeArgs(rest)]);
         return 'continue';
       }
       case '/reject': {
@@ -379,7 +386,22 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
         await relay(['report']);
         return 'continue';
       case '/models':
-        await relay(['models']);
+        await relay(['models', ...restArgs]);
+        return 'continue';
+      case '/mode':
+        await relay(['mode', ...restArgs]);
+        return 'continue';
+      case '/open':
+        await relay(['open', ...restArgs]);
+        return 'continue';
+      case '/rounds':
+        await relay(['rounds', ...restArgs]);
+        return 'continue';
+      case '/ideate':
+        await relay(['ideate', ...restArgs]);
+        return 'continue';
+      case '/feedback':
+        await relay(['feedback', ...restArgs]);
         return 'continue';
       default:
         println(`unknown command: ${name} — try /help`);
@@ -398,6 +420,85 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       resolve(code);
     };
 
+    // --- slash menu: typing `/` opens it immediately; ↑/↓ select, Esc close.
+    // Node ≥20: Interface#keypress does not re-emit for piped input — listen
+    // on the raw input stream (PTY-equivalent coverage in tests).
+    const keypressHost = process.stdin as unknown as {
+      on(event: 'keypress', listener: (str: string | undefined, key?: readline.Key) => void): void;
+    };
+    keypressHost.on('keypress', (_str, key) => {
+      if (!key || quitting || !tty) return;
+      const line = rl.line;
+
+      // Submission is owned by the 'line' handler — never fight it here.
+      if (key.name === 'return' || key.name === 'enter') {
+        if (menu.open || menuLines.length > 0) {
+          eraseMenu();
+          menu = closeMenu();
+        }
+        return;
+      }
+
+      if (key.name === 'escape') {
+        if (menu.open || menuLines.length > 0) {
+          eraseMenu();
+          menu = closeMenu();
+          clearInputLine();
+        }
+        return;
+      }
+
+      if (menu.open && (key.name === 'up' || key.name === 'down')) {
+        eraseMenu();
+        menu = moveSelection(menu, key.name === 'up' ? -1 : 1);
+        const selected = selectedCommand(menu);
+        if (selected) {
+          clearInputLine();
+          rl.write(selected.name);
+        }
+        drawMenu();
+        return;
+      }
+
+      // Live refresh while the user is still typing a slash word.
+      const slashWord = line.startsWith('/') && !line.includes(' ');
+      if (slashWord && line.length <= 24) {
+        eraseMenu();
+        menu = openMenu(line);
+        drawMenu();
+        return;
+      }
+      if (menu.open && !slashWord) {
+        eraseMenu();
+        menu = closeMenu();
+      }
+
+      // Argument hints: "/logs " shows the usage line for the command.
+      if (line.includes(' ')) {
+        const headToken = line.slice(0, line.indexOf(' '));
+        const res = resolveSlash(headToken);
+        if (res.kind === 'exact' || res.kind === 'prefix') {
+          const cmd = SLASH_COMMANDS.find((c) => c.name === res.name);
+          if (cmd && cmd.usage !== cmd.name) {
+            eraseMenu();
+            const row = truncateForWidth(`  usage: ${cmd.usage}`, menuColumns);
+            process.stdout.write(`${row}\n`);
+            menuLines = [row];
+          }
+        }
+      }
+    });
+
+    // Resize: re-measure width so menu rows stay inside the terminal.
+    const onResize = (): void => {
+      menuColumns = process.stdout.columns ?? menuColumns;
+      if (menu.open && menuLines.length > 0) {
+        eraseMenu();
+        drawMenu();
+      }
+    };
+    process.stdout.on('resize', onResize);
+
     // Lines are processed strictly in order: a piped stdin chunk can emit
     // several 'line' events back-to-back, and /quit must never overtake an
     // in-flight command's output.
@@ -408,20 +509,20 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       try {
         if (!input) {
           // empty line — nothing to do
-        } else if (!input.startsWith('/')) {
-          const intent = interpretInput(input);
-          if (intent.kind === 'query') {
-            await relay(intent.cliArgs);
-          } else if (intent.kind === 'pending-action') {
-            // High-impact NL becomes a pending Decision — never an execution.
-            await relay([
-              'decision',
-              'propose',
-              `${intent.summary} (classified: ${intent.reason})`,
-            ]);
+        } else if (input === '/') {
+          // Bare `/` (Enter) shows the menu again — never an error.
+          menu = openMenu('/');
+          if (tty) {
+            drawMenu();
           } else {
-            println(intent.hint);
+            for (const row of renderMenu(menu, { columns: menuColumns })) println(row);
           }
+          return;
+        } else if (!input.startsWith('/')) {
+          // Plain text → `ideaseek ask`: queries answer from state, high-impact
+          // requests become pending Decisions, everything else goes to the
+          // supervisor. The REPL never prints "unknown input".
+          await relay(['ask', ...tokenizeArgs(input)]);
         } else {
           const outcome = await dispatch(input);
           if (outcome === 'quit') {
@@ -446,7 +547,7 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     rl.on('SIGINT', () => {
       if (rl.line && rl.line.length > 0) {
         // Ctrl-C with typed input: clear the line.
-        rl.write(null, { ctrl: true, name: 'u' });
+        clearInputLine();
         return;
       }
       println(paint('Ctrl-C: use /quit to exit (background runs keep going)', 'warn', paintOpts));

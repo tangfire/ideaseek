@@ -183,6 +183,16 @@ ideaseek run --question "..."
 
 IdeaSeek 按内容 hash 和版本增量处理：新增论文只触发受影响的 PaperCard/综合；新增数据只触发相关 snapshot、comparison 和实验；新增 comparison 只补做该方法。
 
+如果用户暂时没有某些数据，IdeaSeek 可以根据论文、数据集论文和代码 README 发现候选数据集：
+
+```bash
+ideaseek datasets discover --question "..."
+ideaseek datasets list
+ideaseek datasets explain <candidate-id>
+```
+
+结果包含用途、字段、规模、许可证、来源论文、获取方式和推荐理由。平台默认只推荐，不自动下载大型或受限数据；用户自行下载或授权挂载后，再运行 `scan` 建立 DatasetSnapshot。
+
 ## 在同一项目继续思考新的 idea
 
 如果几天后论文、数据和 comparison 都没有变化，不要重新初始化项目。创建新的 ideation round：
