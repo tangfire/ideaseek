@@ -102,6 +102,35 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'novelty-check-v1') {
+    const override = process.env.IDEASEEK_FAKE_NOVELTY_OUTPUT;
+    if (override != null) return override;
+    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+      ideaId?: string;
+      cardVersion?: number;
+      candidateRefs?: string[];
+    };
+    const refs = Array.isArray(context.candidateRefs) ? context.candidateRefs : [];
+    const first = refs[0] ?? null;
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      verdict: refs.length > 0 ? 'PROCEED_WITH_CAUTION' : 'PROCEED',
+      score: refs.length > 0 ? 7 : 8,
+      positioning: 'frame as a measurable reweighting improvement over the closest local candidate',
+      claims: [
+        {
+          claim: 'calibration-error reweighting beats sample-count weighting',
+          closestPaperRef: first,
+          overlap: 'both reweight client contributions',
+          delta: 'uses measured calibration error instead of sample counts',
+        },
+      ],
+      patents: [],
+      priorArtDegraded: true,
+      notes: ['local index only: no web tools available for patent search'],
+    });
+  }
   if (request.outputSchema === 'ablation-plan-v1') {
     const override = process.env.IDEASEEK_FAKE_ABLATION_PLAN_OUTPUT;
     if (override != null) return override;

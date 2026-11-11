@@ -11,6 +11,7 @@ import { assessIdeaCard } from './card.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import type { IdeaCheckReport } from './check.js';
 import { assertPlanMatchesSpec, readPlan } from './plan.js';
+import { assertNoveltyClear, readNoveltyReport } from './novelty.js';
 
 /**
  * ExperimentSpec/RunResult wiring for ideas (plan §E, DATA_CONTRACTS): every
@@ -296,6 +297,8 @@ export interface RunIdeaExperimentOptions {
   timeoutMs: number;
   /** Resume from the last compatible checkpoint (refuses task-level recovery). */
   resume?: boolean;
+  /** Audited reason to proceed despite a current ABANDON novelty verdict. */
+  waiveNovelty?: string;
 }
 
 /** The subset of WorkflowDb the spec lifecycle needs (main runs + ablations). */
@@ -699,6 +702,15 @@ export async function runIdeaExperiment(
     ideaId,
     cardVersion: meta.currentVersion,
   });
+
+  // Novelty gate (capability 4): a current ABANDON verdict stops the run
+  // unless an audited --waive-novelty reason was provided (CLI records it).
+  const novelty = await readNoveltyReport(projectRoot, ideaId);
+  assertNoveltyClear(
+    novelty,
+    { ideaId, cardVersion: meta.currentVersion },
+    { waiveNovelty: opts.waiveNovelty },
+  );
 
   // A real (re-)run needs the pre-analysis part of the graph: ANALYZING ideas
   // walk NEEDS_REVISION → IMPLEMENTING → check first; SMOKE_TESTED enters

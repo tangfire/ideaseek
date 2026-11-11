@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
 import type { CandidatesIndex } from '../idea/generate.js';
+import type { NoveltyCandidate } from '../idea/novelty.js';
 import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
 import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/experiment.js';
 import { runAblations } from '../idea/ablation.js';
@@ -723,6 +724,246 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('novelty')
+    .description(
+      'novelty + prior-art verdict bound to the local paper index (ARIS novelty-check backend)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a previous novelty.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const meta = await loadWorkspaceMeta(root, ideaId);
+          const card = await loadIdeaCard(root, ideaId);
+          const { loadArisSkill } = await import('../aris/skill.js');
+          const noveltySkill = await loadArisSkill('novelty-check');
+          const priorArtSkill = await loadArisSkill('prior-art-search');
+          const {
+            buildNoveltyRequest,
+            noveltyPath,
+            parseNoveltyOutput,
+            readNoveltyReport,
+            writeNoveltyReport,
+          } = await import('../idea/novelty.js');
+          const { listRounds } = await import('../idea/rounds.js');
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+
+          // Local candidates: FTS over the project's PaperCard index — the ONLY
+          // closestPaperRef values the report may cite (anti-hallucination).
+          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+          let candidates: NoveltyCandidate[] = [];
+          let constraints: string[] = [];
+          let question: string | null = null;
+          try {
+            question = runtime.config.research.question;
+            const rounds = await listRounds(root);
+            if (rounds.length > 0) constraints = rounds[rounds.length - 1]!.noveltyConstraints;
+            const queries = [
+              card.hypothesis.statement,
+              card.novelty.claim,
+              card.hypothesis.targetProblem,
+            ];
+            const byKey = new Map<string, NoveltyCandidate>();
+            for (const query of queries) {
+              const hits = await runtime.db.searchPapers(query, { limit: 8 });
+              for (const hit of hits) {
+                const existing = byKey.get(hit.paperKey);
+                if (!existing || hit.snippet.length > existing.snippet.length) {
+                  byKey.set(hit.paperKey, {
+                    paperKey: hit.paperKey,
+                    source: hit.source,
+                    snippet: hit.snippet,
+                  });
+                }
+              }
+            }
+            candidates = [...byKey.values()].slice(0, 12);
+          } finally {
+            await runtime.close();
+          }
+
+          const request = buildNoveltyRequest(
+            { novelty: noveltySkill, priorArt: priorArtSkill },
+            {
+              ideaId,
+              cardVersion: meta.currentVersion,
+              cardJson: JSON.stringify(card, null, 2),
+              constraints,
+              candidates,
+              question,
+            },
+          );
+
+          if (!opts.force) {
+            const existing = await readNoveltyReport(root, ideaId);
+            if (existing && existing.inputHash === request.inputHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    ideaId,
+                    reused: true,
+                    inputHash: existing.inputHash,
+                    verdict: existing.verdict,
+                    score: existing.score,
+                    priorArtDegraded: existing.priorArtDegraded,
+                    path: `ideas/${ideaId}/novelty.json`,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `reused novelty report for ${ideaId}: ${existing.verdict} (score ${existing.score})\n`,
+                );
+                process.stdout.write('next: regenerate with --force after new evidence\n');
+              }
+              return 0;
+            }
+          }
+
+          const { buildHarness } = await import('./shared.js');
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const kind =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+          const harness = buildHarness(kind);
+          await harness.initialize();
+          let output: string;
+          let runtimeKind = kind;
+          try {
+            const result = await harness.runTask({
+              runId: `idea:${ideaId}`,
+              taskId: `novelty-${ideaId}`,
+              profile: 'idea-generator',
+              instruction: request.instruction,
+              inputs: [
+                {
+                  kind: 'text',
+                  name: 'novelty_context',
+                  content: JSON.stringify({
+                    ideaId,
+                    cardVersion: meta.currentVersion,
+                    candidateRefs: candidates.map((candidate) => candidate.paperKey),
+                    constraints,
+                  }),
+                },
+                { kind: 'text', name: 'idea_card', content: JSON.stringify(card) },
+              ],
+              outputSchema: 'novelty-check-v1',
+              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
+              idempotencyKey: request.idempotencyKey,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'HarnessBlockError') {
+              const block = (error as { block?: string }).block ?? 'BLOCKED';
+              if (opts.json) {
+                process.stdout.write(jsonLine({ ideaId, blocked: block, written: false }));
+              } else {
+                process.stderr.write(
+                  `idea novelty blocked [${block}]: ${(error as Error).message}\n` +
+                    'nothing was written — restore quota/auth/network and rerun the same command\n',
+                );
+              }
+              return 2;
+            }
+            throw error;
+          } finally {
+            await harness.shutdown().catch(() => undefined);
+          }
+
+          const report = parseNoveltyOutput(
+            output,
+            {
+              ideaId,
+              cardVersion: meta.currentVersion,
+              candidateRefs: candidates.map((c) => c.paperKey),
+            },
+            {
+              inputHash: request.inputHash,
+              skills: {
+                novelty: { name: noveltySkill.name, sha256: noveltySkill.sha256 },
+                priorArt: { name: priorArtSkill.name, sha256: priorArtSkill.sha256 },
+              },
+              harnessRuntime: runtimeKind,
+            },
+          );
+          await writeNoveltyReport(root, report);
+
+          let eventSeq: number | null = null;
+          const audit = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await audit.db.getLatestRun(audit.project.id);
+            if (run) {
+              const event = await audit.db.appendEvent({
+                runId: run.runId,
+                phase: 'ANALYZING',
+                objectId: ideaId,
+                role: 'system',
+                eventType: 'novelty_verdict',
+                summary: `novelty ${report.verdict} (score ${report.score}) for ${ideaId} — ARIS novelty-check`,
+                status: report.verdict.toLowerCase(),
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await audit.close();
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                reused: false,
+                inputHash: report.inputHash,
+                verdict: report.verdict,
+                score: report.score,
+                claims: report.claims.length,
+                closestPapers: report.claims.filter((claim) => claim.closestPaperRef !== null)
+                  .length,
+                patents: report.patents.length,
+                priorArtDegraded: report.priorArtDegraded,
+                candidates: candidates.length,
+                path: `ideas/${ideaId}/novelty.json`,
+                eventSeq,
+              }),
+            );
+            return 0;
+          }
+
+          process.stdout.write(
+            `novelty ${ideaId} v${meta.currentVersion}: ${report.verdict} (score ${report.score}/10)\n`,
+          );
+          for (const claim of report.claims) {
+            process.stdout.write(
+              `  • ${claim.claim}\n    closest: ${claim.closestPaperRef ?? 'none in local index'} — ${claim.delta}\n`,
+            );
+          }
+          process.stdout.write(`  positioning: ${report.positioning}\n`);
+          process.stdout.write(
+            `  prior-art: ${report.patents.length} patent hit(s)` +
+              `${report.priorArtDegraded ? ' (degraded: no web tools — honest local-only pass)' : ''}\n`,
+          );
+          process.stdout.write(`  file: ${noveltyPath(root, ideaId).replace(`${root}/`, '')}\n`);
+          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+          if (report.verdict === 'ABANDON') {
+            process.stdout.write(
+              `next: experiments are blocked — ideaseek idea set-status ${ideaId} REJECTED --reason "..." ` +
+                `or address the overlap then ideaseek idea novelty ${ideaId} --force\n`,
+            );
+          } else {
+            process.stdout.write(`next: ideaseek idea experiment ${ideaId}\n`);
+          }
+          return 0;
+        },
+      ),
+    );
+
+  idea
     .command('create')
     .description(
       'create ideas/<id>/ workspace (card, versions, src/config/data/experiments, README)',
@@ -1146,12 +1387,22 @@ export function registerIdeaCommand(program: Command): void {
     .option('--scale <scale>', 'smoke | quick (never full training)', 'smoke')
     .option('--timeout <ms>', 'run timeout', (value) => Number(value), 120_000)
     .option('--resume', 'resume from the last compatible checkpoint (task-level recovery refuses)')
+    .option(
+      '--waive-novelty <reason>',
+      'proceed despite a current ABANDON novelty verdict (records a Decision/Event)',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (
           ideaId: string,
-          opts: { scale: string; timeout: number; resume?: boolean; json?: boolean },
+          opts: {
+            scale: string;
+            timeout: number;
+            resume?: boolean;
+            waiveNovelty?: string;
+            json?: boolean;
+          },
         ) => {
           const root = await openRoot();
           if (opts.scale !== 'smoke' && opts.scale !== 'quick') {
@@ -1167,10 +1418,45 @@ export function registerIdeaCommand(program: Command): void {
               parseAutonomyMode(runtime.config.policy.autonomyMode),
               'start-experiment',
             );
+
+            // Audited novelty waiver: record the Decision BEFORE running so
+            // an ABANDON bypass is always visible in the event trail.
+            let waiverSeq: number | null = null;
+            if (opts.waiveNovelty) {
+              const { readNoveltyReport } = await import('../idea/novelty.js');
+              const { loadWorkspaceMeta } = await import('../idea/workspace.js');
+              const metaW = await loadWorkspaceMeta(root, ideaId);
+              const report = await readNoveltyReport(root, ideaId);
+              if (
+                report &&
+                report.cardVersion === metaW.currentVersion &&
+                report.verdict === 'ABANDON'
+              ) {
+                const run = await runtime.db.getLatestRun(runtime.project.id);
+                if (run) {
+                  const event = await runtime.db.appendEvent({
+                    runId: run.runId,
+                    phase: 'DECISION',
+                    objectId: ideaId,
+                    role: 'user',
+                    eventType: 'decision',
+                    summary: `novelty-waived: ${ideaId} ABANDON (score ${report.score}) — ${opts.waiveNovelty}`,
+                    status: 'confirmed',
+                  });
+                  waiverSeq = event.seq;
+                }
+              }
+            }
+
             const outcome = await runIdeaExperiment(
               root,
               ideaId,
-              { scale: opts.scale as IdeaScale, timeoutMs: opts.timeout, resume: opts.resume },
+              {
+                scale: opts.scale as IdeaScale,
+                timeoutMs: opts.timeout,
+                resume: opts.resume,
+                waiveNovelty: opts.waiveNovelty,
+              },
               runtime,
               runtime.db,
             );
@@ -1187,6 +1473,7 @@ export function registerIdeaCommand(program: Command): void {
                   metrics: outcome.metrics,
                   failure: outcome.failure,
                   statusAfter: outcome.statusAfter,
+                  waiverSeq,
                 }),
               );
             } else if (outcome.alreadyRecorded) {
@@ -1207,6 +1494,11 @@ export function registerIdeaCommand(program: Command): void {
               );
               process.stdout.write(
                 `next: fix and re-check, then walk back: ideaseek idea set-status ${ideaId} NEEDS_REVISION\n`,
+              );
+            }
+            if (waiverSeq !== null && !opts.json) {
+              process.stdout.write(
+                `novelty ABANDON waived: ${opts.waiveNovelty} (decision event #${waiverSeq})\n`,
               );
             }
             if (!outcome.alreadyRecorded) {
