@@ -15,6 +15,35 @@ Workflow Supervisor ── Workflow DB / RunEvent / Artifact Store
 
 DSH 是 Agent Runtime 和插件宿主，不是科研数据库、GPU 调度器或唯一的长任务状态来源。业务层只依赖 `HarnessAdapter`，不直接依赖 DSH 内部实现。DSH 升级只需要通过适配层和兼容性测试。
 
+## 分层与依赖方向
+
+依赖只能从上到下通过公开 port/contract 进入，底层不能反向依赖 CLI 或具体 provider：
+
+```text
+Presentation       CLI/REPL/TUI、JSON、plain、attach
+Application        commands/use-cases、Supervisor、审批、策略
+Domain             Project/Run/Task/Idea/Comparison/Protocol/Experiment 状态和规则
+Ports              TaskStore、ArtifactStore、EventBus、ModelGateway、Harness、Runner、CredentialBroker
+Adapters           SQLite/Postgres、文件系统、DSH SDK、Python Worker、Docker/GPU、GitHub
+Infrastructure     进程、网络、容器、日志、备份和操作系统
+```
+
+CLI command 不直接拼 SQL、不直接调用 DSH、不直接修改 artifact；它调用 Application use-case。Domain 规则不能依赖 Commander、SQLite、Node 进程 API、Python 或某个模型 provider。Adapters 可以依赖 Domain/Ports，反方向禁止。
+
+新增模块先回答它属于哪一层，以及通过哪个 port 交互。若一个功能同时修改 CLI、数据库 schema、Agent prompt 和实验执行器，应拆成契约、应用编排和 adapter 三个可测试部分。
+
+## 核心组合根
+
+项目启动时由 composition root 组装：配置、DB、artifact store、event bus、DSH Harness、worker runner、experiment scheduler、credential broker 和 use-cases。业务模块通过接口接收依赖，不在函数内部隐式创建 SQLite、子进程或 DSH client；测试用 fake adapter 替换真实基础设施。
+
+## 长任务边界
+
+Supervisor 只负责领取/恢复 workflow node，不能把科研判断写进调度器。Agent/Worker 只返回结构化结果和 artifact 引用，不能直接推进下游阶段；Application 层依据 schema、门禁和 Decision/Event 推进状态。实验 runner 只执行已锁定的 ExperimentSpec，不修改 IdeaCard、协议或 comparison 状态。
+
+## 当前实现成熟度
+
+当前仓库已经有上述主要边界的实现雏形：`src/commands`、`src/workflow`、`src/dsh`、`src/worker`、`src/experiment`、`src/comparison`、`src/idea` 和 `src/knowledge`。Phase 5/6 继续开发时，必须逐步把 command 中的编排抽到 application/use-case 服务，避免每新增一个 CLI 命令就复制 DB、事件和门禁逻辑。这个重构是架构硬化，不应改变已锁定的数据契约。
+
 ## 进程
 
 - **CLI**：初始化目录、配置、发出控制命令、订阅事件和显示报告。

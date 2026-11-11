@@ -51,6 +51,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 
 - [plan.md](plan.md)：完整产品和架构计划、风险、里程碑与取舍。
 - [ARCHITECTURE.md](ARCHITECTURE.md)：组件、进程和 DSH 边界。
+- [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)：关键架构决策和长期不可破坏的边界。
 - [AGENT_ROLES.md](AGENT_ROLES.md)：Agent 角色、能力 profile、输入输出和权限。
 - [WORKFLOW_SPEC.md](WORKFLOW_SPEC.md)：工作流状态机、阶段门槛和恢复语义。
 - [CLI_SPEC.md](CLI_SPEC.md)：命令、实时交互、后台运行和退出码。

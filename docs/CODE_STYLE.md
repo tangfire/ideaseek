@@ -4,6 +4,15 @@
 
 代码优先保证边界清楚、可恢复、可测试和可审计。不要用隐式全局状态、未记录的 side effect 或 Agent 自由文本作为业务协议。
 
+## 分层规则
+
+- CLI/REPL 只负责解析输入、显示状态和调用 use-case；不直接写数据库、调用 DSH 或执行 shell。
+- Domain 规则只依赖纯类型、schema 和 ports；不依赖 Commander、SQLite、Node child_process、DSH SDK 或 Python。
+- Application/use-case 负责事务边界、门禁、Decision/Event 和任务编排；它通过接口使用基础设施。
+- SQLite/Postgres、DSH、GitHub、Docker/GPU、Python Worker 都属于 adapters；必须可用 fake 实现测试。
+- 需要跨层调用时先增加稳定 contract/port，不通过 import 内部实现或全局单例绕过边界。
+- 同一个业务规则只能有一个权威实现；CLI 命令、REPL 命令和 JSON API 复用同一个 use-case。
+
 ## TypeScript / DSH 插件
 
 - 遵循 DSH 仓库已有 ESLint/formatter/TypeScript 配置，不另造风格。
