@@ -95,9 +95,11 @@ ideaseek init
 
 实现 comparison 发现、官方代码导入、论文重实现、upstream/worktree 隔离、Baseline Repair Agent、统一 ExperimentSpec/RunResult 和 required comparison 门槛。
 
-### Phase 4.5：ARIS P0 科研能力集成
+### Phase 4.5A：ARIS P0 科研质量能力
 
 优先复用 ARIS 的 `idea-discovery`、`experiment-bridge`、`ablation-planner`、`novelty-check`、fresh-context reviewer 和 `experiment-audit`。把它们通过 adapter 接入 IdeaSeek 的 artifact、ExperimentSpec、RunEvent、Decision 和 checkpoint；不要重复实现同类 workflow，也不要创建第二套 Agent Loop/任务数据库。完成失败回退、权限、预算和恢复测试后再继续 Phase 5。
+
+迁移后继续 Phase 4.5B：research-wiki、HTML artifact、watchdog、experiment queue、monitor-experiment 和 session recovery；再进入 Phase 4.5C：claim/citation audit、integrity forensics、Overleaf、rebuttal 和 slides。P2 论文交付不阻塞基础 idea/quick 实验，但应按 ARIS 优先复用。
 
 同时审计 IdeaSeek 已有的 idea/experiment/ablation/review/audit 实现；如果 ARIS 更成熟，迁移默认执行 backend 到 ARIS，旧实现降级为兼容 fallback 或移除默认入口。迁移前写 capability conformance tests，不能只是并行保留两套默认 workflow。
 

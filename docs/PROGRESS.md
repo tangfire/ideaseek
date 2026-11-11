@@ -105,7 +105,7 @@ Phase 4：Comparison 复现与统一评测
 - [x] 所有 required comparison 门槛
 - [ ] 任意结构代码仓库的 Codebase Analyst、入口发现和 wrapper/smoke 流程
 
-## Phase 4.5：ARIS P0 科研能力集成
+## Phase 4.5A：ARIS P0 科研质量能力
 
 目标：优先复用 ARIS 已有的成熟科研 workflow；IdeaSeek 负责把它们接入自己的 Artifact、ExperimentSpec、RunEvent、Decision 和 checkpoint，而不是重写同类能力。
 
@@ -122,6 +122,22 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 旧重复实现降级为兼容 fallback 或移除默认入口
 - [ ] ARIS capability conformance/regression tests
 - [ ] ARIS 迁移通过后删除旧重复实现、入口和重复配置
+
+## Phase 4.5B：ARIS P1 研究记忆与长任务增强
+
+- [ ] research-wiki：Paper/Idea/Experiment/Claim 图谱和 typed edges
+- [ ] render-html：IDEA_REPORT、review、wiki 和审计 artifact 阅读视图
+- [ ] watchdog：只检测 stalled/dead/stale，不做质量裁决
+- [ ] experiment-queue：wave、depends_on、OOM retry、stale cleanup 和公平排队
+- [ ] monitor-experiment：心跳、日志、资源和等待原因
+- [ ] session recovery：跨会话恢复上下文摘要和 artifact 引用
+
+## Phase 4.5C：ARIS P2 论文与发表交付
+
+- [ ] paper-claim-audit 和 citation-crosscheck
+- [ ] integrity-forensics
+- [ ] Overleaf/LaTeX paper-write workflow
+- [ ] rebuttal、paper slides 和 talk workflow
 
 ## Phase 5：Idea 生成与实验闭环
 

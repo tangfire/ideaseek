@@ -26,7 +26,7 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 - fresh-context review：每一轮 reviewer 读取当前 artifact 的新上下文，不延续旧评审对话；
 - result-to-claim gate：实验完成后判断结果支持什么、不支持什么、还缺什么证据。
 
-### P1：研究记忆和可读交付
+### P1：研究记忆和可读交付（Phase 4.5B）
 
 - `research-wiki`：把项目事实、论文、idea、实验和决定组织成可搜索研究记忆；
 - `render-html`：把 Markdown/JSON artifact 渲染成用户更容易阅读的 HTML；
@@ -34,20 +34,20 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 - `paper-write` / `rebuttal`：作为 handoff 之后的可选写作 workflow。
 - `overleaf-sync` / LaTeX workflow：生成可上传到 Overleaf 的可编辑工程，保留 BibTeX、图表源数据和 provenance。
 
-### P1：数据集发现
+### P1：数据集发现（Phase 4.5B）
 
 加入 `Dataset Discovery Agent`：从论文、表格、代码 README、数据集论文和允许的学术索引中发现常用数据集，输出 `DatasetCandidate`：名称、来源、用途、字段/任务、规模、许可证、下载/申请方式、相关论文、与当前问题的关联和置信度。
 
 默认只发现和推荐，不自动下载大型或受限数据。用户显式授权后，平台可以下载公开元数据或小型 fixture；真正训练数据仍由用户提供/挂载，进入新的 dataset snapshot 后才参与实验。
 
-### P1：长任务和实验运营
+### P1：长任务和实验运营（Phase 4.5B）
 
 - watchdog：只检测 stalled/dead/stale，不替用户判断 idea 是否正确或实验是否通过；
 - experiment-queue：wave、depends_on、OOM-aware retry、stale cleanup 和队列公平；
 - monitor-experiment：读取心跳、日志和资源，不篡改结果；
 - session recovery：跨 CLI/Agent 会话恢复上下文摘要和 artifact 引用。
 
-### P2：研究记忆、写作与交付
+### P2：论文与发表交付（Phase 4.5C）
 
 - research-wiki 的 Paper/Idea/Experiment/Claim 图谱和 typed edges；
 - render-html：把 IDEA_REPORT、review、research wiki 和审计结果生成易读 HTML；

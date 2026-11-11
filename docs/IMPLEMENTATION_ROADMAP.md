@@ -36,11 +36,19 @@
 
 验收：comparison 来源、许可证、patch、环境、复现状态和失败原因可追溯；所有 required 方法通过或明确阻塞。
 
-## Phase 4.5：ARIS P0 科研能力集成
+## Phase 4.5A：ARIS P0 科研质量能力
 
 在 Comparison 契约稳定后，优先接入 ARIS 的成熟科研 workflow：idea discovery、experiment bridge、ablation planner、novelty/prior-art check、fresh-context reviewer 和 experiment audit。通过 skill/plugin adapter 映射到 IdeaSeek 的 IdeaCard、ExperimentSpec、Artifact、RunEvent、Decision 和 checkpoint；不复制第二套 Agent Loop 或任务数据库。
 
 验收：ARIS workflow 能读取 IdeaSeek artifact 并输出结构化结果；失败/额度耗尽/权限拒绝可恢复；comparison gate、预算、证据和实验协议不能被 skill 绕过。
+
+## Phase 4.5B：ARIS P1 研究记忆与长任务增强
+
+接入 research-wiki、HTML artifact renderer、watchdog、experiment queue、monitor-experiment 和 session recovery。它们必须读写 IdeaSeek 的 Artifact/Event/Checkpoint，不创建第二套状态来源。
+
+## Phase 4.5C：ARIS P2 论文与发表交付
+
+接入 claim/citation audit、integrity forensics、Overleaf/LaTeX、rebuttal、slides 和 talk。它们在 `HANDOFF_READY` 或 Full Research 阶段使用，不阻塞基础 idea/quick 实验闭环。
 
 ## Phase 5：Idea 生成与实验闭环
 
