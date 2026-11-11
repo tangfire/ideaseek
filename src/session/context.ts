@@ -116,11 +116,11 @@ export async function collectContext(root: string): Promise<ContextReport> {
     const ideas: ContextIdeaRef[] = [];
     try {
       const { listWorkspaces } = await import('../idea/workspace.js');
-      const { readPlan } = await import('../idea/plan.js');
+      const { loadStoredPlan } = await import('../experiment/plan.js');
       const { readNoveltyReport } = await import('../idea/novelty.js');
       const { readLatestReview } = await import('../idea/review.js');
       for (const workspace of await listWorkspaces(root)) {
-        const plan = await readPlan(root, workspace.ideaId);
+        const plan = await loadStoredPlan(runtime, workspace.ideaId);
         const novelty = await readNoveltyReport(root, workspace.ideaId);
         const review = await readLatestReview(root, workspace.ideaId);
         ideas.push({

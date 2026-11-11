@@ -10,7 +10,6 @@ import type { RunFailureCategory } from '../experiment/spec.js';
 import { assessIdeaCard } from './card.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import type { IdeaCheckReport } from './check.js';
-import { assertPlanMatchesSpec, readPlan } from './plan.js';
 import { assertNoveltyClear, readNoveltyReport } from './novelty.js';
 import { assertReviewClear, readLatestReview } from './review.js';
 
@@ -145,11 +144,23 @@ export async function buildIdeaSpec(
   const protocolId = await latestProtocolId(opts.runtime);
   const attempt = opts.attempt ?? 1;
 
-  // ARIS plan binding: a CURRENT plan's hash travels with the spec so every
-  // RunResult stays traceable to the claim map that promised it.
-  const plan = await readPlan(projectRoot, ideaId);
-  const planNote =
-    plan && plan.cardVersion === meta.currentVersion ? `plan:${plan.inputHash.slice(7, 19)}` : null;
+  // Seeds: a CURRENT ARIS experiment plan wins over config seeds (the plan
+  // is the idea's declared reproducibility contract); stale plans (idea
+  // revised since) and plan-less runs fall back to config/train.json.
+  const configSeeds = Array.isArray(config.seeds)
+    ? config.seeds.filter((s): s is number => typeof s === 'number' && Number.isInteger(s))
+    : [];
+  let planSeeds: number[] | null = opts.planSeeds ?? null;
+  if (!planSeeds) {
+    try {
+      const { loadPlanSeeds } = await import('../experiment/plan.js');
+      planSeeds = await loadPlanSeeds(opts.runtime, ideaId, meta.currentVersion);
+    } catch {
+      planSeeds = null;
+    }
+  }
+  const seeds =
+    planSeeds && planSeeds.length > 0 ? planSeeds : configSeeds.length > 0 ? configSeeds : [42];
 
   // Silent 主指标 change guard: when a protocol exists, its FIRST primary
   // metric (the 主指标) must appear in the spec. Secondary metrics and
@@ -179,18 +190,12 @@ export async function buildIdeaSpec(
         `idea-v:${meta.currentVersion}`,
         `idea-code:${codeHash ?? 'empty'}`,
         `attempt:${attempt}`,
-        ...(planNote ? [planNote] : []),
         ...(opts.extraNotes ?? []),
       ],
     },
     command: [...commandFor(config, opts.scale), ...(opts.commandSuffix ?? [])],
     metrics,
-    seeds:
-      opts.planSeeds && opts.planSeeds.length > 0
-        ? opts.planSeeds
-        : Array.isArray(config.seeds)
-          ? config.seeds.filter((s): s is number => typeof s === 'number' && Number.isInteger(s))
-          : [42],
+    seeds,
     resources: (() => {
       const res = (config.resources ?? {}) as { gpus?: unknown; memoryGiB?: unknown };
       return {
@@ -737,16 +742,6 @@ export async function runIdeaExperiment(
     };
   }
 
-  // Claim→metric accountability (runs only when a real execution happens —
-  // an already-recorded spec reports its result without re-litigating plans):
-  // a current plan's primaryMetric must be answered by this spec or the run
-  // is refused before any compute is spent.
-  const plan = await readPlan(projectRoot, ideaId);
-  assertPlanMatchesSpec(plan, baseSpec.metrics, {
-    ideaId,
-    cardVersion: meta.currentVersion,
-  });
-
   // Novelty gate (capability 4): a current ABANDON verdict stops the run
   // unless an audited --waive-novelty reason was provided (CLI records it).
   const novelty = await readNoveltyReport(projectRoot, ideaId);
@@ -766,7 +761,6 @@ export async function runIdeaExperiment(
       waiveReview: opts.waiveReview,
     },
   );
-
   // A real (re-)run needs the pre-analysis part of the graph: ANALYZING ideas
   // walk NEEDS_REVISION → IMPLEMENTING → check first; SMOKE_TESTED enters
   // RUNNING. Failed runs stay RUNNING (fix + retry without ceremony).

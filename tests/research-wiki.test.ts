@@ -121,10 +121,17 @@ describe('ideaseek wiki (ARIS research-wiki backend)', () => {
     expect((await runCli(project, ['idea', 'scaffold', ideaId])).code).toBe(0);
     const check = await runCli(project, ['idea', 'check', ideaId, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
+    const plan = await runCli(project, [
+      'experiment',
+      'plan',
+      ideaId,
+      '--harness',
+      'fake',
+      '--json',
+    ]);
+    expect(plan.code, plan.stderr).toBe(0);
     const experiment = await runCli(project, ['idea', 'experiment', ideaId, '--json']);
     expect(experiment.code, experiment.stdout + experiment.stderr).toBe(0);
-    const plan = await runCli(project, ['idea', 'plan', ideaId, '--harness', 'fake', '--json']);
-    expect(plan.code, plan.stderr).toBe(0);
 
     // One indexed paper for the paper node type.
     expect((await runCli(project, ['run', '--question', 'wiki', '--enqueue-only'])).code).toBe(0);
@@ -192,7 +199,7 @@ describe('ideaseek wiki (ARIS research-wiki backend)', () => {
     for (const edge of edges) expect(edge.evidence.length).toBeGreaterThan(3);
 
     await readFile(join(wikiRoot, 'ideas', `${ideaId}.md`), 'utf8');
-    await readFile(join(wikiRoot, 'claims', `${ideaId}-c1.md`), 'utf8');
+    await readFile(join(wikiRoot, 'claims', 'c1.md'), 'utf8');
     // Helper materialized the ARIS derived files.
     await readFile(join(wikiRoot, 'index.md'), 'utf8');
     await readFile(join(wikiRoot, 'query_pack.md'), 'utf8');

@@ -350,184 +350,6 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
-    .command('plan')
-    .description('generate the experiment plan for an idea (ARIS experiment-plan skill backend)')
-    .argument('<ideaId>', 'kebab-case idea id')
-    .option(
-      '--harness <kind>',
-      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
-    )
-    .option('--force', 'ignore a previous plan.json and regenerate')
-    .option('--json', 'machine-readable output')
-    .action(
-      action(
-        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
-          const root = await openRoot();
-          const meta = await loadWorkspaceMeta(root, ideaId);
-          const card = await loadIdeaCard(root, ideaId);
-          const { loadArisSkill } = await import('../aris/skill.js');
-          const skill = await loadArisSkill('experiment-plan');
-          const { buildPlanRequest, parsePlanOutput, planPath, readPlan, writePlan } =
-            await import('../idea/plan.js');
-          const { loadConfig } = await import('../config/config.js');
-          const { projectPaths } = await import('../config/paths.js');
-          const config = await loadConfig(projectPaths(root));
-          const request = buildPlanRequest(skill, {
-            ideaId,
-            cardVersion: meta.currentVersion,
-            cardJson: JSON.stringify(card, null, 2),
-            question: config.resolved.research.question,
-          });
-
-          if (!opts.force) {
-            const existing = await readPlan(root, ideaId);
-            if (existing && existing.inputHash === request.inputHash) {
-              if (opts.json) {
-                process.stdout.write(
-                  jsonLine({
-                    ideaId,
-                    reused: true,
-                    inputHash: existing.inputHash,
-                    skill: existing.skill,
-                    primaryMetric: existing.primaryMetric,
-                    path: `ideas/${ideaId}/experiments/plan.json`,
-                  }),
-                );
-              } else {
-                process.stdout.write(
-                  `reused experiment plan for ${ideaId} (inputHash ${existing.inputHash.slice(0, 12)}…, ` +
-                    `primary metric "${existing.primaryMetric}")\n`,
-                );
-                process.stdout.write(
-                  'next: ideaseek idea experiment <id> · regenerate with --force\n',
-                );
-              }
-              return 0;
-            }
-          }
-
-          const { buildHarness } = await import('./shared.js');
-          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
-          const kind =
-            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
-          const harness = buildHarness(kind);
-          await harness.initialize();
-          let output: string;
-          let runtimeKind = kind;
-          try {
-            const result = await harness.runTask({
-              runId: `idea:${ideaId}`,
-              taskId: `idea-plan-${ideaId}`,
-              profile: 'idea-generator',
-              instruction: request.instruction,
-              inputs: [
-                {
-                  kind: 'text',
-                  name: 'idea_context',
-                  content: JSON.stringify({
-                    ideaId,
-                    cardVersion: meta.currentVersion,
-                    question: config.resolved.research.question,
-                  }),
-                },
-                { kind: 'text', name: 'idea_card', content: JSON.stringify(card) },
-              ],
-              outputSchema: 'experiment-plan-v1',
-              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
-              idempotencyKey: request.idempotencyKey,
-            });
-            output = result.output;
-            runtimeKind = result.runtime.kind;
-          } catch (error) {
-            if (error instanceof Error && error.name === 'HarnessBlockError') {
-              const block = (error as { block?: string }).block ?? 'BLOCKED';
-              if (opts.json) {
-                process.stdout.write(jsonLine({ ideaId, blocked: block, written: false }));
-              } else {
-                process.stderr.write(
-                  `idea plan blocked [${block}]: ${(error as Error).message}\n` +
-                    'nothing was written — restore quota/auth/network and rerun the same command\n',
-                );
-              }
-              return 2;
-            }
-            throw error;
-          } finally {
-            await harness.shutdown().catch(() => undefined);
-          }
-
-          const plan = parsePlanOutput(
-            output,
-            { ideaId, cardVersion: meta.currentVersion },
-            {
-              inputHash: request.inputHash,
-              skill: { name: skill.name, sha256: skill.sha256 },
-              harnessRuntime: runtimeKind,
-            },
-          );
-          await writePlan(root, plan);
-
-          let eventSeq: number | null = null;
-          const { ProjectRuntime } = await import('../workflow/runtime.js');
-          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
-          try {
-            const run = await runtime.db.getLatestRun(runtime.project.id);
-            if (run) {
-              const event = await runtime.db.appendEvent({
-                runId: run.runId,
-                phase: 'PLANNING',
-                objectId: ideaId,
-                role: 'system',
-                eventType: 'idea_plan',
-                summary: `experiment plan generated for ${ideaId} (ARIS experiment-plan)`,
-                status: 'generated',
-              });
-              eventSeq = event.seq;
-            }
-          } finally {
-            await runtime.close();
-          }
-
-          if (opts.json) {
-            process.stdout.write(
-              jsonLine({
-                ideaId,
-                reused: false,
-                inputHash: plan.inputHash,
-                skill: plan.skill,
-                harness: runtimeKind,
-                primaryMetric: plan.primaryMetric,
-                blocks: plan.blocks.length,
-                claims: plan.claimMap.length,
-                path: `ideas/${ideaId}/experiments/plan.json`,
-                eventSeq,
-              }),
-            );
-            return 0;
-          }
-
-          process.stdout.write(
-            `experiment plan for ${ideaId} v${meta.currentVersion} ` +
-              `(ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)}, harness ${runtimeKind})\n`,
-          );
-          process.stdout.write(`  primary metric: ${plan.primaryMetric}\n`);
-          process.stdout.write(
-            `  ${plan.claimMap.length} claim(s) · ${plan.blocks.length} block(s) · ` +
-              `budget ${plan.computeBudget.gpuMinutes} gpu-min · ${plan.risks.length} risk(s)\n`,
-          );
-          for (const claim of plan.claimMap) process.stdout.write(`  • ${claim.claim}\n`);
-          process.stdout.write(`  file: ${planPath(root, ideaId).replace(`${root}/`, '')}\n`);
-          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
-          process.stdout.write(
-            'next: ideaseek idea experiment <ideaId> — the runner refuses a spec that does not ' +
-              "answer this plan's primary metric\n",
-          );
-          return 0;
-        },
-      ),
-    );
-
-  idea
     .command('ablation-plan')
     .description(
       'propose the ablation set from the mechanism chain (ARIS ablation-planner backend)',
@@ -554,8 +376,15 @@ export function registerIdeaCommand(program: Command): void {
             readAblationPlan,
             writeAblationPlan,
           } = await import('../idea/ablation-plan.js');
-          const { readPlan } = await import('../idea/plan.js');
-          const experimentPlan = await readPlan(root, ideaId);
+          const { loadStoredPlan } = await import('../experiment/plan.js');
+          const { ProjectRuntime: PlanRuntime } = await import('../workflow/runtime.js');
+          const planRuntime = await PlanRuntime.open({ cwd: root, recover: false });
+          let experimentPlan: Awaited<ReturnType<typeof loadStoredPlan>> = null;
+          try {
+            experimentPlan = await loadStoredPlan(planRuntime, ideaId);
+          } finally {
+            await planRuntime.close();
+          }
           const request = buildAblationPlanRequest(skill, {
             ideaId,
             cardVersion: meta.currentVersion,
@@ -1002,7 +831,7 @@ export function registerIdeaCommand(program: Command): void {
           let bundle: Awaited<ReturnType<typeof collectIdeaEvidence>>;
           let latest = 0;
           try {
-            bundle = await collectIdeaEvidence(root, ideaId, card, gather.db, {
+            bundle = await collectIdeaEvidence(root, ideaId, card, gather, {
               includeReviews: false,
             });
             latest = await latestReviewRound(root, ideaId);
@@ -1213,7 +1042,7 @@ export function registerIdeaCommand(program: Command): void {
           const gather = await ProjectRuntime.open({ cwd: root, recover: false });
           let bundle: unknown;
           try {
-            bundle = await collectIdeaEvidence(root, ideaId, card, gather.db);
+            bundle = await collectIdeaEvidence(root, ideaId, card, gather);
           } finally {
             await gather.close();
           }

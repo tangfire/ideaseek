@@ -234,45 +234,90 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     });
   }
   if (request.outputSchema === 'experiment-plan-v1') {
+    // Test hook: raw override exercises plan parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PLAN_OUTPUT;
     if (override != null) return override;
-    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
-      ideaId?: string;
-      cardVersion?: number;
-    };
-    const card = JSON.parse(request.inputs[1]?.content ?? '{}') as {
-      minimalExperiment?: { metrics?: string[] };
-    };
-    const metrics =
-      Array.isArray(card.minimalExperiment?.metrics) && card.minimalExperiment.metrics.length > 0
-        ? card.minimalExperiment.metrics
-        : ['loss'];
-    return JSON.stringify({
-      ideaId: context.ideaId ?? 'unknown',
-      cardVersion: context.cardVersion ?? 1,
-      primaryMetric: metrics[0],
-      claimMap: [
-        {
-          claim: 'the intervention improves the primary metric against the baseline',
-          evidence: 'IdeaCard mechanismChain + paperEvidence',
-        },
-      ],
-      blocks: [
-        {
-          name: 'main smoke',
-          scale: 'smoke',
-          metrics,
-          successCriteria: 'primary metric improves across seeds',
-          failureModes: ['no improvement across seeds', 'variance explosion'],
-        },
-      ],
-      runOrder: ['M0 smoke', 'M1 quick'],
-      computeBudget: { gpuMinutes: 10 },
-      risks: ['seed variance'],
-      checklist: ['idea check passed'],
-    });
+    return JSON.stringify(buildFakeExperimentPlan(request));
   }
   return buildFakeCard(request, call);
+}
+
+/**
+ * Deterministic claim-driven plan that passes parseExperimentPlan guards:
+ * one MUST-RUN anchor (smoke run, quick data tier), a nice-to-have block,
+ * 3 seeds (ARIS DEFAULT_SEEDS) and a budget inside the fixture card ceiling
+ * (maxGpuMinutes: 120). Metrics come from the idea context (card metric +
+ * protocol primaries) so the plan stays coherent with the spec it plans.
+ */
+function buildFakeExperimentPlan(request: HarnessTaskRequest): Record<string, unknown> {
+  let cardMetric = 'accuracy';
+  const directions = new Map<string, 'higher' | 'lower'>();
+  try {
+    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+      minimalExperiment?: { metrics?: unknown };
+      protocol?: { primaryMetrics?: { name?: unknown; direction?: unknown }[] };
+      budget?: { maxGpuMinutes?: unknown };
+    };
+    const first = Array.isArray(context.minimalExperiment?.metrics)
+      ? context.minimalExperiment.metrics[0]
+      : null;
+    if (typeof first === 'string' && first) cardMetric = first;
+    for (const metric of context.protocol?.primaryMetrics ?? []) {
+      if (
+        typeof metric.name === 'string' &&
+        (metric.direction === 'higher' || metric.direction === 'lower')
+      ) {
+        directions.set(metric.name, metric.direction);
+      }
+    }
+  } catch {
+    // no context — defaults apply
+  }
+  const metricNames = [...new Set([cardMetric, ...directions.keys()])];
+  const metrics = metricNames.map((name) => ({
+    name,
+    direction: directions.get(name) ?? ('higher' as const),
+  }));
+
+  return {
+    problem: 'non-IID clients diverge under uniform aggregation',
+    thesis: 'drift-proportional reweighting reduces worst-client drift',
+    claims: [
+      {
+        claimId: 'c1',
+        statement: 'reweighting clients by measured drift improves worst-client recall',
+        linkedBlocks: ['b1-anchor'],
+      },
+    ],
+    blocks: [
+      {
+        blockId: 'b1-anchor',
+        name: 'anchor result',
+        claimTested: 'c1',
+        priority: 'MUST-RUN',
+        scale: 'smoke',
+        dataScale: 'quick',
+        metrics,
+        successCriterion: 'beats the uniform-weight baseline on the smoke slice',
+        failureInterpretation: 'hypothesis unsupported at this scale',
+      },
+      {
+        blockId: 'b2-diagnosis',
+        name: 'failure diagnosis',
+        claimTested: 'c1',
+        priority: 'NICE-TO-HAVE',
+        scale: 'quick',
+        dataScale: 'quick',
+        metrics,
+        successCriterion: 'variance drops across seeds',
+        failureInterpretation: 'report as diagnosis, not support',
+      },
+    ],
+    runOrder: ['b1-anchor', 'b2-diagnosis'],
+    seeds: [42, 200, 201],
+    budgetMinutes: 90,
+    risks: [{ risk: 'seed variance on tiny slices', mitigation: 'report 3-seed spread' }],
+  };
 }
 
 /**

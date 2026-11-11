@@ -75,7 +75,7 @@ export async function buildResearchWiki(
 ): Promise<WikiBuildResult> {
   const { ProjectRuntime } = await import('../workflow/runtime.js');
   const { listWorkspaces, loadIdeaCard } = await import('../idea/workspace.js');
-  const { readPlan } = await import('../idea/plan.js');
+  const { loadStoredPlan } = await import('../experiment/plan.js');
 
   const now = opts.now ?? Date.now();
   const added = new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -196,10 +196,10 @@ export async function buildResearchWiki(
         }
       }
 
-      const plan = await readPlan(root, ideaId);
+      const plan = await loadStoredPlan(runtime, ideaId);
       if (plan) {
-        for (const [index, claim] of plan.claimMap.entries()) {
-          const slug = `${sanitizeSlug(ideaId)}-c${index + 1}`;
+        for (const claim of plan.plan.claims) {
+          const slug = sanitizeSlug(claim.claimId);
           pages.push({
             id: `claim:${slug}`,
             kind: 'claim',
@@ -208,18 +208,18 @@ export async function buildResearchWiki(
               frontmatter({
                 type: 'claim',
                 node_id: `claim:${slug}`,
-                name: `"${claim.claim.replace(/"/g, '')}"`,
+                name: `"${claim.statement.replace(/"/g, '')}"`,
                 status: 'planned',
                 added,
               }),
               '',
-              `# ${claim.claim}`,
+              `# ${claim.statement}`,
               '',
               '## Statement',
-              claim.claim,
+              claim.statement,
               '',
-              '## Evidence',
-              claim.evidence,
+              '## Linked blocks',
+              claim.linkedBlocks.join(', ') || '(none)',
               '',
             ].join('\n'),
           });
@@ -227,7 +227,7 @@ export async function buildResearchWiki(
             from: `idea:${ideaId}`,
             to: `claim:${slug}`,
             type: 'states',
-            evidence: `plan.claimMap[${index}]: ${claim.evidence.slice(0, 120)}`,
+            evidence: `experiment-plan ${plan.inputHash.slice(7, 19)} claim ${claim.claimId}`,
           });
         }
       }

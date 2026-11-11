@@ -18,6 +18,12 @@ export interface IdeaEvidenceBundle {
 export interface EvidenceDb {
   getExperiment(specId: string): Promise<unknown | null>;
   listExperiments(): Promise<{ specId: string }[]>;
+  listArtifactsByKind(kind: string): Promise<{ contentHash: string }[]>;
+}
+
+export interface EvidenceRuntime {
+  db: EvidenceDb;
+  store: { readFinalText(hash: string): Promise<string> };
 }
 
 export interface CollectOptions {
@@ -29,12 +35,12 @@ export async function collectIdeaEvidence(
   root: string,
   ideaId: string,
   card: unknown,
-  db: EvidenceDb,
+  runtime: EvidenceRuntime,
   opts: CollectOptions = {},
 ): Promise<IdeaEvidenceBundle> {
   const { readFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
-  const { readPlan } = await import('./plan.js');
+  const { loadStoredPlan } = await import('../experiment/plan.js');
   const { readNoveltyReport } = await import('./novelty.js');
   const { readLatestReview } = await import('./review.js');
 
@@ -47,14 +53,14 @@ export async function collectIdeaEvidence(
     checkReport = null;
   }
 
-  const all = await db.listExperiments();
+  const all = await runtime.db.listExperiments();
   const ablations = all.filter((doc) => doc.specId.startsWith(`idea-${ideaId}-abl-`));
 
   return {
     card,
     checkReport,
-    experiment: await db.getExperiment(`idea-${ideaId}`),
-    plan: await readPlan(root, ideaId),
+    experiment: await runtime.db.getExperiment(`idea-${ideaId}`),
+    plan: await loadStoredPlan(runtime, ideaId),
     novelty: await readNoveltyReport(root, ideaId),
     review: opts.includeReviews === false ? null : await readLatestReview(root, ideaId),
     ablations,

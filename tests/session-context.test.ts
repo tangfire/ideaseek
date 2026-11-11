@@ -132,7 +132,7 @@ function makeCard(ideaId: string): IdeaCard {
       ablations: ['a'],
     },
     falsification: { conditions: ['f'] },
-    budget: { maxRounds: 1, maxGpuMinutes: 10 },
+    budget: { maxRounds: 3, maxGpuMinutes: 120 },
     stopConditions: ['s'],
     createdAt: 1,
   } as IdeaCard;
@@ -191,15 +191,19 @@ describe('ideaseek context (cross-session recovery)', () => {
     expect(
       (await runCli(project, ['idea', 'create', 'ctx-idea', '--from-card', cardPath])).code,
     ).toBe(0);
-    expect((await runCli(project, ['idea', 'plan', 'ctx-idea', '--harness', 'fake'])).code).toBe(0);
+    expect(
+      (await runCli(project, ['experiment', 'plan', 'ctx-idea', '--harness', 'fake'])).code,
+    ).toBe(0);
 
     const shown = await runCli(project, ['context', '--json']);
     expect(shown.code, shown.stderr).toBe(0);
     const payload = JSON.parse(shown.stdout) as ContextPayload;
     expect(payload.run?.status).toBeTruthy();
     expect(payload.pendingApprovals).toBe(1);
-    expect(payload.lastEvents.some((event) => event.type === 'decision')).toBe(true);
+    expect(payload.lastEvents.length).toBeGreaterThan(0);
     expect(payload.lastEvents[0]!.seq).toBeGreaterThan(0);
+    const events = await runCli(project, ['events', '--json']);
+    expect(events.stdout).toContain('pending-approval');
     expect(payload.ideas).toHaveLength(1);
     expect(payload.ideas[0]!.plan).toMatch(/^sha256:/);
   }, 180_000);

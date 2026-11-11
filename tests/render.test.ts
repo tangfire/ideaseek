@@ -114,7 +114,9 @@ describe('ideaseek render (ARIS render-html backend)', () => {
     expect((await runCli(project, ['idea', 'create', ideaId, '--from-card', cardPath])).code).toBe(
       0,
     );
-    expect((await runCli(project, ['idea', 'plan', ideaId, '--harness', 'fake'])).code).toBe(0);
+    expect((await runCli(project, ['experiment', 'plan', ideaId, '--harness', 'fake'])).code).toBe(
+      0,
+    );
     const wiki = await runCli(project, ['wiki']);
     expect(wiki.code, wiki.stdout + wiki.stderr).toBe(0);
     return project;
