@@ -78,7 +78,10 @@ describe('scripts/release-check (release hygiene gate)', () => {
   }, 60_000);
 
   it('flags a key-shaped secret in a scanned file (exit 1)', async () => {
-    const dir = await fixtureProject('api_token = "sk-abcdef1234567890abcdef1234567890abcdef"');
+    // Assembled at runtime so this test file itself never contains a
+    // contiguous key-shaped literal (the scanner must stay strict).
+    const fakeKey = `sk-${'a1b2c3d4'.repeat(5)}`;
+    const dir = await fixtureProject(`api_token = "${fakeKey}"`);
     const result = await runCheck(['--skip-git', '--root', dir, '--json']);
     expect(result.code).toBe(1);
     const report = JSON.parse(result.stdout) as {
