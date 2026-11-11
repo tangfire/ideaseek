@@ -1,6 +1,6 @@
 # IdeaSeek 数据规模与快速验证策略
 
-IdeaSeek 的定位是快速科研发现、idea 验证和代码交付，不是替用户完成最终大规模 benchmark。用户提供的全量数据集始终只读，平台只把它们作为生成代表性验证切片和最终复现配置的来源。IdeaSeek 内部不执行全量训练；用户拿到代码后自行运行 full-scale 实验。
+IdeaSeek 的默认定位是快速科研发现、idea 验证和代码交付，不是自动替用户完成最终大规模 benchmark。用户提供的全量数据集始终只读，平台只把它们作为生成代表性验证切片和 handoff 配置的来源；达到 `HANDOFF_READY` 后，用户可以显式批准 Full Research 模式，由平台单独执行 full-run。
 
 ## 四级数据规模
 

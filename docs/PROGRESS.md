@@ -169,6 +169,8 @@ Phase 4：Comparison 复现与统一评测
 - [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
 - [ ] Application/domain/adapter 分层硬化与 composition root
 - [ ] Build-vs-reuse 审查：优先接入 DSH/ARIS，避免重复实现
+- [ ] `HANDOFF_READY` 后 Full Research/Publication 模式、数据下载审批和 full-run 隔离
+- [ ] 全量图表、claim audit、论文草稿和独立 reviewer 交付链
 
 ## Phase 8：发布与文档
 

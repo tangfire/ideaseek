@@ -91,6 +91,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [ARIS_INTEGRATION_PLAN.md](ARIS_INTEGRATION_PLAN.md)：将 ARIS 的 workflow、reviewer、wiki、审计和渲染能力接入 IdeaSeek 的计划。
 - [IDEATION_ROUNDS.md](IDEATION_ROUNDS.md)：同一论文/数据项目的多轮 idea 探索、去重和增量复用。
 - [IDEA_IMPROVEMENT.md](IDEA_IMPROVEMENT.md)：导入已有 idea/代码、诊断问题和生成改进路线。
+- [FULL_RESEARCH_MODE.md](FULL_RESEARCH_MODE.md)：用户批准后下载数据、运行全量实验、画图和生成论文草稿。
 - [LONG_RUNNING_WORKFLOWS.md](LONG_RUNNING_WORKFLOWS.md)：跨多轮 idea/实验的长任务生命周期、恢复粒度和 soak-test 验收。
 
 ## 首版边界

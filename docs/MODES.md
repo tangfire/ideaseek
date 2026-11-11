@@ -10,6 +10,10 @@ Research 模式负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 
 Agent 模式直接使用 DSH Agent、Session、Tool 和 provider，适合查看/解释项目代码、编写小工具、修复明确的工程问题、运行受限测试、查看日志和准备 handoff 文件。它仍受 capability profile、项目根路径、网络、凭据和容器策略限制。默认不能修改 `papers/`、`datasets/`、comparison `upstream/`、锁定协议、已提交实验结果或已发布 handoff。需要修改科研对象时必须进入明确的 Research Decision/Approval。
 
+## Full Research / Publication 模式
+
+这是 Research 在 idea 达到 `HANDOFF_READY` 后的显式升级模式。用户批准后，IdeaSeek 可以发现/下载公开数据、运行 full-scale 实验、生成图表、调用 ARIS-style 写作/claim audit/reviewer workflow，并交付论文草稿和完整复现包。下载、全量训练和论文主张都有独立预算、checkpoint 和审批；它不是普通探索的默认行为。
+
 ## 切换方式
 
 交互终端：
