@@ -1,0 +1,193 @@
+# IdeaSeek 用户指南
+
+IdeaSeek 是一个面向科研探索的多 Agent CLI。你提供研究问题、论文、已有数据和可选的 comparison；它负责建立论文证据库、生成实验协议、复现/修复 comparison、提出和验证多个 idea，并交付值得继续做全量实验的代码和 handoff。
+
+IdeaSeek 的探索实验使用 `smoke`、`quick` 和 `standard` 数据规模。最终全量训练由研究者拿到 handoff 后自行运行。
+
+## 5 分钟开始
+
+### 安装
+
+正式发布后的目标安装方式：
+
+```bash
+npm install -g ideaseek
+ideaseek doctor
+```
+
+当前源码开发版本请先阅读 [PACKAGING.md](PACKAGING.md) 和 [BOOTSTRAP_DEVELOPMENT.md](BOOTSTRAP_DEVELOPMENT.md)。
+
+### 创建研究项目
+
+```bash
+mkdir fl-model-heterogeneity
+cd fl-model-heterogeneity
+ideaseek init
+```
+
+当前目录就是项目。IdeaSeek 会创建：
+
+```text
+papers/       # 研究论文
+datasets/     # 用户数据集或只读挂载
+comparisons/  # 对比方法论文/代码
+incoming/     # 暂时不确定类型的材料
+knowledge/    # 论文卡片、研究地图、协议和 baseline 记录
+ideas/        # 每个 idea 的独立代码和实验
+reports/      # 中间和最终报告
+.research/    # 数据库、任务、缓存和 checkpoint
+```
+
+### 配置并检查环境
+
+```bash
+ideaseek setup
+ideaseek doctor
+```
+
+IdeaSeek 会检测 Node、Python、容器、CUDA、GPU、磁盘、DSH provider 和可选本地 embedding。API key 使用 `/models` 或 DSH credential store 配置，不要写进项目文件。
+
+### 放入输入
+
+把论文放入 `papers/`，数据放入 `datasets/`，已有 comparison 放入 `comparisons/`。不确定的材料先放 `incoming/`，然后运行：
+
+```bash
+ideaseek scan
+ideaseek intake
+ideaseek plan --question "在联邦学习中，不同客户端模型结构不一致时，如何实现有效知识协作？"
+```
+
+`scan` 只建立 manifest 和候选分组，不移动或覆盖原始文件。`plan` 显示论文数量、数据、comparison、模型 route、预计 token/GPU/磁盘和需要确认的科学语义。
+
+### 启动探索
+
+```bash
+ideaseek start --question "在联邦学习中，不同客户端模型结构不一致时，如何实现有效知识协作？"
+```
+
+限制本次最多进入实验的 idea 数量：
+
+```bash
+ideaseek run --question "..." --ideas 3 --data-scale quick
+```
+
+默认模式是 `guided`：论文解析、检索、代码检查和 quick 实验自动执行；研究问题、数据语义、协议锁定、comparison 清单和 handoff 等关键节点会请求确认。
+
+## 运行中查看和控制
+
+前台运行时可以直接观察事件，也可以后台运行：
+
+```bash
+ideaseek run --question "..." --detach
+ideaseek attach --run <run-id>
+ideaseek status --detail
+ideaseek next
+ideaseek pause --run <run-id>
+ideaseek resume --run <run-id>
+ideaseek continue --run <run-id>
+```
+
+进入交互终端：
+
+```bash
+ideaseek interactive
+```
+
+常用命令：
+
+```text
+/models       查看模型 route/provider
+/status       查看阶段、任务、资源和预算
+/next         查看阻塞和下一步
+/papers       查看论文进度和解析失败
+/comparisons  查看 comparison 状态
+/ideas        查看 idea 和版本
+/experiments  查看实验队列和结果
+/logs <id>    查看脱敏日志
+/approve      确认当前协议或门槛
+/pause        安全暂停
+/resume       恢复
+/report       生成报告
+/quit         退出交互界面，不取消后台任务
+```
+
+交互提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。高影响操作会变成待确认 Decision。
+
+## IdeaSeek 会做什么
+
+流程通常是：
+
+```text
+论文并行阅读
+→ PaperCard 和证据
+→ 研究地图和机制库
+→ 数据画像和实验协议
+→ comparison 发现/复现/修复
+→ 多个 idea 生成
+→ 独立代码和 quick/standard 实验
+→ 消融和 Result Analyst
+→ idea 修订或新 idea 分支
+→ handoff 代码和全量实验配置
+```
+
+IdeaSeek 不把“方法 A + 方法 B”直接当成创新。候选需要有问题矛盾、机制链、最近邻工作、可观测预测和否证条件。
+
+## 查看结果
+
+```bash
+ideaseek report
+ideaseek idea list
+ideaseek idea analyze --idea <idea-id>
+ideaseek experiment handoff --idea <idea-id>
+```
+
+每个 idea 位于 `ideas/<idea-id>/`，包含说明、代码、数据切片、实验、消融和复现命令。结果等级包括：
+
+- `EXPLORATORY`：初步机制证据；
+- `PROMISING`：quick/部分 standard 验证支持；
+- `HANDOFF_READY`：达到跨场景、复现和资源门槛；
+- `USER_FULL_RESULT`：研究者自行完成全量实验后的结果。
+
+`HANDOFF_READY` 表示值得投入全量实验，不代表 IdeaSeek 已证明全量结果一定有效。
+
+## 补充论文、数据或 comparison
+
+把新增材料放入项目后再次运行：
+
+```bash
+ideaseek scan
+ideaseek run --question "..."
+```
+
+IdeaSeek 按内容 hash 和版本增量处理：新增论文只触发受影响的 PaperCard/综合；新增数据只触发相关 snapshot、comparison 和实验；新增 comparison 只补做该方法。
+
+## 出错、额度耗尽和恢复
+
+```bash
+ideaseek doctor
+ideaseek status --detail
+ideaseek next
+ideaseek continue --run <run-id>
+```
+
+模型额度、GitHub 限额或 provider 余额耗尽会进入可恢复状态。已完成论文、comparison、idea 和实验不会重做。GPU OOM、进程崩溃、SSH 断开和服务器重启也从最小 checkpoint 继续。
+
+## 项目和历史记录
+
+当前目录默认是当前项目：
+
+```bash
+ideaseek status
+ideaseek projects
+ideaseek open ~/research/another-project
+ideaseek status --project ~/research/another-project
+```
+
+## 进一步阅读
+
+- [CLI_SPEC.md](CLI_SPEC.md)：完整命令和退出码；
+- [TERMINAL_UX.md](TERMINAL_UX.md)：终端交互和事件显示；
+- [MODEL_ROUTING.md](MODEL_ROUTING.md)：模型分层和 `/models`；
+- [USER_JOURNEY_ACCEPTANCE.md](USER_JOURNEY_ACCEPTANCE.md)：完整用户旅程验收；
+- [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：专业产品要求；
+- [OPERATIONS.md](OPERATIONS.md)：部署、凭据、备份和故障处理。

@@ -134,6 +134,8 @@ Phase 4：Comparison 完整闭环
 
 ## Phase 9：产品化验收
 
+- [ ] README Quickstart 与 USER_GUIDE 从零机器验证
+- [ ] 文档站分层、搜索和版本发布流程
 - [ ] Application/domain/adapter 分层硬化与 composition root
 - [ ] CLI/REPL/JSON 共享 use-case，消除状态和门禁重复实现
 - [ ] ARCHITECTURE_DECISIONS.md 约束的依赖方向检查

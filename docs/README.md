@@ -76,6 +76,8 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)：版本发布、迁移、回滚和升级验收。
 - [BOOTSTRAP_DEVELOPMENT.md](BOOTSTRAP_DEVELOPMENT.md)：从 clone DSH、创建 IdeaSeek 私有仓库到让开发 Agent 开工的步骤。
 - [PACKAGING.md](PACKAGING.md)：普通用户安装、开发安装、doctor、升级、回滚和平台支持。
+- [USER_GUIDE.md](USER_GUIDE.md)：面向普通用户的完整使用手册。
+- [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md)：文档站分层和发布规范。
 - [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：专业产品的 onboarding、可观测性、成本、安全、交付和维护要求。
 - [PRODUCT_GAPS_AUDIT.md](PRODUCT_GAPS_AUDIT.md)：从真实用户操作反推的自然语言交互、dry-run、多项目、清理、通知和反馈缺口。
 - [USER_JOURNEY_ACCEPTANCE.md](USER_JOURNEY_ACCEPTANCE.md)：从安装到 handoff、恢复和升级的完整用户旅程验收。

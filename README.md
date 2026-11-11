@@ -25,3 +25,5 @@ The design and development handoff documents are in `docs/`. Start with:
 Source code and tests are intentionally empty until Phase 0 begins.
 
 Start development with [docs/BOOTSTRAP_DEVELOPMENT.md](docs/BOOTSTRAP_DEVELOPMENT.md). The authoritative design and developer instructions are in [docs/README.md](docs/README.md), [docs/AGENTS.md](docs/AGENTS.md), and [docs/PROGRESS.md](docs/PROGRESS.md).
+
+For end-user usage, start with [docs/USER_GUIDE.md](docs/USER_GUIDE.md). It covers installation, project setup, model configuration, paper/data intake, interactive runs, recovery, results, and handoff.
