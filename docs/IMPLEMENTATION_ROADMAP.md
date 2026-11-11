@@ -1,55 +1,61 @@
 # 实施路线
 
-## Phase 0：骨架与可恢复运行
+## Phase 0：基础运行与可恢复性
 
-实现 CLI、项目目录、`start` 小白入口、自动环境检测、starter/standard/research 规模策略、宽松输入扫描/manifest、`scan/intake/organize/next/status/pause/resume/attach`、配置抽象、SQLite/PostgreSQL 抽象、RunEvent、Supervisor、任务租约和 artifact 哈希。用假 Worker 和故障注入验证恢复；确认 scan/organize 不移动或覆盖原始文件。
+实现项目目录、`init/start/setup/doctor`、输入 manifest、配置快照、Workflow DB、Task lease/heartbeat、RunEvent、Artifact Store、Supervisor、pause/resume/continue 和故障恢复。
 
-验收：终端断开、Worker 崩溃、进程重启和整机重启后，只重跑最小未完成任务。
+验收：Worker 崩溃、进程重启、终端断开和整机重启后只重跑最小未完成任务；原始输入不被移动或覆盖。
 
-## Phase 1：DSH 集成与能力 profile
+## Phase 1：DSH Runtime 与 Agent 能力
 
-固定 DSH 版本，建立 HarnessAdapter、Cordis plugins、headless/SDK 启动、模型 provider、角色 profile、工具注册和凭据引用。先让一个 Paper Extractor 完成结构化任务。
+固定 DSH 版本，建立 HarnessAdapter、Cordis plugin/bundle/profile、provider、capability profile、工具 schema、凭据引用和 Agent 事件映射。
 
-验收：不同角色看到不同工具和路径；模型 key 不进入 prompt、事件和日志；Agent session 与工作流状态可关联但互不替代。
+验收：不同角色看到不同工具和路径；模型 key 不进入 prompt、事件或日志；Agent session 与工作流状态互不替代。
 
 ## Phase 1.5：CLI 交互与可观察性
 
-实现 IdeaSeek 的交互式终端层：启动 banner、`ideaseek ›` 提示符、阶段/Agent/任务事件摘要、审批界面、attach/watch/replay、pause/resume 反馈、plain/JSON 输出和脱敏日志。UI 只订阅 Supervisor 的 RunEvent，不自行维护科研状态。
+实现启动 banner、交互提示符、slash 命令、RunEvent 实时摘要、审批反馈、attach/watch/replay、plain/JSON 输出和脱敏日志。CLI 只调用 application use-case，不自行维护科研状态。
 
-验收：用户能看到当前阶段、完成/排队/失败任务、资源和阻塞原因；SSH 断开后可以 attach 继续观察；交互、plain 和 JSON 三种模式都不泄露 secret 或模型隐藏推理。
+验收：用户能看到阶段、Agent、任务、资源和阻塞；SSH 断开后可以 attach；高影响操作有确认；三种输出模式语义一致。
 
-## Phase 2：论文与知识库
+## Phase 2：论文知识与证据
 
-实现 PDF 解析/OCR、页码证据、去重、全文/向量检索、PaperCard、主题综合和研究地图。先用人工标注的 30–100 篇论文校准。
+实现 PDF/LaTeX/OCR/表格解析、PaperCard、证据定位、去重、FTS/可选 embedding、增量处理、并行 map/reduce、Evidence Checker、主题综合、机制库和研究地图。
 
 验收：关键字段证据支持率、页码定位、失败文档识别和增量重跑通过 gold set。
 
-## Phase 3：数据集和 comparison
+## Phase 3：数据画像与实验协议
 
-实现 dataset card、Protocol Synthesis Agent、Leakage/Validity Checker、comparison 候选发现、官方代码导入、论文重实现、Baseline Repair 和统一评测协议；不要求先手工完成某个领域的完整适配器。
+实现 Dataset Analyst、Protocol Synthesis Agent、Leakage/Validity Checker、ExperimentalProtocolProposal、DatasetSlice、Scenario Planner 和 handoff manifest。领域插件不是前置条件。
 
-验收：每个 required comparison 能标记来源、许可、差异和状态；原始仓库不变；至少一个真实任务中所有 required comparison 可运行或明确阻塞。
+验收：协议能从论文、comparison 代码和数据提出并锁定；切片可重建；泄漏门禁和用户确认可解释；原始数据不变。
 
-## Phase 4：Idea 与实验闭环
+## Phase 4：Comparison 复现与统一评测
 
-实现 IdeaCard、独立 idea workspace、Code Implementer、ExperimentSpec、容器执行、GPU Capacity Planner、Scenario Planner、L0–L4 实验组合、基线/候选/消融和 Result Analyst。
+实现 comparison manifest、用户仓库导入、官方代码定位、论文重实现、Baseline Repair、ExperimentSpec/RunResult 和 required comparison gate。
 
-验收：两个 idea 能并行运行且互不污染；每个结果能追溯到 idea/version、代码、数据、环境、场景和 run；报告能区分机制支持、稳定性、场景鲁棒性和外部验证；支持继续、否证、无效运行三种路径。
+验收：comparison 来源、许可证、patch、环境、复现状态和失败原因可追溯；所有 required 方法通过或明确阻塞。
 
-## Phase 5：领域无关科研闭环验收
+## Phase 5：Idea 生成与实验闭环
 
-用一个真实任务族（例如联邦学习模型异构）作为验收样例，验证核心引擎能从该方向的论文、comparison 代码和用户数据自动生成 dataset card、切分、指标、comparison 适配、ExperimentSpec、消融和 gold set。验收目标是验证领域无关流程，而不是把该方向硬编码进核心。必须跑通从论文到 baseline、idea、代码、quick/standard 小规模实验和 handoff 的完整闭环；领域插件只补充必要解析器和检查器。
+实现 Mechanism Analyst、Idea Generator、Research Discussant、Novelty Challenger、Synthesis Lead、IdeaCard 机制链、独立 idea workspace、Code Implementer、GPU Capacity Planner、quick/standard 实验、消融、Result Analyst、Idea revision 和 handoff。
 
-验收：研究者能检查数据语义、切分和指标；平台能区分代码/环境失败与科学假设失败；结果可复现且不发生明显泄漏。
+验收：多个 idea 可并行且互不污染；结果绑定 idea/version、代码、数据、协议、场景和 run；失败实验保留；handoff 门禁正确拒绝不充分结果。
 
-## Phase 6：跨方向泛化与资源感知
+## Phase 6：领域无关引擎验证
 
-在一个方向闭环通过后，使用不同任务族的论文、comparison 代码和数据做回归验证，确认协议生成器、数据切片、comparison 适配、资源估算和 quick/standard 探索不会依赖某一学科的硬编码。处理多 GPU、客户端/视频/多模态缓存和多数据集场景；特殊格式或规则只有在通用能力不足时才通过可选插件补充。用户最终的多 GPU 全量实验通过 handoff 交付，不进入 IdeaSeek 自动探索循环。
+用一个真实任务族验证同一套核心引擎可以从论文、comparison 和数据自动生成协议、探索 idea、运行 quick/standard 实验并生成 handoff；再用第二个不同任务族回归，检查没有方向硬编码。领域插件只补充特殊格式或规则。
 
-## Phase 7：按需扩展与发布
+验收：不同任务族的输入都能进入同一套 PaperCard、Protocol、ExperimentSpec、Result 和 handoff 契约；没有新方向时不需要修改核心 Agent Loop。
 
-完成可选插件 SDK、Linux 安装包、WSL2 使用路径、回归/许可证/secret 检查、备份恢复演练、版本迁移和回滚清单。
+## Phase 7：产品硬化与长任务能力
 
-每一阶段先写契约和失败测试，再实现 happy path；不要在 Phase 1 前堆复杂多 Agent 角色，也不要在质量指标未达标前追求千篇论文吞吐。
+实现 ResearchRun 多轮编排、训练内部 checkpoint、长周期 soak test、自然语言/审批、模型分层路由、多项目上下文、清理/归档/导出、通知、用户反馈和 application/domain/adapter 分层硬化。
 
+验收：用户可从安装、运行、断线、额度耗尽、机器重启、idea 修订到 handoff 完成完整旅程；所有关键操作可解释、可暂停、可恢复。
 
+## Phase 8：发布与文档
+
+完成 README/User Guide/文档站、可选插件 SDK、npm CLI、Linux 安装包、WSL2 路径、依赖/许可证/secret 检查、备份恢复演练、版本迁移和回滚。其他方向和领域插件作为按需 backlog，不阻塞核心发布。
+
+每一阶段先写契约和失败测试，再实现主路径；阶段完成必须更新 `PROGRESS.md` 并提交 commit。

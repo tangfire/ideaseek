@@ -15,14 +15,16 @@ Phase 4：Comparison 完整闭环
 
 领域插件、向量检索、多 GPU 和其他方向扩展不是 Phase 4/5 的前置条件。模块交付记录是 append-only 历史；顶部 checkbox 是当前状态的唯一来源。
 
-## Phase 0：项目骨架与恢复
+## Phase 0：基础运行与可恢复性
+
+目标：让项目、任务、artifact、事件和 checkpoint 在进程/机器中断后可恢复。
 
 - [x] `ideaseek init` 幂等创建项目目录和模板
 - [x] `ideaseek start` 小白用户一键入口和规模自适应策略
 - [x] `ideaseek setup/doctor/config explain`
 - [x] 自动检测 Python/Node/容器/CUDA/GPU/磁盘
 - [x] `scan/intake/organize` 与 InputManifest
-- [x] `starter/standard/research` 运行策略和报告措辞
+- [x] starter/standard/research 运行策略和报告措辞
 - [x] 配置 schema、迁移和 ResolvedConfig 快照
 - [x] Workflow DB 与 artifact store 接口
 - [x] Task lease、heartbeat、重试、取消和幂等提交
@@ -31,7 +33,9 @@ Phase 4：Comparison 完整闭环
 - [x] `pause/resume/continue/cancel`
 - [x] 故障注入和 checkpoint 恢复
 
-## Phase 1：DSH 集成
+## Phase 1：DSH Runtime 与 Agent 能力
+
+目标：接入 DSH 的 provider、Agent、Session、Tool、Subagent 和 capability profile，不复制 DSH Agent Loop。
 
 - [x] 固定 DSH commit/包版本和兼容性测试
 - [x] `HarnessAdapter`
@@ -44,20 +48,22 @@ Phase 4：Comparison 完整闭环
 
 ## Phase 1.5：CLI 交互与可观察性
 
-目标：让用户能像使用成熟 Agent CLI 一样实时看到 IdeaSeek 在做什么、为什么等待、需要什么确认，并能在 SSH 断开后重新接入。
+目标：让用户能实时观察、控制和恢复长期科研任务。
 
 - [x] IdeaSeek 启动 banner 和窄终端 fallback
-- [x] `ideaseek ›` 交互提示符与 `/help`、`/status`、`/next`
+- [x] `ideaseek ›` 交互提示符与基础 slash 命令
 - [x] 论文、comparison、idea、实验的实时事件摘要
 - [x] `attach/watch/events` 事件回放与实时跟随
 - [ ] protocol/experiment/权限审批交互
 - [x] `pause/resume/continue/cancel` 交互反馈
-- [x] `--plain` 无颜色日志输出
-- [x] `--json` 机器可读事件和状态输出
+- [x] `--plain` 和 `--json` 输出
 - [x] 任务详情、脱敏日志和错误解释
 - [x] 断线重连、终端尺寸变化和后台 supervisor 状态显示
+- [ ] Research/Agent 模式切换、权限摘要和 DSH 复用
 
-## Phase 2：论文与知识库
+## Phase 2：论文知识与证据
+
+目标：把论文变成可检索、可引用、可增量复用的研究知识。
 
 - [x] PDF/LaTeX/OCR/表格/图表解析
 - [x] PaperCard schema 和证据定位
@@ -67,7 +73,9 @@ Phase 4：Comparison 完整闭环
 - [x] 主题综合、机制库和研究地图
 - [x] 论文 gold set 回归
 
-## Phase 3：数据与实验协议
+## Phase 3：数据画像与实验协议
+
+目标：从论文、comparison 代码和用户数据自动生成可审查的实验协议。
 
 - [x] Dataset Analyst 和 dataset card
 - [x] Protocol Synthesis Agent
@@ -77,9 +85,10 @@ Phase 4：Comparison 完整闭环
 - [x] Scenario Planner 和实验组合 L0–L4
 - [x] DatasetSlice `smoke/quick/standard`、handoff manifest 和晋级规则
 - [x] 数据分布保持、客户端/域/主体边界和泄漏检查
-- [ ] 首发领域验证（优先联邦学习模型异构）及人工 gold set
 
-## Phase 4：Comparison
+## Phase 4：Comparison 复现与统一评测
+
+目标：让 comparison 可以被导入、修复、重实现、运行并和 idea 在同一协议下比较。
 
 - [x] comparison manifest 与 required 状态
 - [x] 用户仓库导入和 upstream/worktree 隔离
@@ -89,7 +98,9 @@ Phase 4：Comparison 完整闭环
 - [x] 统一 ExperimentSpec/RunResult
 - [x] 所有 required comparison 门槛
 
-## Phase 5：Idea 与实验闭环
+## Phase 5：Idea 生成与实验闭环
+
+目标：让 idea 有机制、有独立代码、能并行 quick/standard 验证，并能根据结果修订或分叉。
 
 - [ ] Mechanism Analyst、Idea Generator、Research Discussant
 - [ ] Novelty Challenger、Synthesis Lead
@@ -97,74 +108,63 @@ Phase 4：Comparison 完整闭环
 - [x] 独立 idea workspace 和代码版本
 - [x] Code Implementer、smoke test、静态检查
 - [x] GPU Capacity Planner 和多 idea 并行
-- [x] 主实验、消融、失败分类和结果分析
+- [x] 主实验、消融、失败分类和 Result Analyst
 - [x] Idea 版本迭代、否证和新 idea 分支
 - [x] 结果/报告/复现清单
 - [x] guided/autonomous/review-only 自动化策略和科学门槛
 
-## Phase 6：领域无关闭环与跨方向验证
+## Phase 6：领域无关引擎验证
 
-目标：用一个真实研究方向验证领域无关的论文学习、协议综合、comparison、quick/standard 实验和 handoff 完整闭环，再用不同任务族回归验证核心没有依赖某个方向的硬编码。联邦学习模型异构只是验收样例，不是产品支持范围的上限。
+目标：用真实研究材料验证同一套核心引擎可以从论文、comparison 和数据自动设计协议、探索 idea 并交付 handoff。联邦学习模型异构只是当前验收样例，不是产品支持范围的上限。
 
 - [x] 接入真实 FL 数据集并生成 dataset manifest
 - [x] 生成客户端/模型异构实验协议并通过泄漏门禁
-- [x] 在至少两个代表性数据切片上验证 protocol lock
+- [x] 在代表性数据切片上验证 protocol lock
 - [x] 完成 required comparison 的 quick smoke/评测
 - [x] 运行一个 idea 的机制验证、关键消融和结果反馈
-- [ ] 生成 `HANDOFF_READY` 级别的代码、配置和复现包
 - [x] 建立该方向的人工 gold set 和回归样例
+- [ ] 生成 `HANDOFF_READY` 级别的代码、配置和复现包
+- [ ] 用第二个不同任务族做领域无关回归验证
 
-## Phase 7：资源感知与按需扩展
+## Phase 7：产品硬化与长任务能力
 
-这些项目按真实需求启用，不是通用 idea 生成的前置条件。IdeaSeek 根据论文、comparison 代码、数据画像和实验协议自动估算资源；特殊格式、指标、泄漏规则或仿真器只有在通用能力不足时才通过用户/社区插件补充。
+目标：让真实用户可以长期、低风险、可解释地使用 IdeaSeek。
 
-- [ ] 定义可选插件 SDK、安装/启用/doctor 和权限 manifest
-- [ ] 协议驱动的多 GPU/CPU/内存资源计划与 handoff 建议
-- [ ] 运行时资源反馈、OOM/温度/磁盘阈值处理
-- [ ] 多数据集/多场景实验组合扩展
-- [ ] 按需安装插件的权限、版本和回退机制
+- [ ] ResearchRun 跨 idea 版本/多轮实验的持久化编排
+- [ ] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
+- [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
+- [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
+- [ ] protocol/experiment/权限审批交互
+- [ ] 自然语言 REPL 与高影响操作确认
+- [ ] fast/balanced/deep/deterministic 模型路由
+- [ ] 用户级/项目级配置、多项目注册和项目锁
+- [ ] cleanup/archive/export、通知和反馈入口
+- [ ] IdeationRound 多轮 idea、旧候选去重和用户反馈回流
+- [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
+- [ ] Application/domain/adapter 分层硬化与 composition root
 
-## Phase 8：发布与运维
+## Phase 8：发布与文档
 
+目标：让新用户能安装、学习、升级、恢复和复现。
+
+- [ ] README Quickstart 与 USER_GUIDE 从零机器验证
+- [ ] 文档站分层、搜索和版本发布流程
 - [ ] npm CLI/package 发布和版本校验
 - [ ] 一键安装/卸载和 `ideaseek doctor`
 - [ ] Linux 安装包和服务器部署验证
 - [ ] Windows/WSL2 使用路径验证
 - [ ] 回归集、依赖、许可证和 secret 检查
-- [ ] 备份恢复演练和发布清单
-- [ ] 版本迁移、回滚和已知限制说明
+- [ ] 备份恢复演练、版本迁移和回滚
 
-## Phase 9：产品化验收
+## 可选扩展 Backlog
 
-- [ ] README Quickstart 与 USER_GUIDE 从零机器验证
-- [ ] 文档站分层、搜索和版本发布流程
-- [ ] Application/domain/adapter 分层硬化与 composition root
-- [x] CLI/REPL/JSON 共享 use-case，消除状态和门禁重复实现
-- [x] ARCHITECTURE_DECISIONS.md 约束的依赖方向检查
-- [ ] ResearchRun 跨 idea 版本/多轮实验的持久化编排
-- [ ] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
-- [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
-- [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
-- [ ] 自然语言 REPL 与高影响操作确认
-- [x] `plan` dry-run、成本/资源预估和审批摘要
-- [ ] 用户级/项目级配置分层与 `config explain`
-- [ ] 多项目注册、项目锁和目录守卫
-- [ ] 当前目录项目上下文、`projects/open` 和 `--project` 覆盖
-- [ ] cleanup/archive/export 生命周期命令
-- [ ] 本地通知、可选 webhook 和无心跳检测
-- [ ] 运行中调整 idea/comparison 优先级和资源
-- [ ] 用户反馈入口和 gold set 导入
-- [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
-- [ ] IdeationRound 多轮 idea、旧候选去重和用户反馈回流
-- [ ] Research/Agent 模式切换、权限摘要和 DSH 复用
-- [ ] 运行前 `plan`、成本/资源估算和高成本确认
-- [ ] `next/status/explain` 的阻塞和决策解释
-- [ ] 任务详情、脱敏日志和本地/可选远程通知
-- [ ] 项目归档、导出、跨机器恢复和 artifact 校验
-- [ ] Markdown/JSON/BibTeX/handoff 报告导出
-- [ ] 用户反馈、gold set 和回归评测入口
-- [ ] 产品需求清单 P0 验收
+这些项目按真实需求启用，不是核心科研闭环的前置条件：
 
+- [ ] 可选插件 SDK、安装/启用/doctor 和权限 manifest
+- [ ] 多 GPU/CPU/内存资源计划和本地模型推理服务增强
+- [ ] 多数据集/多场景实验组合扩展
+- [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter
+- [ ] 其他研究方向的回归验证和专用插件
 ## 模块交付记录
 
 每个完成模块追加一行：
@@ -234,3 +234,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-11 | Phase 9 架构依赖方向检查：tests/architecture.test 六条静态守卫（node:sqlite 仅限 workflow/sqlite 适配器、@deepseek-ai SDK 仅限 src/dsh/**（dsh-plugins 豁免）、domain 六模块零 commander/dsh-sdk/commands/sqlite 依赖、commands+cli 不直连 sqlite/dsh-sdk、REPL 无 workflow/db·runtime 直连且经 cli/runner 转发（ADR-006）、状态机 types 无 CLI 依赖）+ 最小重构：comparison smoke 内联 spawn 抽换为共享 runRepairCommand/writeRepairLog（与 baseline repair 同路径，消除子进程重复实现）| ea0c79e | 门禁 63 files/465 vitest+9 python 全绿 | composition root 仍集中在 commands/shared.ts（过渡态，完整 DI 组装留后续硬化）；ExperimentRunner 仅执行锁定 spec 的类型级约束由 ExperimentSpec 参数类型体现，未加运行时水印 | 下一模块：plan dry-run（P0 产品验收）
 2026-11-11 | Phase 9 plan dry-run：ideaseek plan [--question|--run|--json]（零副作用聚合：input-manifest 论文/字节统计+已索引数、comparison 注册表+gate 预览、idea workspace/就绪数/上限、切片按尺度、模型 route+凭据存在性（不打印值）、实时 host 探测、带 basis 标注的估算（token 启发式=estimate、max_model_cost/max_gpu_hours=预算天花板非预测、协议 resourceEstimate 原文引用）、guided 审批节点四件套、阻塞清单（config/gate/协议未锁）、--run 附现有 run 剩余任务；startedNothing 断言）| 42faf37 | 门禁 64 files/468 vitest+9 python 全绿（3 条 plan 测试：dry-run 全字段+run 未创建、--run 进度不产生第二 run、非项目拒绝）| 成本预测仅预算天花板（无 provider 价目表）；论文 token 为启发式标注 | 下一模块：explain task/decision/artifact（P0）
 2026-11-11 | Phase 9 explain task/decision/artifact（PRODUCT_REQUIREMENTS P0）：ideaseek explain 三态溯源（task=run 上下文/attempt/幂等键/脱敏错误/产物/关联事件/产出规则、decision=事件 seq→RunEvent+run 绑定+不可改写规则、artifact=hash/大小/提交任务/run+完整性校验 verifyFileHash→verified|mismatch|missing 退出码0/1）、WorkflowDb.getArtifact 单条访问器（迁移无改动，纯查询）、全部只读重建不重跑任何东西 | 41259c7 | 门禁 65 files/471 vitest+9 python 全绿（3 条 explain 测试：task 全字段+幽灵拒绝、decision seq 绑定+坏输入、artifact verified→篡改→mismatch 退出1+幽灵/用法）| decision 仅扫最新 run（更早 run 的决策需 --run 范围扩展，后续增强）；explains 不含模型 prompt（按安全边界） | 下一模块：/models 模型路由状态（P0）
+
