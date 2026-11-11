@@ -134,6 +134,10 @@ Phase 4：Comparison 完整闭环
 
 ## Phase 9：产品化验收
 
+- [ ] ResearchRun 跨 idea 版本/多轮实验的持久化编排
+- [ ] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
+- [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
+- [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
 - [ ] 自然语言 REPL 与高影响操作确认
 - [ ] `plan` dry-run、成本/资源预估和审批摘要
 - [ ] 用户级/项目级配置分层与 `config explain`

@@ -22,6 +22,8 @@
 
 涉及用户流程、成本、通知、报告导出、归档、恢复或发布验收时，补读 `PRODUCT_REQUIREMENTS.md`。
 
+涉及数小时/数天实验、idea 多轮迭代、训练恢复或长期 supervisor 时，补读 `LONG_RUNNING_WORKFLOWS.md`；不要把会话 resume 当作 workflow resume。
+
 涉及配置、报告引用、实验结论或发布时，必须补读 `CONFIG_SPEC.md`、`PROVENANCE_AND_CITATIONS.md`、`RESEARCH_INTEGRITY.md` 和 `RELEASE_CHECKLIST.md`。
 涉及具体研究方向、数据切分、指标或实验协议时，必须补读 `DOMAIN_ADAPTERS.md`，并先确定该方向适配器的契约。
 
