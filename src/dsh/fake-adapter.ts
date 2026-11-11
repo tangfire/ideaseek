@@ -102,6 +102,35 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'experiment-audit-v1') {
+    const override = process.env.IDEASEEK_FAKE_AUDIT_OUTPUT;
+    if (override != null) return override;
+    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+      ideaId?: string;
+      cardVersion?: number;
+    };
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      overallVerdict: 'PASS',
+      checks: [
+        {
+          id: 'result-existence',
+          verdict: 'PASS',
+          detail: 'result metrics present in the bundle',
+          evidence: 'experiment.result.metrics',
+        },
+        {
+          id: 'score-normalization',
+          verdict: 'PASS',
+          detail: 'metrics match the plan primary metric naming',
+          evidence: 'plan.primaryMetric',
+        },
+      ],
+      claims: [],
+      summary: 'results are internally consistent with the recorded plan',
+    });
+  }
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;

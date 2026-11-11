@@ -9,6 +9,7 @@ import type { ExperimentSpec } from '../experiment/spec.js';
 import { collectAnalysisInput } from './analyze.js';
 import { analyzeIdea, type IdeaAnalysis } from './analysis.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
+import { readAudit } from './audit.js';
 import { probeCapacity } from '../runtime/capacity.js';
 
 /**
@@ -33,6 +34,9 @@ export interface HandoffLevelInput {
   scalesRun: string[];
   seedsCount: number;
   comparisonGateOk: boolean;
+  /** Current experiment-audit verdict (FAIL blocks delivery; WARN alerts). */
+  auditVerdict?: 'PASS' | 'WARN' | 'FAIL' | null;
+  auditSummary?: string;
 }
 
 /**
@@ -59,6 +63,11 @@ export function computeHandoffLevel(input: HandoffLevelInput): HandoffGate {
     );
   }
   if (!input.comparisonGateOk) blockers.push('required comparison gate FAILED');
+  // ARIS experiment-audit: a FAIL never ships as HANDOFF_READY; WARN stays
+  // visible in the package without blocking (audit is advisory-but-honest).
+  if (input.auditVerdict === 'FAIL') {
+    blockers.push(`experiment-audit FAIL${input.auditSummary ? `: ${input.auditSummary}` : ''}`);
+  }
 
   const handoffReady = blockers.length === 0;
   return {
@@ -185,11 +194,15 @@ export async function buildIdeaHandoff(
       continue;
     }
   }
+  const audit = await readAudit(projectRoot, ideaId);
+  const currentAudit = audit && audit.cardVersion === meta.currentVersion ? audit : null;
   const gate = computeHandoffLevel({
     analysisVerdict: analysis.verdict,
     scalesRun: [...succeededScales].sort(),
     seedsCount: analysis.coverage.seeds,
     comparisonGateOk: comparisonGate.ok,
+    auditVerdict: currentAudit?.overallVerdict ?? null,
+    auditSummary: currentAudit?.summary,
   });
 
   // --- assemble the package.

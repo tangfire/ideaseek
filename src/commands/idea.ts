@@ -993,48 +993,18 @@ export function registerIdeaCommand(program: Command): void {
             reviewRoundPath,
             writeReviewRound,
           } = await import('../idea/review.js');
-          const { readPlan } = await import('../idea/plan.js');
-          const { readNoveltyReport } = await import('../idea/novelty.js');
+          const { collectIdeaEvidence } = await import('../idea/evidence.js');
           const { ProjectRuntime } = await import('../workflow/runtime.js');
 
           // Evidence bundle: raw artifacts only — the reviewer never sees an
-          // executor summary (fresh-context independence, ARIS).
+          // executor summary or its own prior rounds (fresh context, ARIS).
           const gather = await ProjectRuntime.open({ cwd: root, recover: false });
-          let bundle: {
-            card: unknown;
-            checkReport: unknown;
-            experiment: unknown;
-            plan: unknown;
-            novelty: unknown;
-            ablations: unknown;
-          };
+          let bundle: Awaited<ReturnType<typeof collectIdeaEvidence>>;
           let latest = 0;
           try {
-            const { readFile } = await import('node:fs/promises');
-            const { join: joinPath } = await import('node:path');
-            let checkReport: unknown = null;
-            try {
-              checkReport = JSON.parse(
-                await readFile(
-                  joinPath(root, 'ideas', ideaId, 'experiments', 'check-report.json'),
-                  'utf8',
-                ),
-              );
-            } catch {
-              checkReport = null;
-            }
-            const mainExperiment = await gather.db.getExperiment(`idea-${ideaId}`);
-            const ablations = (await gather.db.listExperiments()).filter((doc) =>
-              doc.specId.startsWith(`idea-${ideaId}-abl-`),
-            );
-            bundle = {
-              card,
-              checkReport,
-              experiment: mainExperiment,
-              plan: await readPlan(root, ideaId),
-              novelty: await readNoveltyReport(root, ideaId),
-              ablations,
-            };
+            bundle = await collectIdeaEvidence(root, ideaId, card, gather.db, {
+              includeReviews: false,
+            });
             latest = await latestReviewRound(root, ideaId);
           } finally {
             await gather.close();
@@ -1208,6 +1178,207 @@ export function registerIdeaCommand(program: Command): void {
               `next: address the weaknesses, then ideaseek idea review ${ideaId} --force ` +
                 '(a fresh independent round) · experiments are blocked meanwhile\n',
             );
+          }
+          return 0;
+        },
+      ),
+    );
+
+  idea
+    .command('audit')
+    .description(
+      'cross-model experiment audit over the artifact bundle (ARIS experiment-audit backend)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a previous audit.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const meta = await loadWorkspaceMeta(root, ideaId);
+          const card = await loadIdeaCard(root, ideaId);
+          const { loadArisSkill } = await import('../aris/skill.js');
+          const auditSkill = await loadArisSkill('experiment-audit');
+          const analyzeSkill = await loadArisSkill('analyze-results');
+          const { auditPath, buildAuditRequest, parseAuditOutput, readAudit, writeAudit } =
+            await import('../idea/audit.js');
+          const { collectIdeaEvidence } = await import('../idea/evidence.js');
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+
+          const gather = await ProjectRuntime.open({ cwd: root, recover: false });
+          let bundle: unknown;
+          try {
+            bundle = await collectIdeaEvidence(root, ideaId, card, gather.db);
+          } finally {
+            await gather.close();
+          }
+
+          const request = buildAuditRequest(
+            { audit: auditSkill, analyze: analyzeSkill },
+            { ideaId, cardVersion: meta.currentVersion, bundle },
+          );
+
+          if (!opts.force) {
+            const existing = await readAudit(root, ideaId);
+            if (existing && existing.inputHash === request.inputHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    ideaId,
+                    reused: true,
+                    inputHash: existing.inputHash,
+                    overallVerdict: existing.overallVerdict,
+                    checks: existing.checks.length,
+                    path: `ideas/${ideaId}/experiments/audit.json`,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `reused experiment audit for ${ideaId}: ${existing.overallVerdict} ` +
+                    `(${existing.checks.length} check(s))\n`,
+                );
+                process.stdout.write('next: regenerate with --force after new results\n');
+              }
+              return 0;
+            }
+          }
+
+          const { buildHarness } = await import('./shared.js');
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const kind =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+          const harness = buildHarness(kind);
+          await harness.initialize();
+          let output: string;
+          let runtimeKind = kind;
+          let reviewerModel: string | null = null;
+          try {
+            const result = await harness.runTask({
+              runId: `idea:${ideaId}`,
+              taskId: `idea-audit-${ideaId}`,
+              profile: 'idea-generator',
+              instruction: request.instruction,
+              inputs: [
+                {
+                  kind: 'text',
+                  name: 'evidence_bundle',
+                  content: JSON.stringify({
+                    ideaId,
+                    cardVersion: meta.currentVersion,
+                    evidenceDigest: request.inputHash,
+                  }),
+                },
+              ],
+              outputSchema: 'experiment-audit-v1',
+              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
+              idempotencyKey: request.idempotencyKey,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+            reviewerModel = result.model;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'HarnessBlockError') {
+              const block = (error as { block?: string }).block ?? 'BLOCKED';
+              if (opts.json) {
+                process.stdout.write(jsonLine({ ideaId, blocked: block, written: false }));
+              } else {
+                process.stderr.write(
+                  `idea audit blocked [${block}]: ${(error as Error).message}\n` +
+                    'nothing was written — restore quota/auth/network and rerun the same command\n',
+                );
+              }
+              return 2;
+            }
+            throw error;
+          } finally {
+            await harness.shutdown().catch(() => undefined);
+          }
+
+          const audit = parseAuditOutput(
+            output,
+            { ideaId, cardVersion: meta.currentVersion },
+            {
+              inputHash: request.inputHash,
+              skills: {
+                audit: { name: auditSkill.name, sha256: auditSkill.sha256 },
+                analyze: { name: analyzeSkill.name, sha256: analyzeSkill.sha256 },
+              },
+              harnessRuntime: runtimeKind,
+              reviewerModel,
+              evidenceDigest: request.evidenceDigest,
+            },
+          );
+          await writeAudit(root, audit);
+
+          let eventSeq: number | null = null;
+          const runAudit = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runAudit.db.getLatestRun(runAudit.project.id);
+            if (run) {
+              const event = await runAudit.db.appendEvent({
+                runId: run.runId,
+                phase: 'ANALYZING',
+                objectId: ideaId,
+                role: 'reviewer',
+                eventType: 'experiment_audit',
+                summary:
+                  `experiment audit ${audit.overallVerdict} for ${ideaId} ` +
+                  `(${audit.checks.length} check(s), reviewer ${audit.reviewerModel ?? 'unknown'})`,
+                status: audit.overallVerdict.toLowerCase(),
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await runAudit.close();
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                reused: false,
+                inputHash: audit.inputHash,
+                overallVerdict: audit.overallVerdict,
+                checks: audit.checks.map((check) => ({ id: check.id, verdict: check.verdict })),
+                claims: audit.claims.length,
+                reviewerModel: audit.reviewerModel,
+                path: `ideas/${ideaId}/experiments/audit.json`,
+                eventSeq,
+              }),
+            );
+            return 0;
+          }
+
+          process.stdout.write(
+            `experiment audit ${ideaId} v${meta.currentVersion}: ${audit.overallVerdict} ` +
+              `· reviewer ${audit.reviewerModel ?? 'unknown'} ` +
+              `(ARIS ${auditSkill.name} @ ${auditSkill.sha256.slice(0, 12)})\n`,
+          );
+          for (const check of audit.checks) {
+            process.stdout.write(
+              `  ${check.verdict.padEnd(4)} ${check.id.padEnd(22)} ${check.detail}\n` +
+                `       evidence: ${check.evidence}\n`,
+            );
+          }
+          process.stdout.write(`  ${audit.summary}\n`);
+          process.stdout.write(`  file: ${auditPath(root, ideaId).replace(`${root}/`, '')}\n`);
+          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+          if (audit.overallVerdict === 'FAIL') {
+            process.stdout.write(
+              'next: handoff delivery is blocked while this audit FAILs — fix the findings, ' +
+                `then ideaseek idea audit ${ideaId} --force\n`,
+            );
+          } else if (audit.overallVerdict === 'WARN') {
+            process.stdout.write(
+              'next: warnings ship inside the handoff package (visible, non-blocking)\n',
+            );
+          } else {
+            process.stdout.write('next: ideaseek idea handoff <ideaId>\n');
           }
           return 0;
         },
