@@ -52,11 +52,25 @@ export function registerModelsCommand(program: Command): void {
         const bindings = describeTierBindings();
         const credentials = credentialStatus();
         const dshPin = await readDshPin();
+        const { loadUserConfig, resolveCredentialPresence } =
+          await import('../config/user-config.js');
+        const user = await loadUserConfig();
+        const credentialPresence = resolveCredentialPresence(user.config.models.credentialRef);
 
         const payload = {
           projectRoute: config.resolved.runtime.modelRoute,
           dshCommit: dshPin,
           credentials,
+          userConfig: {
+            path: user.path,
+            existed: user.existed,
+            errors: user.errors,
+            provider: user.config.models.provider,
+            defaultRoute: user.config.models.defaultRoute,
+            credentialRef: credentialPresence.ref,
+            credentialPresence: credentialPresence.presence,
+            notificationsEnabled: user.config.notifications.enabled,
+          },
           tiers: bindings,
           rules: [
             'Agent cannot read or modify API keys — presence is reported only',
@@ -78,6 +92,14 @@ export function registerModelsCommand(program: Command): void {
         process.stdout.write(
           `credentials: deepseek api key ${credentials.deepseekApiKey} (presence only)\n`,
         );
+        process.stdout.write(
+          `user config: ${payload.userConfig.path} (${payload.userConfig.existed ? 'loaded' : 'defaults'}) · ` +
+            `provider=${payload.userConfig.provider} · credentialRef=${payload.userConfig.credentialRef ?? 'none'} ` +
+            `[${payload.userConfig.credentialPresence}]\n`,
+        );
+        for (const error of payload.userConfig.errors) {
+          process.stdout.write(`  ✗ ${error}\n`);
+        }
         for (const tier of bindings) {
           const binding =
             tier.model === null

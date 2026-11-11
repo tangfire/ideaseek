@@ -78,6 +78,34 @@ export function registerDoctorCommand(program: Command): void {
                 detail: `${configLoad.path} (v${configLoad.resolved.configVersion})`,
               });
             }
+
+            // User-level config: strict validation; credential references
+            // resolve by NAME only (never values).
+            try {
+              const { loadUserConfig, resolveCredentialPresence } =
+                await import('../config/user-config.js');
+              const user = await loadUserConfig();
+              for (const error of user.errors) {
+                checks.push({ level: 'error', name: 'user-config', detail: error });
+              }
+              if (user.errors.length === 0) {
+                const presence = resolveCredentialPresence(user.config.models.credentialRef);
+                checks.push({
+                  level: presence.presence === 'missing' ? 'warn' : 'ok',
+                  name: 'user-config',
+                  detail:
+                    `${user.path} (${user.existed ? 'loaded' : 'defaults'}) · ` +
+                    `credentialRef=${presence.ref ?? 'none'} [${presence.presence}]`,
+                });
+              }
+            } catch (error) {
+              checks.push({
+                level: 'warn',
+                name: 'user-config',
+                detail: `unreadable: ${(error as Error).message}`,
+              });
+            }
+
             for (const dir of [
               'papers',
               'datasets',

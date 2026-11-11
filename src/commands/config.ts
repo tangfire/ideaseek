@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { loadConfig, type LoadedConfig } from '../config/config.js';
+import { loadUserConfig, type LoadedUserConfig } from '../config/user-config.js';
 import { findProjectRoot, projectPaths } from '../config/paths.js';
 import { action, jsonLine } from './shared.js';
 
@@ -36,6 +37,26 @@ function printExplain(config: LoadedConfig): void {
   }
 }
 
+function printUserExplain(user: LoadedUserConfig): void {
+  process.stdout.write(`user config: ${user.path}\n`);
+  process.stdout.write(`  exists: ${user.existed ? 'yes' : 'no (built-in defaults)'}\n`);
+  for (const error of user.errors) process.stdout.write(`  ✗ ${error}\n`);
+  for (const [key, value] of Object.entries(user.config.models)) {
+    const source = user.sources[`models.${key}`] ?? 'user-default';
+    process.stdout.write(`  models.${key} = ${JSON.stringify(value)}  [${source}]\n`);
+  }
+  process.stdout.write(
+    `  embeddings.cacheDir = ${JSON.stringify(user.config.embeddings.cacheDir)}  [${user.sources['embeddings.cacheDir'] ?? 'user-default'}]\n`,
+  );
+  process.stdout.write(
+    `  notifications.enabled = ${String(user.config.notifications.enabled)}  [${user.sources['notifications.enabled'] ?? 'user-default'}]\n`,
+  );
+  process.stdout.write(
+    '  boundary: project research.yaml cannot read or override user secrets; ' +
+      'credentialRef resolves by name only\n',
+  );
+}
+
 export function registerConfigCommand(program: Command): void {
   const config = program.command('config').description('inspect effective configuration');
 
@@ -53,6 +74,8 @@ export function registerConfigCommand(program: Command): void {
           );
         }
         const loaded = await loadConfig(projectPaths(root), root.split(/[\\/]/).pop() ?? 'project');
+        const user = await loadUserConfig();
+        const failed = loaded.errors.length > 0 || user.errors.length > 0;
         if (opts.json) {
           process.stdout.write(
             jsonLine({
@@ -64,12 +87,21 @@ export function registerConfigCommand(program: Command): void {
               migrationNotes: loaded.migrationNotes,
               sources: loaded.sources,
               resolved: loaded.resolved,
+              userConfig: {
+                path: user.path,
+                existed: user.existed,
+                errors: user.errors,
+                sources: user.sources,
+                config: user.config,
+                note: 'project research.yaml never contains or reads secrets; credentialRef is a name only',
+              },
             }),
           );
-          return loaded.errors.length > 0 ? 2 : 0;
+          return failed ? 2 : 0;
         }
         printExplain(loaded);
-        return loaded.errors.length > 0 ? 2 : 0;
+        printUserExplain(user);
+        return failed ? 2 : 0;
       }),
     );
 }
