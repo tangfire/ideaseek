@@ -6,3 +6,6 @@ pnpm-lock.yaml
 
 # Repository docs are hand-maintained; keep their diffs reviewable
 **/*.md
+
+# Vendored ARIS files must stay byte-identical (manifest SHA-256)
+aris-skills/

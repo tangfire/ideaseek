@@ -27,6 +27,7 @@ import { registerModeCommand } from './commands/mode.js';
 import { registerOpenCommand } from './commands/open.js';
 import { registerPendingCommand } from './commands/pending.js';
 import { registerWikiCommand } from './commands/wiki.js';
+import { registerRenderCommand } from './commands/render.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -105,6 +106,7 @@ export function buildProgram(): Command {
   registerOpenCommand(program);
   registerPendingCommand(program);
   registerWikiCommand(program);
+  registerRenderCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);

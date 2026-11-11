@@ -27,6 +27,7 @@ export const VENDORED_SKILLS: readonly string[] = [
   'integrity-forensics',
   'novelty-check',
   'prior-art-search',
+  'render-html',
   'research-wiki',
 ];
 
@@ -153,6 +154,22 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
   {
     path: 'skills/research-wiki/SKILL.md',
     sha256: '564eea3ad9e8763ba2120605e61b18260b201976e9d6035643d8f65982052c06',
+  },
+  {
+    path: 'skills/render-html/SKILL.md',
+    sha256: '83d2608faaa09c1faf135c4c4a26415fcf9f96e98ed1d1884b207b6c1f1514d3',
+  },
+  {
+    path: 'skills/render-html/scripts/render_html.py',
+    sha256: 'f563872737d1fafbc38ea6a6de85451063daa196b219e163dcb32c3abeb6d58f',
+  },
+  {
+    path: 'skills/render-html/scripts/templates/academic.html',
+    sha256: 'af3a2f998091edd2804b9e64eab21bf77b6caa57349fcfbbe767b1a8d16380cc',
+  },
+  {
+    path: 'skills/render-html/scripts/templates/dashboard.html',
+    sha256: '156e0825a131279debe55d1b91d7aa7c5f85e755458414932110687c9c3b3779',
   },
   {
     path: 'tools/research_wiki.py',
