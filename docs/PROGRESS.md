@@ -102,9 +102,9 @@ Phase 4：Comparison 完整闭环
 - [x] 结果/报告/复现清单
 - [x] guided/autonomous/review-only 自动化策略和科学门槛
 
-## Phase 6：首个方向验证
+## Phase 6：领域无关闭环与跨方向验证
 
-目标：用一个真实研究方向验证通用论文学习、协议综合、comparison、quick/standard 实验和 handoff 的完整闭环。优先使用联邦学习模型异构，但不把领域知识硬编码进核心。
+目标：用一个真实研究方向验证领域无关的论文学习、协议综合、comparison、quick/standard 实验和 handoff 完整闭环，再用不同任务族回归验证核心没有依赖某个方向的硬编码。联邦学习模型异构只是验收样例，不是产品支持范围的上限。
 
 - [x] 接入真实 FL 数据集并生成 dataset manifest
 - [x] 生成客户端/模型异构实验协议并通过泄漏门禁

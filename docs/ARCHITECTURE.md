@@ -15,6 +15,12 @@ Workflow Supervisor ── Workflow DB / RunEvent / Artifact Store
 
 DSH 是 Agent Runtime 和插件宿主，不是科研数据库、GPU 调度器或唯一的长任务状态来源。业务层只依赖 `HarnessAdapter`，不直接依赖 DSH 内部实现。DSH 升级只需要通过适配层和兼容性测试。
 
+## 领域无关核心
+
+IdeaSeek 的核心科研能力不按研究方向分叉。输入可以是任意方向的论文、comparison 代码和用户数据；通用引擎通过 PaperCard、机制/证据检索、Dataset Analyst、Protocol Synthesis、代码/环境工具和 ExperimentSpec 生成当前项目的实验方案。领域插件只提供特殊格式解析、确定性指标/泄漏检查或仿真接口，不能成为 idea 生成或基本实验探索的前置条件。
+
+领域无关不等于无条件猜测。无法从论文、代码和数据安全推断的样本单位、标签、切分、主指标或实验语义必须生成可解释的确认项；用户确认的是当前项目的协议草案，不需要预先为每个学科编写适配器。
+
 ## 分层与依赖方向
 
 依赖只能从上到下通过公开 port/contract 进入，底层不能反向依赖 CLI 或具体 provider：

@@ -1,6 +1,6 @@
 # IdeaSeek 用户指南
 
-IdeaSeek 是一个面向科研探索的多 Agent CLI。你提供研究问题、论文、已有数据和可选的 comparison；它负责建立论文证据库、生成实验协议、复现/修复 comparison、提出和验证多个 idea，并交付值得继续做全量实验的代码和 handoff。
+IdeaSeek 是一个领域无关的科研探索多 Agent CLI。你提供研究问题、该方向论文、已有数据和可选的 comparison；它从这些材料中学习实验设计，生成当前项目的实验协议，复现/修复 comparison，提出和验证多个 idea，并交付值得继续做全量实验的代码和 handoff。
 
 IdeaSeek 的探索实验使用 `smoke`、`quick` 和 `standard` 数据规模。最终全量训练由研究者拿到 handoff 后自行运行。
 
