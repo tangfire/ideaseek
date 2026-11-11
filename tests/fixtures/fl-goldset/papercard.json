@@ -1,0 +1,37 @@
+{
+  "paper_id": "synth-fedhet-0001",
+  "document_hash": "sha256:4e4402b0530e8d0120f864679027e0a06ce4096e8eaed7123cbc307e5b965fbb",
+  "title": "Synthetic Study of Model Heterogeneity in Federated Learning (fixture)",
+  "problem": "clients with heterogeneous architectures degrade federated averaging under non-IID data",
+  "method": {
+    "summary": "share intermediate representations instead of full weights to tolerate heterogeneous models",
+    "steps": ["split local model", "exchange shared representations", "aggregate at server"],
+    "motivation": ["parameter sharing assumes identical architectures"]
+  },
+  "datasets": ["SyntheticHeteroMNIST (fixture)"],
+  "metrics": ["accuracy", "communication cost"],
+  "baselines": ["FedAvg (fixture reference)"],
+  "limitations": ["single synthetic partition scheme", "no privacy analysis"],
+  "claims": [
+    {
+      "text": "representation exchange recovers at least half of the homogeneous-model accuracy gap under heterogeneous architectures",
+      "evidence": [
+        {
+          "page": 6,
+          "quote": "recovers at least half of the accuracy gap"
+        }
+      ]
+    },
+    {
+      "text": "communication cost grows sub-linearly with the number of shared modules",
+      "evidence": [
+        {
+          "section": "Section 5.2"
+        }
+      ]
+    }
+  ],
+  "unknowns": ["behavior under adversarial clients"],
+  "parser_version": "pdf-1-fixture",
+  "prompt_schema_version": "papercard-v1-fixture"
+}

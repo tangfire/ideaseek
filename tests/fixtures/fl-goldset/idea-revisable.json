@@ -1,0 +1,85 @@
+{
+  "ideaId": "synth-revisable-idea",
+  "version": 1,
+  "parentVersion": null,
+  "status": "CANDIDATE",
+  "hypothesis": {
+    "statement": "trimmed-mean aggregation improves robustness over FedAvg under heterogeneity",
+    "targetProblem": "pooled majority is brittle on non-IID label skew"
+  },
+  "paperEvidence": [
+    {
+      "paperRef": "synth-fedhet-0001",
+      "statement": "label distribution varies across clients",
+      "evidence": "p.2 quote 'varies across clients'"
+    }
+  ],
+  "contradictions": ["pooled counting ignores client imbalance"],
+  "novelty": {
+    "claim": "balanced prior at sanity-baseline level",
+    "uncertainty": "may vanish at quick scale",
+    "whyNotRestatement": "isolates prior estimation, not model updates"
+  },
+  "mechanismChain": {
+    "designPrincipleLink": "inverts sample-proportional pooling",
+    "steps": [
+      {
+        "kind": "observation",
+        "text": "pooled majority accuracy collapses on skewed test slice"
+      },
+      {
+        "kind": "hypothesis",
+        "text": "per-client normalized histograms pick a test-relevant class"
+      },
+      {
+        "kind": "intervention",
+        "text": "predict argmax of mean normalized histograms"
+      },
+      {
+        "kind": "expected-change",
+        "text": "accuracy strictly above pooled baseline"
+      },
+      {
+        "kind": "baseline-difference",
+        "text": "vs pooled sample-count majority"
+      },
+      {
+        "kind": "falsifier",
+        "text": "accuracy <= baseline on both scales"
+      }
+    ]
+  },
+  "nearestComparisons": [
+    {
+      "methodId": "baseline-majority-fixture",
+      "difference": "pooled vs client-balanced",
+      "evidence": "fixture worktree"
+    }
+  ],
+  "componentNecessity": [
+    {
+      "component": "client-balancing",
+      "role": "necessary-mechanism",
+      "removeEffect": "collapses to pooled majority"
+    }
+  ],
+  "competingExplanations": ["tiny-slice artifact"],
+  "boundaryConditions": ["label skew only"],
+  "risks": ["2-client smoke instability"],
+  "minimalExperiment": {
+    "code": "src/train.py",
+    "data": "fixture slice",
+    "baselines": ["baseline-majority-fixture"],
+    "metrics": ["accuracy"],
+    "ablations": ["pooled majority"]
+  },
+  "falsification": {
+    "conditions": ["no improvement over fedavg-fixture on 3 seeds"]
+  },
+  "budget": {
+    "maxRounds": 3,
+    "maxGpuMinutes": 30
+  },
+  "stopConditions": ["falsified on both scales"],
+  "createdAt": 1794300000000
+}

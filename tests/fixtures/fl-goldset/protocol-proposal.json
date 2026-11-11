@@ -1,0 +1,74 @@
+{
+  "protocolId": "proto-synth-flhet-v1",
+  "version": 1,
+  "taskDefinition": {
+    "value": "multi-class classification of synthetic heterogeneous FL data",
+    "source": "paper-evidence",
+    "confidence": 0.8
+  },
+  "sampleUnit": {
+    "value": "one client update round",
+    "source": "adapter-rule",
+    "confidence": 0.75
+  },
+  "labelSemantics": {
+    "value": "digit class 0-9 (synthetic)",
+    "source": "user",
+    "confidence": 1
+  },
+  "splitRules": {
+    "value": ["client-partitioned train/test, no cross-client leakage"],
+    "source": "adapter-rule",
+    "confidence": 0.85
+  },
+  "leakageChecks": ["no test client samples in train partition"],
+  "preprocessing": ["normalize to [0,1]", "per-client batching"],
+  "baselineEntries": [
+    {
+      "methodId": "fedavg-fixture",
+      "entry": "python train.py --model fedavg",
+      "source": "code",
+      "confidence": 0.8
+    }
+  ],
+  "primaryMetrics": [
+    {
+      "name": "accuracy",
+      "direction": "higher",
+      "source": "paper-evidence",
+      "confidence": 0.85
+    },
+    {
+      "name": "communication cost",
+      "direction": "lower",
+      "source": "paper-evidence",
+      "confidence": 0.7
+    }
+  ],
+  "secondaryMetrics": [
+    {
+      "name": "per-client accuracy variance",
+      "direction": "lower",
+      "source": "agent-inference",
+      "confidence": 0.6
+    }
+  ],
+  "statisticalSummary": ["mean ± std over 5 seeds"],
+  "smokeTest": {
+    "value": "2 clients, 1 round",
+    "source": "adapter-rule",
+    "confidence": 0.9
+  },
+  "resourceEstimate": {
+    "value": "0.5 GPU-hours per quick run",
+    "source": "agent-inference",
+    "confidence": 0.55
+  },
+  "ablations": ["w/o representation exchange"],
+  "supportCriteria": ["accuracy >= fedavg-fixture + 0.02 on quick"],
+  "refuteCriteria": ["accuracy < fedavg-fixture on 3 seeds"],
+  "invalidRunCriteria": ["data loader produced NaN"],
+  "stopConditions": ["budget exhausted", "3 rounds without signal"],
+  "generatedAt": 1794300000000,
+  "generator": "protocol-synth-fixture"
+}

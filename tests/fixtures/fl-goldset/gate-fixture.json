@@ -1,0 +1,48 @@
+{
+  "methods": [
+    {
+      "methodId": "fedavg-fixture",
+      "status": "smoke-tested",
+      "record": {
+        "methodId": "fedavg-fixture"
+      }
+    },
+    {
+      "methodId": "fedprox-fixture",
+      "status": "excluded",
+      "record": {
+        "methodId": "fedprox-fixture",
+        "statusReason": "license forbids use (fixture)"
+      }
+    },
+    {
+      "methodId": "feddf-fixture",
+      "status": "repairing",
+      "record": {
+        "methodId": "feddf-fixture"
+      }
+    }
+  ],
+  "experiments": [
+    {
+      "specId": "repro-fedproto-fixture",
+      "status": "succeeded",
+      "spec": {
+        "specId": "repro-fedproto-fixture",
+        "comparisonIds": ["fedproto-fixture"]
+      },
+      "result": {
+        "status": "succeeded"
+      }
+    }
+  ],
+  "extraMethods": [
+    {
+      "methodId": "fedproto-fixture",
+      "status": "source-resolved",
+      "record": {
+        "methodId": "fedproto-fixture"
+      }
+    }
+  ]
+}
