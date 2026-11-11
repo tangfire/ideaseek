@@ -152,10 +152,22 @@ ideaseek experiment handoff --idea <idea-id>
 
 ## 改进已有 Idea
 
-如果你已经有 idea、代码和部分实验结果，可以直接导入：
+如果你已经有 idea、代码和部分实验结果，把它的文件夹放进当前项目：
 
 ```bash
-ideaseek improve --idea ./existing-idea --question "为什么当前方法在跨客户端泛化上不足？"
+incoming/ideas/my-existing-idea/
+  README.md
+  idea.md
+  code/
+  results/
+```
+
+然后执行：
+
+```bash
+ideaseek scan
+ideaseek intake
+ideaseek idea improve --source incoming/ideas/my-existing-idea --question "为什么当前方法在跨客户端泛化上不足？"
 ```
 
 IdeaSeek 会先复现原始 baseline，再分析代码、论文、数据、comparison、错误分布和新颖性风险，然后提出多个改进路线。原始代码保持只读；工程修复生成同一 idea 的新版本，科学假设变化创建新的 idea 分支。每条改进路线都要经过 quick/standard 实验和消融，不能把没有复现原始 baseline 的结果写成改进有效。

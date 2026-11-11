@@ -2,24 +2,37 @@
 
 IdeaSeek 不只支持从论文生成全新 idea，也支持用户带着已有 idea、代码和实验结果进入改进流程。目标是找到“临门一脚”问题：效果不足、机制不完整、泛化差、比较不公平、实现瓶颈或新颖性不足，并提出有证据的改进路线。
 
-## 输入
+## 用户输入方式
 
-用户可以提供研究问题、原始 idea 说明、代码仓库/目录、已有配置/日志/指标，以及论文、数据集和 comparison。
+首选交互与普通项目材料保持一致：用户把已有 idea 文件夹放进项目的 `incoming/ideas/<idea-name>/`，然后运行 `scan/intake`。文件夹可以包含代码仓库、idea 描述、配置、日志、指标、已有 checkpoint 和 README；用户不需要先执行特殊 import 命令。
+
+```text
+research-project/
+  incoming/
+    ideas/
+      hetero-distillation/
+        README.md
+        idea.md
+        code/
+        configs/
+        results/
+```
 
 ```bash
-ideaseek improve --idea ./existing-idea --question "..."
-ideaseek improve --idea ./existing-idea --results ./existing-idea/results
-ideaseek idea import ./existing-idea
-ideaseek idea improve --idea idea-001 --ideas 3
+ideaseek scan
+ideaseek intake
+ideaseek idea improve --source incoming/ideas/hetero-distillation --question "为什么跨客户端泛化不足？"
 ```
+
+如果用户放入多个 idea，`intake` 分别展示入口、配置、结果和歧义；用户选择后才创建正式 Idea 对象。
 
 ## 原始版本保护
 
-用户代码导入为只读 `source` snapshot，平台在独立 workspace/branch 工作：
+确认导入后，用户原始目录留在 `incoming/ideas/<name>/` 并以只读 snapshot/hash 登记；平台在正式 idea 下建立独立 workspace/branch：
 
 ```text
 ideas/idea-001/
-  source/          # 用户原始代码，只读、hash 固定
+  source/          # 用户原始代码的只读引用/hash，不复制进可变工作区
   versions/
     v1/             # 导入版本
     v2/             # 工程修复或改进版本
