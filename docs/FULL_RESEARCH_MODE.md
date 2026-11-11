@@ -25,6 +25,29 @@ Full Research 使用独立的 `full-run`，不污染探索 run：复用锁定协
 
 ARIS-style workflow 可以生成主结果表、消融表、多种子/场景图、训练和资源曲线、失败分析、论文草稿、方法图、limitations 和 rebuttal 草稿。所有图表绑定 raw result、RunResult、代码/data/protocol hash；论文 claim 必须经过 result-to-claim、paper-claim-audit、citation audit 和独立 reviewer。论文草稿不等于已证明或可直接投稿。
 
+论文交付以 Overleaf 兼容的 LaTeX 工程为主，同时保留 Markdown/JSON 中间 artifact：
+
+```text
+paper/
+  main.tex
+  sections/
+    introduction.tex
+    related_work.tex
+    method.tex
+    experiments.tex
+    limitations.tex
+  figures/
+  tables/
+  references.bib
+  assets/
+  results/              # 图表源数据和生成 manifest
+  provenance.json
+  README.md             # 本地编译和 Overleaf 上传说明
+  environment.lock
+```
+
+平台生成一个可上传到 Overleaf 的 zip/目录，不要求用户安装完整 LaTeX 才能拿到结果。用户可以把整个 `paper/` 上传到 Overleaf，也可以只复制 `.tex`、`figures/`、`tables/` 和 `.bib`。源 Markdown/JSON、实验结果和 provenance 保留在 IdeaSeek 项目中，LaTeX 是可编辑交付物，不是不可追溯的最终黑盒。
+
 ## CLI
 
 ```bash
@@ -36,6 +59,7 @@ ideaseek full run --idea <idea-id> --detach
 ideaseek full attach --run <full-run-id>
 ideaseek full paper --run <full-run-id>
 ideaseek full audit --run <full-run-id>
+ideaseek paper export --run <full-run-id> --format overleaf --out paper.zip
 ```
 
 用户可以暂停下载、训练、绘图或论文生成；已完成 artifact 保留。最终交付包括论文草稿、图表源数据、代码 commit、环境锁文件、数据来源/许可证、全量日志、审计报告和未解决风险。

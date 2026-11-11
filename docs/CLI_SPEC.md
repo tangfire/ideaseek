@@ -53,6 +53,7 @@ ideaseek datasets list
 ideaseek datasets explain <candidate-id>
 ideaseek experiment promote --idea <id> --to standard
 ideaseek experiment handoff --idea <id>
+ideaseek paper export --run <id> --format overleaf --out <path>
 ideaseek report [--run <id>]
 ```
 

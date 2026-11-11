@@ -32,6 +32,7 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 - `render-html`：把 Markdown/JSON artifact 渲染成用户更容易阅读的 HTML；
 - `monitor-experiment` / `experiment-queue`：长实验监控、队列和等待原因；
 - `paper-write` / `rebuttal`：作为 handoff 之后的可选写作 workflow。
+- `overleaf-sync` / LaTeX workflow：生成可上传到 Overleaf 的可编辑工程，保留 BibTeX、图表源数据和 provenance。
 
 ### P1：数据集发现
 

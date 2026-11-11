@@ -150,6 +150,14 @@ ideaseek experiment handoff --idea <idea-id>
 
 `HANDOFF_READY` 表示值得投入全量实验，不代表 IdeaSeek 已证明全量结果一定有效。
 
+Full Research 的论文交付默认是 Overleaf 兼容的 LaTeX 工程：
+
+```bash
+ideaseek paper export --run <full-run-id> --format overleaf --out paper.zip
+```
+
+把 `paper.zip` 上传到 Overleaf 即可继续编辑；工程包含 `main.tex`、章节、图表、BibTeX、编译说明、结果源数据和 provenance。IdeaSeek 也保留 Markdown/JSON 版本，方便审计和重新生成图表。
+
 ## 改进已有 Idea
 
 如果你已经有 idea、代码和部分实验结果，把它的文件夹放进当前项目：
