@@ -36,6 +36,12 @@
 
 验收：comparison 来源、许可证、patch、环境、复现状态和失败原因可追溯；所有 required 方法通过或明确阻塞。
 
+## Phase 4.5：ARIS P0 科研能力集成
+
+在 Comparison 契约稳定后，优先接入 ARIS 的成熟科研 workflow：idea discovery、experiment bridge、ablation planner、novelty/prior-art check、fresh-context reviewer 和 experiment audit。通过 skill/plugin adapter 映射到 IdeaSeek 的 IdeaCard、ExperimentSpec、Artifact、RunEvent、Decision 和 checkpoint；不复制第二套 Agent Loop 或任务数据库。
+
+验收：ARIS workflow 能读取 IdeaSeek artifact 并输出结构化结果；失败/额度耗尽/权限拒绝可恢复；comparison gate、预算、证据和实验协议不能被 skill 绕过。
+
 ## Phase 5：Idea 生成与实验闭环
 
 实现 Mechanism Analyst、Idea Generator、Research Discussant、Novelty Challenger、Synthesis Lead、IdeaCard 机制链、独立 idea workspace、Code Implementer、GPU Capacity Planner、quick/standard 实验、消融、Result Analyst、Idea revision 和 handoff。

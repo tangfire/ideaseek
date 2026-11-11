@@ -102,6 +102,19 @@ Phase 4：Comparison 复现与统一评测
 - [x] 所有 required comparison 门槛
 - [ ] 任意结构代码仓库的 Codebase Analyst、入口发现和 wrapper/smoke 流程
 
+## Phase 4.5：ARIS P0 科研能力集成
+
+目标：优先复用 ARIS 已有的成熟科研 workflow；IdeaSeek 负责把它们接入自己的 Artifact、ExperimentSpec、RunEvent、Decision 和 checkpoint，而不是重写同类能力。
+
+- [ ] ARIS skill/plugin adapter 和版本/许可证 manifest
+- [ ] `idea-discovery`/`idea-creator` 接入 IdeaCard/IdeationRound
+- [ ] `experiment-plan`/`experiment-bridge` 接入 ExperimentSpec/RunResult
+- [ ] `ablation-planner` 接入机制链和消融矩阵
+- [ ] `novelty-check`/`prior-art-search` 接入 PaperCard 和 evidence
+- [ ] fresh-context independent reviewer 接入 Review artifact/Decision
+- [ ] `experiment-audit`/integrity workflow 接入结果门禁
+- [ ] ARIS skill 失败时的回退、权限和 checkpoint 测试
+
 ## Phase 5：Idea 生成与实验闭环
 
 目标：让 idea 有机制、有独立代码、能并行 quick/standard 验证，并能根据结果修订或分叉。

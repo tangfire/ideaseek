@@ -95,6 +95,10 @@ ideaseek init
 
 实现 comparison 发现、官方代码导入、论文重实现、upstream/worktree 隔离、Baseline Repair Agent、统一 ExperimentSpec/RunResult 和 required comparison 门槛。
 
+### Phase 4.5：ARIS P0 科研能力集成
+
+优先复用 ARIS 的 `idea-discovery`、`experiment-bridge`、`ablation-planner`、`novelty-check`、fresh-context reviewer 和 `experiment-audit`。把它们通过 adapter 接入 IdeaSeek 的 artifact、ExperimentSpec、RunEvent、Decision 和 checkpoint；不要重复实现同类 workflow，也不要创建第二套 Agent Loop/任务数据库。完成失败回退、权限、预算和恢复测试后再继续 Phase 5。
+
 ### Phase 5：Idea 和快速实验
 
 实现 Mechanism Analyst、Idea Generator、Research Discussant、Novelty Challenger、Synthesis Lead、IdeaCard 机制链、DRAFT_COMPOSITION 门槛、独立 idea workspace、Code Implementer、GPU Capacity Planner、quick/standard 实验、消融、结果分析和 idea 迭代。
