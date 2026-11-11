@@ -15,6 +15,7 @@ import {
   type IdeaRuntime,
 } from './experiment.js';
 import { deriveAblations, type AblationEntryPlan } from './analysis.js';
+import { orderDerivedAblations, readAblationPlan } from './ablation-plan.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import type { ExperimentSpec } from '../experiment/spec.js';
 
@@ -45,6 +46,14 @@ export interface AblationRunResult {
   codeHash: string | null;
   entries: AblationRunEntry[];
   allOk: boolean;
+  /** Present when a current ARIS ablation-plan annotated this run. */
+  plan?: {
+    inputHash: string;
+    coverageAssessment: string;
+    matched: number;
+    deferred: { name: string; kind: string }[];
+    unmatchedTargets: string[];
+  };
 }
 
 export interface RunAblationsOptions {
@@ -122,16 +131,26 @@ export async function runAblations(
     );
   }
 
-  const plan = deriveAblations(card).filter(slugExists);
-  if (plan.length === 0) {
+  const derived = deriveAblations(card).filter(slugExists);
+  if (derived.length === 0) {
     throw new IdeaseekError(
       'INVALID_ARGUMENT',
       `idea ${ideaId} declares no ablations (componentNecessity with role necessary-mechanism and/or minimalExperiment.ablations)`,
     );
   }
 
+  // ARIS ablation-plan (capability 3): a CURRENT plan orders the queue by
+  // priority and annotates each spec with the predicted outcome; stale or
+  // missing plans leave the derived order untouched.
+  const storedPlan = await readAblationPlan(projectRoot, ideaId);
+  const currentPlan =
+    storedPlan && storedPlan.cardVersion === meta.currentVersion ? storedPlan : null;
+  const ordering = orderDerivedAblations(derived, currentPlan);
+  const plan = ordering.ordered;
+
   const entries: AblationRunEntry[] = [];
   for (const item of plan) {
+    const planEntry = ordering.matched.get(item.ablationId) ?? null;
     const specId = `idea-${ideaId}-abl-${item.ablationId}`;
     const existing = (await db.getExperiment(specId)) as ExperimentDocLike | null;
     const attempt = resolveAttempt(existing);
@@ -145,6 +164,8 @@ export async function runAblations(
         `ablation-label:${item.label}`,
         `parent-spec:idea-${ideaId}`,
         ...(item.removeComponent ? [`removes:${item.removeComponent}`] : []),
+        ...(currentPlan ? [`ablation-plan:${currentPlan.inputHash.slice(7, 19)}`] : []),
+        ...(planEntry ? [`expect:${planEntry.expectedOutcome.slice(0, 120)}`] : []),
       ],
       commandSuffix: ['--ablate', item.ablationId],
     });
@@ -230,6 +251,20 @@ export async function runAblations(
     codeHash,
     entries,
     allOk: entries.every((entry) => entry.exitCode === 0),
+    ...(currentPlan
+      ? {
+          plan: {
+            inputHash: currentPlan.inputHash,
+            coverageAssessment: currentPlan.coverageAssessment,
+            matched: ordering.matched.size,
+            deferred: ordering.deferred.map((entry) => ({
+              name: entry.name,
+              kind: entry.kind,
+            })),
+            unmatchedTargets: ordering.unmatchedTargets,
+          },
+        }
+      : {}),
   };
 }
 

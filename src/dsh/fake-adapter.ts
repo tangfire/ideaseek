@@ -102,6 +102,60 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'ablation-plan-v1') {
+    const override = process.env.IDEASEEK_FAKE_ABLATION_PLAN_OUTPUT;
+    if (override != null) return override;
+    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+      ideaId?: string;
+      cardVersion?: number;
+    };
+    const card = JSON.parse(request.inputs[1]?.content ?? '{}') as {
+      componentNecessity?: { component?: string; role?: string }[];
+      minimalExperiment?: { ablations?: string[] };
+    };
+    const entries: Record<string, unknown>[] = [];
+    for (const component of card.componentNecessity ?? []) {
+      if (component.role !== 'necessary-mechanism' || !component.component) continue;
+      entries.push({
+        name: `w/o ${component.component}`,
+        kind: 'component',
+        target: component.component,
+        whatItTests: `whether ${component.component} carries the mechanism`,
+        expectedOutcome: `removing ${component.component} degrades the primary metric`,
+        // Deliberately AFTER the card ablation so tests can prove the plan
+        // reorders the derived matrix (derive order puts components first).
+        priority: 3,
+      });
+    }
+    for (const [index, label] of (card.minimalExperiment?.ablations ?? []).entries()) {
+      entries.push({
+        name: label,
+        kind: 'card-ablation',
+        target: label,
+        whatItTests: `the declared ablation "${label}"`,
+        expectedOutcome: `removing ${label} removes the gain`,
+        priority: index + 1,
+      });
+    }
+    entries.push({
+      name: 'learning-rate sensitivity',
+      kind: 'hyperparameter',
+      target: null,
+      whatItTests: 'whether the gain survives lr variation',
+      expectedOutcome: 'gain persists across lr ∈ {0.5x, 2x}',
+      priority: 4,
+    });
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      entries,
+      coverageAssessment:
+        'component ablations discriminate the mechanism chain; hyperparameter entry guards robustness',
+      unnecessary: [],
+      suggestedOrder: entries.map((entry) => String(entry.name)),
+      estimatedGpuMinutes: 10,
+    });
+  }
   if (request.outputSchema === 'experiment-plan-v1') {
     const override = process.env.IDEASEEK_FAKE_PLAN_OUTPUT;
     if (override != null) return override;

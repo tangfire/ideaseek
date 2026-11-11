@@ -527,6 +527,202 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('ablation-plan')
+    .description(
+      'propose the ablation set from the mechanism chain (ARIS ablation-planner backend)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a previous ablation-plan.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const meta = await loadWorkspaceMeta(root, ideaId);
+          const card = await loadIdeaCard(root, ideaId);
+          const { loadArisSkill } = await import('../aris/skill.js');
+          const skill = await loadArisSkill('ablation-planner');
+          const {
+            ablationPlanPath,
+            buildAblationPlanRequest,
+            parseAblationPlanOutput,
+            readAblationPlan,
+            writeAblationPlan,
+          } = await import('../idea/ablation-plan.js');
+          const { readPlan } = await import('../idea/plan.js');
+          const experimentPlan = await readPlan(root, ideaId);
+          const request = buildAblationPlanRequest(skill, {
+            ideaId,
+            cardVersion: meta.currentVersion,
+            cardJson: JSON.stringify(card, null, 2),
+            planJson: experimentPlan ? JSON.stringify(experimentPlan, null, 2) : null,
+          });
+
+          if (!opts.force) {
+            const existing = await readAblationPlan(root, ideaId);
+            if (existing && existing.inputHash === request.inputHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    ideaId,
+                    reused: true,
+                    inputHash: existing.inputHash,
+                    skill: existing.skill,
+                    entries: existing.entries.length,
+                    path: `ideas/${ideaId}/experiments/ablation-plan.json`,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `reused ablation plan for ${ideaId} (${existing.entries.length} entr(ies), ` +
+                    `inputHash ${existing.inputHash.slice(0, 12)}…)\n`,
+                );
+                process.stdout.write(
+                  'next: ideaseek idea ablate <ideaId> · regenerate with --force\n',
+                );
+              }
+              return 0;
+            }
+          }
+
+          const { buildHarness } = await import('./shared.js');
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const kind =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+          const harness = buildHarness(kind);
+          await harness.initialize();
+          let output: string;
+          let runtimeKind = kind;
+          try {
+            const result = await harness.runTask({
+              runId: `idea:${ideaId}`,
+              taskId: `ablation-plan-${ideaId}`,
+              profile: 'idea-generator',
+              instruction: request.instruction,
+              inputs: [
+                {
+                  kind: 'text',
+                  name: 'idea_context',
+                  content: JSON.stringify({ ideaId, cardVersion: meta.currentVersion }),
+                },
+                { kind: 'text', name: 'idea_card', content: JSON.stringify(card) },
+              ],
+              outputSchema: 'ablation-plan-v1',
+              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
+              idempotencyKey: request.idempotencyKey,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'HarnessBlockError') {
+              const block = (error as { block?: string }).block ?? 'BLOCKED';
+              if (opts.json) {
+                process.stdout.write(jsonLine({ ideaId, blocked: block, written: false }));
+              } else {
+                process.stderr.write(
+                  `idea ablation-plan blocked [${block}]: ${(error as Error).message}\n` +
+                    'nothing was written — restore quota/auth/network and rerun the same command\n',
+                );
+              }
+              return 2;
+            }
+            throw error;
+          } finally {
+            await harness.shutdown().catch(() => undefined);
+          }
+
+          const plan = parseAblationPlanOutput(
+            output,
+            { ideaId, cardVersion: meta.currentVersion, card },
+            {
+              inputHash: request.inputHash,
+              skill: { name: skill.name, sha256: skill.sha256 },
+              harnessRuntime: runtimeKind,
+            },
+          );
+          await writeAblationPlan(root, plan);
+
+          let eventSeq: number | null = null;
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            if (run) {
+              const event = await runtime.db.appendEvent({
+                runId: run.runId,
+                phase: 'ANALYZING',
+                objectId: ideaId,
+                role: 'system',
+                eventType: 'ablation_plan',
+                summary: `ablation plan generated for ${ideaId} (ARIS ablation-planner)`,
+                status: 'generated',
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await runtime.close();
+          }
+
+          const deferred = plan.entries.filter((entry) => entry.target === null);
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                reused: false,
+                inputHash: plan.inputHash,
+                skill: plan.skill,
+                harness: runtimeKind,
+                entries: plan.entries.length,
+                runnable: plan.entries.length - deferred.length,
+                deferred: deferred.length,
+                estimatedGpuMinutes: plan.estimatedGpuMinutes,
+                path: `ideas/${ideaId}/experiments/ablation-plan.json`,
+                eventSeq,
+              }),
+            );
+            return 0;
+          }
+
+          process.stdout.write(
+            `ablation plan for ${ideaId} v${meta.currentVersion} ` +
+              `(ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)}, harness ${runtimeKind})\n`,
+          );
+          for (const entry of plan.entries) {
+            process.stdout.write(
+              `  [p${entry.priority}] ${entry.name} (${entry.kind}${entry.target ? `: ${entry.target}` : ''})\n` +
+                `        tests: ${entry.whatItTests}\n` +
+                `        expect: ${entry.expectedOutcome}\n`,
+            );
+          }
+          process.stdout.write(`  coverage: ${plan.coverageAssessment}\n`);
+          if (plan.unnecessary.length > 0) {
+            process.stdout.write(`  unnecessary: ${plan.unnecessary.join('; ')}\n`);
+          }
+          if (deferred.length > 0) {
+            process.stdout.write(
+              `  deferred (scaffold cannot run, reported not dropped): ${deferred
+                .map((entry) => entry.name)
+                .join(', ')}\n`,
+            );
+          }
+          process.stdout.write(
+            `  file: ${ablationPlanPath(root, ideaId).replace(`${root}/`, '')}\n`,
+          );
+          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+          process.stdout.write(
+            'next: ideaseek idea ablate <ideaId> — the queue follows plan priorities and each ' +
+              'spec records its expected outcome\n',
+          );
+          return 0;
+        },
+      ),
+    );
+
+  idea
     .command('create')
     .description(
       'create ideas/<id>/ workspace (card, versions, src/config/data/experiments, README)',
@@ -1179,6 +1375,23 @@ export function registerIdeaCommand(program: Command): void {
               );
               for (const metric of entry.metrics) {
                 process.stdout.write(`        ${metric.name} = ${metric.value}\n`);
+              }
+            }
+            if (result.plan) {
+              process.stdout.write(
+                `ablation plan (ARIS, ${result.plan.matched} matched): ${result.plan.coverageAssessment}\n`,
+              );
+              if (result.plan.deferred.length > 0) {
+                process.stdout.write(
+                  `  deferred (scaffold cannot run): ${result.plan.deferred
+                    .map((entry) => entry.name)
+                    .join(', ')}\n`,
+                );
+              }
+              if (result.plan.unmatchedTargets.length > 0) {
+                process.stdout.write(
+                  `  coverage gap (plan target without derived ablation): ${result.plan.unmatchedTargets.join(', ')}\n`,
+                );
               }
             }
             if (result.allOk) {
