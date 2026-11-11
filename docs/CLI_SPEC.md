@@ -27,6 +27,9 @@ ideaseek next
 ideaseek run --question "..."
 ideaseek run --question "..." --ideas 3
 ideaseek ideate --round new --ideas 3
+ideaseek idea import <path>
+ideaseek improve --idea <path-or-id> --question "..."
+ideaseek idea improve --idea <idea-id> --ideas 3
 ideaseek rounds list
 ideaseek rounds show <round-id>
 ideaseek feedback --idea <idea-id> --label useful

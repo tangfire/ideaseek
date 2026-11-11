@@ -141,6 +141,7 @@ Phase 4：Comparison 完整闭环
 - [x] 用户级/项目级配置、多项目注册和项目锁
 - [ ] cleanup/archive/export、通知和反馈入口
 - [x] IdeationRound 多轮 idea、旧候选去重和用户反馈回流
+- [ ] 已有 Idea 导入、诊断、改进 proposal 和版本/分支实验
 - [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
 - [ ] Application/domain/adapter 分层硬化与 composition root
 

@@ -150,6 +150,16 @@ ideaseek experiment handoff --idea <idea-id>
 
 `HANDOFF_READY` 表示值得投入全量实验，不代表 IdeaSeek 已证明全量结果一定有效。
 
+## 改进已有 Idea
+
+如果你已经有 idea、代码和部分实验结果，可以直接导入：
+
+```bash
+ideaseek improve --idea ./existing-idea --question "为什么当前方法在跨客户端泛化上不足？"
+```
+
+IdeaSeek 会先复现原始 baseline，再分析代码、论文、数据、comparison、错误分布和新颖性风险，然后提出多个改进路线。原始代码保持只读；工程修复生成同一 idea 的新版本，科学假设变化创建新的 idea 分支。每条改进路线都要经过 quick/standard 实验和消融，不能把没有复现原始 baseline 的结果写成改进有效。
+
 ## 补充论文、数据或 comparison
 
 把新增材料放入项目后再次运行：
