@@ -10,6 +10,7 @@ import { collectAnalysisInput } from './analyze.js';
 import { analyzeIdea, type IdeaAnalysis } from './analysis.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import { readAudit } from './audit.js';
+import { readClaimAudit } from './claim-audit.js';
 import { probeCapacity } from '../runtime/capacity.js';
 
 /**
@@ -37,6 +38,8 @@ export interface HandoffLevelInput {
   /** Current experiment-audit verdict (FAIL blocks delivery; WARN alerts). */
   auditVerdict?: 'PASS' | 'WARN' | 'FAIL' | null;
   auditSummary?: string;
+  /** Current idea claim/citation audit (FAIL = unciteable card evidence). */
+  evidenceAuditVerdict?: 'pass' | 'warn' | 'fail' | null;
 }
 
 /**
@@ -67,6 +70,12 @@ export function computeHandoffLevel(input: HandoffLevelInput): HandoffGate {
   // visible in the package without blocking (audit is advisory-but-honest).
   if (input.auditVerdict === 'FAIL') {
     blockers.push(`experiment-audit FAIL${input.auditSummary ? `: ${input.auditSummary}` : ''}`);
+  }
+  if (input.evidenceAuditVerdict === 'fail') {
+    blockers.push(
+      'evidence audit FAIL: card evidence is not locatable in the cited sources ' +
+        '(rerun ideaseek idea claim-audit)',
+    );
   }
 
   const handoffReady = blockers.length === 0;
@@ -196,6 +205,9 @@ export async function buildIdeaHandoff(
   }
   const audit = await readAudit(projectRoot, ideaId);
   const currentAudit = audit && audit.cardVersion === meta.currentVersion ? audit : null;
+  const evidenceAudit = await readClaimAudit(projectRoot, ideaId);
+  const currentEvidence =
+    evidenceAudit && evidenceAudit.cardVersion === meta.currentVersion ? evidenceAudit : null;
   const gate = computeHandoffLevel({
     analysisVerdict: analysis.verdict,
     scalesRun: [...succeededScales].sort(),
@@ -203,6 +215,7 @@ export async function buildIdeaHandoff(
     comparisonGateOk: comparisonGate.ok,
     auditVerdict: currentAudit?.overallVerdict ?? null,
     auditSummary: currentAudit?.summary,
+    evidenceAuditVerdict: currentEvidence?.verdict ?? null,
   });
 
   // --- assemble the package.

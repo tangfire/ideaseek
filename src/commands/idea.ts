@@ -1386,6 +1386,86 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('claim-audit')
+    .description(
+      'verify card evidence against indexed papers and registered comparisons (deterministic)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const { runClaimAudit, writeClaimAudit, claimAuditPath } =
+          await import('../idea/claim-audit.js');
+        const audit = await runClaimAudit(root, ideaId);
+        await writeClaimAudit(root, audit);
+
+        let eventSeq: number | null = null;
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'ANALYZING',
+              objectId: ideaId,
+              role: 'system',
+              eventType: 'claim_audit',
+              summary:
+                `claim audit ${audit.verdict} for ${ideaId} ` +
+                `(${audit.stats.found} found, ${audit.stats.missing} missing, ${audit.stats.unverified} unverified)`,
+              status: audit.verdict,
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              cardVersion: audit.cardVersion,
+              verdict: audit.verdict,
+              stats: audit.stats,
+              checks: audit.checks,
+              path: `ideas/${ideaId}/evidence-audit.json`,
+              eventSeq,
+            }),
+          );
+          return audit.verdict === 'fail' ? 2 : 0;
+        }
+
+        process.stdout.write(
+          `claim audit ${ideaId} v${audit.cardVersion}: ${audit.verdict.toUpperCase()} ` +
+            `(${audit.stats.found} found · ${audit.stats.missing} missing · ${audit.stats.unverified} unverified)\n`,
+        );
+        for (const check of audit.checks) {
+          const mark =
+            check.verdict === 'found' ? 'ok  ' : check.verdict === 'missing' ? 'FAIL' : '??  ';
+          process.stdout.write(
+            `  ${mark} [${check.kind}] ${check.ref}${check.page !== null ? ` (p.${check.page})` : ''}\n` +
+              `        ${check.detail}\n`,
+          );
+        }
+        process.stdout.write(`  file: ${claimAuditPath(root, ideaId).replace(`${root}/`, '')}\n`);
+        if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+        if (audit.verdict === 'fail') {
+          process.stdout.write(
+            'next: fix the card evidence or register the comparison — handoff delivery is blocked while this FAILs\n',
+          );
+        } else if (audit.verdict === 'warn') {
+          process.stdout.write('next: ingest the missing sources to reach a full pass\n');
+        } else {
+          process.stdout.write('next: ideaseek idea handoff <ideaId>\n');
+        }
+        return audit.verdict === 'fail' ? 2 : 0;
+      }),
+    );
+
+  idea
     .command('create')
     .description(
       'create ideas/<id>/ workspace (card, versions, src/config/data/experiments, README)',

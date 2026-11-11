@@ -52,7 +52,7 @@ export interface VerifyEvidenceInput {
   now: number;
 }
 
-function normalize(text: string): string {
+export function normalize(text: string): string {
   return text
     .normalize('NFKC') // fold PDF typography: fi/fl/ff ligatures, full-width forms
     .replace(/­/g, '') // soft hyphens
@@ -63,7 +63,7 @@ function normalize(text: string): string {
 }
 
 /** Finds `quote` in the source; returns the 1-based page when paged input exists. */
-function locateQuote(
+export function locateQuote(
   quote: string,
   pages: { page: number; text: string }[] | null,
   sourceText: string | null,
