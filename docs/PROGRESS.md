@@ -72,6 +72,7 @@ Phase 4：Comparison 完整闭环
 - [x] Evidence Checker
 - [x] 主题综合、机制库和研究地图
 - [x] 论文 gold set 回归
+- [ ] 图像/曲线视觉理解与低置信度回退核验
 
 ## Phase 3：数据画像与实验协议
 
