@@ -5,7 +5,7 @@ import { formatEventLine, paint } from '../src/cli/format.js';
 import { resolveSlash, slashCompleter, SLASH_COMMANDS } from '../src/cli/repl.js';
 import type { RunEvent } from '../src/workflow/types.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -202,7 +202,7 @@ describe('ideaseek interactive (CLI)', () => {
     repl.write('/bogus\n');
     await repl.waitFor(/unknown command: \/bogus/);
     repl.write('plain text input\n');
-    await repl.waitFor(/unknown input: plain text input/);
+    await repl.waitFor(/not sure how to handle that/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
     expect(done.stdout).toContain('/status');
@@ -407,5 +407,59 @@ describe('bare invocation modes', () => {
     // Subcommand --json still parses as the subcommand's own flag.
     const status = await runCli(dir, ['status', '--json']);
     expect(JSON.parse(status.stdout)).toHaveProperty('run');
+  }, 60_000);
+});
+
+describe('natural language in the REPL (Journey E)', () => {
+  it('answers read-only queries from persisted state', async () => {
+    const dir = await makeProjectDir();
+    const repl = startRepl(dir);
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('status\n');
+    await repl.waitFor(/Run/);
+    repl.write('为什么 idea-x 还没通过？\n');
+    await repl.waitFor(/当前阶段|建议|下一条命令/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).toContain('项目');
+  }, 60_000);
+
+  it('turns high-impact requests into pending-approval Decisions without executing them', async () => {
+    const dir = await makeProjectDir();
+    // A run must exist to bind decisions to.
+    const enqueued = await runCli(dir, ['run', '--question', 'nl decision', '--enqueue-only']);
+    expect(enqueued.code).toBe(0);
+
+    const repl = startRepl(dir);
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('优先验证 idea-002，先别给 idea-001 分配 GPU\n');
+    await repl.waitFor(/pending-approval decision/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).toContain('nothing was changed');
+
+    const events = await runCli(dir, ['events', '--json']);
+    const decision = (
+      JSON.parse(events.stdout) as {
+        events: { eventType: string; status: string; summary: string }[];
+      }
+    ).events.find((e) => e.eventType === 'decision');
+    expect(decision).toBeTruthy();
+    expect(decision!.status).toBe('pending-approval');
+    expect(decision!.summary).toContain('优先验证 idea-002');
+    // Nothing was executed: no idea workspace appeared.
+    await expect(
+      readFile(join(dir, 'ideas', 'idea-002', 'workspace.json'), 'utf8'),
+    ).rejects.toThrow();
+  }, 60_000);
+
+  it('guides unknown text instead of failing', async () => {
+    const dir = await makeProjectDir();
+    const repl = startRepl(dir);
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('xyzzy random gibberish\n');
+    await repl.waitFor(/not sure how to handle that/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
   }, 60_000);
 });

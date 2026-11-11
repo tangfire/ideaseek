@@ -4,6 +4,7 @@ import readline from 'node:readline';
 import { detectEnvironment } from '../runtime/detect.js';
 import { renderBanner, renderHeader, type HeaderContext } from './banner.js';
 import { formatEventLine, paint, type PaintOptions } from './format.js';
+import { interpretInput } from './nl.js';
 import { cliEntryPath, runCli, runCliJson } from './runner.js';
 
 /**
@@ -85,6 +86,10 @@ function helpText(): string {
   }
   lines.push('');
   lines.push('Tab completes; a unique prefix works too (e.g. /sta → /status).');
+  lines.push('Natural language: queries like "为什么 method-x 还没通过" answer from state;');
+  lines.push(
+    'high-impact requests ("优先验证 idea-001") become pending-approval Decisions — never silent.',
+  );
   lines.push('Every command has an equivalent non-interactive CLI form.');
   return lines.join('\n');
 }
@@ -404,7 +409,19 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
         if (!input) {
           // empty line — nothing to do
         } else if (!input.startsWith('/')) {
-          println(`unknown input: ${input.slice(0, 40)} — type /help for commands`);
+          const intent = interpretInput(input);
+          if (intent.kind === 'query') {
+            await relay(intent.cliArgs);
+          } else if (intent.kind === 'pending-action') {
+            // High-impact NL becomes a pending Decision — never an execution.
+            await relay([
+              'decision',
+              'propose',
+              `${intent.summary} (classified: ${intent.reason})`,
+            ]);
+          } else {
+            println(intent.hint);
+          }
         } else {
           const outcome = await dispatch(input);
           if (outcome === 'quit') {

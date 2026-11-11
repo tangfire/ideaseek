@@ -9,6 +9,59 @@ import { action, jsonLine, resolveRun } from './shared.js';
  * `ideaseek confirm protocol`, which appends the matching decision event.
  */
 export function registerDecisionCommand(program: Command): void {
+  const decision = program.command('decision').description('record auditable decisions');
+
+  decision
+    .command('propose')
+    .description(
+      'record a natural-language request as a pending-approval Decision (never executed directly)',
+    )
+    .argument('<text...>', 'the user request, verbatim')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (text: string[], opts: { json?: boolean }) => {
+        const request = text.join(' ').trim();
+        if (!request) {
+          throw new IdeaseekError('INVALID_ARGUMENT', 'decision propose requires text');
+        }
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+        try {
+          const run = await resolveRun(runtime);
+          const event = await runtime.db.appendEvent({
+            runId: run.runId,
+            phase: 'DECISION',
+            objectId: null,
+            role: 'user',
+            eventType: 'decision',
+            summary: `pending-approval: ${request}`,
+            status: 'pending-approval',
+          });
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                decision: 'pending-approval',
+                runId: run.runId,
+                seq: event.seq,
+                request,
+              }),
+            );
+          } else {
+            process.stdout.write(
+              `recorded pending-approval decision [#${event.seq}]: ${request}\n`,
+            );
+            process.stdout.write(
+              '  nothing was changed — review with ideaseek events, then apply the ' +
+                'equivalent command with --confirm\n',
+            );
+          }
+          return 0;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
   program
     .command('reject')
     .description('record a user rejection decision against the current run')

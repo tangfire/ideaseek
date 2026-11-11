@@ -141,6 +141,8 @@ export interface DecisionInput {
   target: string;
   mode: AutonomyMode;
   reason?: string;
+  /** Defaults: confirmed (user) or auto (autonomous); pending-approval for NL requests. */
+  status?: 'confirmed' | 'auto' | 'pending-approval';
 }
 
 export interface DecisionDb {
@@ -178,7 +180,7 @@ export async function recordDecision(
     summary:
       `${input.action}: ${input.target} [${input.mode}]` +
       (input.reason ? ` — ${input.reason}` : ''),
-    status: confirmed ? 'confirmed' : 'auto',
+    status: input.status ?? (confirmed ? 'confirmed' : 'auto'),
   });
 }
 
