@@ -155,6 +155,7 @@ Phase 4：Comparison 完整闭环
 - [ ] 运行中调整 idea/comparison 优先级和资源
 - [ ] 用户反馈入口和 gold set 导入
 - [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
+- [ ] IdeationRound 多轮 idea、旧候选去重和用户反馈回流
 - [ ] 运行前 `plan`、成本/资源估算和高成本确认
 - [ ] `next/status/explain` 的阻塞和决策解释
 - [ ] 任务详情、脱敏日志和本地/可选远程通知

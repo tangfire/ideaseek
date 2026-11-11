@@ -46,6 +46,8 @@ INIT
 
 `--ideas N` 是本次 run 允许进入实现/实验的候选上限，不是要求模型无条件生成 N 个 idea。省略时由平台依据候选差异、证据、预算、资源和预计信息增益选择数量，默认先验证 1 个；未进入实验的候选仍作为 IdeaCard 保存，可在后续 run 继续。
 
+一个 Project 可以有多个 `IdeationRound`。用户重复运行同一项目时，可以继续当前 round 或创建新 round。新 round 复用不变的 PaperCard、研究地图、协议、comparison 和实验 artifact；它读取旧 idea、失败、反馈和候选 fingerprint，要求新候选有差异化依据。没有新信息时允许返回“没有足够新信息生成高质量新 idea”，不能强行凑数量。
+
 Idea 生成必须经过团队式机制审查：
 
 ```text

@@ -83,6 +83,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md)：专业产品的 onboarding、可观测性、成本、安全、交付和维护要求。
 - [PRODUCT_GAPS_AUDIT.md](PRODUCT_GAPS_AUDIT.md)：从真实用户操作反推的自然语言交互、dry-run、多项目、清理、通知和反馈缺口。
 - [USER_JOURNEY_ACCEPTANCE.md](USER_JOURNEY_ACCEPTANCE.md)：从安装到 handoff、恢复和升级的完整用户旅程验收。
+- [IDEATION_ROUNDS.md](IDEATION_ROUNDS.md)：同一论文/数据项目的多轮 idea 探索、去重和增量复用。
 - [LONG_RUNNING_WORKFLOWS.md](LONG_RUNNING_WORKFLOWS.md)：跨多轮 idea/实验的长任务生命周期、恢复粒度和 soak-test 验收。
 
 ## 首版边界

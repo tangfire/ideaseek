@@ -161,6 +161,18 @@ ideaseek run --question "..."
 
 IdeaSeek 按内容 hash 和版本增量处理：新增论文只触发受影响的 PaperCard/综合；新增数据只触发相关 snapshot、comparison 和实验；新增 comparison 只补做该方法。
 
+## 在同一项目继续思考新的 idea
+
+如果几天后论文、数据和 comparison 都没有变化，不要重新初始化项目。创建新的 ideation round：
+
+```bash
+ideaseek ideate --round new --ideas 3
+ideaseek rounds list
+ideaseek rounds show <round-id>
+```
+
+新 round 会复用已经完成的论文知识、协议、baseline 和实验结果，读取上一轮的 idea、失败原因和用户反馈，并要求新候选与上一轮有明确差异。没有新的证据或机制时，平台可以诚实返回没有足够新信息，而不是重复生成相同 idea。
+
 ## 出错、额度耗尽和恢复
 
 ```bash

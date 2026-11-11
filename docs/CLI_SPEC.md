@@ -23,6 +23,10 @@ ideaseek confirm protocol
 ideaseek next
 ideaseek run --question "..."
 ideaseek run --question "..." --ideas 3
+ideaseek ideate --round new --ideas 3
+ideaseek rounds list
+ideaseek rounds show <round-id>
+ideaseek feedback --idea <idea-id> --label useful
 ideaseek run --question "..." --detach
 ideaseek attach --run <id>
 ideaseek watch --run <id>
