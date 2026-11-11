@@ -44,7 +44,7 @@ Phase 4：Comparison 完整闭环
 - [x] Agent capability profiles
 - [x] Tool schemas、权限和审计事件
 - [x] 假 Paper Extractor 端到端任务
-- [ ] fast/balanced/deep/deterministic 模型路由和按角色覆盖
+- [x] fast/balanced/deep/deterministic 模型路由和按角色覆盖
 
 ## Phase 1.5：CLI 交互与可观察性
 
@@ -136,9 +136,9 @@ Phase 4：Comparison 完整闭环
 - [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
 - [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
 - [ ] protocol/experiment/权限审批交互
-- [ ] 自然语言 REPL 与高影响操作确认
+- [x] 自然语言 REPL 与高影响操作确认
 - [ ] fast/balanced/deep/deterministic 模型路由
-- [ ] 用户级/项目级配置、多项目注册和项目锁
+- [x] 用户级/项目级配置、多项目注册和项目锁
 - [ ] cleanup/archive/export、通知和反馈入口
 - [ ] IdeationRound 多轮 idea、旧候选去重和用户反馈回流
 - [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
@@ -240,4 +240,5 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-11 | Phase 9 cleanup/archive/export（PRODUCT_GAPS #6 结果生命周期）：cleanup [--cache]（仅枚举 .research/artifacts/tmp + 陈旧 daemon.json；beginCommit 未 finalize 的 staged temp 经 listStagedTempPaths 保护、dry-run 默认、papers/ideas/knowledge 结构上不可达）、archive --run（reports/archive-<id> 四件套 events/tasks/artifacts/archive.json + decision 事件、run 保持完全可读）、export --run --to（artifacts 逐文件 sha256 进 export-manifest、events/tasks/run 全量脱敏、绝不拷贝 .env、sk- 形状值拒绝出仓（带词边界防 task- 误杀，redactSecrets 同步修边界））、WorkflowDb.listArtifactsByRun+listStagedTempPaths | 464ef14 | 门禁 67 files/480 vitest+9 python 全绿（3 条 maintenance 测试：dry-run→staged 保护→cache 删除孤儿不碰原件、archive 可读+决策审计、export 哈希清单+无 .env+事件 token 脱敏）| 嵌入式 embedding 缓存（用户级 ~/.cache）未纳入清理（跨项目共享，留 --user-cache 后续） | 下一模块：多项目注册与项目锁（P0）
 2026-11-11 | Phase 9 多项目注册与项目锁（PRODUCT_GAPS #5）：runtime/registry 用户级 projects.json（init 幂等登记 fresh/already 双路径、IDEASEEK_REGISTRY_PATH 覆盖使测试永不碰真实 ~/.ideaseek、global-setup 统一重定向）、runtime/project-lock 咨询锁（live 外部 pid→RUN_BLOCKED 快速失败、死 pid 自动接管并记 note、同 pid 可重入、release 只删自己的锁；worker 走 DB 租约不占此锁）、run 命令全程持锁 finally 释放、ideaseek projects [--json] 只读探测各注册项目（exists/lastRun/lock+alive/daemon，recover:false 防写）| 9c6753f | 门禁 68 files/484 vitest+9 python 全绿（4 条 projects 测试：注册幂等+隔离路径、锁三态（live 拒/死接管/幂等释放）、projects CLI 登记与状态、run 并发冲突→锁释放后恢复；全量套件无竞态回归）| detach daemon 不持此锁（由 daemon.json+任务租约协调，文档化）；跨机注册同步未做 | 下一模块：自然语言 REPL 查询与高影响确认（P0 收尾）
 2026-11-11 | Phase 9 自然语言 REPL 查询与高影响审批（Journey E + GAPS #1）：src/cli/nl 确定性意图矩阵（查询类：status/next/为什么/各域列表/模型路由→转发现有 CLI use-case；高影响类：优先级/预算/comparison 排除/假设变更/暂停 idea→pending-approval Decision 绝不执行；未知→引导语）、ideaseek decision propose <text...>（pending-approval RunEvent，明示 nothing was changed，审阅后用等价命令 --confirm 应用）、recordDecision 增加 status（confirmed/auto/pending-approval）、REPL 非斜杠输入走 interpretInput（query→relay、pending→decision propose、unknown→hint），/help 补自然语言说明；REPL 仍零 workflow/db 直依赖（经 CLI 转发，架构守卫保持绿）| 3d891d6 | 门禁 68 files/487 vitest+9 python 全绿（interactive 19 条含3条 NL：状态查询应答、高影响请求落 pending 且 ideas 零副作用、未知引导）| 语义理解为词法规则非模型（模型解释需 DSH 任务面，凭据解锁后可增强）；意图白名单外的表述归入 unknown 不猜测 | Phase 9 P0 清单完成项：plan/explain/models/门禁/NL/项目锁/清理导出；余：用户级配置分层（provider 隐藏输入）、ExperimentRunner 训练内 checkpoint
-2026-10-11 | Phase 9 用户级/项目级配置分层（GAPS #3 + CONFIG_SPEC）：src/config/user-config（~/.ideaseek/config.yaml 或 IDEASEEK_USER_CONFIG 覆盖：models.provider/defaultRoute/credentialRef、embeddings.cacheDir、notifications；严格校验——未知字段报错、credentialRef 只接受 env:NAME|dsh:id 引用、任何 sk-/token 形状值硬拒绝、webhook 禁嵌 token；缺文件→零错误默认、坏 YAML→返回错误不抛）、resolveCredentialPresence（引用→configured/missing/store/not-configured，结构永不含值）、config explain 增补 user 段（逐字段 [user-default|user-file] 来源+边界声明：项目 research.yaml 永不读写用户 secret）、models list/userConfig 段（provider+credentialRef+presence）、doctor user-config 检查（错误→error、引用缺失→warn）| 待提交 | 门禁 69 files/496 vitest+9 python 全绿（9 条 user-config 测试：默认/合法文件/secret 拒绝/未知键、加载缺文件与坏 YAML、presence 解析零泄漏、explain 双层+项目文件零改动、secret 配置 explain 退出2且不回显、models/doctor 接线）| provider 隐藏输入配置向导（Journey B 后半）与通知 webhook 实发未做；用户配置无 setter 命令（手编文件+doctor 校验） | 下一模块：ExperimentRunner 训练内 checkpoint 能力（LONG_RUNNING）
+2026-11-11 | Phase 7 用户级/项目级配置分层（GAPS #3 + CONFIG_SPEC）：src/config/user-config（~/.ideaseek/config.yaml 或 IDEASEEK_USER_CONFIG 覆盖：models.provider/defaultRoute/credentialRef、embeddings.cacheDir、notifications；严格校验——未知字段报错、credentialRef 只接受 env:NAME|dsh:id 引用、任何 sk-/token 形状值硬拒绝、webhook 禁嵌 token；缺文件→零错误默认、坏 YAML→返回错误不抛）、resolveCredentialPresence（引用→configured/missing/store/not-configured，结构永不含值）、config explain 增补 user 段（逐字段 [user-default|user-file] 来源+边界声明：项目 research.yaml 永不读写用户 secret）、models list/userConfig 段（provider+credentialRef+presence）、doctor user-config 检查（错误→error、引用缺失→warn）| 9681f4b | 门禁 69 files/496 vitest+9 python 全绿（9 条 user-config 测试：默认/合法文件/secret 拒绝/未知键、加载缺文件与坏 YAML、presence 解析零泄漏、explain 双层+项目文件零改动、secret 配置 explain 退出2且不回显、models/doctor 接线）| provider 隐藏输入配置向导（Journey B 后半）与通知 webhook 实发未做；用户配置无 setter 命令（手编文件+doctor 校验） | 下一模块：ExperimentRunner 训练内 checkpoint 能力（LONG_RUNNING）
+2026-11-11 | Phase 7 勾选对齐（并行会话重构清单后按当前 checkbox 重核）：自然语言 REPL 与高影响确认（3d891d6）、模型路由 fast/balanced/deep/deterministic（e09e2db：四层注册表+14角色+use 切换+审计；实际按 tier 选型仍走 DSH provider 默认绑定）、用户级/项目级配置+多项目注册+项目锁（9681f4b + 9c6753f）均已有实现+测试+commit；未勾项保持诚实：权限审批（工具级）、通知/反馈入口、发布前真实 soak、备份失败/预算告警、ExperimentRunner 训练内 checkpoint、ResearchRun 编排硬化、Journey A–H 正式验收、IdeationRound
