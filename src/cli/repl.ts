@@ -198,6 +198,7 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
   });
 
   let promptShown = false;
+  let rlClosed = false;
   let quitting = false;
   let streamChild: ChildProcess | null = null;
   let menu: MenuState = closeMenu();
@@ -208,6 +209,9 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
   let pendingItems: PendingApproval[] = startupPending;
 
   const showPrompt = (): void => {
+    // EOF may close readline while queued lines are still draining —
+    // prompting a closed interface throws ERR_USE_AFTER_CLOSE.
+    if (rlClosed || quitting) return;
     rl.prompt();
     promptShown = true;
   };
@@ -281,7 +285,7 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       if (hadMenu) drawMenu();
       return;
     }
-    if (tty && !plain) {
+    if (tty && !plain && !rlClosed) {
       process.stdout.write('\r\x1b[K');
       process.stdout.write(`${text}\n`);
       rl.prompt(true);
@@ -752,7 +756,10 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
 
     rl.on('close', () => {
       // stdin EOF (piped tests, closed terminal) — drain queued lines first.
-      void queue.then(() => finish(0));
+      // Mark closed FIRST so prompt attempts from still-draining lines
+      // become no-ops; a queue rejection must never go unhandled.
+      rlClosed = true;
+      void queue.then(() => finish(0)).catch(() => finish(0));
     });
 
     showPrompt();

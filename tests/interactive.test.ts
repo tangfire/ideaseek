@@ -371,6 +371,28 @@ describe('ideaseek interactive (CLI)', () => {
     const status = await runCli(dir, ['status', '--json']);
     expect((JSON.parse(status.stdout) as { run: { status: string } }).run.status).toBe('RUNNING');
   }, 90_000);
+
+  it('EOF mid-queue drains without ERR_USE_AFTER_CLOSE (exit 0)', async () => {
+    const dir = await makeProjectDir();
+    const child = spawn(process.execPath, [CLI_BIN, 'interactive'], {
+      cwd: dir,
+      env: { ...process.env, IDEASEEK_CLI: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => (output += String(chunk)));
+    child.stderr.on('data', (chunk) => (output += String(chunk)));
+    const code = await new Promise<number>((resolve) => {
+      child.on('close', (c) => resolve(c ?? -1));
+      // Both lines + immediate EOF: stdin closes while the queue is still
+      // draining — this used to crash with ERR_USE_AFTER_CLOSE (exit 1).
+      child.stdin.write('/status\n/quit\n');
+      child.stdin.end();
+    });
+    expect(code).toBe(0);
+    expect(output).not.toContain('ERR_USE_AFTER_CLOSE');
+    expect(output).toContain('bye');
+  }, 60_000);
 });
 
 describe('bare invocation modes', () => {
