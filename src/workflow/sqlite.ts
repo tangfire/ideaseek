@@ -789,6 +789,39 @@ export class SqliteWorkflowDb implements WorkflowDb {
     );
   }
 
+  cleanupQueued(runId: string): Promise<number> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const run = this.requireRun(runId);
+        if (!TERMINAL_RUN_STATUSES.includes(run.status)) {
+          throw new IdeaseekError(
+            'INVALID_STATE',
+            `run ${runId} is ${run.status}; cancel it instead of cleaning the queue`,
+          );
+        }
+        const now = this.clock.now();
+        const result = this.db
+          .prepare(
+            `UPDATE task SET status = 'canceled', cancel_requested = 1, finished_at = ?, updated_at = ?,
+                            error_json = ?
+             WHERE run_id = ? AND status = 'queued'`,
+          )
+          .run(now, now, JSON.stringify(cancelError()), runId);
+        const count = Number(result.changes);
+        if (count > 0) {
+          this.insertEvent({
+            runId,
+            phase: run.phase,
+            eventType: 'task_canceled',
+            summary: `${count} stale queued task(s) cleaned up from terminal run`,
+            status: 'canceled',
+          });
+        }
+        return count;
+      }),
+    );
+  }
+
   // ------------------------------------------------------------------- tasks
 
   enqueueTask(input: EnqueueTaskInput): Promise<{ task: TaskRecord; created: boolean }> {

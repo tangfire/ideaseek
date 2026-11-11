@@ -302,6 +302,8 @@ export interface RunIdeaExperimentOptions {
   waiveNovelty?: string;
   /** Audited reason to proceed despite a current failing review round. */
   waiveReview?: string;
+  /** Auto-retry ONCE after a resource-category failure (OOM/device). Default true. */
+  retryResource?: boolean;
 }
 
 /** The subset of WorkflowDb the spec lifecycle needs (main runs + ablations). */
@@ -515,10 +517,44 @@ export async function executeSpecRun(
     // progress bookkeeping must never fail the experiment itself
   }
 
+  // Test hook: IDEASEEK_FORCE_RUN_FAILURE="<category>:<maxAttempt>" forces a
+  // classified failure while the real command succeeds — drives the
+  // resource-retry path without needing a real OOM device.
+  let finalSucceeded = succeeded;
+  let finalFailure: { category: RunFailureCategory; summary: string } | null = succeeded
+    ? null
+    : { category: failureCategory, summary: failureSummary };
+  const forcedSpec = process.env.IDEASEEK_FORCE_RUN_FAILURE;
+  if (forcedSpec && finalSucceeded) {
+    const [forcedCategory = '', forcedMaxText = '1'] = forcedSpec.split(':');
+    const valid: RunFailureCategory[] = [
+      'environment',
+      'dependency',
+      'data',
+      'timeout',
+      'resource',
+      'code',
+      'invalid-result',
+      'unknown',
+    ];
+    const note = (spec.environment.notes ?? []).find((entry) => entry.startsWith('attempt:'));
+    const currentAttempt = Number((note ?? 'attempt:1').slice('attempt:'.length));
+    if (
+      valid.includes(forcedCategory as RunFailureCategory) &&
+      currentAttempt <= Number(forcedMaxText)
+    ) {
+      finalSucceeded = false;
+      finalFailure = {
+        category: forcedCategory as RunFailureCategory,
+        summary: `forced ${forcedCategory} failure (attempt ${currentAttempt})`,
+      };
+    }
+  }
+
   return {
-    succeeded,
+    succeeded: finalSucceeded,
     metrics,
-    failure: succeeded ? null : { category: failureCategory, summary: failureSummary },
+    failure: finalFailure,
     startedAt,
     finishedAt: Date.now(),
     logRef,
@@ -838,6 +874,19 @@ export async function runIdeaExperiment(
   let statusAfter = after.status;
   if (succeeded && after.status === 'RUNNING') {
     statusAfter = (await setIdeaStatus(projectRoot, ideaId, 'ANALYZING')).status;
+  }
+
+  // Resource (OOM/device) failures are transient by policy: ONE automatic
+  // retry through the normal path — the registry bumps attempt → a new
+  // spec hash, so history keeps the failed v1 and the retry is auditable.
+  // `retryResource: false` caps the recursion at a single retry.
+  if (
+    !succeeded &&
+    exec.failure?.category === 'resource' &&
+    attempt === 1 &&
+    opts.retryResource !== false
+  ) {
+    return runIdeaExperiment(projectRoot, ideaId, { ...opts, retryResource: false }, runtime, db);
   }
 
   return {

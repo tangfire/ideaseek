@@ -226,6 +226,12 @@ export interface WorkflowDb {
    * canceled. Commit attempts after cancellation are rejected.
    */
   ackCancel(taskId: string, workerId: string, reason: 'cancel' | 'pause'): Promise<TaskRecord>;
+  /**
+   * Queue hygiene (experiment-queue): cancels tasks still `queued` on a
+   * TERMINAL run — stale leftovers after cancel/complete/fail. Returns how
+   * many tasks were cleaned; refuses non-terminal runs (cancel those).
+   */
+  cleanupQueued(runId: string): Promise<number>;
 
   // Events
   appendEvent(event: NewRunEvent): Promise<RunEvent>;
