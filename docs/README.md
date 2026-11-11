@@ -31,7 +31,7 @@ ideaseek status --detail
 ideaseek report
 ```
 
-当前目录是项目根目录。平台创建的 `papers/`、`datasets/`、`comparisons/`、`knowledge/`、`ideas/`、`reports/` 和 `.research/` 都属于项目工作区。
+当前目录是项目根目录。平台创建的 `papers/`、`datasets/`、`comparisons/`、`idea-seeds/`、`knowledge/`、`ideas/`、`reports/` 和 `.research/` 都属于项目工作区。`idea-seeds/` 是用户已有 idea 的可选输入目录；`ideas/` 是平台生成和版本化管理的输出目录。
 
 IdeaSeek 不默认替用户下载大型数据集。推荐入口是 `papers/`、`datasets/<dataset-id>/`、`comparisons/<method-id>/` 和不确定材料的 `incoming/`。用户可以先按大致类型放入，再运行 `ideaseek scan` 和 `ideaseek intake`；平台识别、去重、分组并生成待确认清单，`ideaseek organize --apply` 只创建索引/软链接/副本，不覆盖原始文件。用户把可用数据放入 `datasets/` 或配置只读挂载路径；平台只做数据盘点、质量检查和可重建的小规模切分。论文、数据集和 comparison 都按哈希增量处理：后续补论文、补数据或补对比方法时，只运行受影响的任务，已有知识卡片和实验结果复用。
 IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`standard` 派生切片，先快速验证 idea，再按证据晋级；不会因为改一行代码就自动重新跑一天的全量实验。平台最终通过 `ideaseek experiment handoff --idea <id>` 交付用户自行运行全量实验所需的代码、split、环境、配置和命令，原始数据永远不被修改。

@@ -4,24 +4,23 @@ IdeaSeek 不只支持从论文生成全新 idea，也支持用户带着已有 id
 
 ## 用户输入方式
 
-首选交互与普通项目材料保持一致：用户把已有 idea 文件夹或压缩包放进项目的 `incoming/ideas/<idea-name>/`，然后运行 `scan/intake`。压缩包可以包含任意代码仓库结构、idea 描述、配置、日志、指标、已有 checkpoint 和 README；不要求代码目录叫 `src/`、入口叫 `train.py` 或符合 IdeaSeek 自己的模板。用户不需要先解压、重排仓库或执行特殊 import 命令。
+首选交互与普通项目材料保持一致：用户把已有 idea 文件夹或压缩包放进项目根目录的 `idea-seeds/<idea-name>/`，然后运行 `scan/intake`。`idea-seeds/` 是可为空的用户输入目录，与 `papers/`、`datasets/`、`comparisons/` 同级。压缩包可以包含任意代码仓库结构、idea 描述、配置、日志、指标、已有 checkpoint 和 README；不要求代码目录叫 `src/`、入口叫 `train.py` 或符合 IdeaSeek 自己的模板。用户不需要先解压、重排仓库或执行特殊 import 命令。
 
 ```text
 research-project/
-  incoming/
-    ideas/
-      hetero-distillation/
-        README.md
-        idea.md
-        code/
-        configs/
-        results/
+  idea-seeds/
+    hetero-distillation/
+      README.md
+      idea.md
+      code/
+      configs/
+      results/
 ```
 
 ```bash
 ideaseek scan
 ideaseek intake
-ideaseek idea improve --source incoming/ideas/hetero-distillation --question "为什么跨客户端泛化不足？"
+ideaseek idea improve --source idea-seeds/hetero-distillation --question "为什么跨客户端泛化不足？"
 ```
 
 Intake Agent 递归扫描仓库结构，检查 README、语言/依赖清单、训练与评估入口、配置、测试、数据加载器和 git 元数据，生成 `RepositoryUnderstanding`：候选入口、运行命令、环境、数据接口、指标、路径依据和置信度。随后 Code Analysis Agent 在只读快照中检查源码和调用关系，必要时生成独立 wrapper/adapter。所有自动识别都必须附证据；找不到入口或无法理解数据契约时，展示具体候选并请用户确认。Agent 不得为迎合标准结构而移动或重命名原文件。
@@ -30,7 +29,7 @@ Intake Agent 递归扫描仓库结构，检查 README、语言/依赖清单、�
 
 ## 原始版本保护
 
-确认导入后，用户原始目录留在 `incoming/ideas/<name>/` 并以只读 snapshot/hash 登记；平台在正式 idea 下建立独立 workspace/branch：
+确认导入后，用户原始目录留在 `idea-seeds/<name>/` 并以只读 snapshot/hash 登记；平台在正式 idea 下建立独立 workspace/branch：
 
 ```text
 ideas/idea-001/

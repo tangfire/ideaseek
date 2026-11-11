@@ -65,7 +65,7 @@ ideaseek report [--run <id>]
 
 模型配置同时支持交互和脚本：`/models` 或 `ideaseek models` 查看 route/provider/model 状态；`models test` 只做最小连接和能力检查。API key 使用隐藏输入，写入 DSH credential store 或外部 secret manager，不写入 `research.yaml`、prompt、事件、日志或 git。`--json` 输出只包含脱敏 provider、model、route、能力和额度状态。
 
-`scan` 默认扫描 `papers/`、`datasets/`、`comparisons/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、`ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。代码仓库允许任意目录结构；Codebase Analyst 通过 README、依赖、测试和源码检查生成候选入口/数据接口说明，不要求用户改成固定模板。自动识别必须给出依据和置信度；有歧义时先确认，再在隔离副本中 smoke test。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
+`scan` 默认扫描 `papers/`、`datasets/`、`comparisons/`、`idea-seeds/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、平台管理的 `ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。代码仓库允许任意目录结构；Codebase Analyst 通过 README、依赖、测试和源码检查生成候选入口/数据接口说明，不要求用户改成固定模板。自动识别必须给出依据和置信度；有歧义时先确认，再在隔离副本中 smoke test。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
 
 `scan/intake` 支持常见压缩包。平台先列出 archive 成员和候选类型，再在隔离目录安全解压；拒绝绝对路径、`../` 穿越、危险 symlink、过深嵌套、压缩炸弹、超出大小/文件数配额或需要密码的 archive。原压缩包不执行、不覆盖、不删除；未知、损坏或加密格式进入 `ARCHIVE_BLOCKED`，给出具体下一步。
 

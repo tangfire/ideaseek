@@ -26,6 +26,7 @@ Phase 4：Comparison 复现与统一评测
 - [x] `ideaseek setup/doctor/config explain`
 - [x] 自动检测 Python/Node/容器/CUDA/GPU/磁盘
 - [x] `scan/intake/organize` 与 InputManifest
+- [ ] `idea-seeds/` 输入目录扫描、intake 确认和只读导入
 - [ ] 常见压缩包扫描、安全解压、成员 manifest 和 `ARCHIVE_BLOCKED` 处理
 - [x] starter/standard/research 运行策略和报告措辞
 - [x] 配置 schema、迁移和 ResolvedConfig 快照
