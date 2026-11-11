@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import subprocess
 import sys
@@ -89,6 +90,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
+@unittest.skipUnless(importlib.util.find_spec("pdfplumber"), 'pdfplumber not installed (optional table parser)')
 class TablesTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="ideaseek-tables-")
@@ -135,6 +137,20 @@ class OcrTests(unittest.TestCase):
         pdf = root / "_ocr_fixture.pdf"
         pdf.write_bytes(build_minimal_pdf(["OCR selftest words"]))
         try:
+            # The pinned venv may belong to another platform (shared checkout:
+            # Windows Scripts/ seen from WSL). Probe path visibility first —
+            # a venv that cannot see this fixture must skip, not fail.
+            try:
+                probe = subprocess.run(
+                    [str(venv_py), "-c",
+                     "import os,sys; sys.exit(0 if os.path.exists(sys.argv[1]) else 3)",
+                     str(pdf)],
+                    capture_output=True, timeout=60,
+                )
+            except (OSError, subprocess.SubprocessError):
+                self.skipTest("worker venv not runnable on this platform")
+            if probe.returncode != 0:
+                self.skipTest("worker venv cannot see this path (cross-platform checkout)")
             out = subprocess.run(
                 [str(venv_py), "-m", "ideaseek_worker", "ocr", str(pdf)],
                 capture_output=True, text=True, cwd=str(root), timeout=300,
