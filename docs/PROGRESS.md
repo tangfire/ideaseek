@@ -197,7 +197,10 @@ Phase 4：Comparison 复现与统一评测
 - [ ] P0 capability：ablation planner（优先复用 ARIS）
 - [ ] P0 capability：novelty check + fresh-context independent reviewer（优先复用 ARIS）
 - [ ] P0 capability：experiment audit/integrity（优先复用 ARIS）
+- [ ] P0 capability：selectable fresh-context reviewer 和 result-to-claim gate
 - [ ] P1 capability：research wiki 和 HTML artifact renderer（优先复用 ARIS）
+- [ ] P1 capability：watchdog/experiment queue/session recovery workflow
+- [ ] P2 capability：claim/citation audit、paper writing/rebuttal/slides workflow
 - [ ] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入
 ## 模块交付记录
 

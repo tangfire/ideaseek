@@ -22,6 +22,9 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 - reviewer independence：每轮评审使用新的上下文，不延续上一次的自我辩护；
 - `paper-claim-audit` / `citation-audit`：检查 claim、引用和证据；
 - `integrity-forensics`：检查实验选择、结果叙述和异常模式。
+- selectable reviewer backend：选择 Codex/其他独立 reviewer，记录实际 reviewer identity、route、scope 和 acceptance；
+- fresh-context review：每一轮 reviewer 读取当前 artifact 的新上下文，不延续旧评审对话；
+- result-to-claim gate：实验完成后判断结果支持什么、不支持什么、还缺什么证据。
 
 ### P1：研究记忆和可读交付
 
@@ -35,6 +38,20 @@ ARIS 已经把很多科研工作流沉淀成可组合的 Markdown skills、跨�
 加入 `Dataset Discovery Agent`：从论文、表格、代码 README、数据集论文和允许的学术索引中发现常用数据集，输出 `DatasetCandidate`：名称、来源、用途、字段/任务、规模、许可证、下载/申请方式、相关论文、与当前问题的关联和置信度。
 
 默认只发现和推荐，不自动下载大型或受限数据。用户显式授权后，平台可以下载公开元数据或小型 fixture；真正训练数据仍由用户提供/挂载，进入新的 dataset snapshot 后才参与实验。
+
+### P1：长任务和实验运营
+
+- watchdog：只检测 stalled/dead/stale，不替用户判断 idea 是否正确或实验是否通过；
+- experiment-queue：wave、depends_on、OOM-aware retry、stale cleanup 和队列公平；
+- monitor-experiment：读取心跳、日志和资源，不篡改结果；
+- session recovery：跨 CLI/Agent 会话恢复上下文摘要和 artifact 引用。
+
+### P2：研究记忆、写作与交付
+
+- research-wiki 的 Paper/Idea/Experiment/Claim 图谱和 typed edges；
+- render-html：把 IDEA_REPORT、review、research wiki 和审计结果生成易读 HTML；
+- paper-claim-audit、citation-crosscheck 和 integrity forensics；
+- paper-write、rebuttal、slides 和 talk，作为 handoff 后的可选研究交付链。
 
 ## IdeaSeek 与 ARIS 的职责
 
@@ -106,3 +123,11 @@ Phase 4.5 不只新增 adapter，还要审计 IdeaSeek 当前实现：
 | 研究记忆/报告 | research-wiki/render-html | 通过 artifact adapter 接入，不替换 IdeaSeek DB |
 
 每项迁移都要有 capability conformance test；测试通过后旧重复实现、旧默认入口和重复配置必须删除。历史 artifact、run、Decision 和报告保持可读；需要兼容旧数据时只保留一次性 migration，而不是保留第二套运行逻辑。
+
+## ARIS 运行原则也要吸收
+
+- 外部 heartbeat/watchdog 只负责推进停滞任务和暴露 stale，不做质量裁决；
+- verdict-bearing reviewer/audit 不得被无限 loop 自动重复到“满意”为止；
+- 实验输出折叠只影响终端显示，完整日志和模型上下文保持完整；
+- 研究 Markdown/JSON artifact 是可审计来源，HTML 是生成的阅读视图；
+- 多模型 executor/reviewer 的实际身份和 scope 必须记录，不能凭配置名称推断 reviewer 独立性。
