@@ -876,6 +876,12 @@ export class SqliteWorkflowDb implements WorkflowDb {
     return Promise.resolve(rows.map(rowToArtifact));
   }
 
+  getArtifact(artifactId: string): Promise<ArtifactRecord | null> {
+    const row = this.db.prepare('SELECT * FROM artifact WHERE artifact_id = ?').get(artifactId) as
+      ArtifactRow | undefined;
+    return Promise.resolve(row ? rowToArtifact(row) : null);
+  }
+
   replacePaperIndex(entry: PaperIndexEntry): Promise<void> {
     return Promise.resolve().then(() =>
       this.tx(() => {

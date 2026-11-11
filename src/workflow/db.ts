@@ -196,6 +196,8 @@ export interface WorkflowDb {
   listArtifacts(taskId: string): Promise<ArtifactRecord[]>;
   /** All committed artifacts of a kind across runs (knowledge indexing). */
   listArtifactsByKind(kind: string): Promise<ArtifactRecord[]>;
+  /** Single artifact by id (explain/provenance lookups). */
+  getArtifact(artifactId: string): Promise<ArtifactRecord | null>;
   claimNextTask(runId: string, workerId: string, opts: ClaimOptions): Promise<TaskRecord | null>;
   markTaskStarted(taskId: string, workerId: string): Promise<TaskRecord>;
   heartbeat(taskId: string, workerId: string, opts: ClaimOptions): Promise<HeartbeatResult>;
