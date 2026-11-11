@@ -24,6 +24,7 @@ Phase 4：Comparison 完整闭环
 - [x] `ideaseek setup/doctor/config explain`
 - [x] 自动检测 Python/Node/容器/CUDA/GPU/磁盘
 - [x] `scan/intake/organize` 与 InputManifest
+- [ ] 常见压缩包扫描、安全解压、成员 manifest 和 `ARCHIVE_BLOCKED` 处理
 - [x] starter/standard/research 运行策略和报告措辞
 - [x] 配置 schema、迁移和 ResolvedConfig 快照
 - [x] Workflow DB 与 artifact store 接口

@@ -49,7 +49,7 @@ IdeaSeek 会检测 Node、Python、容器、CUDA、GPU、磁盘、DSH provider �
 
 ### 放入输入
 
-把论文放入 `papers/`，数据放入 `datasets/`，已有 comparison 放入 `comparisons/`。不确定的材料先放 `incoming/`，然后运行：
+把论文、数据、comparison 代码或已有 idea 的文件夹/压缩包放入 `papers/`、`datasets/`、`comparisons/` 或 `incoming/`。不确定的材料先放 `incoming/`，然后运行：
 
 ```bash
 ideaseek scan

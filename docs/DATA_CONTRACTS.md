@@ -28,6 +28,10 @@
 
 `InputManifest` 记录原始路径、文件类型、大小、内容 hash、发现时间、解析器版本和候选角色。`CandidateGroup` 记录可能属于同一论文、comparison 或 dataset 的文件、置信度、识别依据和待用户确认字段。manifest 是增量处理的依据；原始路径不能被整理动作覆盖。
 
+## ArchiveInput
+
+压缩包是合法的一等输入。记录原始 archive path/hash/size/format、解压 artifact、成员清单、成员 hash、来源关系、解析器版本、阻塞项和安全扫描结果。原压缩包只读；解压目录是平台管理的不可变输入快照或隔离 worktree。
+
 ## RepositoryUnderstanding
 
 记录用户仓库的任意结构分析结果：source snapshot/hash、语言、依赖清单、候选训练/评估/测试入口、配置文件、数据加载/输出接口、指标实现、README 说明、识别证据、置信度、未解决问题和用户确认。入口和命令不能只凭常见文件名猜定；自动运行前先在隔离副本做静态检查和 smoke test。

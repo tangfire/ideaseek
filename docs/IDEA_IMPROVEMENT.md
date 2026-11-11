@@ -4,7 +4,7 @@ IdeaSeek 不只支持从论文生成全新 idea，也支持用户带着已有 id
 
 ## 用户输入方式
 
-首选交互与普通项目材料保持一致：用户把已有 idea 文件夹放进项目的 `incoming/ideas/<idea-name>/`，然后运行 `scan/intake`。文件夹可以包含任意代码仓库结构、idea 描述、配置、日志、指标、已有 checkpoint 和 README；不要求代码目录叫 `src/`、入口叫 `train.py` 或符合 IdeaSeek 自己的模板。用户不需要先重排仓库或执行特殊 import 命令。
+首选交互与普通项目材料保持一致：用户把已有 idea 文件夹或压缩包放进项目的 `incoming/ideas/<idea-name>/`，然后运行 `scan/intake`。压缩包可以包含任意代码仓库结构、idea 描述、配置、日志、指标、已有 checkpoint 和 README；不要求代码目录叫 `src/`、入口叫 `train.py` 或符合 IdeaSeek 自己的模板。用户不需要先解压、重排仓库或执行特殊 import 命令。
 
 ```text
 research-project/

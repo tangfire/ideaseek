@@ -63,6 +63,8 @@ ideaseek report [--run <id>]
 
 `scan` 默认扫描 `papers/`、`datasets/`、`comparisons/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、`ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。代码仓库允许任意目录结构；Codebase Analyst 通过 README、依赖、测试和源码检查生成候选入口/数据接口说明，不要求用户改成固定模板。自动识别必须给出依据和置信度；有歧义时先确认，再在隔离副本中 smoke test。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
 
+`scan/intake` 支持常见压缩包。平台先列出 archive 成员和候选类型，再在隔离目录安全解压；拒绝绝对路径、`../` 穿越、危险 symlink、过深嵌套、压缩炸弹、超出大小/文件数配额或需要密码的 archive。原压缩包不执行、不覆盖、不删除；未知、损坏或加密格式进入 `ARCHIVE_BLOCKED`，给出具体下一步。
+
 如果运行因 token/API 额度、GitHub 限额或 provider 余额暂停，状态为 `QUOTA_EXHAUSTED` 或 `AUTH_REQUIRED`。用户补充额度/凭据后执行 `ideaseek doctor`，再执行 `ideaseek continue`；它从最近 checkpoint 继续，不重做已经成功的任务。
 
 `--ideas N` 指定本次最多进入实现和实验验证的候选数量。省略时由平台按候选差异度、证据完整度、资源/预算和预计信息增益决定，默认先验证 1 个；它不是“强行生成 N 个 idea”。新增论文、数据集或 comparison 时，run 只补做受影响的对象，复用未变化的 PaperCard、baseline 和实验 artifact。
