@@ -91,3 +91,18 @@ ARIS 仓库为 MIT 许可。IdeaSeek 可以借鉴其公开方法，也可以在�
 4. 如果必须重写，缺口是持久化、安全、结构化契约、资源调度还是实验公平性？
 
 没有通过这道门禁，不得在 IdeaSeek 核心新增同类 Agent Loop、reviewer 或 workflow。
+
+## Existing capability migration audit
+
+Phase 4.5 不只新增 adapter，还要审计 IdeaSeek 当前实现：
+
+| IdeaSeek 能力 | ARIS 对照 | 迁移动作 |
+|---|---|---|
+| IdeaCard/idea 生成 | idea-discovery/idea-creator | 保留 IdeaSeek schema/版本/DB，优先迁移生成 workflow backend |
+| ExperimentSpec/bridge | experiment-plan/experiment-bridge | 保留资源/队列/RunResult，复用 ARIS 计划和桥接逻辑 |
+| 消融矩阵 | ablation-planner | 保留机制链和结果绑定，迁移 proposal 生成与审查 |
+| Novelty/独立 reviewer | novelty-check/auto-review-loop | 采用 fresh-context reviewer，结果写 Review artifact/Decision |
+| 结果审计 | analyze-results/experiment-audit/integrity-forensics | 复用审计规则，保留 IdeaSeek 失败分类和 handoff gate |
+| 研究记忆/报告 | research-wiki/render-html | 通过 artifact adapter 接入，不替换 IdeaSeek DB |
+
+每项迁移都要有 capability conformance test；测试通过后旧重复实现不再作为默认路径。

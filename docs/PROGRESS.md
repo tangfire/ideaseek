@@ -114,6 +114,10 @@ Phase 4：Comparison 复现与统一评测
 - [ ] fresh-context independent reviewer 接入 Review artifact/Decision
 - [ ] `experiment-audit`/integrity workflow 接入结果门禁
 - [ ] ARIS skill 失败时的回退、权限和 checkpoint 测试
+- [ ] 审计 IdeaSeek 已有同类实现与 ARIS 能力差异
+- [ ] 将更成熟的 idea/experiment/ablation/review/audit backend 迁移到 ARIS
+- [ ] 旧重复实现降级为兼容 fallback 或移除默认入口
+- [ ] ARIS capability conformance/regression tests
 
 ## Phase 5：Idea 生成与实验闭环
 

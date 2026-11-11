@@ -37,3 +37,13 @@ IdeaSeek 内部运行 smoke/quick/standard，快速筛选和迭代 idea；通过
 ## ADR-008：能力必须，来源可替换
 
 ARIS 的 P0 科研能力是 IdeaSeek 的产品验收要求，而不是用户可选项：idea discovery、experiment bridge、ablation、novelty/independent review 和 experiment audit 都必须存在。优先通过 ARIS skill/plugin 实现；若外部版本、许可证、运行环境或接口不适合，使用兼容 adapter 或等价实现满足相同 capability contract。用户不应因为没有安装某个外部仓库而得到一个缺核心科研质量控制的降级平台，除非运行在明确的 review-only/探索性模式并显示限制。
+
+## ADR-009：成熟能力迁移，不保留重复实现
+
+对 IdeaSeek 已有的 idea、experiment、ablation、review、audit 和研究记忆实现逐项与 ARIS 对比。若 ARIS workflow 更成熟、覆盖更广或质量门禁更强，IdeaSeek 应将该能力的执行 backend 迁移为 ARIS skill/plugin，并保留 IdeaSeek 的 schema、Artifact、RunEvent、Decision、预算和 checkpoint 边界。
+
+- 不为了保留旧代码而维护两套默认实现；
+- 旧实现只能作为兼容 fallback，且必须有明确切换策略和回归结果；
+- 迁移前冻结契约并写 conformance test，确认失败、取消、恢复和权限语义不退化；
+- 迁移后从主流程移除重复入口，避免用户不知道运行了哪套 workflow；
+- 仅当 ARIS 无法满足 IdeaSeek 的持久化、安全、资源或结构化契约时，才保留 IdeaSeek 的薄层实现。

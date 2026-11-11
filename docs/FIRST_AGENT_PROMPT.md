@@ -99,6 +99,8 @@ ideaseek init
 
 优先复用 ARIS 的 `idea-discovery`、`experiment-bridge`、`ablation-planner`、`novelty-check`、fresh-context reviewer 和 `experiment-audit`。把它们通过 adapter 接入 IdeaSeek 的 artifact、ExperimentSpec、RunEvent、Decision 和 checkpoint；不要重复实现同类 workflow，也不要创建第二套 Agent Loop/任务数据库。完成失败回退、权限、预算和恢复测试后再继续 Phase 5。
 
+同时审计 IdeaSeek 已有的 idea/experiment/ablation/review/audit 实现；如果 ARIS 更成熟，迁移默认执行 backend 到 ARIS，旧实现降级为兼容 fallback 或移除默认入口。迁移前写 capability conformance tests，不能只是并行保留两套默认 workflow。
+
 ### Phase 5：Idea 和快速实验
 
 实现 Mechanism Analyst、Idea Generator、Research Discussant、Novelty Challenger、Synthesis Lead、IdeaCard 机制链、DRAFT_COMPOSITION 门槛、独立 idea workspace、Code Implementer、GPU Capacity Planner、quick/standard 实验、消融、结果分析和 idea 迭代。
