@@ -11,7 +11,7 @@ IdeaSeek 的定位是快速科研发现、idea 验证和代码交付，不是替
 | `standard` | 稳定性和场景验证 | 更大切片、多种子/多场景 | 可作为当前数据的阶段性结论 |
 | `handoff` | 生成用户后续全量实验的配置和命令 | 全量数据路径、完整 split、资源建议和复现脚本 | 只交付配置，不在 IdeaSeek 内执行 |
 
-默认策略：代码修改/参数探索使用 `smoke`/`quick`；通过快速门槛后在多个用户数据集上运行 `standard` 小切片；最后生成 `handoff` 包。IdeaSeek 不提供“平台内 full 训练”开关，避免探索流程被长时间全量任务阻塞。
+默认策略：代码修改/参数探索使用 `smoke`/`quick`；通过快速门槛后在多个用户数据集上运行 `standard` 小切片；最后生成 `handoff` 包。IdeaSeek 根据协议和当前机器资源估算 smoke/quick/standard 的安全并发和资源需求；用户最终的 full-scale 多 GPU 训练只在 handoff 中交付。IdeaSeek 不提供“平台内 full 训练”开关，避免探索流程被长时间全量任务阻塞。
 
 ## 切片原则
 
