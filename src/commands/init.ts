@@ -174,6 +174,30 @@ export function registerInitCommand(program: Command): void {
         const cwd = process.cwd();
         const outcome = await initializeProject(cwd, opts.name);
 
+        // Register in the user-level project registry (best effort) — runs
+        // for both fresh and idempotent (already) initializations.
+        try {
+          const { registerProject } = await import('../runtime/registry.js');
+          const name =
+            opts.name ??
+            (await (async () => {
+              try {
+                const { readFile } = await import('node:fs/promises');
+                return (
+                  JSON.parse(await readFile(join(outcome.root, 'research.yaml'), 'utf8')) as {
+                    project?: { name?: string };
+                  }
+                ).project?.name;
+              } catch {
+                return undefined;
+              }
+            })()) ??
+            outcome.name;
+          await registerProject(outcome.root, name);
+        } catch {
+          // registry is convenience metadata — never block init on it
+        }
+
         if (outcome.already) {
           // Idempotent: never overwrite existing files or schema.
           if (opts.json) {

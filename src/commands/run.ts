@@ -50,6 +50,19 @@ export function registerRunCommand(program: Command): void {
           force?: boolean;
           json?: boolean;
         }) => {
+          // One mutating controller at a time per directory (stale pid
+          // takeover is automatic; workers use DB leases, not this lock).
+          const { findProjectRoot } = await import('../config/paths.js');
+          const lockRoot = await findProjectRoot(process.cwd());
+          let lockHeld = false;
+          if (lockRoot) {
+            const { acquireProjectLock } = await import('../runtime/project-lock.js');
+            const acquired = await acquireProjectLock(lockRoot, 'run');
+            lockHeld = acquired.acquired;
+            if (acquired.tookOverStale && !opts.json) {
+              process.stdout.write('note: took over a stale project lock (previous pid is gone)\n');
+            }
+          }
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
             harness: buildHarness(opts.harness),
@@ -257,6 +270,10 @@ export function registerRunCommand(program: Command): void {
             }
           } finally {
             await runtime.close();
+            if (lockHeld && lockRoot) {
+              const { releaseProjectLock } = await import('../runtime/project-lock.js');
+              await releaseProjectLock(lockRoot);
+            }
           }
         },
       ),
