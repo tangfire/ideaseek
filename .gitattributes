@@ -1,0 +1,4 @@
+# Vendored ARIS skills are SHA-256 verified against src/aris/manifest.ts:
+# the manifest hashes the exact committed bytes (LF). Force LF checkouts so
+# Windows autocrlf never breaks integrity verification.
+aris-skills/** text eol=lf

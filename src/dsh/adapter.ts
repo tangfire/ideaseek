@@ -22,6 +22,7 @@ export type HarnessProfile =
   | 'synthesis-analyst'
   | 'idea-generator'
   | 'experiment-designer'
+  | 'reviewer'
   | 'demo';
 
 export interface HarnessBudget {
@@ -132,3 +133,4 @@ export interface HarnessAdapter {
   health(): Promise<HarnessHealth>;
   shutdown(): Promise<void>;
 }
+

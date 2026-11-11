@@ -22,5 +22,23 @@ export { IdeaseekError, isIdeaseekError, exitCodeForError } from './core/errors.
 export { ManualClock, systemClock, type Clock } from './core/clock.js';
 export { sha256Of, sha256OfFile, type ContentHash } from './core/hash.js';
 export { findProjectRoot, projectPaths, type ProjectPaths } from './config/paths.js';
+export {
+  runReview,
+  listReviews,
+  reviewDir,
+  reviewPath,
+  buildReviewRequest,
+  parseReviewOutput,
+  REVIEW_IDEA_SCHEMA,
+  REVIEW_AUDIT_SCHEMA,
+} from './review/review.js';
+export type {
+  ReviewArtifact,
+  ReviewInput,
+  ReviewKind,
+  ReviewTarget,
+  RunReviewOptions,
+  RunReviewResult,
+} from './review/review.js';
 export { loadConfig, defaultConfig, type ResolvedConfig } from './config/config.js';
 export { buildProgram, runCli } from './cli.js';
