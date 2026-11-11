@@ -96,7 +96,79 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       summary: `supervisor classified: ${(request.inputs[0]?.content ?? '').slice(0, 120)}`,
     });
   }
+  if (request.outputSchema === 'idea-candidates-v1') {
+    // Test hook: raw override exercises parse/validation failure paths.
+    const override = process.env.IDEASEEK_FAKE_IDEA_OUTPUT;
+    if (override != null) return override;
+    return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
+  }
   return buildFakeCard(request, call);
+}
+
+/**
+ * Deterministic IdeaCard that passes validateIdeaCard and the mechanism
+ * gate (full six-step chain, one necessary component) so the generate →
+ * validate → create path runs end to end without a model.
+ */
+function buildFakeIdeaCard(): Record<string, unknown> {
+  return {
+    ideaId: 'gen-fake-1',
+    version: 1,
+    parentVersion: null,
+    status: 'CANDIDATE',
+    hypothesis: {
+      statement: 'per-client reweighting of the local objective reduces worst-client drift',
+      targetProblem: 'non-IID clients diverge under uniform aggregation',
+    },
+    paperEvidence: [
+      {
+        paperRef: 'fixture-paper-1',
+        statement: 'uniform averaging hurts strong non-IID clients',
+        evidence: 'fixture quote [page 1]',
+      },
+    ],
+    contradictions: ['prior work reports no drift with small local epochs'],
+    novelty: {
+      claim: 'reweight by measured drift instead of client size',
+      uncertainty: 'may only help on extreme label skew',
+      whyNotRestatement: 'size-based weighting is the restated baseline',
+    },
+    mechanismChain: {
+      designPrincipleLink: 'adapt aggregation to measured client drift',
+      steps: [
+        { kind: 'observation', text: 'worst-client loss oscillates under uniform averaging' },
+        { kind: 'hypothesis', text: 'drift-proportional weights dampen the oscillation' },
+        { kind: 'intervention', text: 'weight clients by rolling loss slope' },
+        { kind: 'expected-change', text: 'worst-client loss variance decreases' },
+        { kind: 'baseline-difference', text: 'beats uniform FedAvg on the same slice' },
+        { kind: 'falsifier', text: 'no variance reduction across 3 seeds' },
+      ],
+    },
+    nearestComparisons: [
+      { methodId: 'fedavg', difference: 'adaptive weights', evidence: 'fixture quote [page 2]' },
+    ],
+    componentNecessity: [
+      {
+        component: 'drift reweighting',
+        role: 'necessary-mechanism',
+        removeEffect: 'reverts to uniform averaging',
+      },
+    ],
+    competingExplanations: ['learning-rate schedule explains the gain'],
+    boundaryConditions: ['label-skew only; feature-skew untested'],
+    risks: ['weight noise on tiny clients'],
+    minimalExperiment: {
+      code: 'src/train.py',
+      data: 'dataset slice',
+      baselines: ['fedavg'],
+      metrics: ['worst-client accuracy'],
+      ablations: ['uniform weights'],
+    },
+    falsification: { conditions: ['variance unchanged across 3 seeds'] },
+    budget: { maxRounds: 1, maxGpuMinutes: 10 },
+    stopConditions: ['budget exhausted'],
+    createdAt: 1,
+  };
 }
 function buildFakeCard(request: HarnessTaskRequest, call: number): string {
   const content = request.inputs[0]?.content ?? '';

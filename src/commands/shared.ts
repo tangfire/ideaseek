@@ -209,7 +209,14 @@ export async function runWorkerInteractive(
 /** Builds the agent harness for CLI commands (Phase 1: fake only). */
 export function buildHarness(kind: string | undefined): HarnessAdapter {
   const selected = kind ?? 'fake';
-  if (selected === 'fake') return new FakeHarnessAdapter();
+  if (selected === 'fake') {
+    // Test hook: IDEASEEK_FAKE_BLOCK makes the fake harness throw a typed
+    // HarnessBlockError on the next call (quota/auth/network recovery tests).
+    const block = process.env.IDEASEEK_FAKE_BLOCK;
+    const valid =
+      block === 'QUOTA_EXHAUSTED' || block === 'AUTH_REQUIRED' || block === 'NETWORK_BLOCKED';
+    return new FakeHarnessAdapter(valid ? { block, blockTimes: 1 } : {});
+  }
   if (selected === 'dsh') {
     const researchDir = projectPaths(process.cwd()).researchDir;
     return new DshHarnessAdapter({

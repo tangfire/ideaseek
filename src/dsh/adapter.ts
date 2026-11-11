@@ -16,7 +16,8 @@
  *   and resume later without redoing successful work.
  */
 
-export type HarnessProfile = 'paper-extractor' | 'evidence-checker' | 'synthesis-analyst' | 'demo';
+export type HarnessProfile =
+  'paper-extractor' | 'evidence-checker' | 'synthesis-analyst' | 'idea-generator' | 'demo';
 
 export interface HarnessBudget {
   timeoutMs: number;

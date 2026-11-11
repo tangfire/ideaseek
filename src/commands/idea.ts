@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
+import type { CandidatesIndex } from '../idea/generate.js';
 import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
 import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/experiment.js';
 import { runAblations } from '../idea/ablation.js';
@@ -143,6 +144,206 @@ export function registerIdeaCommand(program: Command): void {
 
         if (!ok) return 2;
         if (opts.requireCandidate && !gate.ok) return 2;
+        return 0;
+      }),
+    );
+
+  idea
+    .command('generate')
+    .description(
+      'generate candidate IdeaCards for an ideation round (ARIS idea-creator skill backend)',
+    )
+    .requiredOption('--round <id>', 'ideation round id, e.g. r1')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a previous candidates.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { round: string; harness?: string; force?: boolean; json?: boolean }) => {
+        const root = await openRoot();
+        const { loadRound } = await import('../idea/rounds.js');
+        const round = await loadRound(root, opts.round);
+        const { loadArisSkill } = await import('../aris/skill.js');
+        const skill = await loadArisSkill('idea-creator');
+        const {
+          IDEA_CANDIDATES_SCHEMA,
+          buildGenerationRequest,
+          candidatesIndexPath,
+          parseCandidatesOutput,
+          readCandidatesIndex,
+          writeCandidates,
+        } = await import('../idea/generate.js');
+        const request = buildGenerationRequest(round, skill);
+        const cardList = (cards: { ideaId: string }[]): string =>
+          cards
+            .map(
+              (card) => `knowledge/ideation-rounds/${round.roundId}/candidates/${card.ideaId}.json`,
+            )
+            .join(', ');
+
+        // Idempotent reuse: same round + same skill hash = same inputHash.
+        if (!opts.force) {
+          const existing = await readCandidatesIndex(root, round.roundId);
+          if (existing && existing.inputHash === request.inputHash) {
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  roundId: round.roundId,
+                  reused: true,
+                  inputHash: existing.inputHash,
+                  skill: existing.skill,
+                  count: existing.candidates.length,
+                  reason: existing.reason ?? null,
+                  paths: existing.candidates.map(
+                    (card) =>
+                      `knowledge/ideation-rounds/${round.roundId}/candidates/${card.ideaId}.json`,
+                  ),
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `reused ${existing.candidates.length} candidate(s) for ${round.roundId} ` +
+                  `(same inputHash ${existing.inputHash.slice(0, 12)}…, skill ${existing.skill.name}@${existing.skill.sha256.slice(0, 12)})\n`,
+              );
+              if (existing.reason) process.stdout.write(`  reason: ${existing.reason}\n`);
+              if (existing.candidates.length > 0) {
+                process.stdout.write(`  files: ${cardList(existing.candidates)}\n`);
+              }
+              process.stdout.write(
+                'next: ideaseek rounds show ' + `${round.roundId} · regenerate with --force\n`,
+              );
+            }
+            return 0;
+          }
+        }
+
+        const { buildHarness } = await import('./shared.js');
+        const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+        const kind =
+          opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+        const harness = buildHarness(kind);
+        await harness.initialize();
+        let output: string;
+        let runtimeKind = kind;
+        try {
+          const result = await harness.runTask({
+            runId: `round:${round.roundId}`,
+            taskId: `idea-generate-${round.roundId}`,
+            profile: 'idea-generator',
+            instruction: request.instruction,
+            inputs: [{ kind: 'text', name: 'round_context', content: request.roundContext }],
+            outputSchema: IDEA_CANDIDATES_SCHEMA,
+            budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
+            idempotencyKey: request.idempotencyKey,
+          });
+          output = result.output;
+          runtimeKind = result.runtime.kind;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'HarnessBlockError') {
+            const block = (error as { block?: string }).block ?? 'BLOCKED';
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({ roundId: round.roundId, blocked: block, written: false }),
+              );
+            } else {
+              process.stderr.write(
+                `idea generate blocked [${block}]: ${(error as Error).message}\n` +
+                  'nothing was written — restore quota/auth/network and rerun the same command\n',
+              );
+            }
+            return 2;
+          }
+          throw error;
+        } finally {
+          await harness.shutdown().catch(() => undefined);
+        }
+
+        const parsed = parseCandidatesOutput(output, round);
+        const index: CandidatesIndex = {
+          contract: IDEA_CANDIDATES_SCHEMA,
+          roundId: round.roundId,
+          inputHash: request.inputHash,
+          skill: { name: skill.name, sha256: skill.sha256 },
+          generatedAt: Date.now(),
+          harnessRuntime: runtimeKind,
+          ...(parsed.reason ? { reason: parsed.reason } : {}),
+          candidates: parsed.cards,
+          rejected: parsed.rejected,
+        };
+        const written = await writeCandidates(root, round.roundId, index);
+
+        // Audit trail: candidates land as a RunEvent when a run exists.
+        let eventSeq: number | null = null;
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'IDEATION',
+              objectId: round.roundId,
+              role: 'system',
+              eventType: 'idea_candidates',
+              summary:
+                parsed.cards.length > 0
+                  ? `generated ${parsed.cards.length} candidate(s) for ${round.roundId} (ARIS idea-creator)`
+                  : `no new candidates for ${round.roundId}: ${parsed.reason ?? 'empty'}`,
+              status: parsed.cards.length > 0 ? 'generated' : 'empty',
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              roundId: round.roundId,
+              reused: false,
+              inputHash: request.inputHash,
+              skill: { name: skill.name, sha256: skill.sha256 },
+              harness: runtimeKind,
+              count: parsed.cards.length,
+              reason: parsed.reason,
+              rejected: parsed.rejected,
+              paths: written,
+              eventSeq,
+            }),
+          );
+          return 0;
+        }
+
+        process.stdout.write(
+          `generated ${parsed.cards.length} candidate(s) for round ${round.roundId} ` +
+            `(ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)}, harness ${runtimeKind})\n`,
+        );
+        for (const card of parsed.cards) {
+          process.stdout.write(
+            `  + knowledge/ideation-rounds/${round.roundId}/candidates/${card.ideaId}.json  [${card.status}]\n`,
+          );
+        }
+        if (parsed.reason) process.stdout.write(`  reason: ${parsed.reason}\n`);
+        for (const entry of parsed.rejected) {
+          process.stdout.write(
+            `  ✗ ${entry.ideaId ?? '(missing id)'}: ${entry.errors[0] ?? 'invalid'}\n`,
+          );
+        }
+        if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+        if (parsed.cards.length > 0) {
+          const first = parsed.cards[0]!;
+          process.stdout.write(
+            `next: ideaseek idea validate knowledge/ideation-rounds/${round.roundId}/candidates/${first.ideaId}.json --require-candidate\n` +
+              `      ideaseek idea create ${first.ideaId} --from-card knowledge/ideation-rounds/${round.roundId}/candidates/${first.ideaId}.json\n`,
+          );
+        } else {
+          process.stdout.write(
+            `next: add evidence/feedback and rerun ideate — index kept at ${candidatesIndexPath(root, round.roundId).replace(`${root}/`, '')}\n`,
+          );
+        }
         return 0;
       }),
     );

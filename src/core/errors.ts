@@ -36,6 +36,9 @@ export type IdeaseekErrorCode =
   | 'QUOTA_EXHAUSTED'
   | 'AUTH_REQUIRED'
   | 'NETWORK_BLOCKED'
+  | 'SKILL_NOT_FOUND'
+  | 'SKILL_TAMPERED'
+  | 'SKILL_INVALID'
   | 'INTERNAL';
 
 export class IdeaseekError extends Error {
@@ -76,6 +79,8 @@ export function exitCodeForError(error: unknown): number {
     case 'ALREADY_INITIALIZED':
     case 'RUN_NOT_ACTIVE':
     case 'RUN_BLOCKED':
+    case 'SKILL_NOT_FOUND':
+    case 'SKILL_TAMPERED':
       return EXIT_USER_INPUT;
     case 'ENV_UNSUPPORTED':
       return EXIT_ENV_UNSUPPORTED;

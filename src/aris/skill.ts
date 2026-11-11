@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
+import { IdeaseekError } from '../core/errors.js';
 import { ARIS_SOURCE, VENDORED_FILES, VENDORED_SKILLS } from './manifest.js';
 
 /**
@@ -16,12 +17,11 @@ import { ARIS_SOURCE, VENDORED_FILES, VENDORED_SKILLS } from './manifest.js';
 
 export type ArisSkillErrorCode = 'SKILL_NOT_FOUND' | 'SKILL_TAMPERED' | 'SKILL_INVALID';
 
-export class ArisSkillError extends Error {
-  readonly code: ArisSkillErrorCode;
+/** IdeaseekError so the CLI prints `error: [SKILL_TAMPERED] …` with exit 2. */
+export class ArisSkillError extends IdeaseekError {
   constructor(code: ArisSkillErrorCode, message: string) {
-    super(message);
+    super(code, message);
     this.name = 'ArisSkillError';
-    this.code = code;
   }
 }
 

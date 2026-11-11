@@ -18,8 +18,9 @@ import { action, jsonLine } from './shared.js';
  * - `rounds list/show` are read-only views;
  * - `feedback` appends user labels to an idea (append-only) and records a
  *   feedback RunEvent so reviews enter the auditable trail.
- * Candidate GENERATION itself is the Idea Generator's job (model-gated);
- * this command prepares and reports the deterministic context.
+ * Candidate GENERATION runs through `ideaseek idea generate` (model-gated,
+ * ARIS idea-creator skill backend); this command prepares and reports the
+ * deterministic context and points at it.
  */
 export function registerIdeateCommands(program: Command): void {
   program
@@ -76,7 +77,8 @@ export function registerIdeateCommands(program: Command): void {
                 `${round.noveltyConstraints.length} novelty constraint(s)\n`,
             );
             process.stdout.write(
-              'next: add evidence/feedback first if nothing changed, then the Idea Generator runs\n',
+              `next: ideaseek idea generate --round ${round.roundId}` +
+                ' (add evidence/feedback first if nothing changed)\n',
             );
             return 0;
           }
@@ -102,7 +104,7 @@ export function registerIdeateCommands(program: Command): void {
                 inherited: result.round.inherited,
                 noveltyConstraints: result.round.noveltyConstraints,
                 ideaLimit: result.round.ideaLimit,
-                next: 'Idea Generator consumes this context (model-gated)',
+                next: `ideaseek idea generate --round ${result.round.roundId}`,
               }),
             );
             return 0;
@@ -120,7 +122,8 @@ export function registerIdeateCommands(program: Command): void {
             `round ${result.round.roundId} created · new information: ${result.newInformationNote}\n`,
           );
           process.stdout.write(
-            'next: Idea Generator consumes this context (requires model credentials)\n',
+            `next: ideaseek idea generate --round ${result.round.roundId}` +
+              '   (ARIS idea-creator backend; the dsh harness needs model credentials)\n',
           );
           return 0;
         },
