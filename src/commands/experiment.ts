@@ -8,8 +8,22 @@ import {
   type ExperimentSpec,
   type RunResult,
 } from '../experiment/spec.js';
+import {
+  assertAutonomy,
+  checkAutonomy,
+  parseAutonomyMode,
+  recordDecision,
+} from '../workflow/autonomy.js';
 import type { ExperimentDoc } from '../workflow/db.js';
-import { action, jsonLine } from './shared.js';
+import { ensureActiveRun } from './ingest.js';
+import {
+  action,
+  assertConfigUsable,
+  buildHarness,
+  buildHandlers,
+  jsonLine,
+  runWorkerInteractive,
+} from './shared.js';
 
 async function openRuntime(root: string) {
   const { ProjectRuntime } = await import('../workflow/runtime.js');
@@ -59,15 +73,19 @@ function metricSummary(doc: ExperimentDoc): string {
 }
 
 /**
- * `ideaseek experiment spec|result|list|show` — unified ExperimentSpec /
- * RunResult registry (docs/DATA_CONTRACTS.md, CLI_SPEC). Specs are validated
- * and content-hashed before persistence; results attach exactly once per
- * spec version (re-attach refuses — record a new version instead).
+ * `ideaseek experiment spec|result|list|show|plan|bridge` — unified
+ * ExperimentSpec / RunResult registry (docs/DATA_CONTRACTS.md, CLI_SPEC) plus
+ * the Phase 4.5 ARIS plan/bridge backend: `plan` renders the vendored
+ * `experiment-plan` skill through the harness into a plan Artifact + planned
+ * spec; `bridge` executes a current plan through IdeaSeek's runner (check
+ * gate, comparison gate, capacity admission, RunResult, checkpoint).
+ * Specs are validated and content-hashed before persistence; results attach
+ * exactly once per spec version (re-attach refuses — record a new version).
  */
 export function registerExperimentCommand(program: Command): void {
   const experiment = program
     .command('experiment')
-    .description('unified experiment specs and run results');
+    .description('unified experiment specs and run results (ARIS plan/bridge backend)');
 
   experiment
     .command('spec')
@@ -288,5 +306,302 @@ export function registerExperimentCommand(program: Command): void {
           await runtime.close();
         }
       }),
+    );
+
+  experiment
+    .command('plan')
+    .description(
+      "plan an idea's experiments via the ARIS experiment-plan skill (plan Artifact + planned ExperimentSpec)",
+    )
+    .argument('<ideaId>', 'idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { harness?: string; json?: boolean }) => {
+        const root = await openRoot();
+        // Fail fast on a tampered/missing skill — before any run, task or
+        // model call (ARIS conformance: integrity refusal writes nothing).
+        const { loadArisSkill } = await import('../aris/skill.js');
+        const skill = await loadArisSkill('experiment-plan');
+        const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+        const kind =
+          opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, harness: buildHarness(kind) });
+        try {
+          assertConfigUsable(runtime.configLoad);
+          const { buildPlanContext, computePlanInputHash, loadStoredPlan } =
+            await import('../experiment/plan.js');
+          const context = await buildPlanContext(root, runtime, ideaId);
+          const inputHash = computePlanInputHash(context, skill);
+          const idempotencyKey = `experiment-plan:${inputHash.slice(7, 31)}`;
+          const skillInfo = { name: skill.name, sha256: skill.sha256 };
+
+          // Restart-safe incremental skip: identical inputs already planned.
+          const existing = await loadStoredPlan(runtime, ideaId, { inputHash });
+          if (existing) {
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  reused: true,
+                  inputHash,
+                  skill: skillInfo,
+                  harness: kind,
+                  scale: existing.spec.scale,
+                  spec: existing.spec,
+                  blocks: existing.plan.blocks.length,
+                  seeds: existing.plan.seeds,
+                  budgetMinutes: existing.plan.budgetMinutes,
+                  eventSeq: null,
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `experiment plan current for ${ideaId} ` +
+                  `(input ${inputHash.slice(0, 12)}…, scale ${existing.spec.scale}, ` +
+                  `${existing.plan.blocks.length} block(s), skill ${skill.name}@${skill.sha256.slice(0, 12)})\n`,
+              );
+              process.stdout.write(`next: ideaseek experiment bridge ${ideaId}\n`);
+            }
+            return 0;
+          }
+
+          const { runId } = await ensureActiveRun(runtime);
+          const { created } = await runtime.db.enqueueTask({
+            runId,
+            type: 'experiment.plan',
+            phase: 'DEMO',
+            payload: { ideaId },
+            dependsOn: [],
+            idempotencyKey,
+            maxAttempts: runtime.config.runtime.maxAttempts,
+          });
+
+          const { exit } = await runWorkerInteractive(runtime, runId, {
+            kind: 'inline',
+            handlers: buildHandlers(),
+            onLog: opts.json ? undefined : (message) => process.stderr.write(`  · ${message}\n`),
+          });
+
+          if (exit.reason === 'failed') {
+            const tasks = await runtime.db.listTasks(runId);
+            const failed = [...tasks]
+              .reverse()
+              .find((task) => task.type === 'experiment.plan' && task.status === 'failed');
+            if (failed?.error) {
+              process.stderr.write(`error: [${failed.error.code}] ${failed.error.message}\n`);
+            }
+          } else if (exit.reason === 'blocked' && !opts.json) {
+            process.stderr.write(
+              `experiment plan blocked (${exit.runStatus}) — restore quota/credentials and rerun: ` +
+                `ideaseek experiment plan ${ideaId}\n`,
+            );
+          }
+
+          const stored = await loadStoredPlan(runtime, ideaId, { inputHash });
+          let eventSeq: number | null = null;
+          if (exit.reason === 'completed' && stored && !stored.reused) {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            if (run) {
+              const event = await runtime.db.appendEvent({
+                runId: run.runId,
+                phase: 'EXPERIMENTING',
+                objectId: ideaId,
+                role: 'system',
+                eventType: 'experiment_plan',
+                summary:
+                  `planned ${ideaId} v${stored.ideaVersion}: ${stored.plan.blocks.length} block(s) ` +
+                  `scale=${stored.spec.scale} seeds=${stored.plan.seeds.join(',')} ` +
+                  `(ARIS experiment-plan)`,
+                status: 'planned',
+              });
+              eventSeq = event.seq;
+            }
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                runId,
+                ideaId,
+                enqueued: created,
+                reason: exit.reason,
+                inputHash,
+                skill: skillInfo,
+                harness: kind,
+                reused: stored?.reused ?? false,
+                scale: stored?.spec.scale ?? null,
+                spec: stored?.spec ?? null,
+                blocks: stored?.plan.blocks.length ?? 0,
+                mustRun:
+                  stored?.plan.blocks.filter((block) => block.priority === 'MUST-RUN').length ?? 0,
+                seeds: stored?.plan.seeds ?? [],
+                budgetMinutes: stored?.plan.budgetMinutes ?? null,
+                eventSeq,
+              }),
+            );
+          } else if (exit.reason === 'completed' && stored) {
+            process.stdout.write(
+              `experiment plan: ${ideaId} (ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)}, ` +
+                `harness ${kind})\n`,
+            );
+            process.stdout.write(
+              `  ${stored.plan.blocks.length} block(s) ` +
+                `(${stored.plan.blocks.filter((block) => block.priority === 'MUST-RUN').length} must-run) · ` +
+                `scale ${stored.spec.scale} · dataScale ${stored.plan.blocks[0]?.dataScale ?? '?'} · ` +
+                `seeds ${stored.plan.seeds.join(',')} · budget ≤${stored.plan.budgetMinutes} min\n`,
+            );
+            process.stdout.write(
+              `  spec ${stored.spec.specId} v${stored.spec.version} planned (${stored.spec.specHash.slice(0, 19)}…)\n`,
+            );
+            if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+            process.stdout.write(
+              `next: ideaseek experiment bridge ${ideaId}   (requires a passing ideaseek idea check)\n`,
+            );
+          }
+
+          switch (exit.reason) {
+            case 'completed':
+              return 0;
+            case 'failed':
+              return 1;
+            case 'canceled':
+              return 4;
+            case 'blocked':
+              return 2;
+            default:
+              return exit.runStatus === 'RUNNING' ? 3 : 0;
+          }
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  experiment
+    .command('bridge')
+    .description(
+      'ARIS experiment-bridge: plan-gated execution (comparison gate + capacity admission → unified RunResult)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--timeout <ms>', 'run timeout', (value) => Number(value), 120_000)
+    .option('--resume', 'resume from the last compatible checkpoint (task-level recovery refuses)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { timeout: number; resume?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
+          }
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root });
+          try {
+            // Permission denial first: review-only never starts experiments.
+            assertAutonomy(
+              parseAutonomyMode(runtime.config.policy.autonomyMode),
+              'start-experiment',
+            );
+            const { runExperimentBridge } = await import('../experiment/bridge.js');
+            const result = await runExperimentBridge(
+              root,
+              ideaId,
+              { timeoutMs: opts.timeout, resume: opts.resume },
+              runtime,
+            );
+
+            if (result.outcome && !result.outcome.alreadyRecorded) {
+              const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+              const check = checkAutonomy(mode, 'start-experiment');
+              if (check.needsDecision) {
+                const decision = await recordDecision(runtime.db, runtime.project.id, {
+                  action: 'start-experiment',
+                  target: `bridge ${ideaId} ${result.plan.scale}`,
+                  mode,
+                });
+                if (decision && !opts.json) {
+                  process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+                }
+              }
+            }
+
+            const outcome = result.outcome;
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  plan: result.plan,
+                  gate: { ok: result.gate.ok, blocking: result.gate.blocking },
+                  admitted: result.admitted,
+                  queuedReason: result.queuedReason,
+                  constraints: result.constraints,
+                  specId: outcome?.specId ?? null,
+                  version: outcome?.version ?? null,
+                  attempt: outcome?.attempt ?? null,
+                  alreadyRecorded: outcome?.alreadyRecorded ?? false,
+                  resultStatus: outcome?.resultStatus ?? null,
+                  metrics: outcome?.metrics ?? [],
+                  failure: outcome?.failure ?? null,
+                  statusAfter: outcome?.statusAfter ?? null,
+                  eventSeq: result.eventSeq,
+                }),
+              );
+              return result.admitted && outcome ? outcome.exitCode : 0;
+            }
+
+            if (!result.admitted) {
+              process.stdout.write(
+                `experiment bridge: ${ideaId} QUEUED by the capacity planner — ${result.queuedReason}\n`,
+              );
+              if (result.constraints.length > 0) {
+                process.stdout.write(`  constraints: ${result.constraints.join(' · ')}\n`);
+              }
+              process.stdout.write(
+                `  plan ${result.plan.inputHash.slice(0, 12)}… kept · nothing executed\n` +
+                  `next: ideaseek capacity   (free GPU/disk or lower the request, then rerun)\n`,
+              );
+              return 0;
+            }
+            if (!outcome) return 0;
+
+            process.stdout.write(
+              `experiment bridge: ${ideaId} plan ${result.plan.inputHash.slice(0, 12)}… ` +
+                `scale=${result.plan.scale} → ${outcome.specId} v${outcome.version}: ` +
+                `${outcome.alreadyRecorded ? 'ALREADY RECORDED' : outcome.resultStatus === 'succeeded' ? 'SUCCEEDED' : 'FAILED'} ` +
+                `→ ${outcome.statusAfter}\n`,
+            );
+            if (outcome.alreadyRecorded) {
+              for (const metric of outcome.metrics) {
+                process.stdout.write(`  ${metric.name} = ${metric.value}\n`);
+              }
+            } else if (outcome.resultStatus === 'succeeded') {
+              for (const metric of outcome.metrics) {
+                process.stdout.write(`  ${metric.name} = ${metric.value}\n`);
+              }
+            } else {
+              process.stdout.write(
+                `  failure: ${outcome.failure?.category}: ${outcome.failure?.summary ?? ''}\n`,
+              );
+              process.stdout.write(
+                `next: fix and re-check, then walk back: ideaseek idea set-status ${ideaId} NEEDS_REVISION\n`,
+              );
+            }
+            if (result.eventSeq !== null)
+              process.stdout.write(`  event #${result.eventSeq} recorded\n`);
+            if (outcome.resultStatus === 'succeeded') {
+              process.stdout.write(
+                `next: ideaseek idea ablate ${ideaId}   ·   ideaseek idea analyze ${ideaId}\n`,
+              );
+            }
+            return outcome.exitCode;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
     );
 }

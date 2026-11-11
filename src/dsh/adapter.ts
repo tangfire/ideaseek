@@ -17,7 +17,12 @@
  */
 
 export type HarnessProfile =
-  'paper-extractor' | 'evidence-checker' | 'synthesis-analyst' | 'idea-generator' | 'demo';
+  | 'paper-extractor'
+  | 'evidence-checker'
+  | 'synthesis-analyst'
+  | 'idea-generator'
+  | 'experiment-designer'
+  | 'demo';
 
 export interface HarnessBudget {
   timeoutMs: number;
