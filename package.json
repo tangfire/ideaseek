@@ -26,7 +26,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run && pnpm test:python",
     "test:watch": "vitest",
-    "test:python": "node worker/python/run-tests.mjs"
+    "test:python": "node worker/python/run-tests.mjs",
+    "release-check": "node scripts/release-check.mjs"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.1.0",

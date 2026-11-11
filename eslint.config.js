@@ -16,7 +16,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   prettier,
   {
-    files: ['worker/python/**/*.mjs'],
+    files: ['worker/python/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
   },
   {
