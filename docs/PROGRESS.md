@@ -60,6 +60,8 @@ Phase 4：Comparison 复现与统一评测
 - [x] protocol/experiment/权限审批交互
 - [x] `pause/resume/continue/cancel` 交互反馈
 - [x] `--plain` 和 `--json` 输出
+- [ ] TUI 应用壳：备用屏幕、固定输入区、事件 pane 和 footer
+- [ ] command palette 原地过滤，不滚屏不重复 prompt
 - [x] 任务详情、脱敏日志和错误解释
 - [x] 断线重连、终端尺寸变化和后台 supervisor 状态显示
 - [x] Research/Agent 模式切换、权限摘要和 DSH 复用

@@ -49,3 +49,7 @@ ARIS 的 P0 科研能力是 IdeaSeek 的产品验收要求，而不是用户可�
 - 仅当 ARIS 无法满足 IdeaSeek 的持久化、安全、资源或结构化契约时，才保留 IdeaSeek 的薄层实现。
 
 迁移完成并通过 conformance/regression tests 后，旧的重复实现、重复 CLI 入口和重复默认配置必须删除；不能以“以后可能 fallback”为理由长期保留两套默认 workflow。删除前保留迁移说明和必要的数据/schema migration，不删除历史 artifact 和 run 记录。
+
+## ADR-010：交互模式是终端应用，不是 readline 输出拼接
+
+IdeaSeek 的交互模式必须提供固定布局、原地输入、command palette、事件 pane、footer、resize 和备用屏幕语义，接近成熟 Agent CLI 的终端应用体验。非交互、plain 和 JSON 模式仍使用行式输出。TUI 只负责展示和输入，不能复制 application/use-case 或维护第二套状态。

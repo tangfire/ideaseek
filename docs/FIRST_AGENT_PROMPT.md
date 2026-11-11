@@ -81,7 +81,7 @@ ideaseek init
 
 ### Phase 1.5：CLI 交互与可观察性
 
-实现启动 banner、`ideaseek ›` 提示符、RunEvent 实时摘要、审批反馈、attach/watch/replay、plain/JSON 输出和脱敏日志。CLI 只显示 Supervisor 状态，不自行维护科研状态，也不显示模型隐藏推理。
+实现终端应用壳（备用屏幕/原始输入/固定布局）、command palette、固定输入区、RunEvent 实时摘要、审批反馈、attach/watch/replay、plain/JSON 输出和脱敏日志。不要继续用 readline+追加 ANSI 文本模拟全屏 UI；CLI 只显示 Supervisor 状态，不自行维护科研状态，也不显示模型隐藏推理。
 
 ### Phase 2：论文和知识库
 

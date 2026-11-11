@@ -14,7 +14,7 @@
 
 ## Phase 1.5：CLI 交互与可观察性
 
-实现启动 banner、交互提示符、slash 命令、RunEvent 实时摘要、审批反馈、attach/watch/replay、plain/JSON 输出和脱敏日志。CLI 只调用 application use-case，不自行维护科研状态。
+实现终端应用壳（备用屏幕/原始输入/固定布局）、command palette、固定输入区、RunEvent 实时摘要、审批反馈、attach/watch/replay、plain/JSON 输出和脱敏日志。不要用 readline+追加 ANSI 文本模拟全屏 UI；CLI 只调用 application use-case，不自行维护科研状态。
 
 验收：用户能看到阶段、Agent、任务、资源和阻塞；SSH 断开后可以 attach；高影响操作有确认；三种输出模式语义一致。
 

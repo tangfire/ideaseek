@@ -1,6 +1,28 @@
 # IdeaSeek 终端交互与 Logo 规范
 
-IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的事件和接受控制命令。它不拥有科研状态；状态来自 Workflow DB 和持久化 RunEvent。
+IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的事件和接受控制命令。它不拥有科研状态；状态来自 Workflow DB 和持久化 RunEvent。交互模式应作为独立的终端应用壳运行，而不是在 PowerShell 输出流上不断追加文本。
+
+## 交互模式的终端应用壳
+
+交互模式启动后进入原始 TTY/备用屏幕（终端支持时），由 TUI renderer 维护固定布局：
+
+```text
+┌─ header：IdeaSeek / project / mode / model / run ─────────────┐
+│                                                               │
+│  event/activity pane：Agent、论文、comparison、idea、实验      │
+│  可滚动、可折叠、支持事件回放                                  │
+│                                                               │
+├─ command palette：输入 / 或普通问题时原地过滤                  ┤
+│  ideaseek › /model▌                                             │
+│  > /models   model tier routes                                 │
+│    /mode     switch research/agent                            │
+├─ footer：stage / queue / GPU / budget / approval               ┤
+└───────────────────────────────────────────────────────────────┘
+```
+
+输入编辑区必须始终固定在同一行；命令菜单是覆盖层，不能把输入复制成多行。用户继续输入时只更新候选和高亮，不滚动整个终端。上下键、Tab、Enter、Esc、Ctrl-C 和终端 resize 由 TUI 输入层统一处理。
+
+交互模式可以使用成熟的 TypeScript TUI/terminal renderer，但必须保留 IdeaSeek 的事件、权限和 use-case 边界。不要继续在 readline 上堆叠更多光标逃逸来模拟全屏应用。
 
 ## Logo
 
@@ -107,7 +129,7 @@ ideaseek ›
 
 ## 三种显示模式
 
-- **Interactive**：默认，banner、提示符、事件流和审批；
+- **Interactive**：默认，备用屏幕/TUI、banner、固定输入区、事件流和审批；
 - **Plain**：`--plain`，无颜色、动画和 Unicode，适合日志；
 - **JSON**：`--json`，输出 RunEvent/状态对象，适合自动化和监控。
 
