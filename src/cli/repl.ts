@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import os from 'node:os';
 import { resolve as resolvePath } from 'node:path';
-import readline from 'node:readline';
+import readline, { clearScreenDown, cursorTo, moveCursor } from 'node:readline';
 import { detectEnvironment } from '../runtime/detect.js';
 import { renderSessionSummary, type SessionSummary } from '../session/mode.js';
 import { renderApprovalBlock, type PendingApproval } from '../approval/pending.js';
@@ -152,6 +152,33 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     `${paint('type / for the menu · Tab completes · /quit exits (runs keep going)', 'dim', paintOpts)}\n`,
   );
 
+  // Cross-session recovery marker (Phase 4.5B): show the previous session's
+  // fate first, then record ours — a crash leaves endedAt absent so the next
+  // session reports it honestly.
+  let sessionRoot: string | null = null;
+  try {
+    const { findProjectRoot } = await import('../config/paths.js');
+    sessionRoot = await findProjectRoot(process.cwd());
+    if (sessionRoot) {
+      const { readLastSession, writeSessionStart } = await import('../session/context.js');
+      const previous = await readLastSession(sessionRoot);
+      if (previous) {
+        const ended = previous.endedAt ? new Date(previous.endedAt).toISOString() : 'never';
+        const clean = previous.endedAt !== undefined && previous.clean === true;
+        process.stdout.write(
+          `${paint(
+            `last session: pid ${previous.pid} · ended ${ended} — ${clean ? 'clean exit' : 'interrupted/crashed'} (ideaseek context for the full summary)`,
+            'dim',
+            paintOpts,
+          )}\n`,
+        );
+      }
+      await writeSessionStart(sessionRoot);
+    }
+  } catch {
+    sessionRoot = null; // no project → no session marker
+  }
+
   // Approval block at startup (TERMINAL_UX: 需要用户决定时显示确认块).
   const startupPending = await runCliJson<{ items?: PendingApproval[] }>(['pending', '--json'])
     .catch(() => null)
@@ -191,9 +218,13 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
       menuLines = [];
       return;
     }
-    // Keep the input line as the anchor. Clear only the region below it; do
-    // not move upward by menu height because filtered menus change height.
-    process.stdout.write('\x1b[s\n\x1b[J\x1b[u');
+    // Keep the readline input row as the anchor. Move one row down, clear the
+    // menu region, then return to the input row. readline's helpers work more
+    // reliably across Windows Terminal/ConPTY than hand-written save/restore
+    // cursor escapes.
+    moveCursor(process.stdout, 0, 1);
+    clearScreenDown(process.stdout);
+    moveCursor(process.stdout, 0, -1);
     menuLines = [];
   };
 
@@ -202,12 +233,12 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     if (!menu.open || !tty) return;
     const rows = renderMenu(menu, { columns: menuColumns, keyHints: !plain });
     if (rows.length === 0) return;
-    // Save the current input cursor, draw below it, then restore the exact
-    // input position. The prompt never moves when the menu is filtered.
-    let frame = '\x1b[s';
-    if (menuLines.length > 0) frame += '\n\x1b[J\x1b[u';
-    frame += `\n${rows.join('\n')}\n\x1b[u`;
-    process.stdout.write(frame);
+    eraseMenu();
+    // Draw below the current readline input row, then return to the prompt.
+    // The input line is never printed a second time.
+    process.stdout.write(`\n${rows.join('\n')}\n`);
+    moveCursor(process.stdout, 0, -(rows.length + 1));
+    cursorTo(process.stdout, Math.max(0, (rl.cursor ?? rl.line.length) + 11));
     menuLines = rows;
   };
 
@@ -566,10 +597,20 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
   startStream();
 
   return new Promise<number>((resolve) => {
-    const finish = (code: number): void => {
+    const finish = async (code: number): Promise<void> => {
       if (quitting) return;
       quitting = true;
       stopStream();
+      if (sessionRoot) {
+        // Awaited: the process may exit right after resolve — a fire-and-forget
+        // write would race the exit and lose the clean-end marker.
+        try {
+          const context = await import('../session/context.js');
+          await context.writeSessionEnd(sessionRoot, true);
+        } catch {
+          // marker is best-effort; a crash still reads as a crash
+        }
+      }
       rl.close();
       resolve(code);
     };

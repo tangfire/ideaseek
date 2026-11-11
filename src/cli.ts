@@ -31,6 +31,7 @@ import { registerRenderCommand } from './commands/render.js';
 import { registerWatchdogCommand } from './commands/watchdog.js';
 import { registerQueueCommand } from './commands/queue.js';
 import { registerMonitorCommand } from './commands/monitor.js';
+import { registerContextCommand } from './commands/context.js';
 import {
   registerIntakeCommand,
   registerOrganizeCommand,
@@ -113,6 +114,7 @@ export function buildProgram(): Command {
   registerWatchdogCommand(program);
   registerQueueCommand(program);
   registerMonitorCommand(program);
+  registerContextCommand(program);
   registerRunCommand(program);
   registerWorkerCommand(program);
   registerStatusCommand(program);
