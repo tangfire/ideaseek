@@ -57,7 +57,7 @@ Phase 4：Comparison 复现与统一评测
 - [x] `ideaseek ›` 交互提示符与基础 slash 命令
 - [x] 论文、comparison、idea、实验的实时事件摘要
 - [x] `attach/watch/events` 事件回放与实时跟随
-- [ ] protocol/experiment/权限审批交互
+- [x] protocol/experiment/权限审批交互
 - [x] `pause/resume/continue/cancel` 交互反馈
 - [x] `--plain` 和 `--json` 输出
 - [x] 任务详情、脱敏日志和错误解释
@@ -157,7 +157,7 @@ Phase 4：Comparison 复现与统一评测
 - [x] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
 - [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
 - [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
-- [ ] protocol/experiment/权限审批交互
+- [x] protocol/experiment/权限审批交互
 - [x] 自然语言 REPL 与高影响操作确认
 - [ ] fast/balanced/deep/deterministic 模型路由
 - [x] 用户级/项目级配置、多项目注册和项目锁
@@ -276,3 +276,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-11 | Phase 7 实验级 checkpoint/resume（LONG_RUNNING §实验级 checkpoint）：src/experiment/checkpoint 契约（CheckpointPolicy steps/seconds/epoch/none 解析、computeSpecConfigHash 排除墙钟只哈希 command/metrics/seeds/数据/协议/尺度、validateCheckpointCompatibility 四路漂移即拒：code/protocol/data/config、progress/checkpoint_saved 行解析、buildCheckpointManifest 绑定 spec 身份、recovery 二分：保存过 checkpoint=checkpoint 否则 task-level 明示只重跑本实验）、executeSpecRun 集成（policy 转发 --checkpoint-every、心跳/清单落 experiments/progress-<specId>.json、失败时基于当前输入预检 resumeHint、timeout→interrupt force-kill）、idea experiment --resume（task-level 拒绝并指明 WITHOUT --resume、不兼容列出 mismatch、兼容则追加 --resume-from 执行）、配置 checkpoint 项接入 config/train.json | a099b81 | 门禁 70 files/504 vitest+9 python 全绿（8 条 checkpoint 测试：策略解析/配置哈希稳定与敏感、兼容矩阵全漂移、进度与清单解析、CLI 全链（check→崩溃留 ckpt→--resume 成功且 argv 含 --checkpoint-every/--resume-from）、task-level 拒绝 resume+force-kill）| 真实训练器按输出协议（{"progress"}/{"checkpoint_saved"}）接入即获 resume；scaffold 条目已演示、第三方代码不支持时自动 task-level | 下一模块：IdeationRound 多轮 idea 或 Journey 正式验收
 2026-11-11 | Phase 7 IdeationRound 多轮 idea/去重/反馈回流（docs/IDEATION_ROUNDS.md）：src/idea/rounds 不可变轮次对象（冻结 inputManifest/paperCards/researchMap/protocolId+hash/comparisonSet/datasetRootHashes 快照、继承上一轮 idea refs+指纹+反馈标签、noveltyConstraints（角色:组件+hypothesis 声明）、knownFingerprints 去重基线、stopReason no-new-information）、createRound 变化检测（输入/研究地图/卡片数/协议/比较集/反馈任一变化否则诚实报"没有足够新信息"不凑数，首轮也继承既有 idea）、ideate --round new|--round rN --continue（continue 只读不改轮次）、rounds list/show 只读、feedback append-only（labels: useful/invalid/prior-work/experiment-invalid/protocol-error/data-error/baseline-unfair + feedback RunEvent 绑定 run、无 run 仅文件记录）、ideaFingerprint 键序稳定对假设/机制/近邻敏感 | 6d67aa5 | 门禁 71 files/510 vitest+9 python 全绿（6 条：指纹稳定性、r1 快照、r2 无新信息门+中文诚实提示、反馈检出新信息+append-only+继承、feedback 事件+标签/幽灵校验、show 快照+continue 只读）| 候选生成本身是 Idea Generator（凭据面）；语义近邻去重为指纹级（embedding 近邻属后续增强） | 下一模块：Journey A–H 正式验收或 ResearchRun 编排硬化
 2026-11-11 | Phase 1.5 CLI 交互续接（slash 菜单+自然语言 ask+Research/Agent 模式+项目切换）：slash-menu 输入 / 立即开菜单（↑/↓ 选择、Enter 执行、Esc 关闭、Tab/唯一前缀补全、宽度截断与 usage 提示、纯模块+REPL 管 readline）、tokenizeArgs 引号感知分词（/ideate --question "ux test" 完整落参、ask 转发共用）、ideaseek ask（确定性查询→同一批 CLI use-case、高影响→pending-approval Decision 绝不执行、其余→DSH supervisor 分类，测试强制 fake harness）、.research/session.json 会话模式（temp+rename）、ideaseek mode [research|agent] 显示 mode/project/autonomy/strategy+权限摘要并记 Decision/Event（显式切换免 --confirm、不启第二个 run）、research strategy 移至 mode --strategy（guided --confirm）、interactive --mode、/open 两步项目切换（path/注册表名解析→preview 摘要→--confirm chdir+事件流重启+header 重印、歧义/缺失目录硬错误、非项目回退文档浏览）、全局 --project <path>（argv 任意位置提取+chdir）、runner 启动锁定入口绝对路径（chdir 后 relay 不丢脚本）| 52c415d + e33d928（基础切片随 c0cca8d 入库）| 门禁全绿：542 vitest + 9 python（session-mode 4、open-project 6、repl-ux 22、interactive 19；format:check/lint/typecheck）| Agent 模式仅落地模式与权限面，DSH Agent/Session 工具执行按 MODES.md 后置；孤立 ESC 在 Node ~500ms escapeCodeTimeout 内会与后续按键合并（测试等待规避） | 下一模块：protocol/experiment/权限审批交互
+2026-11-11 | Phase 1.5 protocol/experiment/权限审批交互：src/approval/pending 只读扫描（未锁定 protocol-proposal→confirm protocol、pending-approval Decision→仅审阅绝不执行、repair confirmation-required→comparison set-status 接受代码修订，每项都指向既有命令零逻辑复制）、ideaseek pending [--json]（无待办 exit 0 / 有待办 exit 2 可脚本化）、REPL 确认块（启动时与 /pending 触发，TERMINAL_UX 方框+窄终端截断）、/approve [n] 转发既有命令、块内裸数字直接选择、多项时要求显式 /approve <n>、决策项 review-only 明示、/approve 无待办时平实告知；退出竞态防护（println 不在已关闭的 readline 上重新 prompt + attach spawn error 兜底，修复并行负载下偶发 exit 1）| 03644d3 | 门禁全绿：75 files/550 vitest + 9 python（pending-approval 7、interactive 19、repl-ux 23；format:check/lint/typecheck）| 工具级 DSH 权限提示（运行中工具调用审批）未启用——Phase 1 提取不调用需审批工具，留待 Agent 工具面；Decision 的落地仍需用户以等价命令 --confirm 执行（REPL 不代跑任意命令）| Phase 1.5 checkbox 全部完成
