@@ -109,7 +109,7 @@ Phase 4：Comparison 复现与统一评测
 
 目标：优先复用 ARIS 已有的成熟科研 workflow；IdeaSeek 负责把它们接入自己的 Artifact、ExperimentSpec、RunEvent、Decision 和 checkpoint，而不是重写同类能力。
 
-- [ ] ARIS skill/plugin adapter 和版本/许可证 manifest
+- [x] ARIS skill/plugin adapter 和版本/许可证 manifest
 - [ ] `idea-discovery`/`idea-creator` 接入 IdeaCard/IdeationRound
 - [ ] `experiment-plan`/`experiment-bridge` 接入 ExperimentSpec/RunResult
 - [ ] `ablation-planner` 接入机制链和消融矩阵
@@ -117,7 +117,7 @@ Phase 4：Comparison 复现与统一评测
 - [ ] fresh-context independent reviewer 接入 Review artifact/Decision
 - [ ] `experiment-audit`/integrity workflow 接入结果门禁
 - [ ] ARIS skill 失败时的回退、权限和 checkpoint 测试
-- [ ] 审计 IdeaSeek 已有同类实现与 ARIS 能力差异
+- [x] 审计 IdeaSeek 已有同类实现与 ARIS 能力差异
 - [ ] 将更成熟的 idea/experiment/ablation/review/audit backend 迁移到 ARIS
 - [ ] 旧重复实现降级为兼容 fallback 或移除默认入口
 - [ ] ARIS capability conformance/regression tests
@@ -282,3 +282,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-11 | Phase 7 IdeationRound 多轮 idea/去重/反馈回流（docs/IDEATION_ROUNDS.md）：src/idea/rounds 不可变轮次对象（冻结 inputManifest/paperCards/researchMap/protocolId+hash/comparisonSet/datasetRootHashes 快照、继承上一轮 idea refs+指纹+反馈标签、noveltyConstraints（角色:组件+hypothesis 声明）、knownFingerprints 去重基线、stopReason no-new-information）、createRound 变化检测（输入/研究地图/卡片数/协议/比较集/反馈任一变化否则诚实报"没有足够新信息"不凑数，首轮也继承既有 idea）、ideate --round new|--round rN --continue（continue 只读不改轮次）、rounds list/show 只读、feedback append-only（labels: useful/invalid/prior-work/experiment-invalid/protocol-error/data-error/baseline-unfair + feedback RunEvent 绑定 run、无 run 仅文件记录）、ideaFingerprint 键序稳定对假设/机制/近邻敏感 | 6d67aa5 | 门禁 71 files/510 vitest+9 python 全绿（6 条：指纹稳定性、r1 快照、r2 无新信息门+中文诚实提示、反馈检出新信息+append-only+继承、feedback 事件+标签/幽灵校验、show 快照+continue 只读）| 候选生成本身是 Idea Generator（凭据面）；语义近邻去重为指纹级（embedding 近邻属后续增强） | 下一模块：Journey A–H 正式验收或 ResearchRun 编排硬化
 2026-11-11 | Phase 1.5 CLI 交互续接（slash 菜单+自然语言 ask+Research/Agent 模式+项目切换）：slash-menu 输入 / 立即开菜单（↑/↓ 选择、Enter 执行、Esc 关闭、Tab/唯一前缀补全、宽度截断与 usage 提示、纯模块+REPL 管 readline）、tokenizeArgs 引号感知分词（/ideate --question "ux test" 完整落参、ask 转发共用）、ideaseek ask（确定性查询→同一批 CLI use-case、高影响→pending-approval Decision 绝不执行、其余→DSH supervisor 分类，测试强制 fake harness）、.research/session.json 会话模式（temp+rename）、ideaseek mode [research|agent] 显示 mode/project/autonomy/strategy+权限摘要并记 Decision/Event（显式切换免 --confirm、不启第二个 run）、research strategy 移至 mode --strategy（guided --confirm）、interactive --mode、/open 两步项目切换（path/注册表名解析→preview 摘要→--confirm chdir+事件流重启+header 重印、歧义/缺失目录硬错误、非项目回退文档浏览）、全局 --project <path>（argv 任意位置提取+chdir）、runner 启动锁定入口绝对路径（chdir 后 relay 不丢脚本）| 52c415d + e33d928（基础切片随 c0cca8d 入库）| 门禁全绿：542 vitest + 9 python（session-mode 4、open-project 6、repl-ux 22、interactive 19；format:check/lint/typecheck）| Agent 模式仅落地模式与权限面，DSH Agent/Session 工具执行按 MODES.md 后置；孤立 ESC 在 Node ~500ms escapeCodeTimeout 内会与后续按键合并（测试等待规避） | 下一模块：protocol/experiment/权限审批交互
 2026-11-11 | Phase 1.5 protocol/experiment/权限审批交互：src/approval/pending 只读扫描（未锁定 protocol-proposal→confirm protocol、pending-approval Decision→仅审阅绝不执行、repair confirmation-required→comparison set-status 接受代码修订，每项都指向既有命令零逻辑复制）、ideaseek pending [--json]（无待办 exit 0 / 有待办 exit 2 可脚本化）、REPL 确认块（启动时与 /pending 触发，TERMINAL_UX 方框+窄终端截断）、/approve [n] 转发既有命令、块内裸数字直接选择、多项时要求显式 /approve <n>、决策项 review-only 明示、/approve 无待办时平实告知；退出竞态防护（println 不在已关闭的 readline 上重新 prompt + attach spawn error 兜底，修复并行负载下偶发 exit 1）| 03644d3 | 门禁全绿：75 files/550 vitest + 9 python（pending-approval 7、interactive 19、repl-ux 23；format:check/lint/typecheck）| 工具级 DSH 权限提示（运行中工具调用审批）未启用——Phase 1 提取不调用需审批工具，留待 Agent 工具面；Decision 的落地仍需用户以等价命令 --confirm 执行（REPL 不代跑任意命令）| Phase 1.5 checkbox 全部完成
+2026-11-11 | Phase 4.5 起步：ARIS 能力审计（docs/ARIS_AUDIT.md：6 项能力两侧契约对比、迁移/保留结论、conformance 必测路径）+ vendored skill 地基（aris-skills/：11 个 P0 SKILL.md + 17 个 shared-references + MIT LICENSE/NOTICE 记录上游 commit 8f49392）、src/aris manifest（28 文件 SHA-256）+ skill 加载器（完整性拒绝篡改、frontmatter 解析、$ARGUMENTS/{{var}} 渲染、shared-reference 解析、IDEASEEK_ARIS_SKILLS 覆盖活仓库）、ideaseek aris [--json]（来源/许可证/清单/完整性，失配 exit 2）| 5f6fdb0 | 门禁：format/lint/typecheck 绿 + vitest tests/aris-skill.test.ts 9 条 + 全量 76 files/559 vitest+9 python | skills 为纯 Markdown prompt（无第二套 agent loop）；执行 backend 迁移随各能力 checkbox 落地 | 下一模块：idea-discovery/idea-creator 接入 IdeaCard/IdeationRound
