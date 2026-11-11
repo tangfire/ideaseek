@@ -96,7 +96,9 @@ Phase 2：真实 PDF/PaperCard
 Phase 3：Dataset/Protocol Synthesis
 Phase 4：Comparison Repair/Reproduction
 Phase 5：Idea/Code/Quick 实验闭环
-Phase 6：首个方向验证、可选插件和多 GPU 扩展
+Phase 6：领域无关引擎验证、资源感知和按需插件
+Phase 7：产品硬化、长任务和用户旅程验收
+Phase 8：发布、安装和文档
 ```
 
 每个阶段都必须更新 `PROGRESS.md`、写失败测试、提交小 commit，并在下一阶段开始前保持 `main` 可启动。

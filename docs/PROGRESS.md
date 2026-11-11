@@ -7,10 +7,11 @@
 当前主线按优先级推进：
 
 ```text
-Phase 4：Comparison 完整闭环
-→ Phase 5：首个真实方向验证
-→ Phase 6：按需求扩展能力
-→ Phase 7：发布与运维
+Phase 4：Comparison 复现与统一评测
+→ Phase 5：Idea 生成与实验闭环
+→ Phase 6：领域无关引擎验证
+→ Phase 7：产品硬化与长任务能力
+→ Phase 8：发布与文档
 ```
 
 领域插件、向量检索、多 GPU 和其他方向扩展不是 Phase 4/5 的前置条件。模块交付记录是 append-only 历史；顶部 checkbox 是当前状态的唯一来源。
