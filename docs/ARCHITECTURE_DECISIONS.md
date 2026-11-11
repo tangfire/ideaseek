@@ -47,3 +47,5 @@ ARIS 的 P0 科研能力是 IdeaSeek 的产品验收要求，而不是用户可�
 - 迁移前冻结契约并写 conformance test，确认失败、取消、恢复和权限语义不退化；
 - 迁移后从主流程移除重复入口，避免用户不知道运行了哪套 workflow；
 - 仅当 ARIS 无法满足 IdeaSeek 的持久化、安全、资源或结构化契约时，才保留 IdeaSeek 的薄层实现。
+
+迁移完成并通过 conformance/regression tests 后，旧的重复实现、重复 CLI 入口和重复默认配置必须删除；不能以“以后可能 fallback”为理由长期保留两套默认 workflow。删除前保留迁移说明和必要的数据/schema migration，不删除历史 artifact 和 run 记录。

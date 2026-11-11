@@ -8,6 +8,7 @@
 
 ```text
 Phase 4：Comparison 复现与统一评测
+→ Phase 4.5：ARIS P0 能力迁移与 conformance
 → Phase 5：Idea 生成与实验闭环
 → Phase 6：领域无关引擎验证
 → Phase 7：产品硬化与长任务能力
@@ -118,6 +119,7 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 将更成熟的 idea/experiment/ablation/review/audit backend 迁移到 ARIS
 - [ ] 旧重复实现降级为兼容 fallback 或移除默认入口
 - [ ] ARIS capability conformance/regression tests
+- [ ] ARIS 迁移通过后删除旧重复实现、入口和重复配置
 
 ## Phase 5：Idea 生成与实验闭环
 

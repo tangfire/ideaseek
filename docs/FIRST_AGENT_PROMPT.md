@@ -101,6 +101,8 @@ ideaseek init
 
 同时审计 IdeaSeek 已有的 idea/experiment/ablation/review/audit 实现；如果 ARIS 更成熟，迁移默认执行 backend 到 ARIS，旧实现降级为兼容 fallback 或移除默认入口。迁移前写 capability conformance tests，不能只是并行保留两套默认 workflow。
 
+迁移通过完整 conformance/regression tests 后，直接删除旧的重复实现、旧默认入口和重复配置；不要长期保留两套默认 workflow。保留历史 artifact/run 的读取兼容和一次性 migration 即可。
+
 ### Phase 5：Idea 和快速实验
 
 实现 Mechanism Analyst、Idea Generator、Research Discussant、Novelty Challenger、Synthesis Lead、IdeaCard 机制链、DRAFT_COMPOSITION 门槛、独立 idea workspace、Code Implementer、GPU Capacity Planner、quick/standard 实验、消融、结果分析和 idea 迭代。

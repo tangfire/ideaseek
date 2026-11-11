@@ -105,4 +105,4 @@ Phase 4.5 不只新增 adapter，还要审计 IdeaSeek 当前实现：
 | 结果审计 | analyze-results/experiment-audit/integrity-forensics | 复用审计规则，保留 IdeaSeek 失败分类和 handoff gate |
 | 研究记忆/报告 | research-wiki/render-html | 通过 artifact adapter 接入，不替换 IdeaSeek DB |
 
-每项迁移都要有 capability conformance test；测试通过后旧重复实现不再作为默认路径。
+每项迁移都要有 capability conformance test；测试通过后旧重复实现、旧默认入口和重复配置必须删除。历史 artifact、run、Decision 和报告保持可读；需要兼容旧数据时只保留一次性 migration，而不是保留第二套运行逻辑。
