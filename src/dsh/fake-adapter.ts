@@ -369,6 +369,43 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'paper-write-v1') {
+    // Test hook: raw override exercises parse/validation failure paths.
+    const override = process.env.IDEASEEK_FAKE_PAPER_WRITE_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const venueLine =
+      context.split('\n').find((line) => line.startsWith('Venue: ')) ?? 'Venue: none stored';
+    const venue = venueLine.includes('none stored')
+      ? 'ICLR'
+      : venueLine.slice('Venue: '.length).split(' ')[0];
+    return JSON.stringify({
+      venue,
+      title: 'Fake Manuscript',
+      abstract: 'A fake abstract grounded in the persisted results.',
+      sections: [
+        {
+          id: 'intro',
+          heading: 'Introduction',
+          latex: '\\section{Introduction}\nBody text citing the stored plan claims.',
+          sources: ['plan-claims'],
+        },
+        {
+          id: 'experiments',
+          heading: 'Experiments',
+          latex: '\\section{Experiments}\nResults cited by specId.',
+          sources: ['experiment-results'],
+        },
+      ],
+      bibliography: [{ key: 'fake2026', bibtex: '@article{fake2026, title={Fake Work}}' }],
+      qualityPasses: ['reverse-outline'],
+      manualFixes: ['camera-ready formatting'],
+      reviewerFeedback: {
+        verdict: 'REVIEW_UNAVAILABLE',
+        notes: ['no reviewer backend in the fake harness'],
+      },
+    });
+  }
   if (request.outputSchema === 'paper-plan-v1') {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PAPER_PLAN_OUTPUT;
