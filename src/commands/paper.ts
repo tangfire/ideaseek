@@ -687,6 +687,81 @@ export function registerPaperCommand(program: Command): void {
         runEngagement('talk', opts),
       ),
     );
+
+  paper
+    .command('render-figures')
+    .description(
+      'execute the persisted figure scripts and hash the rendered outputs (Phase 7 pipeline)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const root = await findRoot();
+        const { loadArisSkill } = await import('../aris/skill.js');
+        // Provenance: the scripts come from the paper-figure skill output.
+        const skill = await loadArisSkill('paper-figure');
+        const { FIGURE_RENDER_SCHEMA, renderFigures } = await import('../paper/render-figures.js');
+        const { report, figuresDir } = await renderFigures(root, {
+          name: skill.name,
+          sha256: skill.sha256,
+        });
+
+        await ensureDir(join(root, 'reports', 'paper'));
+        await writeFileAtomic(
+          join(root, 'reports', 'paper', 'figure-render.json'),
+          `${JSON.stringify({ contract: FIGURE_RENDER_SCHEMA, ...report }, null, 2)}\n`,
+        );
+
+        let eventSeq: number | null = null;
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const okCount = report.figures.filter((figure) => figure.ok).length;
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'PAPER',
+              objectId: 'figure-render',
+              role: 'system',
+              eventType: 'figure_render',
+              summary: `figure render ${report.status}: ${okCount}/${report.figures.length} script(s) produced hashed outputs`,
+              status: report.status,
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        if (opts.json) {
+          process.stdout.write(jsonLine({ contract: FIGURE_RENDER_SCHEMA, eventSeq, ...report }));
+          return report.status === 'rendered' ? 0 : 1;
+        }
+        const okCount = report.figures.filter((figure) => figure.ok).length;
+        process.stdout.write(
+          `figure render ${report.status}: ${okCount}/${report.figures.length} script(s) → ${figuresDir}\n`,
+        );
+        for (const figure of report.figures) {
+          if (figure.ok) {
+            process.stdout.write(
+              `  ok    ${figure.id} → ${figure.outputs.map((output) => `${output.path} (${output.bytes} B)`).join(', ')}\n`,
+            );
+          } else {
+            process.stdout.write(
+              `  FAIL  ${figure.id}: ${(figure.error ?? 'unknown').slice(0, 200)}\n`,
+            );
+          }
+        }
+        process.stdout.write(
+          `  python ${report.python} · skill ${report.skill.name}@${report.skill.sha256.slice(0, 12)}…\n`,
+        );
+        process.stdout.write(
+          'next: reports/paper/figure-render.json records per-output sha256 (source manifest trail)\n',
+        );
+        return report.status === 'rendered' ? 0 : 1;
+      }),
+    );
 }
 
 /* ------------------------------------------------------------------ */

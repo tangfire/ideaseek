@@ -41,7 +41,7 @@ let cachedPython: string | null | undefined;
  * Interpreter preference: the isolated worker venv (pinned wheels incl.
  * stable onnxruntime for OCR) first, then system python3/python.
  */
-async function pythonBinary(): Promise<string> {
+export async function pythonBinary(): Promise<string> {
   if (cachedPython) return cachedPython;
   const venvCandidate =
     process.platform === 'win32'
