@@ -186,6 +186,9 @@ Phase 4：Comparison 复现与统一评测
 目标：在快速探索和用户认可之后，执行可授权、可恢复的全量对比/idea 实验，基于真实记录生成论文图表与 Overleaf 兼容论文工程。这是最终产品链能力；全量任务必须由用户明确批准。详细契约见 [FULL_RESEARCH_MODE.md](FULL_RESEARCH_MODE.md)。
 
 - [ ] Full Research plan/approval：锁定问题、协议、数据/split、required comparisons、预算、时限、网络和资源
+- [ ] Comparison Planner：基于研究问题、近期文献、目标 venue/子领域和 benchmark 证据生成 required/reference-only/excluded/blocked 清单并由用户确认
+- [ ] 官方代码发现/许可/commit 核验与隔离 clone；无可用官方实现时生成带假设、差异和置信度的论文重实现
+- [ ] 全量 comparison 公平性锁定：数据/split、预处理、指标、调参预算、seed/repeats、资源和偏差说明
 - [ ] 独立 full-run：全量运行全部 required comparison 与最终 idea 版本，多 GPU/长任务/checkpoint/resume
 - [ ] 实验记录保存足以复算统计与图表的原始/中间数据，并绑定 run/code/data/protocol hash
 - [ ] ARIS paper-figure 数据图：折线、柱状、散点、热图、箱线/小提琴、多面板、对比/消融表、资源和敏感性图

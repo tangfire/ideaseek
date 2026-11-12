@@ -64,9 +64,9 @@
 
 ## Phase 7：Full Research 与论文交付
 
-对研究者明确认可并通过 handoff 门槛的 idea，提供独立、可授权、可恢复的全量科研闭环：补齐数据访问、全量运行所有 required comparisons 和最终 idea、统计分析、按真实数据生成多类型图表、结果/claim/citation/integrity 审计，并复用 ARIS `paper-plan → paper-figure → paper-write → paper-compile` 交付 Overleaf 兼容 LaTeX 工程与复现包。图表从结构化实验数据可重建；缺少原始输出的定性图、方法图等应请求输入或使用专用图形 workflow，明确标注人工/额外输入要求。
+对研究者明确认可并通过 handoff 门槛的 idea，先生成带证据的 comparison matrix，明确 required/reference-only/excluded/blocked 和官方代码/论文重实现来源；研究者确认后提供独立、可授权、可恢复的全量闭环：全量运行所有 required comparisons 和最终 idea、统计分析、按真实数据生成多类型图表、结果/claim/citation/integrity 审计，并复用 ARIS `paper-plan → paper-figure → paper-write → paper-compile` 交付 Overleaf 兼容 LaTeX 工程与复现包。目标 venue（包括 CCF A/B）用于规划和质量清单，不能承诺录用。
 
-验收：未经授权不能下载数据或启动全量训练；对比算法与 idea 使用同一锁定协议并有可追溯版本；崩溃/额度耗尽/取消后从 checkpoint 恢复；图表和表格绑定结果、统计定义、代码/数据/协议 hash；论文数字都能追溯到 RunResult；Overleaf 工程可编译并包含 BibTeX、图表源数据和 provenance。
+验收：未经授权不能下载数据或启动全量训练；comparison matrix 有近期工作/venue/任务证据和用户确认；官方代码 clone 与论文重实现清楚区分；required 对比与 idea 使用同一锁定协议/可比资源预算并有可追溯版本；未完成 required 项阻塞运行或需带理由批准 scope 变更；崩溃/额度耗尽/取消后从 checkpoint 恢复；图表和表格绑定结果、统计定义、代码/数据/协议 hash；论文数字都能追溯到 RunResult；Overleaf 工程可编译并包含 BibTeX、图表源数据和 provenance。
 
 ## Phase 8：产品硬化与长任务能力
 

@@ -36,6 +36,10 @@
 - 报告区分原论文结果、本地 comparison 结果、idea 结果、失败实验和未测试场景。
 - 每个结论可跳到证据片段、数据 snapshot、切片、代码 commit、环境、run 和日志。
 - `handoff` 包含全量实验配置、split manifest、环境锁文件、运行命令、数据准备说明、资源估算和已知风险。
+- Full Research 必须形成有证据的 comparison matrix：覆盖与研究问题相关的经典/近期强基线/最近邻/benchmark 方法；逐项区分 required、reference-only、excluded、blocked，附论文证据、目标 venue/子领域依据、代码来源、许可证、实现差异和复现状态。最终 required 清单由研究者确认，不能只由模型静默决定。
+- 有可信官方/作者仓库时，核验来源、commit、license 后隔离导入并复现；无可用代码时才按论文重实现，标记 `paper-reimplementation — NOT official code`，并记录假设、缺失细节和置信度。
+- 全量 comparison 与 IdeaSeek 方法尽可能使用同一数据/split、指标、模型选择与调参预算、seed/repeats 和资源规则；无法统一的部分必须记录 deviation。文献原报告数字与本地复现实验结果分开呈现。
+- 支持用户指定 CCF A/B 或其他目标 venue 作为规划背景，并以近期相关论文/正式要求产生可追溯检查项；不承诺录用，也不以 venue 名称替代科研审查。
 - 报告可导出 Markdown、JSON 和引用/BibTeX；大 artifact 只输出引用和路径，不复制进报告。
 - 用户可以标记 idea 有用/无效/已有工作/实验无效，反馈保留为事件并可进入评测集。
 
