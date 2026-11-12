@@ -50,6 +50,18 @@ function readJsonContext(request: HarnessTaskRequest): Record<string, unknown> {
   return {};
 }
 
+/**
+ * The merged tree carries TWO experiment-audit/idea-review validators with
+ * different field spellings: src/idea/{audit,review}.ts (the `ideaseek idea
+ * audit|review` commands, profile `idea-generator`) and src/review/review.ts
+ * (runReview, profile `reviewer`, ARIS-style ids). One payload cannot satisfy
+ * both, so the fake serves the shape the requester's contract expects —
+ * keyed on the harness profile/taskId, never on silent guessing.
+ */
+function isReviewerStack(request: HarnessTaskRequest): boolean {
+  return request.profile === 'reviewer' || request.taskId.startsWith('review-');
+}
+
 function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'topic-synthesis-v1') {
     return JSON.stringify({
@@ -120,27 +132,128 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     const override = process.env.IDEASEEK_FAKE_AUDIT_OUTPUT;
     if (override != null) return override;
     const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number };
+    if (isReviewerStack(request)) {
+      // src/review/review.ts contract: underscore ids + status/details,
+      // all five ids exactly once, evalType + overall.
+      return JSON.stringify({
+        ideaId: context.ideaId ?? 'unknown',
+        cardVersion: context.cardVersion ?? 1,
+        checks: [
+          {
+            id: 'gt_provenance',
+            status: 'PASS',
+            details: 'metrics use recorded ground truth',
+            evidence: 'experiment.result.metrics',
+          },
+          {
+            id: 'score_normalization',
+            status: 'PASS',
+            details: 'raw scores are not self-normalized',
+            evidence: 'plan.primaryMetric',
+          },
+          {
+            id: 'result_existence',
+            status: 'PASS',
+            details: 'result metrics exist in the bundle',
+            evidence: 'experiment.result.metrics',
+          },
+          {
+            id: 'dead_code',
+            status: 'PASS',
+            details: 'configured metrics are exercised',
+            evidence: 'experiment.spec.metrics',
+          },
+          {
+            id: 'scope',
+            status: 'PASS',
+            details: 'quick-scale scope is stated honestly',
+            evidence: 'experiment.spec.scale',
+          },
+        ],
+        evalType: 'real_gt',
+        overall: 'PASS',
+        summary: 'results are internally consistent with the recorded plan',
+      });
+    }
+    // src/idea/audit.ts contract: hyphen ids + verdict/detail.
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
       overallVerdict: 'PASS',
-      overall: 'PASS',
-      evalType: 'real_gt',
       checks: [
-        { id: 'gt_provenance', status: 'PASS', details: 'metrics use recorded ground truth', evidence: 'experiment.result.metrics' },
-        { id: 'score_normalization', status: 'PASS', details: 'raw scores are not self-normalized', evidence: 'plan.primaryMetric' },
-        { id: 'result_existence', status: 'PASS', details: 'result metrics exist in the bundle', evidence: 'experiment.result.metrics' },
-        { id: 'dead_code', status: 'PASS', details: 'configured metrics are exercised', evidence: 'experiment.spec.metrics' },
-        { id: 'scope', status: 'PASS', details: 'quick-scale scope is stated honestly', evidence: 'experiment.spec.scale' },
+        {
+          id: 'gt-provenance',
+          verdict: 'PASS',
+          detail: 'metrics use recorded ground truth',
+          evidence: 'experiment.result.metrics',
+        },
+        {
+          id: 'score-normalization',
+          verdict: 'PASS',
+          detail: 'raw scores are not self-normalized',
+          evidence: 'plan.primaryMetric',
+        },
+        {
+          id: 'result-existence',
+          verdict: 'PASS',
+          detail: 'result metrics exist in the bundle',
+          evidence: 'experiment.result.metrics',
+        },
+        {
+          id: 'dead-code',
+          verdict: 'PASS',
+          detail: 'configured metrics are exercised',
+          evidence: 'experiment.spec.metrics',
+        },
+        {
+          id: 'scope',
+          verdict: 'PASS',
+          detail: 'quick-scale scope is stated honestly',
+          evidence: 'experiment.spec.scale',
+        },
       ],
       claims: [],
       summary: 'results are internally consistent with the recorded plan',
     });
   }
+  if (request.outputSchema === 'integrity-forensics-v1') {
+    // Test hook: raw override exercises parse/validation failure paths.
+    const override = process.env.IDEASEEK_FAKE_FORENSICS_OUTPUT;
+    if (override != null) return override;
+    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number };
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      findings: [],
+      summary: 'fake forensics pass: no additional findings beyond the deterministic ledger',
+    });
+  }
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;
-    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number; round?: number };
+    const context = readJsonContext(request) as {
+      ideaId?: string;
+      cardVersion?: number;
+      round?: number;
+    };
+    if (isReviewerStack(request)) {
+      // src/review/review.ts contract: weaknesses need detail + minimumFix,
+      // no ideaId/cardVersion/round echo.
+      return JSON.stringify({
+        score: 7,
+        verdict: 'ready',
+        summary: 'fake idea review: artifacts are consistent with the plan primary metric',
+        weaknesses: [
+          {
+            severity: 'minor',
+            detail: 'single seed — widen before claiming',
+            minimumFix: 'run at least one additional seed',
+          },
+        ],
+      });
+    }
+    // src/idea/review.ts contract: echo ideaId/cardVersion/round, weaknesses
+    // carry `text` and at least one entry.
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
@@ -148,13 +261,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       score: 7,
       verdict: 'ready',
       summary: 'fake idea review: artifacts are consistent with the plan primary metric',
-      weaknesses: [
-        {
-          severity: 'minor',
-          detail: 'single seed — widen before claiming',
-          minimumFix: 'run at least one additional seed',
-        },
-      ],
+      weaknesses: [{ severity: 'minor', text: 'single seed — widen before claiming' }],
       questions: [],
     });
   }
