@@ -116,23 +116,87 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  // Two live backends share these schema ids: the ARIS-side runner
+  // (src/review/review.ts, profile 'reviewer') and the CLI idea commands
+  // (src/idea/{review,audit}.ts, profile 'idea-generator'). Each sends its
+  // own output contract in the instruction, so the fake answers the contract
+  // the requester declared instead of forcing one shape onto both.
   if (request.outputSchema === 'experiment-audit-v1') {
     const override = process.env.IDEASEEK_FAKE_AUDIT_OUTPUT;
     if (override != null) return override;
     const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number };
+    const arisContract = request.profile === 'reviewer';
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
       overallVerdict: 'PASS',
       overall: 'PASS',
       evalType: 'real_gt',
-      checks: [
-        { id: 'gt_provenance', status: 'PASS', details: 'metrics use recorded ground truth', evidence: 'experiment.result.metrics' },
-        { id: 'score_normalization', status: 'PASS', details: 'raw scores are not self-normalized', evidence: 'plan.primaryMetric' },
-        { id: 'result_existence', status: 'PASS', details: 'result metrics exist in the bundle', evidence: 'experiment.result.metrics' },
-        { id: 'dead_code', status: 'PASS', details: 'configured metrics are exercised', evidence: 'experiment.spec.metrics' },
-        { id: 'scope', status: 'PASS', details: 'quick-scale scope is stated honestly', evidence: 'experiment.spec.scale' },
-      ],
+      checks: arisContract
+        ? [
+            {
+              id: 'gt_provenance',
+              status: 'PASS',
+              details: 'metrics use recorded ground truth',
+              evidence: 'experiment.result.metrics',
+            },
+            {
+              id: 'score_normalization',
+              status: 'PASS',
+              details: 'raw scores are not self-normalized',
+              evidence: 'plan.primaryMetric',
+            },
+            {
+              id: 'result_existence',
+              status: 'PASS',
+              details: 'result metrics exist in the bundle',
+              evidence: 'experiment.result.metrics',
+            },
+            {
+              id: 'dead_code',
+              status: 'PASS',
+              details: 'configured metrics are exercised',
+              evidence: 'experiment.spec.metrics',
+            },
+            {
+              id: 'scope',
+              status: 'PASS',
+              details: 'quick-scale scope is stated honestly',
+              evidence: 'experiment.spec.scale',
+            },
+          ]
+        : [
+            {
+              id: 'gt-provenance',
+              verdict: 'PASS',
+              detail: 'metrics use recorded ground truth',
+              evidence: 'experiment.result.metrics',
+            },
+            {
+              id: 'score-normalization',
+              verdict: 'PASS',
+              detail: 'raw scores are not self-normalized',
+              evidence: 'plan.primaryMetric',
+            },
+            {
+              id: 'result-existence',
+              verdict: 'PASS',
+              detail: 'result metrics exist in the bundle',
+              evidence: 'experiment.result.metrics',
+            },
+            {
+              id: 'dead-code',
+              verdict: 'PASS',
+              detail: 'configured metrics are exercised',
+              evidence: 'experiment.spec.metrics',
+            },
+            {
+              id: 'scope',
+              verdict: 'PASS',
+              detail: 'quick-scale scope is stated honestly',
+              evidence: 'experiment.spec.scale',
+            },
+          ],
       claims: [],
       summary: 'results are internally consistent with the recorded plan',
     });
@@ -140,7 +204,12 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;
-    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number; round?: number };
+    const context = readJsonContext(request) as {
+      ideaId?: string;
+      cardVersion?: number;
+      round?: number;
+    };
+    const arisContract = request.profile === 'reviewer';
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
@@ -148,13 +217,15 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       score: 7,
       verdict: 'ready',
       summary: 'fake idea review: artifacts are consistent with the plan primary metric',
-      weaknesses: [
-        {
-          severity: 'minor',
-          detail: 'single seed — widen before claiming',
-          minimumFix: 'run at least one additional seed',
-        },
-      ],
+      weaknesses: arisContract
+        ? [
+            {
+              severity: 'minor',
+              detail: 'single seed — widen before claiming',
+              minimumFix: 'run at least one additional seed',
+            },
+          ]
+        : [{ severity: 'minor', text: 'single seed — widen before claiming' }],
       questions: [],
     });
   }
