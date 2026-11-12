@@ -642,6 +642,241 @@ export function registerPaperCommand(program: Command): void {
         return 1;
       }),
     );
+
+  paper
+    .command('rebuttal')
+    .description('draft the rebuttal grounded in persisted reviews and results (ARIS rebuttal)')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored rebuttal.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { harness?: string; force?: boolean; json?: boolean }) =>
+        runEngagement('rebuttal', opts),
+      ),
+    );
+
+  paper
+    .command('slides')
+    .description('build the slide deck content bound to the stored plan (ARIS paper-slides)')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored slides.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { harness?: string; force?: boolean; json?: boolean }) =>
+        runEngagement('slides', opts),
+      ),
+    );
+
+  paper
+    .command('talk')
+    .description('prepare the talk readiness checklist and Q&A (ARIS paper-talk)')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored talk.json and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { harness?: string; force?: boolean; json?: boolean }) =>
+        runEngagement('talk', opts),
+      ),
+    );
+}
+
+/* ------------------------------------------------------------------ */
+/* Rebuttal / slides / talk — one shared runner (Phase 4.5C)           */
+/* ------------------------------------------------------------------ */
+
+type EngagementMode = 'rebuttal' | 'slides' | 'talk';
+
+const ENGAGEMENT_META: Record<
+  EngagementMode,
+  { skill: string; file: string; event: string; label: string }
+> = {
+  rebuttal: { skill: 'rebuttal', file: 'rebuttal.json', event: 'rebuttal', label: 'rebuttal' },
+  slides: {
+    skill: 'paper-slides',
+    file: 'slides.json',
+    event: 'paper_slides',
+    label: 'slide deck',
+  },
+  talk: { skill: 'paper-talk', file: 'talk.json', event: 'paper_talk', label: 'talk plan' },
+};
+
+interface StoredEngagement {
+  contract: string;
+  inputHash: string;
+  skill: { name: string; sha256: string };
+  snapshot: unknown;
+  harnessRuntime: string;
+  generatedAt: number;
+  payload: Record<string, unknown>;
+}
+
+function engagementPath(root: string, mode: EngagementMode): string {
+  return join(root, 'reports', 'paper', ENGAGEMENT_META[mode].file);
+}
+
+async function runEngagement(
+  mode: EngagementMode,
+  opts: { harness?: string; force?: boolean; json?: boolean },
+): Promise<number> {
+  const root = await findRoot();
+  const meta = ENGAGEMENT_META[mode];
+  const { loadArisSkill } = await import('../aris/skill.js');
+  // Integrity gate BEFORE any model call (ADR-008).
+  const skill = await loadArisSkill(meta.skill);
+  const engagement = await import('../paper/engagement.js');
+  const context = await engagement.collectEngagementContext(root);
+  const contract =
+    mode === 'rebuttal'
+      ? engagement.REBUTTAL_SCHEMA
+      : mode === 'slides'
+        ? engagement.SLIDES_SCHEMA
+        : engagement.TALK_SCHEMA;
+  const request = engagement.buildEngagementRequest(skill, context, mode, contract);
+  const path = engagementPath(root, mode);
+
+  if (!opts.force) {
+    let stored: StoredEngagement | null = null;
+    try {
+      stored = JSON.parse(await readFile(path, 'utf8')) as StoredEngagement;
+    } catch {
+      stored = null;
+    }
+    if (stored && stored.inputHash === request.inputHash) {
+      if (opts.json) {
+        process.stdout.write(
+          jsonLine({
+            contract: stored.contract,
+            inputHash: stored.inputHash,
+            skill: stored.skill,
+            harnessRuntime: stored.harnessRuntime,
+            reused: true,
+            payload: stored.payload,
+            path,
+          }),
+        );
+      } else {
+        process.stdout.write(
+          `reused ${meta.label} (same inputHash ${stored.inputHash.slice(0, 12)}…, skill ${stored.skill.name}@${stored.skill.sha256.slice(0, 12)})\n`,
+        );
+        process.stdout.write(`  file: ${path}\n`);
+        process.stdout.write(`next: review the stored ${meta.label}; regenerate with --force\n`);
+      }
+      return 0;
+    }
+  }
+
+  const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+  const kind = opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+  const harness = buildHarness(kind);
+  await harness.initialize();
+  let output: string;
+  let runtimeKind = kind;
+  try {
+    const result = await harness.runTask({
+      runId: contract,
+      taskId: contract,
+      profile: 'paper-planner',
+      instruction: request.instruction,
+      inputs: [{ kind: 'text', name: 'engagement_context', content: request.context }],
+      outputSchema: contract,
+      budget: { timeoutMs: 180_000, maxOutputTokens: 16_384 },
+      idempotencyKey: request.idempotencyKey,
+    });
+    output = result.output;
+    runtimeKind = result.runtime.kind;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'HarnessBlockError') {
+      const block = (error as { block?: string }).block ?? 'BLOCKED';
+      if (opts.json) {
+        process.stdout.write(jsonLine({ blocked: block, written: false, contract }));
+      } else {
+        process.stderr.write(
+          `paper ${mode} blocked [${block}]: ${(error as Error).message}\n` +
+            'nothing was written — restore quota/auth/network and rerun the same command\n',
+        );
+      }
+      return 2;
+    }
+    throw error;
+  } finally {
+    await harness.shutdown().catch(() => undefined);
+  }
+
+  const payload =
+    mode === 'rebuttal'
+      ? (engagement.parseRebuttal(output) as unknown as Record<string, unknown>)
+      : mode === 'slides'
+        ? (engagement.parseSlidesDeck(output, context) as unknown as Record<string, unknown>)
+        : (engagement.parseTalkPlan(output) as unknown as Record<string, unknown>);
+
+  const stored: StoredEngagement = {
+    contract,
+    inputHash: request.inputHash,
+    skill: { name: skill.name, sha256: skill.sha256 },
+    snapshot: context.snapshot,
+    harnessRuntime: runtimeKind,
+    generatedAt: Date.now(),
+    payload,
+  };
+  await ensureDir(join(root, 'reports', 'paper'));
+  await writeFileAtomic(path, `${JSON.stringify(stored, null, 2)}\n`);
+
+  let eventSeq: number | null = null;
+  const { ProjectRuntime } = await import('../workflow/runtime.js');
+  const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+  try {
+    const run = await runtime.db.getLatestRun(runtime.project.id);
+    if (run) {
+      const event = await runtime.db.appendEvent({
+        runId: run.runId,
+        phase: 'PAPER',
+        objectId: contract,
+        role: 'system',
+        eventType: meta.event,
+        summary: `${meta.label} generated (${contract}, ARIS ${meta.skill})`,
+        status: 'generated',
+      });
+      eventSeq = event.seq;
+    }
+  } finally {
+    await runtime.close();
+  }
+
+  if (opts.json) {
+    process.stdout.write(
+      jsonLine({
+        contract,
+        inputHash: stored.inputHash,
+        skill: stored.skill,
+        harnessRuntime: stored.harnessRuntime,
+        reused: false,
+        eventSeq,
+        payload,
+        path,
+      }),
+    );
+    return 0;
+  }
+  process.stdout.write(
+    `${meta.label} written: reports/paper/${meta.file} (contract ${contract}, harness ${runtimeKind})\n`,
+  );
+  process.stdout.write(
+    `  inputHash ${stored.inputHash.slice(0, 19)}… · skill ${skill.name}@${skill.sha256.slice(0, 12)}…\n`,
+  );
+  if (mode === 'slides') {
+    process.stdout.write('  deck content only — assembly/compile is Phase 7\n');
+  }
+  process.stdout.write(`next: review reports/paper/${meta.file}; regenerate with --force\n`);
+  return 0;
 }
 
 async function findRoot(): Promise<string> {

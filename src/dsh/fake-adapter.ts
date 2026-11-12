@@ -369,6 +369,99 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'rebuttal-v1') {
+    const override = process.env.IDEASEEK_FAKE_REBUTTAL_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const specLine =
+      context.split('\n').find((line) => line.startsWith('  - repro-')) ??
+      '  - repro-fake [succeeded]';
+    const specId = specLine.trim().split(' ')[0];
+    return JSON.stringify({
+      overallResponse:
+        'The persisted evidence base addresses the concerns with locked-protocol results.',
+      pointResponses: [
+        {
+          point: 'Evidence base may be insufficient',
+          response: `Grounded in ${specId} under the persisted snapshot.`,
+          evidence: [{ source: specId, location: 'result.metrics' }],
+        },
+      ],
+      newEvidence: [],
+      revisedClaims: [],
+      reviewerFeedback: {
+        verdict: 'REVIEW_UNAVAILABLE',
+        notes: ['no reviewer backend in the fake harness'],
+      },
+    });
+  }
+  if (request.outputSchema === 'paper-slides-v1') {
+    const override = process.env.IDEASEEK_FAKE_SLIDES_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const venueLine =
+      context.split('\n').find((line) => line.startsWith('Stored plan: venue=')) ?? '';
+    const venueMatch = venueLine.match(/venue=(\S+)/);
+    const venue = venueMatch ? venueMatch[1] : 'ICLR';
+    const slides = [1, 2, 3].map((number) => ({
+      number,
+      title: number === 1 ? 'Title' : number === 2 ? 'Problem' : 'Main result',
+      bullets: [`Bullet for slide ${number} grounded in context`],
+      speakerNotes: `Notes for slide ${number}.`,
+      claimSources: ['plan-claim-1'],
+    }));
+    return JSON.stringify({
+      venue,
+      talkType: 'conference',
+      slideCount: 3,
+      slides,
+      talkScript: 'Word-for-word fake talk script grounded in the persisted results.',
+      timeBudgetMinutes: 15,
+      qaPrep: [
+        {
+          question: 'Is the comparison fair?',
+          answer: 'Yes — locked protocol and registered baselines.',
+          source: 'protocol',
+        },
+      ],
+      reviewerFeedback: {
+        verdict: 'REVIEW_UNAVAILABLE',
+        notes: ['no reviewer backend in the fake harness'],
+      },
+    });
+  }
+  if (request.outputSchema === 'paper-talk-v1') {
+    const override = process.env.IDEASEEK_FAKE_TALK_OUTPUT;
+    if (override != null) return override;
+    return JSON.stringify({
+      readiness: 'draft',
+      checklist: [
+        {
+          item: 'slides present',
+          status: 'pass',
+          detail: 'stored slides deck found in context',
+        },
+        {
+          item: 'claims traceable',
+          status: 'pass',
+          detail: 'claims cite persisted spec ids',
+        },
+      ],
+      talkTrack: 'Question → insight → locked-protocol evidence → takeaway.',
+      qAndA: [
+        {
+          question: 'What is the main claim?',
+          answer: 'The claim stated in the stored plan.',
+          source: 'plan-claim-1',
+        },
+      ],
+      blockers: [],
+      reviewerFeedback: {
+        verdict: 'REVIEW_UNAVAILABLE',
+        notes: ['no reviewer backend in the fake harness'],
+      },
+    });
+  }
   if (request.outputSchema === 'paper-write-v1') {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PAPER_WRITE_OUTPUT;

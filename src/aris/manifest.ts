@@ -30,8 +30,11 @@ export const VENDORED_SKILLS: readonly string[] = [
   'paper-compile',
   'paper-figure',
   'paper-plan',
+  'paper-slides',
+  'paper-talk',
   'paper-write',
   'prior-art-search',
+  'rebuttal',
   'render-html',
   'research-wiki',
 ];
@@ -123,6 +126,22 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
   {
     path: 'shared-references/writing-principles.md',
     sha256: '23142c901d034ab0b640a7f2c1ee3899f273020d9bf911134ef06ebfad61e5d8',
+  },
+  {
+    path: 'shared-references/effort-contract.md',
+    sha256: 'c1cb84a099d7d465ce71e0fc6c8fe7449c8273072b4cb977e0e58744d767f482',
+  },
+  {
+    path: 'skills/rebuttal/SKILL.md',
+    sha256: '52ec75bf57fb3ffe6ffdc8c468f69815a12dba4679b0a4f9ac2acb64ebadcb03',
+  },
+  {
+    path: 'skills/paper-slides/SKILL.md',
+    sha256: 'b20083823df5238ad94f6ff4431481ef65424a876fdd09102c1a936f0e5fde1a',
+  },
+  {
+    path: 'skills/paper-talk/SKILL.md',
+    sha256: '54c73cc91084ad64aa8bdb53887c58178146d4c608916818b2156161a8cbcb2a',
   },
   {
     path: 'skills/paper-compile/SKILL.md',
