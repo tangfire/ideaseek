@@ -494,6 +494,23 @@ export function relPathForHash(hash: string): string {
   return `sha256/${hex.slice(0, 2)}/${hex.slice(2, 4)}/${hex}`;
 }
 
+/**
+ * Consistent online snapshot of a workflow DB (Phase 7 backup adapter,
+ * OPERATIONS 备份与恢复). `VACUUM INTO` reads through the WAL while other
+ * connections hold the DB open and writes a fresh database at destPath
+ * (which must not already exist). Lives in this adapter because only this
+ * module may import node:sqlite (ADR ports/adapters guard); callers never
+ * touch a connection themselves.
+ */
+export function vacuumSqliteInto(sourcePath: string, destPath: string): void {
+  const source = new DatabaseSync(sourcePath, { readOnly: true });
+  try {
+    source.exec(`VACUUM INTO '${destPath.replace(/'/g, "''")}'`);
+  } finally {
+    source.close();
+  }
+}
+
 function cancelError(): TaskError {
   return {
     code: 'CANCELED_BY_USER',
