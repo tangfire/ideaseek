@@ -116,23 +116,124 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'dataset-candidates-v1') {
+    // Deterministic Dataset Discovery enrichment: candidates are grounded 1:1
+    // in the provided evidence records (name + evidenceId echo), so the real
+    // validator's anti-hallucination rules pass without a model.
+    const override = process.env.IDEASEEK_FAKE_DATASET_OUTPUT;
+    if (override != null) return override;
+    const context = readJsonContext(request) as {
+      evidence?: { evidenceId?: string; name?: string; paperKey?: string | null }[];
+    };
+    const evidence = Array.isArray(context.evidence) ? context.evidence : [];
+    const candidates = evidence.slice(0, 5).map((item) => ({
+      name: item.name ?? 'unknown',
+      task: 'fake-enriched task (deterministic provider)',
+      unit: 'unknown',
+      scale: null,
+      license: { value: 'unknown', confidence: 0, note: 'not stated in the provided sources' },
+      acquisition: 'unknown',
+      restricted: false,
+      size: 'unknown',
+      url: null,
+      indexId: null,
+      instructions: 'unknown — deterministic provider does not infer access terms',
+      relatedPapers: item.paperKey ? [item.paperKey] : [],
+      evidenceIds: [item.evidenceId ?? 'ev-missing'],
+      relevanceReason: 'grounded in the provided evidence for the research question',
+      confidence: 0.6,
+      confidenceBasis: ['deterministic provider enrichment grounded in one evidence record'],
+      notes: ['fake harness'],
+    }));
+    return JSON.stringify({
+      candidates,
+      notes: ['fake harness deterministic enrichment'],
+    });
+  }
   if (request.outputSchema === 'experiment-audit-v1') {
     const override = process.env.IDEASEEK_FAKE_AUDIT_OUTPUT;
     if (override != null) return override;
     const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number };
+    // Two live audit validators share this schema during the review-backend
+    // migration (src/idea/audit.ts for `ideaseek idea audit` vs
+    // src/review/review.ts for runReview, 02a98cb/cc4c23a): their check-id
+    // enums are disjoint (kebab+eval-type vs snake, all five required), so
+    // the fake serves the shape each caller validates. runReview sends a
+    // `review_input_manifest` fragment; the idea commands send
+    // `evidence_bundle`. Collapse to one output when the backends converge.
+    const arisSide = request.inputs.some((input) => input.name === 'review_input_manifest');
+    const checks = arisSide
+      ? [
+          {
+            id: 'gt_provenance',
+            status: 'PASS',
+            details: 'metrics use recorded ground truth',
+            evidence: 'experiment.result.metrics',
+          },
+          {
+            id: 'score_normalization',
+            status: 'PASS',
+            details: 'raw scores are not self-normalized',
+            evidence: 'plan.primaryMetric',
+          },
+          {
+            id: 'result_existence',
+            status: 'PASS',
+            details: 'result metrics exist in the bundle',
+            evidence: 'experiment.result.metrics',
+          },
+          {
+            id: 'dead_code',
+            status: 'PASS',
+            details: 'configured metrics are exercised',
+            evidence: 'experiment.spec.metrics',
+          },
+          {
+            id: 'scope',
+            status: 'PASS',
+            details: 'quick-scale scope is stated honestly',
+            evidence: 'experiment.spec.scale',
+          },
+        ]
+      : [
+          {
+            id: 'gt-provenance',
+            verdict: 'PASS',
+            detail: 'metrics use recorded ground truth',
+            evidence: 'experiment.result.metrics',
+          },
+          {
+            id: 'score-normalization',
+            verdict: 'PASS',
+            detail: 'raw scores are not self-normalized',
+            evidence: 'plan.primaryMetric',
+          },
+          {
+            id: 'result-existence',
+            verdict: 'PASS',
+            detail: 'result metrics exist in the bundle',
+            evidence: 'experiment.result.metrics',
+          },
+          {
+            id: 'dead-code',
+            verdict: 'PASS',
+            detail: 'configured metrics are exercised',
+            evidence: 'experiment.spec.metrics',
+          },
+          {
+            id: 'scope',
+            verdict: 'PASS',
+            detail: 'quick-scale scope is stated honestly',
+            evidence: 'experiment.spec.scale',
+          },
+        ];
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
       overallVerdict: 'PASS',
       overall: 'PASS',
       evalType: 'real_gt',
-      checks: [
-        { id: 'gt_provenance', status: 'PASS', details: 'metrics use recorded ground truth', evidence: 'experiment.result.metrics' },
-        { id: 'score_normalization', status: 'PASS', details: 'raw scores are not self-normalized', evidence: 'plan.primaryMetric' },
-        { id: 'result_existence', status: 'PASS', details: 'result metrics exist in the bundle', evidence: 'experiment.result.metrics' },
-        { id: 'dead_code', status: 'PASS', details: 'configured metrics are exercised', evidence: 'experiment.spec.metrics' },
-        { id: 'scope', status: 'PASS', details: 'quick-scale scope is stated honestly', evidence: 'experiment.spec.scale' },
-      ],
+      checks,
       claims: [],
       summary: 'results are internally consistent with the recorded plan',
     });
@@ -140,7 +241,11 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;
-    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number; round?: number };
+    const context = readJsonContext(request) as {
+      ideaId?: string;
+      cardVersion?: number;
+      round?: number;
+    };
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
@@ -148,9 +253,14 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       score: 7,
       verdict: 'ready',
       summary: 'fake idea review: artifacts are consistent with the plan primary metric',
+      // Union weakness shape: src/idea/review.ts validates {severity, text}
+      // while the migrating src/review/review.ts validates
+      // {severity, detail, minimumFix}; each validator ignores the other's
+      // extra keys, so one payload satisfies both until they converge.
       weaknesses: [
         {
           severity: 'minor',
+          text: 'single seed — widen before claiming',
           detail: 'single seed — widen before claiming',
           minimumFix: 'run at least one additional seed',
         },

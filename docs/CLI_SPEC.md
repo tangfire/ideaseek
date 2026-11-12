@@ -51,6 +51,8 @@ ideaseek data slices
 ideaseek datasets discover --question "..."
 ideaseek datasets list
 ideaseek datasets explain <candidate-id>
+ideaseek datasets authorize <candidate-id> --grant|--deny --reason "..." [--confirm]
+ideaseek datasets link <candidate-id> --path <file>
 ideaseek experiment promote --idea <id> --to standard
 ideaseek experiment handoff --idea <id>
 ideaseek paper export --run <id> --format overleaf --out <path>

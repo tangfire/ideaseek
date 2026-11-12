@@ -1,6 +1,7 @@
 import { IdeaseekError } from '../core/errors.js';
 import { sha256OfJson } from '../core/hash.js';
 import { loadCompactCards } from '../knowledge/cards.js';
+import { discoveryCandidatesNote } from '../knowledge/dataset-discovery.js';
 import {
   PROTOCOL_INSTRUCTION,
   PROTOCOL_PROMPT_VERSION,
@@ -67,6 +68,11 @@ export const protocolPropose: TaskHandler = async (ctx: TaskContext) => {
     (error as IdeaseekError & { permanent?: boolean }).permanent = true;
     throw error;
   }
+  const datasetProfile = await loadDatasetProfile(ctx);
+  // No registered dataset → surface discovered candidates as recommendations
+  // only, so the proposal never treats them as experiment inputs (Phase 4.5B).
+  const discoveryNote =
+    datasetProfile === null ? await discoveryCandidatesNote(ctx.runtime.paths.knowledgeDir) : null;
   const input = buildProtocolInput({
     // Same source as the propose command (config snapshot, not the run's
     // adopt-fallback question) so incremental input hashes match.
@@ -74,7 +80,8 @@ export const protocolPropose: TaskHandler = async (ctx: TaskContext) => {
       (ctx.run.config.research as { question?: string } | undefined)?.question ?? '',
     ),
     cards,
-    datasetProfile: await loadDatasetProfile(ctx),
+    datasetProfile,
+    discoveryNote,
   });
   const inputHash = await sha256OfJson({
     inputs: input,

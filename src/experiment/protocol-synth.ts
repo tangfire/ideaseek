@@ -34,6 +34,8 @@ export function buildProtocolInput(opts: {
   question: string;
   cards: CompactCard[];
   datasetProfile: DatasetProfileSummary | null;
+  /** Suffix from knowledge/dataset-candidates.json when discovery ran (Phase 4.5B). */
+  discoveryNote?: string | null;
 }): ProtocolInput {
   return {
     question: opts.question || '(no research question configured)',
@@ -55,7 +57,9 @@ export function buildProtocolInput(opts: {
     dataset: opts.datasetProfile ?? {
       present: false,
       files: [],
-      note: 'no user dataset registered (datasets/ empty or unscanned) — data-dependent rules must be low-confidence agent-inference and flagged for user confirmation',
+      note:
+        'no user dataset registered (datasets/ empty or unscanned) — data-dependent rules must be low-confidence agent-inference and flagged for user confirmation' +
+        (opts.discoveryNote ? `; ${opts.discoveryNote}` : ''),
     },
   };
 }

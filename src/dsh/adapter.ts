@@ -20,6 +20,7 @@ export type HarnessProfile =
   | 'paper-extractor'
   | 'evidence-checker'
   | 'synthesis-analyst'
+  | 'dataset-discovery'
   | 'idea-generator'
   | 'experiment-designer'
   | 'reviewer'
@@ -133,4 +134,3 @@ export interface HarnessAdapter {
   health(): Promise<HarnessHealth>;
   shutdown(): Promise<void>;
 }
-

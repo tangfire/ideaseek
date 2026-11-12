@@ -17,6 +17,7 @@ export const ROLE_TIERS: Record<string, ModelTier> = {
   synthesis_analyst: 'balanced',
   protocol_synthesis: 'deep',
   comparison_discovery: 'balanced',
+  dataset_discovery: 'balanced',
   baseline_repair: 'balanced',
   baseline_reproduction: 'deep',
   mechanism_analyst: 'deep',
