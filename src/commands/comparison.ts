@@ -7,6 +7,9 @@ import { stringify } from 'yaml';
 import { importComparisonRepo } from '../comparison/importer.js';
 import { buildCandidates } from '../comparison/discover.js';
 import { evaluateComparisonGate } from '../comparison/gate.js';
+import { buildEntrySuggestions } from '../comparison/entry-suggest.js';
+import { assertWorktree } from '../comparison/repair.js';
+import { analyzeRepository } from '../knowledge/repository.js';
 import { assertAutonomy, parseAutonomyMode, recordDecision } from '../workflow/autonomy.js';
 import {
   COMPARISON_TRANSITIONS,
@@ -576,11 +579,14 @@ export function registerComparisonCommand(program: Command): void {
           if (!doc) throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${methodId} not found`);
           const method = toMethod(doc.record);
           const worktreeDir = join(root, 'comparisons', methodId, 'worktree');
-          const command: string[] = Array.isArray(method.entry)
-            ? method.entry
-            : typeof method.entry === 'string' && method.entry.trim()
-              ? method.entry.trim().split(/\s+/)
-              : ['python', '--version'];
+          const entryConfigured =
+            (Array.isArray(method.entry) && method.entry.length > 0) ||
+            (typeof method.entry === 'string' && method.entry.trim().length > 0);
+          const command: string[] = !entryConfigured
+            ? ['python', '--version'] // placeholder: proves nothing about the method
+            : Array.isArray(method.entry)
+              ? method.entry
+              : String(method.entry).trim().split(/\s+/);
           const timeoutMs = Number.isFinite(opts.timeout) ? (opts.timeout as number) : 120_000;
 
           // Reuse the shared bounded runner (same path as baseline repair) —
@@ -662,6 +668,7 @@ export function registerComparisonCommand(program: Command): void {
                 durationMs,
                 status: record.status,
                 logPath,
+                entryConfigured,
               }),
             );
           } else {
@@ -669,8 +676,120 @@ export function registerComparisonCommand(program: Command): void {
               `smoke ${methodId}: ${passed ? 'PASSED' : 'FAILED'} (exit ${outcome.exitCode}, ${durationMs}ms) → status ${record.status}\n`,
             );
             process.stdout.write(`  log: ${logPath}\n`);
+            if (!entryConfigured) {
+              process.stdout.write(
+                `  note: no entry configured — placeholder ran; next: ideaseek comparison suggest-entry ${methodId}\n`,
+              );
+            }
           }
           return passed ? 0 : 1;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  comparison
+    .command('suggest-entry')
+    .description(
+      'analyze the method worktree and suggest bounded smoke entry commands (never runs them)',
+    )
+    .argument('<methodId>', 'comparison method id')
+    .option('--apply <n>', 'persist suggestion #n as the method entry', (value) => Number(value))
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (methodId: string, opts: { apply?: number; json?: boolean }) => {
+        const root = await openRoot();
+        const runtime = await openRuntime(root);
+        try {
+          const doc = await runtime.db.getComparison(methodId);
+          if (!doc) {
+            throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${methodId} not found`);
+          }
+          const method = toMethod(doc.record);
+          const worktreeDir = join(root, 'comparisons', methodId, 'worktree');
+          await assertWorktree(worktreeDir);
+
+          // Read-only analysis of the isolated worktree (Codebase Analyst).
+          const understanding = await analyzeRepository(worktreeDir, {
+            projectRoot: root,
+          });
+          const suggestions = buildEntrySuggestions(understanding);
+          const currentEntry = Array.isArray(method.entry)
+            ? method.entry
+            : typeof method.entry === 'string' && method.entry.trim()
+              ? method.entry.trim().split(/\s+/)
+              : null;
+
+          if (opts.apply !== undefined) {
+            const index = opts.apply;
+            if (!Number.isInteger(index) || index < 1 || index > suggestions.length) {
+              throw new IdeaseekError(
+                'INVALID_ARGUMENT',
+                suggestions.length === 0
+                  ? 'no entry suggestions discovered in the worktree; set one explicitly with: ideaseek baseline repair --method <id> --entry "..."'
+                  : `--apply must be 1..${suggestions.length}`,
+              );
+            }
+            const picked = suggestions[index - 1]!;
+            const updated: ComparisonMethod = {
+              ...method,
+              entry: picked.argv,
+              updatedAt: Date.now(),
+            };
+            await runtime.db.upsertComparison({
+              methodId,
+              status: updated.status,
+              required: updated.required,
+              record: updated as unknown as Record<string, unknown>,
+              updatedAt: updated.updatedAt,
+            });
+            await exportMethodYaml(root, updated);
+            if (opts.json) {
+              process.stdout.write(jsonLine({ methodId, applied: picked, entryConfigured: true }));
+            } else {
+              process.stdout.write(`applied entry to ${methodId}: ${picked.argv.join(' ')}\n`);
+              process.stdout.write(`  verifies: ${picked.verifies}\n`);
+              process.stdout.write(`next: ideaseek comparison smoke ${methodId}\n`);
+            }
+            return 0;
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                methodId,
+                worktree: worktreeDir,
+                snapshotHash: understanding.source.snapshotHash,
+                currentEntry,
+                needsConfirmation: understanding.needsConfirmation,
+                suggestions,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `entry suggestions for ${methodId} (worktree analyzed; nothing runs without --apply):\n`,
+          );
+          if (suggestions.length === 0) {
+            process.stdout.write(
+              '  (none discovered — set one explicitly: ideaseek baseline repair --method <id> --entry "...")\n',
+            );
+          }
+          suggestions.forEach((suggestion, index) => {
+            process.stdout.write(
+              `  [${index + 1}] ${suggestion.kind.padEnd(5)} ${suggestion.path}  conf=${suggestion.confidence.toFixed(2)}\n`,
+            );
+            process.stdout.write(`      → ${suggestion.argv.join(' ')}\n`);
+            process.stdout.write(`      verifies: ${suggestion.verifies}\n`);
+          });
+          process.stdout.write(
+            `current entry: ${currentEntry ? currentEntry.join(' ') : '(none — smoke runs the python --version placeholder)'}\n`,
+          );
+          process.stdout.write(
+            `next: ideaseek comparison suggest-entry ${methodId} --apply <n>   (persists; then ideaseek comparison smoke ${methodId})\n`,
+          );
+          return 0;
         } finally {
           await runtime.close();
         }
