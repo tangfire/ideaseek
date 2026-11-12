@@ -118,16 +118,16 @@ export async function collectContext(root: string): Promise<ContextReport> {
       const { listWorkspaces } = await import('../idea/workspace.js');
       const { loadStoredPlan } = await import('../experiment/plan.js');
       const { readNoveltyReport } = await import('../idea/novelty.js');
-      const { readLatestReview } = await import('../idea/review.js');
+      const { readLatestIdeaReview } = await import('../idea/gates.js');
       for (const workspace of await listWorkspaces(root)) {
         const plan = await loadStoredPlan(runtime, workspace.ideaId);
         const novelty = await readNoveltyReport(root, workspace.ideaId);
-        const review = await readLatestReview(root, workspace.ideaId);
+        const review = await readLatestIdeaReview(root, workspace.ideaId);
         ideas.push({
           ideaId: workspace.ideaId,
           plan: plan ? plan.inputHash.slice(0, 19) : null,
           novelty: novelty ? novelty.inputHash.slice(0, 19) : null,
-          review: review ? `r${review.round}:${review.inputHash.slice(0, 13)}` : null,
+          review: review ? `v${review.version}:${review.inputHash.slice(0, 19)}` : null,
         });
       }
     } catch {

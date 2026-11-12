@@ -11,7 +11,7 @@ import { assessIdeaCard } from './card.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import type { IdeaCheckReport } from './check.js';
 import { assertNoveltyClear, readNoveltyReport } from './novelty.js';
-import { assertReviewClear, readLatestReview } from './review.js';
+import { assertIdeaReviewClear, readLatestIdeaReview } from './gates.js';
 
 /**
  * ExperimentSpec/RunResult wiring for ideas (plan §E, DATA_CONTRACTS): every
@@ -753,8 +753,8 @@ export async function runIdeaExperiment(
 
   // Independent-review gate (capability 5): a CURRENT failing review round
   // stops the run unless waived with an audited reason (CLI records it).
-  const review = await readLatestReview(projectRoot, ideaId);
-  assertReviewClear(
+  const review = await readLatestIdeaReview(projectRoot, ideaId);
+  assertIdeaReviewClear(
     review,
     { ideaId, cardVersion: meta.currentVersion },
     {

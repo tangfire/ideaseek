@@ -42,7 +42,7 @@ export async function collectIdeaEvidence(
   const { join } = await import('node:path');
   const { loadStoredPlan } = await import('../experiment/plan.js');
   const { readNoveltyReport } = await import('./novelty.js');
-  const { readLatestReview } = await import('./review.js');
+  const { readLatestIdeaReview } = await import('./gates.js');
 
   let checkReport: unknown = null;
   try {
@@ -62,7 +62,7 @@ export async function collectIdeaEvidence(
     experiment: await runtime.db.getExperiment(`idea-${ideaId}`),
     plan: await loadStoredPlan(runtime, ideaId),
     novelty: await readNoveltyReport(root, ideaId),
-    review: opts.includeReviews === false ? null : await readLatestReview(root, ideaId),
+    review: opts.includeReviews === false ? null : await readLatestIdeaReview(root, ideaId),
     ablations,
   };
 }

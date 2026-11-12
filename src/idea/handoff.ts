@@ -9,7 +9,7 @@ import type { ExperimentSpec } from '../experiment/spec.js';
 import { collectAnalysisInput } from './analyze.js';
 import { analyzeIdea, type IdeaAnalysis } from './analysis.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
-import { readAudit } from './audit.js';
+import { currentExperimentAuditVerdict, readLatestExperimentAudit } from './gates.js';
 import { readClaimAudit } from './claim-audit.js';
 import { probeCapacity } from '../runtime/capacity.js';
 
@@ -203,8 +203,11 @@ export async function buildIdeaHandoff(
       continue;
     }
   }
-  const audit = await readAudit(projectRoot, ideaId);
-  const currentAudit = audit && audit.cardVersion === meta.currentVersion ? audit : null;
+  const audit = await readLatestExperimentAudit(projectRoot, ideaId);
+  const currentAudit = currentExperimentAuditVerdict(audit, {
+    ideaId,
+    cardVersion: meta.currentVersion,
+  });
   const evidenceAudit = await readClaimAudit(projectRoot, ideaId);
   const currentEvidence =
     evidenceAudit && evidenceAudit.cardVersion === meta.currentVersion ? evidenceAudit : null;
@@ -213,8 +216,8 @@ export async function buildIdeaHandoff(
     scalesRun: [...succeededScales].sort(),
     seedsCount: analysis.coverage.seeds,
     comparisonGateOk: comparisonGate.ok,
-    auditVerdict: currentAudit?.overallVerdict ?? null,
-    auditSummary: currentAudit?.summary,
+    auditVerdict: currentAudit.verdict,
+    auditSummary: currentAudit.summary,
     evidenceAuditVerdict: currentEvidence?.verdict ?? null,
   });
 

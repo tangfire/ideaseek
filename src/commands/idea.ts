@@ -32,7 +32,7 @@ import {
   type IdeaRunStatus,
 } from '../idea/workspace.js';
 import { findProjectRoot } from '../config/paths.js';
-import { action, jsonLine } from './shared.js';
+import { action, buildHarness, jsonLine } from './shared.js';
 
 async function openRoot(): Promise<string> {
   const root = await findProjectRoot(process.cwd());
@@ -802,118 +802,83 @@ export function registerIdeaCommand(program: Command): void {
       '--harness <kind>',
       'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
     )
-    .option('--force', 'start a NEW review round instead of reusing the latest one')
+    .option('--force', 're-review identical inputs as a NEW append-only version')
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
           const root = await openRoot();
-          const meta = await loadWorkspaceMeta(root, ideaId);
-          const card = await loadIdeaCard(root, ideaId);
-          const { loadArisSkill } = await import('../aris/skill.js');
-          const skill = await loadArisSkill('auto-review-loop');
-          const {
-            buildReviewRequest,
-            evidenceDigest,
-            isReviewPassing,
-            latestReviewRound,
-            parseReviewOutput,
-            readReviewRound,
-            reviewRoundPath,
-            writeReviewRound,
-          } = await import('../idea/review.js');
-          const { collectIdeaEvidence } = await import('../idea/evidence.js');
+          await loadWorkspaceMeta(root, ideaId); // fail fast on an unknown idea
           const { ProjectRuntime } = await import('../workflow/runtime.js');
-
-          // Evidence bundle: raw artifacts only — the reviewer never sees an
-          // executor summary or its own prior rounds (fresh context, ARIS).
-          const gather = await ProjectRuntime.open({ cwd: root, recover: false });
-          let bundle: Awaited<ReturnType<typeof collectIdeaEvidence>>;
-          let latest = 0;
-          try {
-            bundle = await collectIdeaEvidence(root, ideaId, card, gather, {
-              includeReviews: false,
-            });
-            latest = await latestReviewRound(root, ideaId);
-          } finally {
-            await gather.close();
-          }
-
-          const nextRound = latest + 1;
-          const request = buildReviewRequest(skill, {
-            ideaId,
-            cardVersion: meta.currentVersion,
-            round: opts.force ? nextRound : Math.max(latest, 1),
-            bundle,
+          const runtime = await ProjectRuntime.open({
+            cwd: root,
+            harness: buildHarness(opts.harness),
           });
-
-          // Reuse the latest round when the evidence digest is unchanged.
-          if (!opts.force && latest > 0) {
-            const existing = await readReviewRound(root, ideaId, latest);
-            if (existing && existing.inputHash === request.inputHash) {
-              if (opts.json) {
-                process.stdout.write(
-                  jsonLine({
-                    ideaId,
-                    reused: true,
-                    round: existing.round,
-                    score: existing.score,
-                    verdict: existing.verdict,
-                    reviewerModel: existing.reviewerModel,
-                    passing: isReviewPassing(existing),
-                    path: `ideas/${ideaId}/reviews/round-${existing.round}.json`,
-                  }),
-                );
-              } else {
-                process.stdout.write(
-                  `reused review round ${existing.round} for ${ideaId}: ` +
-                    `${existing.verdict} (score ${existing.score}/10, reviewer ${existing.reviewerModel ?? 'unknown'})\n`,
-                );
-                process.stdout.write(
-                  isReviewPassing(existing)
-                    ? 'next: ideaseek idea experiment <ideaId>\n'
-                    : 'next: address the weaknesses, then ideaseek idea review <ideaId> --force\n',
-                );
-              }
+          await runtime.harness?.initialize();
+          try {
+            if (!runtime.harness) {
+              throw new IdeaseekError('INVALID_ARGUMENT', 'review requires a model harness');
+            }
+            const { runReview } = await import('../review/review.js');
+            const { isIdeaReviewPassing } = await import('../idea/gates.js');
+            const result = await runReview({
+              runtime,
+              ideaId,
+              kind: 'idea-review',
+              harness: runtime.harness,
+              force: opts.force,
+            });
+            const artifact = result.artifact;
+            if (artifact.kind !== 'idea-review') {
+              throw new IdeaseekError(
+                'INTERNAL',
+                'review backend returned the wrong artifact kind',
+              );
+            }
+            const passing = isIdeaReviewPassing(artifact);
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  version: result.version,
+                  reused: result.reused,
+                  score: artifact.score,
+                  verdict: artifact.verdict,
+                  passing,
+                  summary: artifact.summary,
+                  weaknesses: artifact.weaknesses,
+                  reviewer: artifact.reviewer.identity,
+                  path: result.path,
+                  eventSeq: result.eventSeq,
+                }),
+              );
               return 0;
             }
-          }
-
-          const round = nextRound;
-          const { buildHarness } = await import('./shared.js');
-          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
-          const kind =
-            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
-          const harness = buildHarness(kind);
-          await harness.initialize();
-          let output: string;
-          let runtimeKind = kind;
-          let reviewerModel: string | null = null;
-          try {
-            const result = await harness.runTask({
-              runId: `idea:${ideaId}`,
-              taskId: `idea-review-${ideaId}-r${round}`,
-              profile: 'idea-generator',
-              instruction: request.instruction,
-              inputs: [
-                {
-                  kind: 'text',
-                  name: 'evidence_bundle',
-                  content: JSON.stringify({
-                    ideaId,
-                    cardVersion: meta.currentVersion,
-                    round,
-                    evidenceDigest: evidenceDigest(bundle),
-                  }),
-                },
-              ],
-              outputSchema: 'idea-review-v1',
-              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
-              idempotencyKey: request.idempotencyKey,
-            });
-            output = result.output;
-            runtimeKind = result.runtime.kind;
-            reviewerModel = result.model;
+            process.stdout.write(
+              `review ${ideaId} v${result.version}: ${artifact.verdict} (score ${artifact.score}/10)` +
+                `${result.reused ? ' — reused identical inputs' : ''}\n`,
+            );
+            process.stdout.write(
+              `  reviewer: ${artifact.reviewer.identity.model ?? 'unknown'} via ` +
+                `${artifact.reviewer.identity.runtime} (fresh context)\n`,
+            );
+            process.stdout.write(`  ${artifact.summary}\n`);
+            for (const weakness of artifact.weaknesses) {
+              process.stdout.write(
+                `  [${weakness.severity}] ${weakness.detail} → ${weakness.minimumFix}\n`,
+              );
+            }
+            process.stdout.write(`  file: ${result.path}\n`);
+            if (result.eventSeq !== null) {
+              process.stdout.write(`  event #${result.eventSeq} recorded\n`);
+            }
+            process.stdout.write(
+              passing
+                ? 'next: ideaseek idea experiment <ideaId>\n'
+                : `next: address the weaknesses, then ideaseek idea review ${ideaId} --force ` +
+                    '(a fresh independent version) · experiments are blocked meanwhile\n',
+            );
+            return 0;
           } catch (error) {
             if (error instanceof Error && error.name === 'HarnessBlockError') {
               const block = (error as { block?: string }).block ?? 'BLOCKED';
@@ -929,187 +894,90 @@ export function registerIdeaCommand(program: Command): void {
             }
             throw error;
           } finally {
-            await harness.shutdown().catch(() => undefined);
+            await runtime.close();
           }
-
-          const review = parseReviewOutput(
-            output,
-            { ideaId, cardVersion: meta.currentVersion, round },
-            {
-              inputHash: request.inputHash,
-              skill: { name: skill.name, sha256: skill.sha256 },
-              harnessRuntime: runtimeKind,
-              reviewerModel,
-              evidenceDigest: evidenceDigest(bundle),
-            },
-          );
-          await writeReviewRound(root, review);
-
-          let eventSeq: number | null = null;
-          const audit = await ProjectRuntime.open({ cwd: root, recover: false });
-          try {
-            const run = await audit.db.getLatestRun(audit.project.id);
-            if (run) {
-              const event = await audit.db.appendEvent({
-                runId: run.runId,
-                phase: 'ANALYZING',
-                objectId: ideaId,
-                role: 'reviewer',
-                eventType: 'idea_review',
-                summary:
-                  `review round ${review.round} for ${ideaId}: ${review.verdict} ` +
-                  `(score ${review.score}/10, reviewer ${review.reviewerModel ?? 'unknown'})`,
-                status: review.verdict === 'not ready' ? 'changes-requested' : review.verdict,
-              });
-              eventSeq = event.seq;
-            }
-          } finally {
-            await audit.close();
-          }
-
-          const passing = isReviewPassing(review);
-          if (opts.json) {
-            process.stdout.write(
-              jsonLine({
-                ideaId,
-                reused: false,
-                round: review.round,
-                score: review.score,
-                verdict: review.verdict,
-                passing,
-                reviewerModel: review.reviewerModel,
-                weaknesses: review.weaknesses.length,
-                evidenceDigest: review.evidenceDigest,
-                path: `ideas/${ideaId}/reviews/round-${review.round}.json`,
-                eventSeq,
-              }),
-            );
-            return 0;
-          }
-
-          process.stdout.write(
-            `review ${ideaId} round ${review.round}: ${review.verdict} ` +
-              `(score ${review.score}/10) · reviewer ${review.reviewerModel ?? 'unknown'} ` +
-              `(ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)}, fresh context)\n`,
-          );
-          process.stdout.write(`  ${review.summary}\n`);
-          for (const weakness of review.weaknesses) {
-            process.stdout.write(`  [${weakness.severity}] ${weakness.text}\n`);
-          }
-          process.stdout.write(
-            `  file: ${reviewRoundPath(root, ideaId, review.round).replace(`${root}/`, '')}\n`,
-          );
-          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
-          if (passing) {
-            process.stdout.write('next: ideaseek idea experiment <ideaId>\n');
-          } else {
-            process.stdout.write(
-              `next: address the weaknesses, then ideaseek idea review ${ideaId} --force ` +
-                '(a fresh independent round) · experiments are blocked meanwhile\n',
-            );
-          }
-          return 0;
         },
       ),
     );
 
   idea
     .command('audit')
-    .description(
-      'cross-model experiment audit over the artifact bundle (ARIS experiment-audit backend)',
-    )
+    .description('cross-model experiment audit over idea artifacts (ARIS experiment-audit backend)')
     .argument('<ideaId>', 'kebab-case idea id')
     .option(
       '--harness <kind>',
       'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
     )
-    .option('--force', 'ignore a previous audit.json and regenerate')
+    .option('--force', 're-audit identical inputs as a NEW append-only version')
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
           const root = await openRoot();
-          const meta = await loadWorkspaceMeta(root, ideaId);
-          const card = await loadIdeaCard(root, ideaId);
-          const { loadArisSkill } = await import('../aris/skill.js');
-          const auditSkill = await loadArisSkill('experiment-audit');
-          const analyzeSkill = await loadArisSkill('analyze-results');
-          const { auditPath, buildAuditRequest, parseAuditOutput, readAudit, writeAudit } =
-            await import('../idea/audit.js');
-          const { collectIdeaEvidence } = await import('../idea/evidence.js');
+          await loadWorkspaceMeta(root, ideaId); // fail fast on an unknown idea
           const { ProjectRuntime } = await import('../workflow/runtime.js');
-
-          const gather = await ProjectRuntime.open({ cwd: root, recover: false });
-          let bundle: unknown;
+          const runtime = await ProjectRuntime.open({
+            cwd: root,
+            harness: buildHarness(opts.harness),
+          });
+          await runtime.harness?.initialize();
           try {
-            bundle = await collectIdeaEvidence(root, ideaId, card, gather);
-          } finally {
-            await gather.close();
-          }
-
-          const request = buildAuditRequest(
-            { audit: auditSkill, analyze: analyzeSkill },
-            { ideaId, cardVersion: meta.currentVersion, bundle },
-          );
-
-          if (!opts.force) {
-            const existing = await readAudit(root, ideaId);
-            if (existing && existing.inputHash === request.inputHash) {
-              if (opts.json) {
-                process.stdout.write(
-                  jsonLine({
-                    ideaId,
-                    reused: true,
-                    inputHash: existing.inputHash,
-                    overallVerdict: existing.overallVerdict,
-                    checks: existing.checks.length,
-                    path: `ideas/${ideaId}/experiments/audit.json`,
-                  }),
-                );
-              } else {
-                process.stdout.write(
-                  `reused experiment audit for ${ideaId}: ${existing.overallVerdict} ` +
-                    `(${existing.checks.length} check(s))\n`,
-                );
-                process.stdout.write('next: regenerate with --force after new results\n');
-              }
-              return 0;
+            if (!runtime.harness) {
+              throw new IdeaseekError('INVALID_ARGUMENT', 'audit requires a model harness');
             }
-          }
-
-          const { buildHarness } = await import('./shared.js');
-          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
-          const kind =
-            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
-          const harness = buildHarness(kind);
-          await harness.initialize();
-          let output: string;
-          let runtimeKind = kind;
-          let reviewerModel: string | null = null;
-          try {
-            const result = await harness.runTask({
-              runId: `idea:${ideaId}`,
-              taskId: `idea-audit-${ideaId}`,
-              profile: 'idea-generator',
-              instruction: request.instruction,
-              inputs: [
-                {
-                  kind: 'text',
-                  name: 'evidence_bundle',
-                  content: JSON.stringify({
-                    ideaId,
-                    cardVersion: meta.currentVersion,
-                    evidenceDigest: request.inputHash,
-                  }),
-                },
-              ],
-              outputSchema: 'experiment-audit-v1',
-              budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
-              idempotencyKey: request.idempotencyKey,
+            const { runReview } = await import('../review/review.js');
+            const result = await runReview({
+              runtime,
+              ideaId,
+              kind: 'experiment-audit',
+              harness: runtime.harness,
+              force: opts.force,
             });
-            output = result.output;
-            runtimeKind = result.runtime.kind;
-            reviewerModel = result.model;
+            const artifact = result.artifact;
+            if (artifact.kind !== 'experiment-audit') {
+              throw new IdeaseekError('INTERNAL', 'audit backend returned the wrong artifact kind');
+            }
+            const failing = artifact.overall === 'FAIL';
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  version: result.version,
+                  reused: result.reused,
+                  overall: artifact.overall,
+                  evalType: artifact.evalType,
+                  checks: artifact.checks,
+                  summary: artifact.summary,
+                  reviewer: artifact.reviewer.identity,
+                  path: result.path,
+                  eventSeq: result.eventSeq,
+                }),
+              );
+              return failing ? 2 : 0;
+            }
+            process.stdout.write(
+              `experiment audit ${ideaId} v${result.version}: ${artifact.overall}` +
+                `${result.reused ? ' — reused identical inputs' : ''} · eval ${artifact.evalType}\n`,
+            );
+            for (const check of artifact.checks) {
+              process.stdout.write(
+                `  ${check.status.padEnd(4)} ${check.id.padEnd(22)} ${check.details}\n` +
+                  `       evidence: ${check.evidence}\n`,
+              );
+            }
+            process.stdout.write(`  ${artifact.summary}\n`);
+            process.stdout.write(`  file: ${result.path}\n`);
+            if (result.eventSeq !== null) {
+              process.stdout.write(`  event #${result.eventSeq} recorded\n`);
+            }
+            process.stdout.write(
+              failing
+                ? 'next: handoff delivery is blocked while this audit FAILs — fix the findings, then rerun with --force\n'
+                : artifact.overall === 'WARN'
+                  ? 'next: warnings ship inside the handoff package (visible, non-blocking)\n'
+                  : 'next: ideaseek idea handoff <ideaId>\n',
+            );
+            return failing ? 2 : 0;
           } catch (error) {
             if (error instanceof Error && error.name === 'HarnessBlockError') {
               const block = (error as { block?: string }).block ?? 'BLOCKED';
@@ -1125,91 +993,8 @@ export function registerIdeaCommand(program: Command): void {
             }
             throw error;
           } finally {
-            await harness.shutdown().catch(() => undefined);
+            await runtime.close();
           }
-
-          const audit = parseAuditOutput(
-            output,
-            { ideaId, cardVersion: meta.currentVersion },
-            {
-              inputHash: request.inputHash,
-              skills: {
-                audit: { name: auditSkill.name, sha256: auditSkill.sha256 },
-                analyze: { name: analyzeSkill.name, sha256: analyzeSkill.sha256 },
-              },
-              harnessRuntime: runtimeKind,
-              reviewerModel,
-              evidenceDigest: request.evidenceDigest,
-            },
-          );
-          await writeAudit(root, audit);
-
-          let eventSeq: number | null = null;
-          const runAudit = await ProjectRuntime.open({ cwd: root, recover: false });
-          try {
-            const run = await runAudit.db.getLatestRun(runAudit.project.id);
-            if (run) {
-              const event = await runAudit.db.appendEvent({
-                runId: run.runId,
-                phase: 'ANALYZING',
-                objectId: ideaId,
-                role: 'reviewer',
-                eventType: 'experiment_audit',
-                summary:
-                  `experiment audit ${audit.overallVerdict} for ${ideaId} ` +
-                  `(${audit.checks.length} check(s), reviewer ${audit.reviewerModel ?? 'unknown'})`,
-                status: audit.overallVerdict.toLowerCase(),
-              });
-              eventSeq = event.seq;
-            }
-          } finally {
-            await runAudit.close();
-          }
-
-          if (opts.json) {
-            process.stdout.write(
-              jsonLine({
-                ideaId,
-                reused: false,
-                inputHash: audit.inputHash,
-                overallVerdict: audit.overallVerdict,
-                checks: audit.checks.map((check) => ({ id: check.id, verdict: check.verdict })),
-                claims: audit.claims.length,
-                reviewerModel: audit.reviewerModel,
-                path: `ideas/${ideaId}/experiments/audit.json`,
-                eventSeq,
-              }),
-            );
-            return 0;
-          }
-
-          process.stdout.write(
-            `experiment audit ${ideaId} v${meta.currentVersion}: ${audit.overallVerdict} ` +
-              `· reviewer ${audit.reviewerModel ?? 'unknown'} ` +
-              `(ARIS ${auditSkill.name} @ ${auditSkill.sha256.slice(0, 12)})\n`,
-          );
-          for (const check of audit.checks) {
-            process.stdout.write(
-              `  ${check.verdict.padEnd(4)} ${check.id.padEnd(22)} ${check.detail}\n` +
-                `       evidence: ${check.evidence}\n`,
-            );
-          }
-          process.stdout.write(`  ${audit.summary}\n`);
-          process.stdout.write(`  file: ${auditPath(root, ideaId).replace(`${root}/`, '')}\n`);
-          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
-          if (audit.overallVerdict === 'FAIL') {
-            process.stdout.write(
-              'next: handoff delivery is blocked while this audit FAILs — fix the findings, ' +
-                `then ideaseek idea audit ${ideaId} --force\n`,
-            );
-          } else if (audit.overallVerdict === 'WARN') {
-            process.stdout.write(
-              'next: warnings ship inside the handoff package (visible, non-blocking)\n',
-            );
-          } else {
-            process.stdout.write('next: ideaseek idea handoff <ideaId>\n');
-          }
-          return 0;
         },
       ),
     );
@@ -1760,7 +1545,8 @@ export function registerIdeaCommand(program: Command): void {
             let waiverSeq: number | null = null;
             if (opts.waiveNovelty || opts.waiveReview) {
               const { readNoveltyReport } = await import('../idea/novelty.js');
-              const { readLatestReview, isReviewPassing } = await import('../idea/review.js');
+              const { readLatestIdeaReview, isIdeaReviewPassing } =
+                await import('../idea/gates.js');
               const { loadWorkspaceMeta } = await import('../idea/workspace.js');
               const metaW = await loadWorkspaceMeta(root, ideaId);
               const run = await runtime.db.getLatestRun(runtime.project.id);
@@ -1782,12 +1568,12 @@ export function registerIdeaCommand(program: Command): void {
                 });
                 waiverSeq = event.seq;
               }
-              const review = opts.waiveReview ? await readLatestReview(root, ideaId) : null;
+              const review = opts.waiveReview ? await readLatestIdeaReview(root, ideaId) : null;
               if (
                 run &&
                 review &&
-                review.cardVersion === metaW.currentVersion &&
-                !isReviewPassing(review)
+                review.target.cardVersion === metaW.currentVersion &&
+                !isIdeaReviewPassing(review)
               ) {
                 const event = await runtime.db.appendEvent({
                   runId: run.runId,
@@ -1796,7 +1582,7 @@ export function registerIdeaCommand(program: Command): void {
                   role: 'user',
                   eventType: 'decision',
                   summary:
-                    `review-waived: ${ideaId} round ${review.round} ${review.verdict} ` +
+                    `review-waived: ${ideaId} v${review.version} ${review.verdict} ` +
                     `(score ${review.score}) — ${opts.waiveReview}`,
                   status: 'confirmed',
                 });
