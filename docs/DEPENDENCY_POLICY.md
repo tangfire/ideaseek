@@ -64,7 +64,7 @@
 ## 当前待办
 
 - 以 Ink 完成 interactive TTY 应用壳，并删除旧的默认 readline/ANSI 重绘路径。（✅ 2026-11-12 完成：`src/cli/shell/app.tsx` 为唯一 TTY renderer，行式路径仅服务 plain/json/非 TTY）
-- 评估 JSON Schema 校验器，统一 TypeScript、Python worker 和 ARIS 结构化契约。（校验器已定 ajv 并接入 papercard-v1 持久化边界；Python worker 读取同一 JSON schema 文件、ARIS 输出契约迁移待后续切片）
+- 评估 JSON Schema 校验器，统一 TypeScript、Python worker 和 ARIS 结构化契约。（校验器已定 ajv；已接入 papercard-v1 持久化边界、parsed-paper-v1 读写双边界、experiment-spec-v1/run-result-v1 语义校验后的子集防线，共 4 契约 + 决策一致性测试；Python worker 读取同一 JSON schema 文件、ARIS 输出契约迁移待后续切片）
 - 评估跨平台子进程 adapter，覆盖 Windows/Linux 的超时、取消和进程树回收。（✅ 2026-11-13 完成：tree-kill + `src/core/proc.ts`，10 处 kill 调用点迁移，`tests/proc.test.ts` 7 条；POSIX 分支由同一套件在 Linux/WSL 执行）
 - 评估 GitHub API adapter，仅用于元数据、license、release 和限额，不替代 Git clone。
 - 仅在需求出现时评估文件扫描、watch、结构化诊断日志和扩展归档解析库。

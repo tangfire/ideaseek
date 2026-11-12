@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/experiment-spec-v1.json",
+  "title": "IdeaSeek ExperimentSpec (experiment-spec-v1)",
+  "description": "Structural contract for ExperimentSpec, mirroring validateExperimentSpec exactly (decision-parity tested). Semantic rules — spec hashing, version-bump identity, protocol locks — stay in src/experiment/spec.ts; loose object fields (environment/resources/budget) stay deliberately untyped here because the TS validator only requires objects. Cross-language consumers (Python runners, ARIS skills) read this file.",
+  "type": "object",
+  "required": [
+    "specId",
+    "version",
+    "comparisonIds",
+    "codeCommit",
+    "dataSnapshotId",
+    "sliceIds",
+    "environment",
+    "command",
+    "metrics",
+    "seeds",
+    "resources",
+    "budget",
+    "createdAt"
+  ],
+  "properties": {
+    "specId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "idea": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["ideaId", "version"],
+          "properties": {
+            "ideaId": { "type": "string" },
+            "version": { "type": "number" }
+          }
+        }
+      ]
+    },
+    "comparisonIds": { "type": "array", "items": { "type": "string" } },
+    "codeCommit": { "type": ["string", "null"] },
+    "dataSnapshotId": { "type": "string" },
+    "sliceIds": { "type": "array", "items": { "type": "string" } },
+    "environment": { "type": "object" },
+    "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "direction"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "direction": { "enum": ["higher", "lower"] }
+        }
+      }
+    },
+    "seeds": { "type": "array", "minItems": 1, "items": { "type": "integer" } },
+    "resources": { "type": "object" },
+    "budget": { "type": "object" },
+    "protocolId": { "type": ["string", "null"] },
+    "createdAt": { "type": "number" }
+  }
+}

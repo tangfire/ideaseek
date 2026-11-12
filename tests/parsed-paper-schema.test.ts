@@ -29,7 +29,8 @@ function pythonEmitted(): Record<string, unknown> {
 
 describe('parsed-paper-v1 schema', () => {
   it('is registered alongside papercard-v1', () => {
-    expect(listSchemaNames()).toEqual(['papercard-v1', 'parsed-paper-v1']);
+    expect(listSchemaNames()).toContain('papercard-v1');
+    expect(listSchemaNames()).toContain('parsed-paper-v1');
   });
 
   const accepted: Record<string, unknown>[] = [

@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { IdeaseekError } from '../core/errors.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import {
   computeSpecHash,
   validateExperimentSpec,
@@ -97,6 +98,10 @@ export function registerExperimentCommand(program: Command): void {
         const root = await openRoot();
         const value = await readJsonFile(file);
         const validation = validateExperimentSpec(value);
+        // Defense in depth (JSON Schema authority): the semantic validator
+        // runs first (stable messages); the shared contract then re-checks
+        // structure so a future loosened validator cannot widen the gate.
+        if (validation.ok) assertAgainstSchema('experiment-spec-v1', value);
         if (!validation.ok) {
           throw new IdeaseekError(
             'INVALID_ARGUMENT',
@@ -158,6 +163,7 @@ export function registerExperimentCommand(program: Command): void {
         const root = await openRoot();
         const value = await readJsonFile(file);
         const validation = validateRunResult(value);
+        if (validation.ok) assertAgainstSchema('run-result-v1', value);
         if (!validation.ok) {
           throw new IdeaseekError(
             'INVALID_ARGUMENT',

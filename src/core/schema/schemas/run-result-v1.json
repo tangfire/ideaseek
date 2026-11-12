@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/run-result-v1.json",
+  "title": "IdeaSeek RunResult (run-result-v1)",
+  "description": "Structural contract for RunResult, mirroring validateRunResult (decision-parity tested). failure is required AND non-null for failed | partial | invalid; the finishedAt >= startedAt time-order rule stays in the TS validator (JSON Schema cannot cross-reference two instance fields without $data extensions) — the schema is therefore a sound subset: everything the validator accepts passes this schema. Cross-language consumers read this file.",
+  "type": "object",
+  "required": [
+    "specId",
+    "status",
+    "logRefs",
+    "artifactRefs",
+    "metrics",
+    "resourcesUsed",
+    "startedAt",
+    "finishedAt"
+  ],
+  "properties": {
+    "specId": { "type": "string" },
+    "status": { "enum": ["succeeded", "failed", "partial", "invalid"] },
+    "logRefs": { "type": "array", "items": { "type": "string" } },
+    "artifactRefs": { "type": "array", "items": { "type": "string" } },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "value"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "value": { "type": "number" },
+          "stdev": { "type": "number", "minimum": 0 },
+          "n": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "resourcesUsed": { "type": "object" },
+    "failure": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/failure" }]
+    },
+    "startedAt": { "type": "number" },
+    "finishedAt": { "type": "number" },
+    "explanation": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "enum": ["failed", "partial", "invalid"] } },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["failure"],
+        "properties": { "failure": { "$ref": "#/definitions/failure" } }
+      }
+    }
+  ],
+  "definitions": {
+    "failure": {
+      "type": "object",
+      "required": ["category", "summary"],
+      "properties": {
+        "category": {
+          "enum": [
+            "environment",
+            "dependency",
+            "data",
+            "timeout",
+            "resource",
+            "code",
+            "invalid-result",
+            "unknown"
+          ]
+        },
+        "summary": { "type": "string", "pattern": "\\S" }
+      }
+    }
+  }
+}
