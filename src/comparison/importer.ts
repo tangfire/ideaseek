@@ -3,6 +3,7 @@ import { access, mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { classifyLicense, type LicenseKind } from './discover.js';
+import { killTreeSafe } from '../core/proc.js';
 
 export interface GitResult {
   code: number;
@@ -41,7 +42,7 @@ export async function runGit(
     child.stdout?.on('data', (chunk) => (out += String(chunk)));
     child.stderr?.on('data', (chunk) => (out += String(chunk)));
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTreeSafe(child.pid);
       reject(new IdeaseekError('NETWORK_BLOCKED', `git ${args[0]} timed out`));
     }, opts.timeoutMs ?? 120_000);
     child.on('error', (error) => {

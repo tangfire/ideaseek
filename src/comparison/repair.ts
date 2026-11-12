@@ -13,6 +13,7 @@ import type {
   RepairRecord,
   RepairRoundOutcome,
 } from './types.js';
+import { killTreeSafe } from '../core/proc.js';
 
 /**
  * Baseline Repair engine (docs/plan.md §C.5–C.7): runs a method entry inside
@@ -230,7 +231,7 @@ export function runRepairCommand(
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killTreeSafe(child.pid);
     }, timeoutMs);
     child.on('error', (error) => {
       clearTimeout(timer);

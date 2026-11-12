@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IdeaseekError, type IdeaseekErrorCode } from '../core/errors.js';
+import { killTreeSafe } from '../core/proc.js';
 
 /** Stable failure codes the python dataset profiler may emit. */
 const DATASET_CODES = new Set<string>([
@@ -95,7 +96,7 @@ export async function profileFederatedDataset(
       let stdout = '';
       let stderr = '';
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        killTreeSafe(child.pid);
         reject(new IdeaseekError('PARSE_FAILED', 'dataset profiling timed out'));
       }, timeoutMs);
       child.stdout?.on('data', (chunk) => (stdout += String(chunk)));

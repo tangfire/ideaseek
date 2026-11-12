@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { runProcess } from '../core/proc.js';
 
 /**
  * Runs this same CLI in a child process so slash commands reuse the exact
@@ -23,33 +23,24 @@ export function cliEntryPath(): string {
   return ENTRY_AT_START;
 }
 
-export function runCli(
+export async function runCli(
   args: string[],
   opts: { cwd?: string; timeoutMs?: number } = {},
 ): Promise<CliRunResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliEntryPath(), ...args], {
-      cwd: opts.cwd ?? process.cwd(),
-      env: { ...process.env, IDEASEEK_CLI: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`ideaseek ${args.join(' ')} timed out`));
-    }, opts.timeoutMs ?? 30_000);
-    child.stdout.on('data', (chunk) => (stdout += String(chunk)));
-    child.stderr.on('data', (chunk) => (stderr += String(chunk)));
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout, stderr });
-    });
+  // Shared subprocess adapter: timeout kills the WHOLE tree (a relay child
+  // may itself have spawned python workers) instead of orphaning them.
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  // Spawn failures keep the historical rejection contract (runProcess
+  // rejects only when the process could not be started).
+  const result = await runProcess(process.execPath, [cliEntryPath(), ...args], {
+    cwd: opts.cwd ?? process.cwd(),
+    env: { ...process.env, IDEASEEK_CLI: '1' },
+    timeoutMs,
   });
+  if (result.timedOut) {
+    throw new Error(`ideaseek ${args.join(' ')} timed out`);
+  }
+  return { code: result.code ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
 /** Runs a CLI command and parses its single JSON-line payload. */

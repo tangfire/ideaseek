@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IdeaseekError, type IdeaseekErrorCode } from '../core/errors.js';
+import { killTreeSafe } from '../core/proc.js';
 
 /** Stable failure codes the python worker may emit (see worker/python/README). */
 const PARSER_CODES = new Set<string>([
@@ -97,7 +98,7 @@ export async function parsePdf(pdfPath: string, opts: ParsePdfOptions = {}): Pro
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTreeSafe(child.pid);
       reject(
         new IdeaseekError('PARSE_FAILED', `pdf parse timed out after ${timeoutMs}ms`, {
           pdfPath,
@@ -210,7 +211,7 @@ export async function extractTables(
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTreeSafe(child.pid);
       reject(new IdeaseekError('PARSE_FAILED', 'table extraction timed out'));
     }, timeoutMs);
     child.stdout.on('data', (chunk) => (stdout += String(chunk)));
@@ -286,7 +287,7 @@ export async function ocrPdf(pdfPath: string, opts: ParsePdfOptions = {}): Promi
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTreeSafe(child.pid);
       reject(new IdeaseekError('PARSE_FAILED', 'OCR timed out'));
     }, timeoutMs);
     child.stdout.on('data', (chunk) => (stdout += String(chunk)));

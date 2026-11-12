@@ -6,6 +6,7 @@ import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { existsSync } from 'node:fs';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import type { PaperSearchHit } from '../workflow/db.js';
+import { killTreeSafe } from '../core/proc.js';
 
 /**
  * Pluggable local embedding layer (user decision: local model, NO external
@@ -61,7 +62,7 @@ export async function installEmbeddingStack(opts: {
       child.stdout?.on('data', (chunk) => (out += String(chunk)));
       child.stderr?.on('data', (chunk) => (out += String(chunk)));
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        killTreeSafe(child.pid);
         reject(new IdeaseekError('INSTALL_FAILED', 'installation step timed out'));
       }, timeoutMs);
       child.on('error', (error) => {
@@ -199,7 +200,7 @@ function runEmbedWorker(
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTreeSafe(child.pid);
       reject(new IdeaseekError('INSTALL_FAILED', 'embedding worker timed out'));
     }, opts.timeoutMs);
     child.stdout?.on('data', (chunk) => (stdout += String(chunk)));

@@ -22,7 +22,7 @@
 | TUI | Ink 或同等级成熟 TUI 框架 | UI 与 use-case 的 adapter；plain/json 仍走行式输出 |
 | CLI 参数 | Commander | 命令到 application use-case 的映射 |
 | 契约校验 | JSON Schema (draft-07) + **ajv 8.20.0**（MIT，锁版本） | schema 版本、迁移、跨 TS/Python 的单一权威契约 |
-| 子进程 | 成熟跨平台进程库或已验证 adapter | 租约、超时、取消、失败分类和恢复语义 |
+| 子进程 | **tree-kill 1.2.2**（MIT，进程树回收）+ 本仓 `src/core/proc.ts` 薄 adapter | 租约、超时、取消、失败分类和恢复语义 |
 | GitHub | Git CLI + 可选 API adapter | 来源、commit、license、权限和审计记录 |
 | PDF/科学解析 | Python 生态成熟库 | 解析器版本、证据定位、哈希绑定和失败回退 |
 | 检索 | FTS/BM25 + 本地 embedding | 混合排序、缓存指纹和证据免责输出 |
@@ -41,6 +41,16 @@
 
 ## 已引入依赖记录
 
+### tree-kill 1.2.2（进程树回收）
+
+- **用途**：`killTree(pid)` 杀掉整棵进程树——Windows 走 `taskkill /T /F`，POSIX 走递归 ppid 遍历。没有它，`child.kill('SIGKILL')` 在 Windows 只杀直接子进程，node relay 背后的 python worker、cmd 包装的 pip 都会变孤儿。
+- **版本/许可证**：1.2.2（锁版本），MIT；自带 `index.d.ts` 类型。
+- **来源/维护**：npm `node-tree-kill`，多年事实标准、代码量极小、无传递依赖；功能稳定无需跟进上游。
+- **Windows/Linux 验证**：Windows 11 上 `tests/proc.test.ts` 7 条全绿（祖孙双进程树回收、超时、AbortSignal 取消、幂等、自身保护）；POSIX 分支由同一套测试在 Linux/WSL 执行（tree-kill 内部实现差异，adapter 语义不变）。
+- **adapter 边界**：`src/core/proc.ts` 只暴露 `killTree`/`killTreeSafe`/`runProcess`（超时、取消、退出码、失败标志）；租约、失败分类、恢复语义仍归 IdeaSeek。原 10 处 `child.kill('SIGKILL')` 调用点已迁移到该 adapter。
+- **替代方案**：execa（功能重叠更多、体积更大，当前只需要树杀+缓冲运行）、手写 taskkill/ps 分支（正是要避免的重复实现）。
+- **测试方式**：`tests/proc.test.ts`；runner/extract/repair/pdf/embeddings/importer 全量回归。
+
 ### ajv 8.20.0（契约校验）
 
 - **用途**：编译 `src/core/schema/schemas/*.json`（draft-07）做结构校验；`validateAgainstSchema`/`assertAgainstSchema` 是唯一入口。
@@ -55,7 +65,7 @@
 
 - 以 Ink 完成 interactive TTY 应用壳，并删除旧的默认 readline/ANSI 重绘路径。（✅ 2026-11-12 完成：`src/cli/shell/app.tsx` 为唯一 TTY renderer，行式路径仅服务 plain/json/非 TTY）
 - 评估 JSON Schema 校验器，统一 TypeScript、Python worker 和 ARIS 结构化契约。（校验器已定 ajv 并接入 papercard-v1 持久化边界；Python worker 读取同一 JSON schema 文件、ARIS 输出契约迁移待后续切片）
-- 评估跨平台子进程 adapter，覆盖 Windows/Linux 的超时、取消和进程树回收。
+- 评估跨平台子进程 adapter，覆盖 Windows/Linux 的超时、取消和进程树回收。（✅ 2026-11-13 完成：tree-kill + `src/core/proc.ts`，10 处 kill 调用点迁移，`tests/proc.test.ts` 7 条；POSIX 分支由同一套件在 Linux/WSL 执行）
 - 评估 GitHub API adapter，仅用于元数据、license、release 和限额，不替代 Git clone。
 - 仅在需求出现时评估文件扫描、watch、结构化诊断日志和扩展归档解析库。
 

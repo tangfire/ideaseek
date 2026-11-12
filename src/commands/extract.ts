@@ -4,6 +4,7 @@ import { closeSync, openSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir } from '../core/atomic.js';
+import { killTree } from '../core/proc.js';
 import { projectPaths } from '../config/paths.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { action, assertConfigUsable, buildHarness, countByStatus, jsonLine } from './shared.js';
@@ -239,7 +240,7 @@ export function registerExtractCommand(program: Command): void {
             while (children.some((child) => child.exitCode === null && child.signalCode === null)) {
               if (Date.now() > deadline) {
                 timedOut = true;
-                for (const child of children) child.kill('SIGKILL');
+                await Promise.all(children.map((child) => killTree(child.pid)));
                 break;
               }
               await new Promise((resolve) => setTimeout(resolve, 1500));
