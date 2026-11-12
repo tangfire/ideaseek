@@ -9,10 +9,12 @@ on the machine.
 - License: MIT — see `LICENSE` in this directory (Copyright (c) 2026 wanshuiyin)
 - Vendored: 2026-11-11
 
-Contents: 13 skill definitions (`skills/<name>/SKILL.md`), the
+Contents: 18 skill definitions (`skills/<name>/SKILL.md`), the
 `shared-references/*.md` files those skills link to, the pure-stdlib
-`tools/research_wiki.py` helper (research-wiki), and the pure-stdlib
-`skills/render-html/scripts/` renderer with its templates.
+`tools/research_wiki.py` helper (research-wiki), the pure-stdlib
+`skills/render-html/scripts/` renderer with its templates, and the
+`skills/paper-write/templates/` LaTeX venue templates (IEEEtran, ICLR,
+ICML, NeurIPS).
 
 Integrity: every vendored file's SHA-256 is recorded in
 `src/aris/manifest.ts` and verified by `ideaseek aris` (and by

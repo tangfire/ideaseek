@@ -27,6 +27,10 @@ export const VENDORED_SKILLS: readonly string[] = [
   'integrity-forensics',
   'monitor-experiment',
   'novelty-check',
+  'paper-compile',
+  'paper-figure',
+  'paper-plan',
+  'paper-write',
   'prior-art-search',
   'render-html',
   'research-wiki',
@@ -107,6 +111,66 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
   {
     path: 'shared-references/reviewer-routing.md',
     sha256: '9668f548d6ed5ecbbf3d9f350e370dfc6623ad0567e9e7050ccc01b69d3b29d1',
+  },
+  {
+    path: 'shared-references/assurance-contract.md',
+    sha256: '4320cc8f8614f95914a1b8594759a8e0264f9e8ba02b7dca8305acab0c43b282',
+  },
+  {
+    path: 'shared-references/venue-checklists.md',
+    sha256: '712396be66d4db85f0038c5ff5479a5fc66db03bc7175c8ed931f7284802f4e2',
+  },
+  {
+    path: 'shared-references/writing-principles.md',
+    sha256: '23142c901d034ab0b640a7f2c1ee3899f273020d9bf911134ef06ebfad61e5d8',
+  },
+  {
+    path: 'skills/paper-compile/SKILL.md',
+    sha256: 'ca064e9b7dffe80d9c3bcabb060f81c651e4926eb1c069a04c6416a8e58fed93',
+  },
+  {
+    path: 'skills/paper-figure/SKILL.md',
+    sha256: '7d115c37bc7de777a12ccc0211d44305d513a017d6a07e8ac8dd7d2e99dab21f',
+  },
+  {
+    path: 'skills/paper-plan/SKILL.md',
+    sha256: '536e720d0570fe9124f5320ac061df3fbf890c8e13161e485bac0c20cbab9c4f',
+  },
+  {
+    path: 'skills/paper-write/SKILL.md',
+    sha256: '752887e18d48e87a3156384d95abb2a6bb987d2eae1c72631d8f00a9bfcad6f2',
+  },
+  {
+    path: 'skills/paper-write/templates/IEEEtran.bst',
+    sha256: '314f0ece704568faf827011bac498650691b2b5ee06320720830e782416d5a5f',
+  },
+  {
+    path: 'skills/paper-write/templates/IEEEtran.cls',
+    sha256: 'da751920a317ed318b7b5cd7fa585a6cc7d28502d457856382e9be24b10a3bd7',
+  },
+  {
+    path: 'skills/paper-write/templates/iclr2026.tex',
+    sha256: '1e4c20b3c5b7445966194151d33c3e2023e828e621be8baf7ffb234b987cfc23',
+  },
+  {
+    path: 'skills/paper-write/templates/icml2025.tex',
+    sha256: 'd346d4b5b96276a4e04ccd7590ad158cce4aabcc090281dca7c4b0900d11530b',
+  },
+  {
+    path: 'skills/paper-write/templates/ieee_conference.tex',
+    sha256: 'a3dc3a175a7dd1512f4a2fdb844a0a482a9e919162e37dc27373d501fbafafbc',
+  },
+  {
+    path: 'skills/paper-write/templates/ieee_journal.tex',
+    sha256: 'bdff7ff0aa376d8a46675bdb6e96c4dd715463360735706aa5fbaa5f834b7604',
+  },
+  {
+    path: 'skills/paper-write/templates/math_commands.tex',
+    sha256: '3efe4556b2c33b4a93c1b6e86b99b9a3ecbd9c9565ccc06bf8a1f51293470dc6',
+  },
+  {
+    path: 'skills/paper-write/templates/neurips2025.tex',
+    sha256: 'fef6448048e58b748d67f438dce6fcfedcc49467542a951d1986dc5b81ca256c',
   },
   {
     path: 'skills/ablation-planner/SKILL.md',
