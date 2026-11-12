@@ -11,7 +11,7 @@
 | LLM/Agent 调用 | DSH HarnessAdapter | ✅ 单一入口 | `grep -rn "api.deepseek\|chat/completions\|api.openai" src` → 0 命中；12 个命令经 `buildHarness`；`src/dsh-plugins/*` 是 DSH 侧插件（sanctioned） |
 | 任务/事件存储 | workflow/sqlite | ✅ 单一存储 | `appendEvent/createRun/claimNextTask` 只在 `src/workflow/*` 定义；commands 只调 `runtime.db.*` API；attach/follow 轮询同一 DB |
 | TUI | Ink | ✅ 单一 TTY renderer + 单一 dispatch | `interactiveRenderer` 路由单测钉住；classic 行式仅服务 plain/json/非 TTY/FORCE_TTY；`1974229` 后 classic 与 Ink 共用 `InteractiveSession`（repl.ts 782→367 行），架构守卫断言 session 不碰 sqlite 且必达 runner |
-| 子进程 | tree-kill + `core/proc.ts` | ✅ 主路径统一，2 处探针待迁移 | `runProcess/killTree(ForSafe)` 覆盖 relay(runCli)、extract 并行 worker、comparison git/repair、pdf/OCR、federated、embeddings；**已迁移（2026-11-13）**：`runtime/detect.ts`、`runtime/capacity.ts` 探针改走 `runProcess`（超时=树杀、ENOENT 详情不变）；`commands/run.ts` spawn 的是 deliberately detached 的 supervise daemon（不该被树杀，合理例外）；`commands/render.ts`、`knowledge/wiki.ts` 的 python helper spawn 无超时杀（候选迁移） |
+| 子进程 | tree-kill + `core/proc.ts` | ✅ 主路径统一，2 处探针待迁移 | `runProcess/killTree(ForSafe)` 覆盖 relay(runCli)、extract 并行 worker、comparison git/repair、pdf/OCR、federated、embeddings；**已迁移（2026-11-13）**：`runtime/detect.ts`、`runtime/capacity.ts` 探针改走 `runProcess`（超时=树杀、ENOENT 详情不变）；`commands/run.ts` spawn 的是 deliberately detached 的 supervise daemon（不该被树杀，合理例外）；`commands/render.ts`、`knowledge/wiki.ts` 的 helper 已迁 runProcess（60s/120s 超时树杀，2026-11-13） |
 | 契约校验 | JSON Schema + ajv | ⚠️ 4 个契约已统一，约 20 个模块仍是手写校验 | 已统一：`papercard-v1`（写读双门禁）、`parsed-paper-v1`（TS+Python 同文件）、`experiment-spec-v1`/`run-result-v1`（与手写 validator 决策一致性）；**待迁移清单**即 PROGRESS「JSON Schema 统一」checkbox：结构层迁 schema、语义层留领域模块（spec 时间序等），迁移顺序按跨语言消费紧迫度 |
 | ARIS 科研 workflow | vendored skills | ✅ 21 个 skill 入库未重写；平台侧只做契约+接线 | `aris-skills/` + manifest 54 文件哈希校验；`grep` 无第二套 prompt workflow；`paper-compile`/`render-figures` 为确定性平台实现（subprocess 编排），ARIS 对应物是 prompt workflow 无可调用库——属 integration plan 允许的 sanctioned 薄实现，且报告记录 skill 哈希溯源 |
 | Python 侧校验 | jsonschema | ✅ 与 TS 同一 schema 文件 | `worker/python/schema_validate.py` 读 `src/core/schema/schemas/*.json`，路径格式与 ajv 对齐；缺依赖降级为 stderr 提示+TS 读门禁兜底 |
@@ -29,7 +29,7 @@
 
 1. JSON Schema 迁移剩余 ~20 个手写 validator（PROGRESS checkbox，结构层逐步外迁）。
 2. ~~`runtime/detect.ts`、`runtime/capacity.ts` 探针迁移到 `runProcess`~~（✅ 2026-11-13 完成，detect/capacity 测试 14/14）。
-3. `commands/render.ts`、`knowledge/wiki.ts` 的 helper spawn 加超时+树杀。
+3. ~~`commands/render.ts`、`knowledge/wiki.ts` 的 helper spawn 加超时+树杀~~（✅ 2026-11-13 完成）。
 4. 第 5 处 walk 出现时再抽共享（现在抽会为 4 种不同规则造一个配置怪物）。
 
 审查方式：后续每次新增依赖或新能力域，先在本文追加一行结论（append-only），并同步 DEPENDENCY_POLICY 的依赖记录。

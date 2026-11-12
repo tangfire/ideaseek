@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { arisSkillsRoot } from '../aris/skill.js';
+import { runProcess } from '../core/proc.js';
 
 /**
  * Research wiki (Phase 4.5B, ARIS research-wiki): a persistent per-project
@@ -371,17 +371,20 @@ async function runHelper(
   script: string,
   args: string[],
 ): Promise<{ code: number; out: string } | null> {
-  return new Promise((resolve) => {
-    const child = spawn(bin, [script, ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+  // Shared subprocess adapter: 120s bound, tree-killed on timeout; spawn
+  // failure still maps to null (wiki degrades honestly without the helper).
+  try {
+    const result = await runProcess(bin, [script, ...args], {
+      timeoutMs: 120_000,
       // Force utf-8: the helper prints emoji that GBK/latin-1 stdout
       // encodings reject on Windows (UnicodeEncodeError → exit 1).
       env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
     });
-    let out = '';
-    child.stdout.on('data', (chunk) => (out += String(chunk)));
-    child.stderr.on('data', (chunk) => (out += String(chunk)));
-    child.on('error', () => resolve(null));
-    child.on('close', (code) => resolve({ code: code ?? -1, out }));
-  });
+    if (result.timedOut) {
+      return { code: -1, out: 'wiki helper timed out after 120000ms (process tree killed)' };
+    }
+    return { code: result.code ?? -1, out: `${result.stdout}${result.stderr}` };
+  } catch {
+    return null;
+  }
 }

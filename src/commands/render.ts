@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { action, jsonLine } from './shared.js';
+import { runProcess } from '../core/proc.js';
 
 /**
  * `ideaseek render` — reading views for IdeaSeek artifacts (Phase 4.5B,
@@ -120,17 +120,20 @@ async function collectTargets(root: string): Promise<RenderTarget[]> {
 }
 
 async function runRenderer(bin: string, args: string[]): Promise<{ code: number; out: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(bin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+  // Shared subprocess adapter: 60s bound, tree-killed on timeout (a hung
+  // helper used to block the command forever).
+  try {
+    const result = await runProcess(bin, args, {
+      timeoutMs: 60_000,
       env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
     });
-    let out = '';
-    child.stdout.on('data', (chunk) => (out += String(chunk)));
-    child.stderr.on('data', (chunk) => (out += String(chunk)));
-    child.on('error', () => resolve({ code: -1, out: '' }));
-    child.on('close', (code) => resolve({ code: code ?? -1, out }));
-  });
+    if (result.timedOut) {
+      return { code: -1, out: 'render timed out after 60000ms (process tree killed)' };
+    }
+    return { code: result.code ?? -1, out: `${result.stdout}${result.stderr}` };
+  } catch {
+    return { code: -1, out: '' };
+  }
 }
 
 export function registerRenderCommand(program: Command): void {
