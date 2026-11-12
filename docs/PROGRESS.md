@@ -17,6 +17,18 @@ Phase 4：Comparison 复现与统一评测
 
 领域插件、向量检索、多 GPU 和其他方向扩展不是 Phase 4/5 的前置条件。模块交付记录是 append-only 历史；顶部 checkbox 是当前状态的唯一来源。
 
+## 横向工程能力：成熟组件与依赖治理
+
+目标：优先复用 DSH、ARIS 和成熟开源包，避免重复实现；新增依赖必须通过许可证、跨平台、适配层和回归测试门禁。详细规则见 [DEPENDENCY_POLICY.md](DEPENDENCY_POLICY.md)。
+
+- [x] DSH/ARIS/IdeaSeek 的职责边界与复用优先原则
+- [x] Ink 纳入 interactive TTY 的首选框架评估
+- [ ] Ink TUI 应用壳和单一 renderer 收口
+- [ ] JSON Schema 统一 TypeScript/Python/ARIS 契约校验
+- [ ] 跨平台子进程 adapter 评估与超时/取消/进程树测试
+- [ ] GitHub API 元数据 adapter 评估（不替代 Git clone）
+- [ ] 文件扫描、watch、结构化诊断日志和归档解析依需求评估
+
 ## Phase 0：基础运行与可恢复性
 
 目标：让项目、任务、artifact、事件和 checkpoint 在进程/机器中断后可恢复。
