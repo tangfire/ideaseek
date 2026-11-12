@@ -8,6 +8,7 @@ import { loadLocalEnv } from './core/env.js';
 import { registerBaselineCommand } from './commands/baseline.js';
 import { registerCapacityCommand } from './commands/capacity.js';
 import { registerComparisonCommand } from './commands/comparison.js';
+import { registerRepositoryCommand } from './commands/repository.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerConfirmCommand } from './commands/confirm.js';
 import { registerDataCommand } from './commands/data.js';
@@ -131,6 +132,7 @@ export function buildProgram(): Command {
   registerReportCommand(program);
   registerControlCommands(program);
   registerComparisonCommand(program);
+  registerRepositoryCommand(program);
   registerBaselineCommand(program);
   registerCapacityCommand(program);
   registerMaintenanceCommands(program);
