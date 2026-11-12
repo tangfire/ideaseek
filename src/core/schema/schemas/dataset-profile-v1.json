@@ -1,0 +1,121 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/dataset-profile-v1.json",
+  "title": "IdeaSeek federated dataset profile (dataset-profile-v1)",
+  "description": "Structural contract for the read-only federated dataset profile the Python worker (ideaseek_worker dataset) emits and TypeScript persists as knowledge/dataset-manifest.json. Single authority across languages: Python validates before emitting, TypeScript validates at the parse boundary. Semantic checks (distribution preservation, leakage) stay with the slice/dataset modules.",
+  "type": "object",
+  "required": [
+    "parser",
+    "root",
+    "splits",
+    "clientCount",
+    "nonIid",
+    "files",
+    "fileCount",
+    "rootHash",
+    "readOnly"
+  ],
+  "properties": {
+    "parser": { "type": "string", "minLength": 1 },
+    "root": { "type": "string", "minLength": 1 },
+    "splits": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/definitions/split" }
+    },
+    "clientCount": { "type": "integer", "minimum": 0 },
+    "nonIid": {
+      "type": "object",
+      "required": [
+        "tvDistanceMean",
+        "tvDistanceMax",
+        "samplesCv",
+        "classesPerClientMean",
+        "interpretation"
+      ],
+      "properties": {
+        "tvDistanceMean": { "type": "number" },
+        "tvDistanceMax": { "type": "number" },
+        "samplesCv": { "type": "number" },
+        "classesPerClientMean": { "type": "number" },
+        "interpretation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rel", "bytes", "sha256"],
+        "properties": {
+          "rel": { "type": "string", "minLength": 1 },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "fileCount": { "type": "integer", "minimum": 0 },
+    "rootHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "readOnly": {
+      "type": "object",
+      "required": ["rootWritableByProcess", "sampleWritableByProcess", "policy"],
+      "properties": {
+        "rootWritableByProcess": { "type": "boolean" },
+        "sampleWritableByProcess": { "type": "boolean" },
+        "policy": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "split": {
+      "type": "object",
+      "required": [
+        "dir",
+        "clients",
+        "clientCount",
+        "totalSamples",
+        "sampleStats",
+        "labelDistribution"
+      ],
+      "properties": {
+        "dir": { "type": "string", "minLength": 1 },
+        "clients": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/client" }
+        },
+        "clientCount": { "type": "integer", "minimum": 0 },
+        "totalSamples": { "type": "integer", "minimum": 0 },
+        "sampleStats": {
+          "type": "object",
+          "required": ["min", "max", "mean", "std"],
+          "properties": {
+            "min": { "type": "integer" },
+            "max": { "type": "integer" },
+            "mean": { "type": "number" },
+            "std": { "type": "number" }
+          }
+        },
+        "labelDistribution": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "required": ["id", "file", "samples", "xShape", "xDtype", "yShape", "yDtype", "labelCounts"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "samples": { "type": "integer", "minimum": 0 },
+        "xShape": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "xDtype": { "type": "string", "minLength": 1 },
+        "yShape": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "yDtype": { "type": "string", "minLength": 1 },
+        "labelCounts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

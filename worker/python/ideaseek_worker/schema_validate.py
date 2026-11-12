@@ -22,6 +22,7 @@ from typing import Any
 
 SCHEMA_FILENAMES = {
     "parsed-paper-v1": "parsed-paper-v1.json",
+    "dataset-profile-v1": "dataset-profile-v1.json",
 }
 
 

@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IdeaseekError, type IdeaseekErrorCode } from '../core/errors.js';
 import { killTreeSafe } from '../core/proc.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /** Stable failure codes the python dataset profiler may emit. */
 const DATASET_CODES = new Set<string>([
@@ -110,7 +111,11 @@ export async function profileFederatedDataset(
         if (code === 0) {
           const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? '';
           try {
-            resolvePromise(JSON.parse(line) as FederatedDatasetProfile);
+            const profile = JSON.parse(line) as FederatedDatasetProfile;
+            // Cross-language contract gate: the Python profiler's output
+            // must satisfy dataset-profile-v1 before anything persists it.
+            assertAgainstSchema('dataset-profile-v1', profile);
+            resolvePromise(profile);
           } catch (error) {
             reject(
               new IdeaseekError(

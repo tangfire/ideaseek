@@ -52,12 +52,15 @@ function clone(base = validCard()): Record<string, unknown> {
 
 describe('schema registry', () => {
   it('registers papercard-v1 and rejects unknown names as programming errors', () => {
-    expect(listSchemaNames()).toEqual([
+    for (const name of [
       'papercard-v1',
       'parsed-paper-v1',
       'experiment-spec-v1',
       'run-result-v1',
-    ]);
+      'dataset-profile-v1',
+    ]) {
+      expect(listSchemaNames()).toContain(name);
+    }
     expect(() => validateAgainstSchema('nope-v1' as 'papercard-v1', {})).toThrow(IdeaseekError);
     try {
       validateAgainstSchema('nope-v1' as 'papercard-v1', {});

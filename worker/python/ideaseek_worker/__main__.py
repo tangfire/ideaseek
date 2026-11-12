@@ -196,6 +196,9 @@ def cmd_dataset(args) -> int:
         return _fail("DATASET_LAYOUT", str(exc))
     except Exception as exc:  # noqa: BLE001 - normalize loader failures
         return _fail("PARSE_FAILED", f"cannot profile dataset: {exc}")
+    violation = validate_payload("dataset-profile-v1", profile)
+    if violation is not None:
+        return _fail("SCHEMA_VIOLATION", violation)
     _emit(profile)
     return 0
 
