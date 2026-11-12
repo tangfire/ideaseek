@@ -10,6 +10,7 @@ const WORKSPACE_DIRS = [
   'papers',
   'datasets',
   'comparisons',
+  'idea-seeds',
   'incoming',
   'knowledge',
   'ideas',

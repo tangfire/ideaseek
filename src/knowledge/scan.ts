@@ -63,7 +63,7 @@ export interface ArchiveInspectionSummary {
   inspectedAt: number;
 }
 
-export type GroupKind = 'paper' | 'comparison' | 'dataset' | 'unknown';
+export type GroupKind = 'paper' | 'comparison' | 'dataset' | 'idea' | 'unknown';
 
 export interface CandidateGroup {
   groupId: string;
@@ -442,6 +442,19 @@ function buildGroups(files: ManifestFile[]): CandidateGroup[] {
     } else if (rootName === 'comparisons') {
       const method = segments[1] && segments[1] !== '_candidates' ? segments[1] : '_candidates';
       push(`comparison:${method}`, 'comparison', file, `method-directory:${method}`);
+    } else if (rootName === 'idea-seeds') {
+      // One seed = one top-level folder (docs/IDEA_IMPROVEMENT.md); loose
+      // files are their own single-file seed candidate.
+      if (segments.length >= 3) {
+        push(
+          `idea:${segments[0]}/${segments[1]}`,
+          'idea',
+          file,
+          `idea-seed-directory:${segments[1]}`,
+        );
+      } else {
+        push(`idea:${dirKey}:${stem}`, 'idea', file, 'loose-idea-seed-file');
+      }
     } else if (rootName === 'incoming') {
       push(`incoming:${dirKey}`, 'unknown', file, 'same-directory');
     } else {

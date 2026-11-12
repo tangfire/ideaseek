@@ -72,6 +72,52 @@ export function registerIdeaCommand(program: Command): void {
     .description('idea cards, workspaces, versions and the mechanism gate');
 
   idea
+    .command('import')
+    .description(
+      'register an idea seed directory read-only (snapshot/hash; the source is never touched)',
+    )
+    .requiredOption(
+      '--source <path>',
+      'project-relative seed directory (idea-seeds/<name> or incoming/ideas/<name>)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { source: string; json?: boolean }) => {
+        const root = await findProjectRoot(process.cwd());
+        if (!root) {
+          throw new IdeaseekError(
+            'NOT_INITIALIZED',
+            'no IdeaSeek project here; run: ideaseek init',
+          );
+        }
+        const { registerIdeaSeed } = await import('../idea/seeds.js');
+        const { registration, changed } = await registerIdeaSeed(root, opts.source);
+        const { snapshot } = registration;
+        if (opts.json) {
+          process.stdout.write(jsonLine({ changed, ...registration }));
+          return 0;
+        }
+        const size =
+          snapshot.totalBytes >= 1024 * 1024
+            ? `${(snapshot.totalBytes / 1024 ** 2).toFixed(1)} MiB`
+            : `${snapshot.totalBytes} B`;
+        const lines = [
+          changed
+            ? `registered idea seed: ${registration.source} (${snapshot.fileCount} file(s) · ${size} · rootHash ${snapshot.rootHash.slice(0, 19)}…)`
+            : `idea seed unchanged: ${registration.source} (same snapshot ${snapshot.rootHash.slice(0, 19)}…; nothing rewritten)`,
+          changed
+            ? registration.history.length > 0
+              ? '  source untouched — snapshot refreshed; previous rootHash kept in history'
+              : '  source untouched — read-only snapshot in knowledge/idea-seeds.json'
+            : '  nothing rewritten — the user source is never touched',
+          'next: ideaseek intake   (the seed shows up as a candidate idea group)',
+        ];
+        process.stdout.write(`${lines.join('\n')}\n`);
+        return 0;
+      }),
+    );
+
+  idea
     .command('validate')
     .description('validate an IdeaCard JSON and run the DRAFT_COMPOSITION mechanism gate')
     .argument('<file>', 'path to the idea card JSON')

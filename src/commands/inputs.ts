@@ -26,7 +26,7 @@ import {
 } from '../knowledge/organize.js';
 import { action, jsonLine } from './shared.js';
 
-const DEFAULT_ROOTS = ['papers', 'datasets', 'comparisons', 'incoming'] as const;
+const DEFAULT_ROOTS = ['papers', 'datasets', 'comparisons', 'idea-seeds', 'incoming'] as const;
 
 async function openProject(): Promise<ReturnType<typeof projectPaths>> {
   const root = await findProjectRoot(process.cwd());
