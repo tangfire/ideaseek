@@ -322,6 +322,53 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     const override = process.env.IDEASEEK_FAKE_PAPERCARD_OUTPUT;
     if (override != null) return override;
   }
+  if (request.outputSchema === 'paper-figure-v1') {
+    // Test hook: raw override exercises parse/validation failure paths.
+    const override = process.env.IDEASEEK_FAKE_PAPER_FIGURE_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const idLine =
+      context
+        .split('\n')
+        .find((line) => line.startsWith('Figure ids from the stored paper plan')) ?? '';
+    const listPart = idLine.includes(': none') ? '' : idLine.slice(idLine.lastIndexOf(': ') + 2);
+    const ids =
+      listPart.length > 0
+        ? listPart
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean)
+        : ['fig-1'];
+    return JSON.stringify({
+      style: 'publication',
+      dpi: 300,
+      format: 'pdf',
+      figures: ids.map((id) => ({
+        id,
+        type: 'bar',
+        title: `Fake ${id}`,
+        dataSources: [{ kind: 'context', ref: 'experiment-results' }],
+        script:
+          'import matplotlib.pyplot as plt' +
+          String.fromCharCode(10) +
+          'fig, ax = plt.subplots()' +
+          String.fromCharCode(10) +
+          "ax.bar(['fake'], [1.0])" +
+          String.fromCharCode(10) +
+          "fig.savefig('" +
+          id +
+          ".pdf')",
+        latexInclude: '\\includegraphics{figures/' + id + '}',
+        claims: ['The persisted results bear on the research question'],
+      })),
+      preservedExisting: [],
+      manualRemaining: ['architecture diagram (manual)'],
+      reviewerFeedback: {
+        verdict: 'REVIEW_UNAVAILABLE',
+        notes: ['no reviewer backend in the fake harness'],
+      },
+    });
+  }
   if (request.outputSchema === 'paper-plan-v1') {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PAPER_PLAN_OUTPUT;
