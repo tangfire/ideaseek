@@ -90,7 +90,58 @@ export function registerIdeaCommand(program: Command): void {
             'no IdeaSeek project here; run: ideaseek init',
           );
         }
-        const { registerIdeaSeed } = await import('../idea/seeds.js');
+        const { registerIdeaSeed, normalizeSeedSource, snapshotSeedDir } =
+          await import('../idea/seeds.js');
+        const sourceRel = normalizeSeedSource(root, opts.source);
+
+        // Intake confirmation gate (docs/IDEA_IMPROVEMENT.md 用户选择后才
+        // 创建正式 Idea 对象): every group touching this source must have
+        // been reviewed with its EXACT current membership first.
+        const { join } = await import('node:path');
+        const { readManifest } = await import('../knowledge/organize.js');
+        const { readConfirmRegistry, isGroupConfirmedWith } =
+          await import('../knowledge/intake-confirm.js');
+        const manifest = await readManifest(join(root, 'knowledge', 'input-manifest.json'));
+        if (!manifest) {
+          throw new IdeaseekError(
+            'USER_INPUT_REQUIRED',
+            'no input manifest yet; run: ideaseek scan',
+          );
+        }
+        const underSource = manifest.files.filter(
+          (file) => file.relPath === sourceRel || file.relPath.startsWith(`${sourceRel}/`),
+        );
+        if (underSource.length === 0) {
+          throw new IdeaseekError(
+            'INVALID_ARGUMENT',
+            `nothing scanned under ${sourceRel} — run: ideaseek scan`,
+          );
+        }
+        const confirmRegistry = await readConfirmRegistry(root);
+        // Confirmation binds reviewed BYTES: hash the source's CURRENT
+        // content so edits after the last confirm invalidate it (a stale
+        // manifest must never wave through changed files).
+        const current = await snapshotSeedDir(join(root, ...sourceRel.split('/')), root);
+        const currentHashes = new Map(
+          current.files.map((file) => [file.relPath, file.sha256 ?? `unhashed:${file.bytes}`]),
+        );
+        const unconfirmed = manifest.groups.filter(
+          (group) =>
+            group.files.some((file) => file === sourceRel || file.startsWith(`${sourceRel}/`)) &&
+            !isGroupConfirmedWith(confirmRegistry, manifest, group, currentHashes),
+        );
+        if (unconfirmed.length > 0) {
+          const hints = unconfirmed
+            .map((group) => `ideaseek intake --confirm ${group.files[0] ?? group.groupId}`)
+            .join(' ; ');
+          throw new IdeaseekError(
+            'INVALID_ARGUMENT',
+            `unconfirmed intake group(s) for ${sourceRel}: ` +
+              unconfirmed.map((group) => `${group.groupId} (${group.kind})`).join(', ') +
+              ` — confirm first: ${hints}`,
+          );
+        }
+
         const { registration, changed } = await registerIdeaSeed(root, opts.source);
         const { snapshot } = registration;
         if (opts.json) {

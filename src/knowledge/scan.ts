@@ -472,7 +472,9 @@ function buildGroups(files: ManifestFile[]): CandidateGroup[] {
             (members.reduce((sum, file) => sum + file.confidence, 0) / members.length) * 100,
           ) / 100;
     groups.push({
-      groupId: `grp-${Buffer.from(key).toString('hex').slice(0, 16)}`,
+      // Hash the FULL bucket key: key prefixes are shared across siblings
+      // (`idea:idea-seeds/…`), so truncating raw hex collided group ids.
+      groupId: `grp-${createHash('sha256').update(key).digest('hex').slice(0, 16)}`,
       kind: bucket.kind,
       files: members.map((file) => file.relPath),
       confidence,

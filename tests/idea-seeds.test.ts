@@ -66,7 +66,7 @@ async function listTree(root: string): Promise<string[]> {
 }
 
 interface ManifestShape {
-  groups: { kind: string; files: string[]; needsConfirmation: boolean }[];
+  groups: { groupId: string; kind: string; files: string[]; needsConfirmation: boolean }[];
   files: { relPath: string; role: string }[];
 }
 
@@ -95,6 +95,8 @@ describe('idea-seeds scan / intake / read-only import', () => {
     const ideaGroups = manifest.groups.filter((group) => group.kind === 'idea');
     expect(ideaGroups).toHaveLength(2);
     expect(ideaGroups.every((group) => group.needsConfirmation)).toBe(true);
+    // Distinct seeds must get distinct group ids (full-key hash).
+    expect(new Set(ideaGroups.map((group) => group.groupId)).size).toBe(2);
     const hetero = ideaGroups.find((group) =>
       group.files.includes('idea-seeds/hetero-distillation/idea.md'),
     )!;
@@ -122,6 +124,27 @@ describe('idea-seeds scan / intake / read-only import', () => {
     expect((await runCli(dir, ['scan'])).code).toBe(0);
     const seedRoot = join(dir, 'idea-seeds');
     const before = await listTree(seedRoot);
+
+    // Intake confirmation is a prerequisite: the gate refuses first.
+    const gated = await runCli(dir, [
+      'idea',
+      'import',
+      '--source',
+      'idea-seeds/hetero-distillation',
+    ]);
+    expect(gated.code).not.toBe(0);
+    expect(gated.stderr).toContain('unconfirmed intake group');
+    expect(gated.stderr).toContain('ideaseek intake --confirm');
+
+    const confirm = await runCli(dir, [
+      'intake',
+      '--confirm',
+      'idea-seeds/hetero-distillation/idea.md',
+    ]);
+    expect(confirm.code).toBe(0);
+    expect(confirm.stdout).toContain('confirmed idea group');
+    const intakeAfter = await runCli(dir, ['intake']);
+    expect(intakeAfter.stdout).toContain('[confirmed]');
 
     const first = await runCli(dir, [
       'idea',
@@ -175,10 +198,23 @@ describe('idea-seeds scan / intake / read-only import', () => {
 
   it('a changed source refreshes the snapshot and keeps history', async () => {
     const dir = await seedProject();
+    expect((await runCli(dir, ['scan'])).code).toBe(0);
+    expect(
+      (await runCli(dir, ['intake', '--confirm', 'idea-seeds/other-seed/note.txt'])).code,
+    ).toBe(0);
     expect((await runCli(dir, ['idea', 'import', '--source', 'idea-seeds/other-seed'])).code).toBe(
       0,
     );
+
+    // Editing confirmed bytes invalidates the confirmation (content-bound).
     await writeFile(join(dir, 'idea-seeds', 'other-seed', 'note.txt'), 'updated notes\n', 'utf8');
+    const blocked = await runCli(dir, ['idea', 'import', '--source', 'idea-seeds/other-seed']);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stderr).toContain('unconfirmed intake group');
+
+    expect(
+      (await runCli(dir, ['intake', '--confirm', 'idea-seeds/other-seed/note.txt'])).code,
+    ).toBe(0);
     const changed = await runCli(dir, ['idea', 'import', '--source', 'idea-seeds/other-seed']);
     expect(changed.code).toBe(0);
     expect(changed.stdout).toContain('registered idea seed');
@@ -193,6 +229,7 @@ describe('idea-seeds scan / intake / read-only import', () => {
 
   it('rejects sources outside the delivery prefixes and missing seeds', async () => {
     const dir = await seedProject();
+    expect((await runCli(dir, ['scan'])).code).toBe(0);
     const outside = await runCli(dir, ['idea', 'import', '--source', 'papers']);
     expect(outside.code).not.toBe(0);
     expect(outside.stderr).toContain('must be under idea-seeds/');
@@ -200,7 +237,7 @@ describe('idea-seeds scan / intake / read-only import', () => {
 
     const missing = await runCli(dir, ['idea', 'import', '--source', 'idea-seeds/does-not-exist']);
     expect(missing.code).not.toBe(0);
-    expect(missing.stderr).toContain('idea seed not found');
+    expect(missing.stderr).toContain('nothing scanned under idea-seeds/does-not-exist');
     expect(missing.stderr).toContain('ideaseek scan');
   }, 60_000);
 });

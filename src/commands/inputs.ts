@@ -12,6 +12,11 @@ import {
 } from '../knowledge/scan.js';
 import { scanArchive, type ArchiveStatus } from '../knowledge/archive.js';
 import {
+  confirmGroup,
+  isGroupConfirmed,
+  readConfirmRegistry,
+} from '../knowledge/intake-confirm.js';
+import {
   defaultArchiveExtractRoot,
   extractArchive,
   recoverArchiveExtractions,
@@ -262,8 +267,9 @@ export function registerIntakeCommand(program: Command): void {
     .description('show unclassified inputs and candidate groups awaiting confirmation')
     .option('--json', 'machine-readable output')
     .option('--extract <relPath>', 'safely extract one scanned archive (refuses unsafe ones)')
+    .option('--confirm <selector>', 'confirm a candidate group by group id or any member file path')
     .action(
-      action(async (opts: { json?: boolean; extract?: string }) => {
+      action(async (opts: { json?: boolean; extract?: string; confirm?: string }) => {
         const paths = await openProject();
         if (opts.extract) return performArchiveExtract(paths, opts.extract, opts.json === true);
 
@@ -274,8 +280,31 @@ export function registerIntakeCommand(program: Command): void {
             'no input manifest yet; run: ideaseek scan',
           );
         }
+        if (opts.confirm) {
+          const entry = await confirmGroup(paths.root, manifest, opts.confirm);
+          if (opts.json) {
+            process.stdout.write(jsonLine({ confirmed: entry }));
+          } else {
+            process.stdout.write(
+              `confirmed ${entry.kind} group ${entry.groupId} (${entry.files.length} file(s))` +
+                String.fromCharCode(10),
+            );
+            process.stdout.write(
+              '  recorded with the exact reviewed file set - membership changes invalidate it' +
+                String.fromCharCode(10),
+            );
+            process.stdout.write(
+              'next: ideaseek idea import --source <seed>   (or continue with ideaseek organize)' +
+                String.fromCharCode(10),
+            );
+          }
+          return 0;
+        }
+        const confirmRegistry = await readConfirmRegistry(paths.root);
         const unknown = manifest.files.filter((file) => file.role === 'unknown');
-        const pending = manifest.groups.filter((group) => group.needsConfirmation);
+        const pending = manifest.groups.filter(
+          (group) => group.needsConfirmation && !isGroupConfirmed(confirmRegistry, manifest, group),
+        );
         const archives = manifest.files.filter((file) => file.role === 'archive' && file.archive);
 
         if (opts.json) {
@@ -286,6 +315,9 @@ export function registerIntakeCommand(program: Command): void {
               unknown: unknown.map((file) => file.relPath),
               groups: manifest.groups,
               pendingConfirmation: pending.length,
+              confirmedGroupIds: manifest.groups
+                .filter((group) => isGroupConfirmed(confirmRegistry, manifest, group))
+                .map((group) => group.groupId),
               duplicates: manifest.duplicateSets,
               archives: archives.map((file) => ({
                 relPath: file.relPath,
@@ -304,10 +336,14 @@ export function registerIntakeCommand(program: Command): void {
             process.stdout.write(`  ? ${file.relPath}\n`);
           }
         }
-        process.stdout.write(`候选分组（${manifest.groups.length}，均待确认）：\n`);
+        const confirmedCount = manifest.groups.filter((group) =>
+          isGroupConfirmed(confirmRegistry, manifest, group),
+        ).length;
+        process.stdout.write(`候选分组（${manifest.groups.length}，已确认 ${confirmedCount}）：\n`);
         for (const group of manifest.groups.slice(0, 50)) {
+          const mark = isGroupConfirmed(confirmRegistry, manifest, group) ? ' [confirmed]' : '';
           process.stdout.write(
-            `  ${group.groupId}  ${group.kind.padEnd(11)} conf=${group.confidence}  ${group.files.length} file(s)  [${group.basis.join(', ')}]\n`,
+            `  ${group.groupId}  ${group.kind.padEnd(11)} conf=${group.confidence}  ${group.files.length} file(s)  [${group.basis.join(', ')}]${mark}\n`,
           );
         }
         if (manifest.duplicateSets.length > 0) {
@@ -334,7 +370,7 @@ export function registerIntakeCommand(program: Command): void {
           }
         }
         process.stdout.write(
-          'next: ideaseek organize   (preview; add --apply to build the index)\n',
+          'next: ideaseek intake --confirm <group-id|file>   then ideaseek organize   (preview; add --apply to build the index)\n',
         );
         return 0;
       }),
