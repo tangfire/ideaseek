@@ -558,6 +558,90 @@ export function registerPaperCommand(program: Command): void {
         return 0;
       }),
     );
+
+  paper
+    .command('compile')
+    .description(
+      'assemble the stored manuscript with the venue template and compile to PDF (ARIS paper-compile)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const root = await findRoot();
+        const { loadArisSkill } = await import('../aris/skill.js');
+        // Provenance only: this workflow is deterministic platform code that
+        // follows the vendored skill — no model call, integrity still checked.
+        const skill = await loadArisSkill('paper-compile');
+        const { PAPER_COMPILE_SCHEMA, compileManuscript } = await import('../paper/compile.js');
+        const { report, mainPath } = await compileManuscript(root, {
+          name: skill.name,
+          sha256: skill.sha256,
+        });
+
+        await ensureDir(join(root, 'reports', 'paper'));
+        await writeFileAtomic(
+          join(root, 'reports', 'paper', 'compile-report.json'),
+          `${JSON.stringify({ contract: PAPER_COMPILE_SCHEMA, ...report }, null, 2)}\n`,
+        );
+
+        let eventSeq: number | null = null;
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'PAPER',
+              objectId: 'paper-compile',
+              role: 'system',
+              eventType: 'paper_compile',
+              summary:
+                report.status === 'compiled'
+                  ? `paper compiled to PDF (${report.pageCount ?? '?'} page(s), venue ${report.venue}, template ${report.template})`
+                  : `paper compile ${report.status}: ${(report.blockers[0] ?? 'see report').slice(0, 120)}`,
+              status: report.status,
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({ contract: PAPER_COMPILE_SCHEMA, eventSeq, mainPath, ...report }),
+          );
+          return report.status === 'compiled' ? 0 : report.status === 'blocked' ? 2 : 1;
+        }
+        if (report.status === 'compiled') {
+          process.stdout.write(
+            `compiled ${report.pdfPath} (${report.pageCount ?? '?'} page(s) · ${report.venue} · template ${report.template})\n`,
+          );
+          process.stdout.write(`  source: ${mainPath}\n`);
+          process.stdout.write(
+            `  latexmk exit 0 · skill ${skill.name}@${skill.sha256.slice(0, 12)}…\n`,
+          );
+          process.stdout.write(
+            'next: check the PDF; paper/ holds main.tex, references.bib, compile.log\n',
+          );
+          return 0;
+        }
+        if (report.status === 'blocked') {
+          process.stderr.write(`paper compile blocked: ${report.blockers.join('; ')}\n`);
+          process.stderr.write('nothing was compiled — resolve the blocker and rerun\n');
+          return 2;
+        }
+        process.stderr.write(
+          `paper compile failed (exit ${report.exitCode ?? 'n/a'}): ${report.blockers.join('; ')}\n`,
+        );
+        process.stderr.write(`  log tail:\n${report.logTail.split('\n').slice(-15).join('\n')}\n`);
+        process.stderr.write(
+          'next: fix paper/main.tex (or provide the missing style file) and rerun ideaseek paper compile\n',
+        );
+        return 1;
+      }),
+    );
 }
 
 async function findRoot(): Promise<string> {
