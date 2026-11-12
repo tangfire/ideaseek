@@ -107,14 +107,23 @@ describe('architecture: dependency direction (ADR-001..006)', () => {
     expect(bad).toEqual([]);
   });
 
-  it('the REPL shares use-cases by relaying the CLI instead of touching the DB (ADR-006)', async () => {
+  it('the REPL shares use-cases through the session instead of touching the DB (ADR-006)', async () => {
     const repl = await readFile(join(SRC, 'cli', 'repl.ts'), 'utf8');
     const specifiers = importsOf(repl);
     expect(specifiers).not.toContain('node:sqlite');
     expect(specifiers.some((s) => s.includes('workflow/db'))).toBe(false);
     expect(specifiers.some((s) => s.includes('workflow/runtime'))).toBe(false);
-    // Slash commands dispatch through the runner (same code path as CLI).
-    expect(specifiers.some((s) => s === './runner.js' || s.includes('cli/runner'))).toBe(true);
+    // Presentation-only: dispatch lives in the shared InteractiveSession
+    // (one implementation for classic + Ink), which relays the CLI runner —
+    // the same code path as the non-interactive commands.
+    expect(specifiers.some((s) => s.includes('shell/session'))).toBe(true);
+    const session = await readFile(join(SRC, 'cli', 'shell', 'session.ts'), 'utf8');
+    const sessionSpecifiers = importsOf(session);
+    expect(sessionSpecifiers).not.toContain('node:sqlite');
+    expect(sessionSpecifiers.some((s) => s.includes('workflow/db'))).toBe(false);
+    expect(
+      sessionSpecifiers.some((s) => s.endsWith('/runner.js') || s.includes('cli/runner')),
+    ).toBe(true);
   });
 
   it('workflow state machine lives outside presentation (types module has no CLI deps)', async () => {
