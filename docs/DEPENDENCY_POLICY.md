@@ -1,6 +1,6 @@
 # IdeaSeek 依赖与成熟组件策略
 
-本文档把“能复用就不重写”落实为开发门禁。IdeaSeek 是科研工作流产品，不应重新实现 Agent Runtime、通用终端渲染、通用进程管理、通用 schema 校验或通用 GitHub API。
+本文档把“能复用就不重写”落实为开发门禁。最近一次全量核查结论见 [BUILD_VS_REUSE_REVIEW.md](BUILD_VS_REUSE_REVIEW.md)（append-only，新增依赖或能力域须回写）。IdeaSeek 是科研工作流产品，不应重新实现 Agent Runtime、通用终端渲染、通用进程管理、通用 schema 校验或通用 GitHub API。
 
 ## 评估顺序
 
