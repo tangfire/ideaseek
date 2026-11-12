@@ -11,6 +11,7 @@ import { analyzeIdea, type IdeaAnalysis } from './analysis.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import { readAudit } from './audit.js';
 import { readClaimAudit } from './claim-audit.js';
+import { computeForensicsPolicy, computeForensicsStateDigest, readForensics } from './forensics.js';
 import { probeCapacity } from '../runtime/capacity.js';
 
 /**
@@ -40,6 +41,18 @@ export interface HandoffLevelInput {
   auditSummary?: string;
   /** Current idea claim/citation audit (FAIL = unciteable card evidence). */
   evidenceAuditVerdict?: 'pass' | 'warn' | 'fail' | null;
+  /**
+   * Current integrity-forensics policy (recomputed from findings+waivers,
+   * never the stored token): BLOCK stops delivery; WARN stays visible.
+   */
+  forensicsPolicy?: 'BLOCK' | 'WARN' | 'NO_NEW_BLOCKER' | null;
+  forensicsSummary?: string;
+  /**
+   * A sweep exists but its inputs changed after it ran — fail closed and
+   * demand a re-sweep (ARIS forensics `fresh` doctrine), instead of letting
+   * a stale verdict speak for newer evidence.
+   */
+  forensicsStale?: boolean;
 }
 
 /**
@@ -75,6 +88,20 @@ export function computeHandoffLevel(input: HandoffLevelInput): HandoffGate {
     blockers.push(
       'evidence audit FAIL: card evidence is not locatable in the cited sources ' +
         '(rerun ideaseek idea claim-audit)',
+    );
+  }
+  // Integrity forensics: a stale sweep cannot speak for the current evidence
+  // (fail closed), a BLOCK never ships, WARN is visible but non-blocking —
+  // the same advisory-but-honest layer as experiment-audit.
+  if (input.forensicsStale) {
+    blockers.push(
+      'integrity-forensics stale: workspace changed after the sweep — ' +
+        'rerun ideaseek idea forensics before delivery',
+    );
+  }
+  if (input.forensicsPolicy === 'BLOCK') {
+    blockers.push(
+      `integrity-forensics BLOCK${input.forensicsSummary ? `: ${input.forensicsSummary}` : ''}`,
     );
   }
 
@@ -208,6 +235,34 @@ export async function buildIdeaHandoff(
   const evidenceAudit = await readClaimAudit(projectRoot, ideaId);
   const currentEvidence =
     evidenceAudit && evidenceAudit.cardVersion === meta.currentVersion ? evidenceAudit : null;
+
+  // Integrity forensics: absent sweep = capability not exercised (neutral);
+  // present sweep must still match the workspace state — recompute the
+  // policy from findings+waivers (the stored token is display only) and
+  // re-derive the state digest (stale → fail closed).
+  const forensics = await readForensics(projectRoot, ideaId);
+  let forensicsPolicy: 'BLOCK' | 'WARN' | 'NO_NEW_BLOCKER' | null = null;
+  let forensicsSummary: string | undefined;
+  let forensicsStale = false;
+  let forensicsRecord: Record<string, unknown> | null = null;
+  if (forensics) {
+    const stateNow = await computeForensicsStateDigest(projectRoot, ideaId, meta.currentVersion);
+    if (forensics.cardVersion !== meta.currentVersion || forensics.stateDigest !== stateNow) {
+      forensicsStale = true;
+    } else {
+      forensicsPolicy = computeForensicsPolicy(forensics.findings, forensics.waivers);
+      forensicsSummary = forensics.summary;
+      const waived = new Set(forensics.waivers.map((waiver) => waiver.findingId));
+      forensicsRecord = {
+        policy: forensicsPolicy,
+        findings: forensics.findings.length,
+        openFindings: forensics.findings.filter((f) => !waived.has(f.id)).length,
+        summary: forensics.summary,
+        generatedAt: forensics.generatedAt,
+      };
+    }
+  }
+
   const gate = computeHandoffLevel({
     analysisVerdict: analysis.verdict,
     scalesRun: [...succeededScales].sort(),
@@ -216,6 +271,9 @@ export async function buildIdeaHandoff(
     auditVerdict: currentAudit?.overallVerdict ?? null,
     auditSummary: currentAudit?.summary,
     evidenceAuditVerdict: currentEvidence?.verdict ?? null,
+    forensicsPolicy,
+    forensicsSummary,
+    forensicsStale,
   });
 
   // --- assemble the package.
@@ -430,6 +488,9 @@ export async function buildIdeaHandoff(
         blockers: gate.blockers,
         analysisVerdict: analysis.verdict,
         comparisonGateOk: comparisonGate.ok,
+        // Forensics WARN is visible here without blocking the gate.
+        integrityForensics: forensicsRecord,
+        integrityForensicsStale: forensics ? forensicsStale : null,
         files: [...files, 'handoff.json'].sort(),
         generatedAt: Date.now(),
         boundaries: [
