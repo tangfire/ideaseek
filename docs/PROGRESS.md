@@ -173,7 +173,7 @@ Phase 4：Comparison 复现与统一评测
 
 目标：让真实用户可以长期、低风险、可解释地使用 IdeaSeek。
 
-- [ ] ResearchRun 跨 idea 版本/多轮实验的持久化编排
+- [x] ResearchRun 跨 idea 版本/多轮实验的持久化编排（ResearchNode graph；长周期 soak 仍待验收）
 - [x] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
 - [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
 - [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
@@ -313,3 +313,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-12 | WSL2 Python 套件补齐（接 Windows/WSL2 验证记录）：WSL 装 pypdf/numpy 后确认两处环境约束——共享检出里 worker/python/.venv 是 Windows venv（WSL 下 Scripts/python.exe 可执行但看不见 /mnt/d 路径）、pdfplumber0.11 依赖 Pillow≥12 需 Python≥3.10 而 WSL 为3.9；测试加固：OCR 用例先探测 venv 能否看见 fixture 路径（跨平台检出→明确 skip 而非 FILE_NOT_FOUND 失败），TablesTests 缺 pdfplumber 时 skip（可选解析器）| 5ab570f | Windows 权威套件 9/9 OK（守卫不改变行为）；WSL2 Oracle Linux 套件 9 tests OK（3 skipped 带明确原因）| WSL 全量 vitest 仍需平台原生依赖二次安装（CLI 产物级电池15/15已覆盖路径验证）；pinned 全依赖（rapidocr 等）在 WSL 需 Python≥3.10+独立 venv，属环境供给 | 下一模块：Phase 8 回归集、依赖、许可证和 secret 检查
 2026-11-12 | Phase 8 回归集/依赖/许可证/secret 检查：scripts/release-check.mjs（pnpm release-check，零新依赖）——回归集在场性（scripts.test+tests/*.test.ts+worker/python/tests/test_*.py+pnpm-lock 可复现性）、直接依赖必须可解析且许可证在宽松 allowlist（当前16/16：MIT/ISC/BSD/Apache-2.0）、tracked 文件（或 --skip-git 目录走查）扫私钥块/sk-/AKIA/ghp_/xox*/AIza/高熵凭据赋值（≥24字符，your-key 类占位不误报；当前372文件0命中）、--json+exit1 可作发布门禁；eslint 为 scripts/*.mjs 补 node globals| 96f8421 | 门禁全绿：94 files/674 vitest + 9 python 全量无偶发（release-check 3条：本仓绿报告、密钥夹具 exit1 指名文件+模式、干净夹具 OK）| 依赖许可证来自已装 node_modules（未安装的包记 dependency not installed）；python requirements 仅盘点不校验许可证（PyPI 无 SPDX 源）| 下一模块：README Quickstart 与 USER_GUIDE 从零机器验证 或 Journey A–H 验收
 2026-11-12 | README Quickstart + USER_GUIDE 从零机器验证：README 从空壳改为真实验证过的 Quickstart（frozen install→build→test→release-check、init/setup/doctor、scan/intake/plan、run/next/status/report 含真实退出码语义 0/1/2/3/4、interactive）；从零链路实测——git clone 新检出→pnpm install --frozen-lockfile 1m27s→pnpm build→node dist/cli.js --version/--help 全过；USER_GUIDE 5 分钟流程在临时项目全跑（init/setup/doctor/scan/intake/plan/run/next/status/report/ask，exit 按设计）| d9febd4 + 1ea76f4 + 11ccf1d | 顺带抓到并修复真实 bug：管道立即 EOF 会在串行队列排空前关闭 readline，showPrompt 抛 ERR_USE_AFTER_CLOSE 且队列 rejection 未捕获→REPL exit1——rlClosed 标志+close handler 捕获（1ea76f4，回归测试：/status+/quit+立即 EOF→exit0）；release-check 自扫描误报修复（假密钥运行时拼装，11ccf1d）| pnpm install 从零验证在本机 store 热缓存下完成（离线冷缓存未测）；npm 全局安装待发布（PACKAGING）| 下一模块：Journey A–H 正式验收
+2026-11-12 | ResearchRun 持久化节点图：idea-round/experiment/analysis ResearchNode、输入依赖、版本失效、成功节点不降级、sync recovery、SQLite migration v8 | a3f48bf | pnpm typecheck + vitest architecture/soak/checkpoint → 19 tests passed | 长周期真实 soak、运行时资源告警和训练器特定 checkpoint 仍待 Phase 7 验收 | 下一模块：long-run soak/告警或 ARIS P1 继续项
