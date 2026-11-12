@@ -36,6 +36,20 @@ export interface FakeHarnessOptions {
  * Schema-aware deterministic outputs so workflow e2e (including synthesis)
  * runs end to end against the fake harness without a model.
  */
+function readJsonContext(request: HarnessTaskRequest): Record<string, unknown> {
+  for (const input of [...request.inputs].reverse()) {
+    try {
+      const value = JSON.parse(input.content) as unknown;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+      }
+    } catch {
+      // Text/TSV inputs are normal; keep looking for a structured context.
+    }
+  }
+  return {};
+}
+
 function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'topic-synthesis-v1') {
     return JSON.stringify({
@@ -105,27 +119,19 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'experiment-audit-v1') {
     const override = process.env.IDEASEEK_FAKE_AUDIT_OUTPUT;
     if (override != null) return override;
-    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
-      ideaId?: string;
-      cardVersion?: number;
-    };
+    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number };
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
       overallVerdict: 'PASS',
+      overall: 'PASS',
+      evalType: 'real_gt',
       checks: [
-        {
-          id: 'result-existence',
-          verdict: 'PASS',
-          detail: 'result metrics present in the bundle',
-          evidence: 'experiment.result.metrics',
-        },
-        {
-          id: 'score-normalization',
-          verdict: 'PASS',
-          detail: 'metrics match the plan primary metric naming',
-          evidence: 'plan.primaryMetric',
-        },
+        { id: 'gt_provenance', status: 'PASS', details: 'metrics use recorded ground truth', evidence: 'experiment.result.metrics' },
+        { id: 'score_normalization', status: 'PASS', details: 'raw scores are not self-normalized', evidence: 'plan.primaryMetric' },
+        { id: 'result_existence', status: 'PASS', details: 'result metrics exist in the bundle', evidence: 'experiment.result.metrics' },
+        { id: 'dead_code', status: 'PASS', details: 'configured metrics are exercised', evidence: 'experiment.spec.metrics' },
+        { id: 'scope', status: 'PASS', details: 'quick-scale scope is stated honestly', evidence: 'experiment.spec.scale' },
       ],
       claims: [],
       summary: 'results are internally consistent with the recorded plan',
@@ -134,19 +140,21 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;
-    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
-      ideaId?: string;
-      cardVersion?: number;
-      round?: number;
-    };
+    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number; round?: number };
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,
       round: context.round ?? 1,
       score: 7,
       verdict: 'ready',
-      summary: 'artifacts are consistent: metrics match the plan primary metric',
-      weaknesses: [{ severity: 'minor', text: 'single seed — widen before claiming' }],
+      summary: 'fake idea review: artifacts are consistent with the plan primary metric',
+      weaknesses: [
+        {
+          severity: 'minor',
+          detail: 'single seed — widen before claiming',
+          minimumFix: 'run at least one additional seed',
+        },
+      ],
       questions: [],
     });
   }
