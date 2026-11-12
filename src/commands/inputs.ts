@@ -7,8 +7,15 @@ import {
   SCAN_PARSER_VERSION,
   renderReview,
   scanProject,
+  summarizeArchiveInput,
   type InputManifest,
 } from '../knowledge/scan.js';
+import { scanArchive, type ArchiveStatus } from '../knowledge/archive.js';
+import {
+  defaultArchiveExtractRoot,
+  extractArchive,
+  recoverArchiveExtractions,
+} from '../knowledge/archive-extract.js';
 import {
   applyOrganize,
   loadIndexManifest,
@@ -149,14 +156,117 @@ export function registerScanCommand(program: Command): void {
     );
 }
 
+/** Concrete next step per archive status (CLI_SPEC: ARCHIVE_BLOCKED 给出具体下一步). */
+function archiveNextStep(status: ArchiveStatus): string {
+  switch (status) {
+    case 'ok':
+      return 'extract with: ideaseek intake --extract <path>';
+    case 'ARCHIVE_BLOCKED':
+      return 'unsafe members refused — fix or remove the archive, then re-run ideaseek scan';
+    case 'corrupted':
+      return 're-download or repair the archive, then re-run ideaseek scan';
+    case 'encrypted':
+      return 'provide a decrypted copy — password-protected archives are never guessed';
+    case 'unknown-format':
+      return 'convert to zip / tar / tar.gz, or unpack manually into an input directory';
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} B`;
+}
+
+/**
+ * `intake --extract <relPath>`: safe extraction into the isolated,
+ * platform-managed extract root. Refuses anything that is not status `ok`
+ * (blocked / corrupted / encrypted / unknown-format) with the concrete
+ * next step; the original archive is never modified, moved or deleted.
+ */
+async function performArchiveExtract(
+  paths: ReturnType<typeof projectPaths>,
+  relPath: string,
+  json: boolean,
+): Promise<number> {
+  const manifest = await readManifest(manifestPath(paths));
+  if (!manifest) {
+    throw new IdeaseekError('USER_INPUT_REQUIRED', 'no input manifest yet; run: ideaseek scan');
+  }
+  const file = manifest.files.find((entry) => entry.relPath === relPath);
+  if (!file || file.role !== 'archive') {
+    const archives = manifest.files
+      .filter((entry) => entry.role === 'archive')
+      .map((entry) => entry.relPath);
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      archives.length > 0
+        ? `not a scanned archive: ${relPath} — archives: ${archives.slice(0, 10).join(', ')}`
+        : `not a scanned archive: ${relPath} — run: ideaseek scan`,
+    );
+  }
+
+  // Always re-inspect at extraction time: safety must be judged against the
+  // current bytes, not a possibly stale manifest entry.
+  const input = await scanArchive(file.path, { projectRoot: paths.root });
+  if (input.status !== 'ok') {
+    const detail = input.safety.violations[0]?.detail ?? input.issues[0] ?? '';
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `cannot extract ${relPath}: status=${input.status}${detail ? ` (${detail})` : ''} — ${archiveNextStep(input.status)}`,
+      { status: input.status, archiveId: input.archiveId, issues: input.issues },
+    );
+  }
+
+  const extractRoot = defaultArchiveExtractRoot(paths.root);
+  await recoverArchiveExtractions(extractRoot); // clear crash leftovers first
+  const result = await extractArchive(input, { extractRoot });
+  const summary = summarizeArchiveInput(result);
+
+  // Persist the extraction pointer so later intake runs show it.
+  const fresh = await readManifest(manifestPath(paths));
+  const target = fresh?.files.find((entry) => entry.path === file.path);
+  if (fresh && target) {
+    target.archive = summary;
+    await writeManifest(manifestPath(paths), fresh);
+  }
+
+  const extraction = summary.extraction;
+  if (json) {
+    process.stdout.write(
+      jsonLine({
+        relPath,
+        archiveId: summary.archiveId,
+        format: summary.format,
+        status: summary.status,
+        memberCount: summary.memberCount,
+        extraction,
+      }),
+    );
+    return 0;
+  }
+  process.stdout.write(
+    `extracted ${relPath}: ${extraction?.fileCount ?? 0} file(s) → ${extraction?.dir ?? '?'}\n`,
+  );
+  process.stdout.write(
+    `rootHash: ${extraction?.rootHash ?? 'n/a'}${extraction?.reused ? ' (reused verified extraction)' : ''}\n`,
+  );
+  process.stdout.write('original archive untouched; contents are read-only platform material\n');
+  return 0;
+}
+
 export function registerIntakeCommand(program: Command): void {
   program
     .command('intake')
     .description('show unclassified inputs and candidate groups awaiting confirmation')
     .option('--json', 'machine-readable output')
+    .option('--extract <relPath>', 'safely extract one scanned archive (refuses unsafe ones)')
     .action(
-      action(async (opts: { json?: boolean }) => {
+      action(async (opts: { json?: boolean; extract?: string }) => {
         const paths = await openProject();
+        if (opts.extract) return performArchiveExtract(paths, opts.extract, opts.json === true);
+
         const manifest = await readManifest(manifestPath(paths));
         if (!manifest) {
           throw new IdeaseekError(
@@ -166,6 +276,7 @@ export function registerIntakeCommand(program: Command): void {
         }
         const unknown = manifest.files.filter((file) => file.role === 'unknown');
         const pending = manifest.groups.filter((group) => group.needsConfirmation);
+        const archives = manifest.files.filter((file) => file.role === 'archive' && file.archive);
 
         if (opts.json) {
           process.stdout.write(
@@ -176,6 +287,10 @@ export function registerIntakeCommand(program: Command): void {
               groups: manifest.groups,
               pendingConfirmation: pending.length,
               duplicates: manifest.duplicateSets,
+              archives: archives.map((file) => ({
+                relPath: file.relPath,
+                ...file.archive!,
+              })),
             }),
           );
           return 0;
@@ -199,6 +314,23 @@ export function registerIntakeCommand(program: Command): void {
           process.stdout.write(`重复内容（${manifest.duplicateSets.length} 组）：\n`);
           for (const set of manifest.duplicateSets.slice(0, 20)) {
             process.stdout.write(`  ${set.sha256.slice(0, 19)}… → ${set.paths.join(', ')}\n`);
+          }
+        }
+        if (archives.length > 0) {
+          process.stdout.write(`压缩包（${archives.length}）：\n`);
+          for (const file of archives.slice(0, 50)) {
+            const info = file.archive!;
+            const extracted = info.extraction
+              ? ` → extracted ${info.extraction.fileCount} file(s)`
+              : '';
+            process.stdout.write(
+              `  [${info.status}] ${file.relPath}  ${info.format} · ${info.memberCount} members · ${formatBytes(info.totalUncompressedBytes)}${extracted}\n`,
+            );
+            if (info.status !== 'ok') {
+              process.stdout.write(`      next: ${archiveNextStep(info.status)}\n`);
+            } else if (!info.extraction) {
+              process.stdout.write(`      next: ${archiveNextStep('ok')}\n`);
+            }
           }
         }
         process.stdout.write(

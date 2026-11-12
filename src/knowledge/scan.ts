@@ -2,6 +2,14 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
+// Deferred cycle (safe in ESM): archive.ts imports `extOf` from here, this
+// module calls `scanArchive` only inside functions, never at module init.
+import {
+  scanArchive,
+  type ArchiveFormat,
+  type ArchiveInput,
+  type ArchiveStatus,
+} from './archive.js';
 
 /** Bumped whenever classification rules change: roles are recomputed, hashes are not. */
 export const SCAN_PARSER_VERSION = 'ideaseek-scan-1';
@@ -25,6 +33,34 @@ export interface ManifestFile {
   confidence: number;
   basis: string[];
   discoveredAt: number;
+  /** Present for role `archive`: member manifest + safety status (see below). */
+  archive?: ArchiveInspectionSummary;
+}
+
+/** Extraction state recorded for an archive (updated by `intake --extract`). */
+export interface ArchiveExtractionSummary {
+  dir: string;
+  fileCount: number;
+  rootHash: string;
+  reused: boolean;
+}
+
+/**
+ * Per-archive inspection persisted in the manifest (CLI_SPEC: scan/intake
+ * 支持常见压缩包 — members are listed first, unsafe archives land in
+ * ARCHIVE_BLOCKED with a concrete reason, never silently accepted).
+ */
+export interface ArchiveInspectionSummary {
+  archiveId: string;
+  format: ArchiveFormat;
+  status: ArchiveStatus;
+  memberCount: number;
+  totalUncompressedBytes: number;
+  /** First safety violation when blocked (path-traversal, compression-ratio, …). */
+  blockReason: string | null;
+  issues: string[];
+  extraction: ArchiveExtractionSummary | null;
+  inspectedAt: number;
 }
 
 export type GroupKind = 'paper' | 'comparison' | 'dataset' | 'unknown';
@@ -256,6 +292,55 @@ async function walk(rootAbs: string, out: string[]): Promise<void> {
  * duplicate detection and candidate grouping. Pure read of user inputs —
  * never writes, moves or deletes anything under the scanned roots.
  */
+/** One summary shape shared by the scan pass and `intake --extract`. */
+export function summarizeArchiveInput(input: ArchiveInput): ArchiveInspectionSummary {
+  return {
+    archiveId: input.archiveId,
+    format: input.format,
+    status: input.status,
+    memberCount: input.memberCount,
+    totalUncompressedBytes: input.totalUncompressedBytes,
+    blockReason: input.safety.violations[0]?.reason ?? null,
+    issues: input.issues.slice(0, 5),
+    extraction: input.extraction
+      ? {
+          dir: input.extraction.dir,
+          fileCount: input.extraction.files,
+          rootHash: input.extraction.rootHash,
+          reused: input.extraction.reused,
+        }
+      : null,
+    inspectedAt: input.scannedAt,
+  };
+}
+
+/**
+ * Inspects one archive during a scan. IO failures are recorded as a
+ * `corrupted` summary instead of aborting the whole scan — an unreadable
+ * archive must stay visibly refused, never silently absent.
+ */
+async function inspectArchiveForManifest(
+  absPath: string,
+  projectRoot: string,
+  now: number,
+): Promise<ArchiveInspectionSummary> {
+  try {
+    return summarizeArchiveInput(await scanArchive(absPath, { projectRoot }));
+  } catch (error) {
+    return {
+      archiveId: 'arc-unreadable',
+      format: 'unknown',
+      status: 'corrupted',
+      memberCount: 0,
+      totalUncompressedBytes: 0,
+      blockReason: null,
+      issues: [`inspection failed: ${(error as Error).message}`],
+      extraction: null,
+      inspectedAt: now,
+    };
+  }
+}
+
 export async function scanProject(opts: ScanOptions): Promise<InputManifest> {
   const previousByPath = new Map<string, ManifestFile>();
   for (const file of opts.previous?.files ?? []) {
@@ -286,6 +371,15 @@ export async function scanProject(opts: ScanOptions): Promise<InputManifest> {
       ? { sha256: previous!.sha256, hashStatus: previous!.hashStatus }
       : await hashFile(absPath, info.size);
     const classification = classifyFile(absPath.split(/[\\/]/).pop() ?? absPath, { rootName });
+    // Archives get a member manifest + safety status; unchanged archives
+    // reuse the previous inspection (the file hash already matched).
+    let archive: ArchiveInspectionSummary | undefined;
+    if (classification.role === 'archive') {
+      archive =
+        unchanged && previous?.archive
+          ? previous.archive
+          : await inspectArchiveForManifest(absPath, opts.projectRoot, opts.now);
+    }
     files.push({
       path: absPath,
       relPath,
@@ -298,6 +392,7 @@ export async function scanProject(opts: ScanOptions): Promise<InputManifest> {
       confidence: classification.confidence,
       basis: classification.basis,
       discoveredAt: opts.now,
+      ...(archive ? { archive } : {}),
     });
   }
 

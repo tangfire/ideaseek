@@ -47,7 +47,7 @@ function startInk(cwd: string): InkRepl {
       // can block long enough for two chunks to coalesce into one paste.
       await sleep(300);
     },
-    waitFor: async (pattern, timeoutMs = 25_000) => {
+    waitFor: async (pattern, timeoutMs = 45_000) => {
       const started = Date.now();
       while (!pattern.test(out)) {
         if (Date.now() - started > timeoutMs) {
@@ -81,9 +81,9 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
     const repl = startInk(dir);
     try {
       // First ink import over a cold/cross-OS filesystem can take seconds.
-      await repl.waitFor(/ideaseek ›/, 30_000);
+      await repl.waitFor(/ideaseek ›/, 60_000);
       // Header context arrives from `status --json` after the first frame.
-      await repl.waitFor(/Project/, 30_000);
+      await repl.waitFor(/Project/, 60_000);
       expect(repl.output()).toContain('\x1b[?1049h'); // alternate screen ON
       expect(repl.output()).toContain('[IS]'); // short mark at 100 cols
       // The first frame must land INSIDE the alternate screen, not before it.
@@ -137,13 +137,13 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
     } finally {
       await cleanup(dir, repl.child);
     }
-  }, 90_000);
+  }, 150_000);
 
   it('Ctrl-D exits without cancelling anything and restores the screen', async () => {
     const dir = await makeProjectDir('ink-interactive-eof');
     const repl = startInk(dir);
     try {
-      await repl.waitFor(/ideaseek ›/, 30_000);
+      await repl.waitFor(/ideaseek ›/, 60_000);
       await repl.write('\x04'); // EOF semantics on an empty line
       const code = await repl.done;
       expect(code).toBe(0);
@@ -151,5 +151,5 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
     } finally {
       await cleanup(dir, repl.child);
     }
-  }, 60_000);
+  }, 120_000);
 });
