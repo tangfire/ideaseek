@@ -9,6 +9,7 @@ import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/
 import { runAblations } from '../idea/ablation.js';
 import { runAnalysis } from '../idea/analyze.js';
 import { buildIdeaHandoff } from '../idea/handoff.js';
+import type { ForensicsBundle, IntegrityForensics } from '../idea/forensics.js';
 import {
   assertAutonomy,
   checkAutonomy,
@@ -1077,6 +1078,347 @@ export function registerIdeaCommand(program: Command): void {
         }
         return audit.verdict === 'fail' ? 2 : 0;
       }),
+    );
+
+  idea
+    .command('forensics')
+    .description(
+      'integrity forensics sweep over persisted evidence → typed policy gate (ARIS integrity-forensics backend)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a previous forensics.json and re-sweep')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const meta = await loadWorkspaceMeta(root, ideaId);
+          const { loadArisSkill } = await import('../aris/skill.js');
+          const skill = await loadArisSkill('integrity-forensics');
+          const {
+            buildForensicsRequest,
+            collectForensicsBundle,
+            forensicsEvidenceDigest,
+            forensicsPath,
+            forensicsWithoutModel,
+            parseForensicsOutput,
+            readForensics,
+            sweepDeterministic,
+            writeForensics,
+          } = await import('../idea/forensics.js');
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+
+          const gather = await ProjectRuntime.open({ cwd: root, recover: false });
+          let bundle: ForensicsBundle;
+          try {
+            bundle = await collectForensicsBundle(root, ideaId, gather);
+          } finally {
+            await gather.close();
+          }
+          const evidenceDigest = forensicsEvidenceDigest(bundle);
+          const sweep = sweepDeterministic(bundle);
+          const request = buildForensicsRequest(skill, {
+            ideaId,
+            cardVersion: meta.currentVersion,
+            bundle,
+            evidenceDigest,
+            sweep,
+          });
+
+          const existing = await readForensics(root, ideaId);
+          if (!opts.force && existing && existing.inputHash === request.inputHash) {
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  reused: true,
+                  policy: existing.policy,
+                  inputHash: existing.inputHash,
+                  findings: existing.findings.map((f) => ({
+                    id: f.id,
+                    family: f.family,
+                    severity: f.severity,
+                  })),
+                  coverage: existing.coverage,
+                  path: `ideas/${ideaId}/experiments/forensics.json`,
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `reused integrity forensics for ${ideaId}: ${existing.policy} ` +
+                  `(${existing.findings.length} finding(s))\n`,
+              );
+              process.stdout.write('next: regenerate with --force after new results\n');
+            }
+            return existing.policy === 'BLOCK' ? 2 : 0;
+          }
+
+          const parseMeta = {
+            inputHash: request.inputHash,
+            skill: { name: skill.name, sha256: skill.sha256 },
+            evidenceDigest,
+            stateDigest: bundle.stateDigest,
+            sweep,
+            // Append-only waiver ledger survives every re-sweep.
+            waivers: existing?.waivers ?? [],
+            cardVersion: meta.currentVersion,
+            harnessRuntime: 'none',
+            model: null,
+          };
+
+          const noEvidence = sweep.findings.some((f) => f.id === 'coverage:no-evidence');
+          let forensics: IntegrityForensics;
+          let eventSeq: number | null = null;
+          if (noEvidence) {
+            // Nothing to review — skip the model pass honestly instead of
+            // spending a call on an empty bundle (coverage records the skip).
+            forensics = forensicsWithoutModel(ideaId, parseMeta);
+          } else {
+            const { buildHarness } = await import('./shared.js');
+            const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+            const kind =
+              opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+            const harness = buildHarness(kind);
+            await harness.initialize();
+            let output: string;
+            let runtimeKind = kind;
+            let model: string | null = null;
+            try {
+              const result = await harness.runTask({
+                runId: `idea:${ideaId}`,
+                taskId: `idea-forensics-${ideaId}`,
+                profile: 'idea-generator',
+                instruction: request.instruction,
+                inputs: [
+                  {
+                    kind: 'text',
+                    name: 'evidence_bundle',
+                    content: JSON.stringify({
+                      ideaId,
+                      cardVersion: meta.currentVersion,
+                      evidenceDigest: request.evidenceDigest,
+                    }),
+                  },
+                ],
+                outputSchema: 'integrity-forensics-v1',
+                budget: { timeoutMs: 120_000, maxOutputTokens: 8_192 },
+                idempotencyKey: request.idempotencyKey,
+              });
+              output = result.output;
+              runtimeKind = result.runtime.kind;
+              model = result.model;
+            } catch (error) {
+              if (error instanceof Error && error.name === 'HarnessBlockError') {
+                const block = (error as { block?: string }).block ?? 'BLOCKED';
+                if (opts.json) {
+                  process.stdout.write(jsonLine({ ideaId, blocked: block, written: false }));
+                } else {
+                  process.stderr.write(
+                    `idea forensics blocked [${block}]: ${(error as Error).message}\n` +
+                      'nothing was written — restore quota/auth/network and rerun the same command\n',
+                  );
+                }
+                return 2;
+              }
+              throw error;
+            } finally {
+              await harness.shutdown().catch(() => undefined);
+            }
+
+            forensics = parseForensicsOutput(
+              output,
+              { ideaId, cardVersion: meta.currentVersion },
+              { ...parseMeta, harnessRuntime: runtimeKind, model },
+            );
+          }
+          await writeForensics(root, forensics);
+
+          const runForensics = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runForensics.db.getLatestRun(runForensics.project.id);
+            if (run) {
+              const event = await runForensics.db.appendEvent({
+                runId: run.runId,
+                phase: 'ANALYZING',
+                objectId: ideaId,
+                role: forensics.coverage.modelPass === 'ran' ? 'reviewer' : 'system',
+                eventType: 'integrity_forensics',
+                summary:
+                  `integrity forensics ${forensics.policy} for ${ideaId} ` +
+                  `(${forensics.findings.length} finding(s), model ${forensics.model ?? 'skipped'})`,
+                status: forensics.policy.toLowerCase(),
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await runForensics.close();
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                reused: false,
+                policy: forensics.policy,
+                inputHash: forensics.inputHash,
+                findings: forensics.findings.map((f) => ({
+                  id: f.id,
+                  family: f.family,
+                  severity: f.severity,
+                  source: f.source,
+                })),
+                coverage: forensics.coverage,
+                model: forensics.model,
+                path: `ideas/${ideaId}/experiments/forensics.json`,
+                eventSeq,
+              }),
+            );
+            return forensics.policy === 'BLOCK' ? 2 : 0;
+          }
+
+          process.stdout.write(
+            `integrity forensics ${ideaId} v${meta.currentVersion}: ${forensics.policy} ` +
+              `· model ${forensics.model ?? 'skipped'} ` +
+              `(ARIS ${skill.name} @ ${skill.sha256.slice(0, 12)})\n`,
+          );
+          for (const finding of forensics.findings) {
+            process.stdout.write(
+              `  ${finding.severity.padEnd(8)} ${finding.id.padEnd(42)} ${finding.detail}\n` +
+                `           evidence: ${finding.evidence}\n`,
+            );
+          }
+          process.stdout.write(`  ${forensics.summary}\n`);
+          process.stdout.write(
+            `  coverage: ${forensics.coverage.checksRun.length} check(s) run, ` +
+              `${forensics.coverage.checksDeferred.length} deferred, ` +
+              `model pass: ${forensics.coverage.modelPass}\n`,
+          );
+          process.stdout.write(`  file: ${forensicsPath(root, ideaId).replace(`${root}/`, '')}\n`);
+          if (eventSeq !== null) process.stdout.write(`  event #${eventSeq} recorded\n`);
+          if (forensics.policy === 'BLOCK') {
+            process.stdout.write(
+              'next: handoff delivery is blocked — fix the findings or explicitly waive them ' +
+                `(ideaseek idea forensics-waive ${ideaId} <finding-id> --reason "..."), ` +
+                'then re-sweep\n',
+            );
+          } else if (forensics.policy === 'WARN') {
+            process.stdout.write(
+              'next: warnings ship visible in the handoff package (handoff.json integrityForensics)\n',
+            );
+          } else {
+            process.stdout.write('next: ideaseek idea handoff <ideaId>\n');
+          }
+          return forensics.policy === 'BLOCK' ? 2 : 0;
+        },
+      ),
+    );
+
+  idea
+    .command('forensics-waive')
+    .description(
+      'waive one integrity-forensics finding (append-only ledger; Decision/Event recorded)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .argument('<findingId>', 'finding id from the current sweep')
+    .requiredOption('--reason <text>', 'why this finding stands as-is (recorded permanently)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, findingId: string, opts: { reason: string; json?: boolean }) => {
+          const root = await openRoot();
+          const meta = await loadWorkspaceMeta(root, ideaId);
+          const { readForensics, waiveFinding, writeForensics } =
+            await import('../idea/forensics.js');
+          const forensics = await readForensics(root, ideaId);
+          if (!forensics) {
+            throw new IdeaseekError(
+              'DEPENDENCY_NOT_MET',
+              `idea ${ideaId} has no integrity-forensics sweep — run: ideaseek idea forensics ${ideaId}`,
+            );
+          }
+          if (forensics.cardVersion !== meta.currentVersion) {
+            throw new IdeaseekError(
+              'DEPENDENCY_NOT_MET',
+              `sweep is stale (card v${forensics.cardVersion} vs workspace v${meta.currentVersion}) ` +
+                `— re-sweep before waiving: ideaseek idea forensics ${ideaId}`,
+            );
+          }
+          if (!forensics.findings.some((f) => f.id === findingId)) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              `no finding "${findingId}" in the current sweep (findings: ` +
+                `${forensics.findings.map((f) => f.id).join(', ') || 'none'})`,
+            );
+          }
+          if (forensics.waivers.some((w) => w.findingId === findingId)) {
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({ ideaId, findingId, alreadyWaived: true, policy: forensics.policy }),
+              );
+            } else {
+              process.stdout.write(
+                `finding ${findingId} is already waived — a waiver is append-only and stands\n`,
+              );
+            }
+            return 0;
+          }
+
+          // Decision BEFORE the mutation (novelty/review-waive discipline):
+          // any gate bypass is visible in the event trail first.
+          let decisionSeq: number | null = null;
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            if (run) {
+              const event = await runtime.db.appendEvent({
+                runId: run.runId,
+                phase: 'DECISION',
+                objectId: ideaId,
+                role: 'user',
+                eventType: 'decision',
+                summary: `forensics-waived: ${ideaId} ${findingId} — ${opts.reason}`,
+                status: 'confirmed',
+              });
+              decisionSeq = event.seq;
+            }
+          } finally {
+            await runtime.close();
+          }
+
+          const updated = waiveFinding(forensics, findingId, opts.reason, decisionSeq);
+          await writeForensics(root, updated);
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                ideaId,
+                findingId,
+                alreadyWaived: false,
+                policy: updated.policy,
+                waivers: updated.waivers.length,
+                decisionSeq,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `waived ${findingId} for ${ideaId}: policy ${forensics.policy} → ${updated.policy}\n`,
+          );
+          process.stdout.write(
+            '  a waiver is not a resolution — the original finding stays on the record\n',
+          );
+          if (decisionSeq !== null)
+            process.stdout.write(`  decision recorded (event #${decisionSeq})\n`);
+          else process.stdout.write('  decision not recorded (no run exists yet)\n');
+          process.stdout.write('next: ideaseek idea handoff <ideaId>\n');
+          return 0;
+        },
+      ),
     );
 
   idea
