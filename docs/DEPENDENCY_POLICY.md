@@ -21,7 +21,7 @@
 | 科研 workflow | ARIS | IdeaCard、ExperimentSpec、RunResult、Artifact、Decision、RunEvent 和 checkpoint |
 | TUI | Ink 或同等级成熟 TUI 框架 | UI 与 use-case 的 adapter；plain/json 仍走行式输出 |
 | CLI 参数 | Commander | 命令到 application use-case 的映射 |
-| 契约校验 | JSON Schema + 成熟校验器 | schema 版本、迁移、跨 TS/Python 的单一权威契约 |
+| 契约校验 | JSON Schema (draft-07) + **ajv 8.20.0**（MIT，锁版本） | schema 版本、迁移、跨 TS/Python 的单一权威契约 |
 | 子进程 | 成熟跨平台进程库或已验证 adapter | 租约、超时、取消、失败分类和恢复语义 |
 | GitHub | Git CLI + 可选 API adapter | 来源、commit、license、权限和审计记录 |
 | PDF/科学解析 | Python 生态成熟库 | 解析器版本、证据定位、哈希绑定和失败回退 |
@@ -39,10 +39,22 @@
 
 迁移通过 conformance/regression tests 后，应删除旧的重复默认实现；不要长期维护两套默认 workflow 或两套默认 TUI。
 
+## 已引入依赖记录
+
+### ajv 8.20.0（契约校验）
+
+- **用途**：编译 `src/core/schema/schemas/*.json`（draft-07）做结构校验；`validateAgainstSchema`/`assertAgainstSchema` 是唯一入口。
+- **版本/许可证**：8.20.0（锁版本，无 `^`），MIT；`pnpm release-check` 许可证 allowlist 覆盖。
+- **来源/维护**：npm 官方包，JSON Schema 社事实上标准实现；此前已是 eslint 的传递依赖，本仓库改为直接声明。
+- **Windows/Linux 验证**：Windows 11 全量 vitest 通过；纯 JS 无原生依赖，跨平台无差异。
+- **adapter 边界**：ajv 只回答“结构是否符合契约”；语义规则（证据核验、哈希绑定、状态机）留在领域模块；错误统一映射为 `SchemaIssue{path,message}` 与 `INVALID_ARTIFACT`。
+- **替代方案**：zod/typebox（自有 DSL，不产出可被 Python/ARIS 直接读取的 JSON Schema 文件，否决）、手写校验（已存在多套平行实现，正是要收敛的问题）。
+- **测试方式**：`tests/schema.test.ts` —— 与 `validatePaperCard` 的 21 例决策一致性矩阵、错误路径、extract 持久化边界 fail-closed 与无误杀 e2e。
+
 ## 当前待办
 
-- 以 Ink 完成 interactive TTY 应用壳，并删除旧的默认 readline/ANSI 重绘路径。
-- 评估 JSON Schema 校验器，统一 TypeScript、Python worker 和 ARIS 结构化契约。
+- 以 Ink 完成 interactive TTY 应用壳，并删除旧的默认 readline/ANSI 重绘路径。（✅ 2026-11-12 完成：`src/cli/shell/app.tsx` 为唯一 TTY renderer，行式路径仅服务 plain/json/非 TTY）
+- 评估 JSON Schema 校验器，统一 TypeScript、Python worker 和 ARIS 结构化契约。（校验器已定 ajv 并接入 papercard-v1 持久化边界；Python worker 读取同一 JSON schema 文件、ARIS 输出契约迁移待后续切片）
 - 评估跨平台子进程 adapter，覆盖 Windows/Linux 的超时、取消和进程树回收。
 - 评估 GitHub API adapter，仅用于元数据、license、release 和限额，不替代 Git clone。
 - 仅在需求出现时评估文件扫描、watch、结构化诊断日志和扩展归档解析库。

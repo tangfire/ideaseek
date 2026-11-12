@@ -1,4 +1,5 @@
 import { IdeaseekError, isIdeaseekError } from '../core/errors.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
 import { extractTables, ocrPdf, parsePdf } from '../knowledge/pdf.js';
@@ -283,6 +284,11 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
       prompt_schema_version: 'papercard-v1',
     },
   };
+
+  // Structural contract gate (src/core/schema/schemas/papercard-v1.json):
+  // a payload that cannot satisfy the cross-language contract fails HERE
+  // instead of being persisted for later stages to trip over.
+  assertAgainstSchema('papercard-v1', card.card);
 
   // Persist an audit trail of every tool call the agent made: summaries are
   // sanitized by the adapter (no secrets, truncated arguments).

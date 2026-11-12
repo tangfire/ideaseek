@@ -43,7 +43,9 @@ function startInk(cwd: string): InkRepl {
     output: () => out,
     write: async (chunk) => {
       child.stdin.write(chunk);
-      await sleep(180);
+      // Generous pacing: under full-suite parallelism the child's event loop
+      // can block long enough for two chunks to coalesce into one paste.
+      await sleep(300);
     },
     waitFor: async (pattern, timeoutMs = 25_000) => {
       const started = Date.now();

@@ -317,6 +317,11 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify(buildFakeExperimentPlan(request));
   }
+  if (request.outputSchema === 'papercard-v1') {
+    // Test hook: raw override exercises the papercard schema gate.
+    const override = process.env.IDEASEEK_FAKE_PAPERCARD_OUTPUT;
+    if (override != null) return override;
+  }
   return buildFakeCard(request, call);
 }
 

@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/papercard-v1.json",
+  "title": "IdeaSeek PaperCard (papercard-v1)",
+  "description": "Structural contract for PaperCard. Single authority shared by TypeScript (ajv), and by Python/ARIS consumers reading this file directly. Semantic checks (evidence verification, hash binding) stay in the Evidence Checker. Platform-stamped fields (paper_id, document_hash, parser_version, prompt_schema_version) are validated here so persisted artifacts always carry them.",
+  "type": "object",
+  "required": [
+    "paper_id",
+    "document_hash",
+    "title",
+    "problem",
+    "method",
+    "datasets",
+    "metrics",
+    "baselines",
+    "limitations",
+    "unknowns",
+    "claims",
+    "parser_version",
+    "prompt_schema_version"
+  ],
+  "properties": {
+    "paper_id": { "type": "string", "minLength": 1 },
+    "document_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "problem": { "type": "string", "minLength": 1 },
+    "method": {
+      "type": "object",
+      "required": ["summary", "steps", "motivation"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "motivation": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "datasets": { "type": "array", "items": { "type": "string" } },
+    "metrics": { "type": "array", "items": { "type": "string" } },
+    "baselines": { "type": "array", "items": { "type": "string" } },
+    "limitations": { "type": "array", "items": { "type": "string" } },
+    "unknowns": { "type": "array", "items": { "type": "string" } },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "evidence"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/definitions/evidenceLocator" }
+          }
+        }
+      }
+    },
+    "parser_version": { "type": "string", "minLength": 1 },
+    "prompt_schema_version": { "type": "string", "minLength": 1 }
+  },
+  "definitions": {
+    "evidenceLocator": {
+      "type": "object",
+      "description": "At least one locator: page >= 1, a non-empty quote, or a section name.",
+      "anyOf": [
+        { "required": ["page"], "properties": { "page": { "type": "number", "minimum": 1 } } },
+        { "required": ["quote"], "properties": { "quote": { "type": "string", "minLength": 1 } } },
+        {
+          "required": ["section"],
+          "properties": { "section": { "type": "string", "minLength": 1 } }
+        }
+      ]
+    }
+  }
+}
