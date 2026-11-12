@@ -149,7 +149,7 @@ Phase 4：Comparison 复现与统一评测
 ## Phase 4.5C：ARIS P2 论文与发表交付
 
 - [x] paper-claim-audit 和 citation-crosscheck
-- [ ] integrity-forensics
+- [x] integrity-forensics：确定性证据 sweep、ARIS adversarial model pass、BLOCK/WARN/NO_NEW_BLOCKER handoff gate、append-only waiver/Decision
 - [ ] Overleaf/LaTeX paper-write workflow
 - [ ] rebuttal、paper slides 和 talk workflow
 
@@ -187,8 +187,8 @@ Phase 4：Comparison 复现与统一评测
 
 - [x] ResearchRun 跨 idea 版本/多轮实验的持久化编排（ResearchNode graph；长周期 soak 仍待验收）
 - [x] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
-- [ ] stale heartbeat、磁盘阈值、备份失败和长期预算告警
-- [ ] 长周期 soak test（加速时钟 CI + 发布前真实运行）
+- [x] stale heartbeat、磁盘阈值、备份失败和长期预算告警（事实型告警，不替代科学判定）
+- [x] 长周期 soak test（加速时钟覆盖恢复/队列/通知/备份；发布前真实长周期运行仍待执行）
 - [x] protocol/experiment/权限审批交互
 - [x] 自然语言 REPL 与高影响操作确认
 - [ ] fast/balanced/deep/deterministic 模型路由
