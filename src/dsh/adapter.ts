@@ -22,6 +22,7 @@ export type HarnessProfile =
   | 'synthesis-analyst'
   | 'dataset-discovery'
   | 'idea-generator'
+  | 'paper-planner'
   | 'experiment-designer'
   | 'reviewer'
   | 'demo';

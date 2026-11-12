@@ -322,6 +322,50 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     const override = process.env.IDEASEEK_FAKE_PAPERCARD_OUTPUT;
     if (override != null) return override;
   }
+  if (request.outputSchema === 'paper-plan-v1') {
+    // Test hook: raw override exercises parse/validation failure paths.
+    const override = process.env.IDEASEEK_FAKE_PAPER_PLAN_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const questionLine =
+      context.split(/\r?\n/).find((line) => line.startsWith('Research question:')) ??
+      'Research question: unknown';
+    const claim = 'The persisted results bear on the research question';
+    return JSON.stringify({
+      paperType: 'empirical-study',
+      venue: 'ICLR',
+      maxPages: 9,
+      contribution: `Fake contribution derived from: ${questionLine.slice(0, 120)}`,
+      claimsEvidence: [
+        {
+          claim,
+          evidence: [
+            {
+              source: questionLine.includes('(no run yet)') ? 'context' : 'experiment-results',
+              location: questionLine.slice(0, 100),
+            },
+          ],
+          status: 'unadjudicated',
+        },
+      ],
+      structure: [
+        {
+          section: '§0 Abstract',
+          purpose: 'state the contribution and strongest evidence',
+          keyPoints: ['contribution', 'evidence'],
+        },
+      ],
+      figurePlan: [
+        { id: 'fig-1', kind: 'bar', caption: 'Fake main result figure', supportsClaims: [claim] },
+      ],
+      citationPlan: [{ topic: 'related work', candidates: ['fake-citation-1'] }],
+      reviewerFeedback: {
+        verdict: 'REVIEW_UNAVAILABLE',
+        notes: ['no reviewer backend in the fake harness'],
+      },
+      nextSteps: ['draft the introduction', 'run the venue checklist'],
+    });
+  }
   return buildFakeCard(request, call);
 }
 
