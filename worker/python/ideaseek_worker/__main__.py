@@ -17,6 +17,7 @@ from .embed import cmd_embed, probe_environment, DEFAULT_MODEL
 from .federated import profile_dataset
 from .pdf_parse import PdfParseError, parse_pdf
 from .minipdf import build_minimal_pdf
+from .schema_validate import validate_payload
 
 
 def _emit(payload: dict) -> None:
@@ -37,7 +38,11 @@ def cmd_parse(args: argparse.Namespace) -> int:
         return _fail(exc.code, exc.message)
     except Exception as exc:  # noqa: BLE001 - last-resort normalization
         return _fail("INTERNAL", str(exc))
-    _emit(parsed.to_json())
+    payload = parsed.to_json()
+    violation = validate_payload("parsed-paper-v1", payload)
+    if violation is not None:
+        return _fail("SCHEMA_VIOLATION", violation)
+    _emit(payload)
     return 0
 
 
@@ -166,13 +171,17 @@ def cmd_ocr(args: argparse.Namespace) -> int:
         return _fail("PARSE_FAILED", f"OCR failed: {exc}")
     if not any(page["text"].strip() for page in pages):
         return _fail("NO_TEXT_LAYER", "OCR produced no text (image-only or empty pages)")
-    _emit({
+    payload = {
         "source": str(path),
         "pageCount": len(pages),
         "pages": pages,
         "parser": "rapidocr+pypdfium2",
         "ocrPagesTruncated": max(0, len(pdf) - total),
-    })
+    }
+    violation = validate_payload("parsed-paper-v1", payload)
+    if violation is not None:
+        return _fail("SCHEMA_VIOLATION", violation)
+    _emit(payload)
     return 0
 
 
