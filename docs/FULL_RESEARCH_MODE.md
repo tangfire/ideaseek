@@ -1,6 +1,8 @@
 # IdeaSeek Full Research / Publication 模式
 
-IdeaSeek 的默认模式是快速探索和 handoff。对于已经达到 `HANDOFF_READY`、用户明确认可的 idea，可以进入可选的 Full Research 模式：自动补齐公开数据、运行用户授权的全量实验、生成图表、执行结果/claim 审计，并交付论文草稿和复现包。
+IdeaSeek 的科研闭环分为两个连续阶段：先在 smoke/quick/standard 切片上高效探索并生成可审查的 `HANDOFF_READY` 候选；研究者认可后，再通过明确授权进入全量研究与论文交付。全量阶段不是快速探索的默认动作，但它是 IdeaSeek 最终产品能力的一部分，不是无关的可选插件。完整链路为：
+
+`Idea discovery → 小规模验证/反馈迭代 → HANDOFF_READY + researcher approval → 全量 comparison/idea 实验 → 统计与图表 → claim/citation/integrity audit → Overleaf 兼容论文工程与复现包`
 
 ## 进入条件
 
@@ -19,11 +21,19 @@ Dataset Discovery Agent 可以从论文、代码 README 和允许的学术索引
 
 ## 全量实验
 
-Full Research 使用独立的 `full-run`，不污染探索 run：复用锁定协议、代码 commit、comparison 结果和 handoff manifest；支持多 GPU、长时间训练、训练内部 checkpoint、断点恢复和资源预算；保存完整命令、环境、数据 hash、随机种子、指标、日志、图表源数据和模型 artifact。全量实验失败进入 Result Analyst 和用户确认，不能自动改变论文主张。
+Full Research 使用独立的 `full-run`，不污染探索 run。它要在锁定协议和数据/代码快照下，执行所有 required comparison 与最终 idea 实现的全量实验；用户确认基线版本、数据与 split、指标、种子/重复次数、预算、时限、资源与停止规则后才启动。支持多 GPU、长时间训练、训练内部 checkpoint、断点恢复和资源预算；保存完整命令、环境、数据 hash、随机种子、指标、日志、原始预测/逐轮指标等可用中间结果、图表源数据和模型 artifact。全量实验失败进入 Result Analyst 和用户确认，不能自动改变论文主张。Quick/standard 结果不能冒充全量结果，探索期 idea 代码变更也不能静默污染已锁定 full-run。
 
 ## 图表与论文
 
-ARIS-style workflow 可以生成主结果表、消融表、多种子/场景图、训练和资源曲线、失败分析、论文草稿、方法图、limitations 和 rebuttal 草稿。所有图表绑定 raw result、RunResult、代码/data/protocol hash；论文 claim 必须经过 result-to-claim、paper-claim-audit、citation audit 和独立 reviewer。论文草稿不等于已证明或可直接投稿。
+优先复用 ARIS 的 `paper-plan → paper-figure → paper-write → paper-compile` workflow。ARIS `paper-figure` 已覆盖常见的数据驱动图：训练/收敛折线图、方法对比柱状图、散点图、热图、箱线图/小提琴图、多面板图，以及 LaTeX 比较表；图形应从全量实验记录与锁定统计定义生成。方法/系统架构图可通过 ARIS figure-spec / method-figure 等专用流程生成或给出可编辑骨架。
+
+图表能力按来源分级，不宣称自动生成任意视觉内容：
+
+- **自动生成**：有结构化数据支撑的指标对比、消融、多种子分布、训练曲线、资源/时间曲线、超参敏感性、跨数据集/场景结果和统计表。是否生成某类图，取决于协议和实际记录的数据；缺少记录时不得编造。
+- **需要额外输入或专用生成器**：方法架构/流程图、定性样例、图像/视频结果拼图、案例可视化、注意力/分割叠加图等。这些需要模型输出、样例、空间/时间中间值，或通过 figure-spec / image workflow 生成，并经用户或 reviewer 检查。
+- **人工补充或确认**：无法从机器记录重建的视觉案例、领域特定示意图、授权受限图片和存在歧义的科学解释。平台必须在 figure plan 标出 `manual/input-required`，不能用装饰图替代证据图。
+
+IdeaSeek 必须为每个 figure/table 保存类型、问题/claim、数据源与过滤、统计聚合/误差条定义、绘图代码/模板版本、生成环境、输入 hash、输出 hash、caption 和审阅状态；相同锁定输入应能重建图表。导出矢量格式（PDF/SVG）和适合预览的 PNG；每个图都要检查数据、标签、单位、色盲/灰度可读性和 caption 一致性。论文 claim 必须经过 result-to-claim、paper-claim-audit、citation audit 和独立 reviewer。论文草稿不等于已证明或可直接投稿。
 
 论文交付以 Overleaf 兼容的 LaTeX 工程为主，同时保留 Markdown/JSON 中间 artifact：
 

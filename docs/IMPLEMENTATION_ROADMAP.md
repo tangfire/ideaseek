@@ -46,9 +46,9 @@
 
 接入 research-wiki、HTML artifact renderer、watchdog、experiment queue、monitor-experiment 和 session recovery。它们必须读写 IdeaSeek 的 Artifact/Event/Checkpoint，不创建第二套状态来源。
 
-## Phase 4.5C：ARIS P2 论文与发表交付
+## Phase 4.5C：ARIS P2 科研完整性审计
 
-接入 claim/citation audit、integrity forensics、Overleaf/LaTeX、rebuttal、slides 和 talk。它们在 `HANDOFF_READY` 或 Full Research 阶段使用，不阻塞基础 idea/quick 实验闭环。
+接入 paper-claim-audit、citation-crosscheck 和 integrity-forensics，作为 handoff 与 Full Research 的证据门禁。论文写作 workflow 在全量结果生成后执行，不得早于证据冻结。
 
 ## Phase 5：Idea 生成与实验闭环
 
@@ -62,13 +62,19 @@
 
 验收：不同任务族的输入都能进入同一套 PaperCard、Protocol、ExperimentSpec、Result 和 handoff 契约；没有新方向时不需要修改核心 Agent Loop。
 
-## Phase 7：产品硬化与长任务能力
+## Phase 7：Full Research 与论文交付
+
+对研究者明确认可并通过 handoff 门槛的 idea，提供独立、可授权、可恢复的全量科研闭环：补齐数据访问、全量运行所有 required comparisons 和最终 idea、统计分析、按真实数据生成多类型图表、结果/claim/citation/integrity 审计，并复用 ARIS `paper-plan → paper-figure → paper-write → paper-compile` 交付 Overleaf 兼容 LaTeX 工程与复现包。图表从结构化实验数据可重建；缺少原始输出的定性图、方法图等应请求输入或使用专用图形 workflow，明确标注人工/额外输入要求。
+
+验收：未经授权不能下载数据或启动全量训练；对比算法与 idea 使用同一锁定协议并有可追溯版本；崩溃/额度耗尽/取消后从 checkpoint 恢复；图表和表格绑定结果、统计定义、代码/数据/协议 hash；论文数字都能追溯到 RunResult；Overleaf 工程可编译并包含 BibTeX、图表源数据和 provenance。
+
+## Phase 8：产品硬化与长任务能力
 
 实现 ResearchRun 多轮编排、训练内部 checkpoint、长周期 soak test、自然语言/审批、模型分层路由、多项目上下文、清理/归档/导出、通知、用户反馈和 application/domain/adapter 分层硬化。
 
 验收：用户可从安装、运行、断线、额度耗尽、机器重启、idea 修订到 handoff 完成完整旅程；所有关键操作可解释、可暂停、可恢复。
 
-## Phase 8：发布与文档
+## Phase 9：发布与文档
 
 完成 README/User Guide/文档站、可选插件 SDK、npm CLI、Linux 安装包、WSL2 路径、依赖/许可证/secret 检查、备份恢复演练、版本迁移和回滚。其他方向和领域插件作为按需 backlog，不阻塞核心发布。
 

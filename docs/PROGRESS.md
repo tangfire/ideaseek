@@ -150,7 +150,7 @@ Phase 4：Comparison 复现与统一评测
 
 - [x] paper-claim-audit 和 citation-crosscheck
 - [x] integrity-forensics：确定性证据 sweep、ARIS adversarial model pass、BLOCK/WARN/NO_NEW_BLOCKER handoff gate、append-only waiver/Decision
-- [ ] Overleaf/LaTeX paper-write workflow
+- [ ] ARIS paper-plan/paper-figure/paper-write/paper-compile 接入（使用锁定结果与可追溯证据）
 - [ ] rebuttal、paper slides 和 talk workflow
 
 ## Phase 5：Idea 生成与实验闭环
@@ -181,7 +181,21 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 生成 `HANDOFF_READY` 级别的代码、配置和复现包
 - [ ] 用第二个不同任务族做领域无关回归验证
 
-## Phase 7：产品硬化与长任务能力
+## Phase 7：Full Research 与论文交付
+
+目标：在快速探索和用户认可之后，执行可授权、可恢复的全量对比/idea 实验，基于真实记录生成论文图表与 Overleaf 兼容论文工程。这是最终产品链能力；全量任务必须由用户明确批准。详细契约见 [FULL_RESEARCH_MODE.md](FULL_RESEARCH_MODE.md)。
+
+- [ ] Full Research plan/approval：锁定问题、协议、数据/split、required comparisons、预算、时限、网络和资源
+- [ ] 独立 full-run：全量运行全部 required comparison 与最终 idea 版本，多 GPU/长任务/checkpoint/resume
+- [ ] 实验记录保存足以复算统计与图表的原始/中间数据，并绑定 run/code/data/protocol hash
+- [ ] ARIS paper-figure 数据图：折线、柱状、散点、热图、箱线/小提琴、多面板、对比/消融表、资源和敏感性图
+- [ ] 图表 source manifest：输入/统计定义/代码版本/hash/caption/审阅状态；PDF/SVG 与 PNG 输出和渲染检查
+- [ ] 方法图、定性案例、图像/视频/空间可视化的专用 workflow 或明确的用户补充入口
+- [ ] result-to-claim、claim/citation/integrity audit 和独立 reviewer 接入 full-run 结果
+- [ ] ARIS paper-plan → paper-figure → paper-write → paper-compile workflow 接入
+- [ ] Overleaf 兼容 LaTeX/BibTeX 工程、图表、源数据、provenance 和复现包导出
+
+## Phase 8：产品硬化与长任务能力
 
 目标：让真实用户可以长期、低风险、可解释地使用 IdeaSeek。
 
@@ -199,11 +213,8 @@ Phase 4：Comparison 复现与统一评测
 - [ ] USER_JOURNEY_ACCEPTANCE.md 的 Journey A–H 验收
 - [ ] Application/domain/adapter 分层硬化与 composition root
 - [ ] Build-vs-reuse 审查：优先接入 DSH/ARIS，避免重复实现
-- [ ] `HANDOFF_READY` 后 Full Research/Publication 模式、数据下载审批和 full-run 隔离
-- [ ] 全量图表、claim audit、论文草稿和独立 reviewer 交付链
-- [ ] Overleaf 兼容 LaTeX 工程、BibTeX、图表源数据和 provenance 导出
 
-## Phase 8：发布与文档
+## Phase 9：发布与文档
 
 目标：让新用户能安装、学习、升级、恢复和复现。
 
