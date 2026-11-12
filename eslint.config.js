@@ -17,7 +17,14 @@ export default tseslint.config(
   prettier,
   {
     files: ['worker/python/**/*.mjs', 'scripts/**/*.mjs'],
-    languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
+    },
   },
   {
     rules: {

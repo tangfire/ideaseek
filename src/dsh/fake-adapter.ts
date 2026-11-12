@@ -127,11 +127,36 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       overall: 'PASS',
       evalType: 'real_gt',
       checks: [
-        { id: 'gt_provenance', status: 'PASS', details: 'metrics use recorded ground truth', evidence: 'experiment.result.metrics' },
-        { id: 'score_normalization', status: 'PASS', details: 'raw scores are not self-normalized', evidence: 'plan.primaryMetric' },
-        { id: 'result_existence', status: 'PASS', details: 'result metrics exist in the bundle', evidence: 'experiment.result.metrics' },
-        { id: 'dead_code', status: 'PASS', details: 'configured metrics are exercised', evidence: 'experiment.spec.metrics' },
-        { id: 'scope', status: 'PASS', details: 'quick-scale scope is stated honestly', evidence: 'experiment.spec.scale' },
+        {
+          id: 'gt_provenance',
+          status: 'PASS',
+          details: 'metrics use recorded ground truth',
+          evidence: 'experiment.result.metrics',
+        },
+        {
+          id: 'score_normalization',
+          status: 'PASS',
+          details: 'raw scores are not self-normalized',
+          evidence: 'plan.primaryMetric',
+        },
+        {
+          id: 'result_existence',
+          status: 'PASS',
+          details: 'result metrics exist in the bundle',
+          evidence: 'experiment.result.metrics',
+        },
+        {
+          id: 'dead_code',
+          status: 'PASS',
+          details: 'configured metrics are exercised',
+          evidence: 'experiment.spec.metrics',
+        },
+        {
+          id: 'scope',
+          status: 'PASS',
+          details: 'quick-scale scope is stated honestly',
+          evidence: 'experiment.spec.scale',
+        },
       ],
       claims: [],
       summary: 'results are internally consistent with the recorded plan',
@@ -140,7 +165,11 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;
-    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number; round?: number };
+    const context = readJsonContext(request) as {
+      ideaId?: string;
+      cardVersion?: number;
+      round?: number;
+    };
     return JSON.stringify({
       ideaId: context.ideaId ?? 'unknown',
       cardVersion: context.cardVersion ?? 1,

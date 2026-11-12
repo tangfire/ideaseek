@@ -24,6 +24,18 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 
 交互模式可以使用成熟的 TypeScript TUI/terminal renderer，但必须保留 IdeaSeek 的事件、权限和 use-case 边界。不要继续在 readline 上堆叠更多光标逃逸来模拟全屏应用。
 
+## 实现状态：Ink Spike（2026-11-12）
+
+按复用优先门禁，交互壳选用 **Ink**（`ink@6.8.0` + `react@19.1.10`，MIT；选型对比见 ADR-010），不再手写光标/清屏/输入重绘。Spike 已验证（`scripts/spike-drive.mjs` 跨进程驱动 + `tests/shell-spike.test.ts`）：
+
+- 备用屏幕进出（`[?1049h/l`）、固定 header / activity pane / 输入行 / footer；
+- 输入内容始终可见（光标块 `▏` 跟随编辑），`/` palette 原地过滤（不滚屏、不重复 prompt）、↑/↓ 选择、Tab 唯一前缀补全、Esc 关闭、Enter 执行、Ctrl-C 提示、Ctrl-D / `/quit` 退出；
+- 后台事件持续刷新（activity pane 尾随跟随 + PageUp/PageDown 翻页）与 resize 重排；
+- 平台：Windows 直连、Windows PowerShell 宿主、WSL2 Linux Node 三路 `spike-drive` 全 PASS（跨 drvfs 首次 ink 导入可达 ~22s，驱动以 `SPIKE_MOUNT_MS` 容忍）；
+- plain / json / 非 TTY / `IDEASEEK_FORCE_TTY` 管道路径不进入 Ink（`interactiveRenderer` 路由单测钉住），旧 readline 行式路径只服务这些场景。
+
+验证入口：`pnpm shell:spike`（真终端手测）· `node scripts/spike-drive.mjs`（自动化驱动）。下一步：以 Ink 为唯一 interactive renderer 接入真实 dispatch/事件流，删除旧默认交互入口。
+
 ## Logo
 
 默认启动 banner 使用厚重、立体感的 block ASCII 字标。它直接突出 IdeaSeek 名称，适合交互式终端启动；不在每条事件中重复显示。窄终端或 `--plain` 模式使用短标识。

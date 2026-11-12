@@ -53,3 +53,14 @@ ARIS 的 P0 科研能力是 IdeaSeek 的产品验收要求，而不是用户可�
 ## ADR-010：交互模式是终端应用，不是 readline 输出拼接
 
 IdeaSeek 的交互模式必须提供固定布局、原地输入、command palette、事件 pane、footer、resize 和备用屏幕语义，接近成熟 Agent CLI 的终端应用体验。非交互、plain 和 JSON 模式仍使用行式输出。TUI 只负责展示和输入，不能复制 application/use-case 或维护第二套状态。
+
+框架选型（复用优先门禁，2026-11-12 Spike）：
+
+| 候选 | 结论 | 理由 |
+|---|---|---|
+| **Ink**（选用） | `ink@6.8.0` + `react@19.1.10`（MIT，vadimdemedes/ink，Node≥20） | React 组件模型的成熟 CLI 框架：声明式渲染 diff 替代手写清屏/光标算术（正是历史 Windows Terminal 漂移 bug 的根因）、`useInput` 原生键盘解码（含 Ctrl/方向/Tab/Esc）、活跃维护、自带 TS 类型、生态最大 |
+| blessed / neo-blessed | 否 | 上游停更、fork 陈旧、命令式 API，无组件模型 |
+| terminal-kit | 否 | 能力全但生态小、命令式文档模型，接入成本高于 Ink |
+| 手写 ANSI（旧实现） | 否（门禁禁止） | 已实测的光标/滚屏/重复 prompt 缺陷来源；只保留为 plain/非 TTY 行式路径 |
+
+依赖记录：`ink@6.8.0`、`react@19.1.10`（运行时），`@types/react@19.3.0`（dev）；许可证 MIT（均在 `pnpm release-check` allowlist）；来源 npm/vadimdemedes/ink；用途 = interactive TTY 单一 renderer；替代方案 = 上表。接入方式 = 薄 `InteractiveShell` adapter（屏幕切换仅 alt-screen 进出两行序列），业务侧只经 `ReplView` 接口调用既有 dispatch/relay/use-case，UI 框架不进入 workflow 状态。
