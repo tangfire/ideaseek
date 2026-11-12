@@ -162,6 +162,17 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       summary: 'results are internally consistent with the recorded plan',
     });
   }
+  if (request.outputSchema === 'integrity-forensics-v1') {
+    const override = process.env.IDEASEEK_FAKE_FORENSICS_OUTPUT;
+    if (override != null) return override;
+    const context = readJsonContext(request) as { ideaId?: string; cardVersion?: number };
+    return JSON.stringify({
+      ideaId: context.ideaId ?? 'unknown',
+      cardVersion: context.cardVersion ?? 1,
+      findings: [],
+      summary: 'fake forensics pass: no additional findings beyond the deterministic ledger',
+    });
+  }
   if (request.outputSchema === 'idea-review-v1') {
     const override = process.env.IDEASEEK_FAKE_REVIEW_OUTPUT;
     if (override != null) return override;

@@ -7,8 +7,16 @@ import { stableJson, type ExperimentSpec, type RunResult } from '../experiment/s
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { IdeaCard } from './card.js';
 import type { IdeaAnalysis } from './analysis.js';
-import type { ExperimentAudit } from './audit.js';
 import type { EvidenceAudit } from './claim-audit.js';
+
+/** Minimal projection of the current reviewer-owned audit artifact.
+ * The old idea/audit backend carried claim impacts; the ADR-009 reviewer
+ * artifact does not. Forensics keeps the field optional at the boundary and
+ * treats absent claim impacts as no additional claim finding. */
+type ExperimentAudit = {
+  cardVersion: number;
+  claims: { id: string; impact: 'none' | 'weaken' | 'block' }[];
+};
 
 /**
  * Integrity forensics (Phase 4.5C, ARIS integrity-forensics): an adversarial
@@ -229,7 +237,7 @@ export async function collectForensicsBundle(
   runtime: ForensicsRuntime,
 ): Promise<ForensicsBundle> {
   const { hashIdeaSource, loadIdeaCard, loadWorkspaceMeta } = await import('./workspace.js');
-  const { readAudit } = await import('./audit.js');
+  const { readLatestExperimentAudit } = await import('./gates.js');
   const { readClaimAudit } = await import('./claim-audit.js');
   const { loadStoredPlan } = await import('../experiment/plan.js');
 
@@ -268,6 +276,17 @@ export async function collectForensicsBundle(
   }
 
   const stateDigest = await computeForensicsStateDigest(root, ideaId, meta.currentVersion);
+  const reviewerAudit = await readLatestExperimentAudit(root, ideaId);
+  const experimentAudit: ExperimentAudit | null = reviewerAudit
+    ? {
+        cardVersion: reviewerAudit.target.cardVersion ?? meta.currentVersion,
+        // The current reviewer contract has no claim-impact field. Keep the
+        // projection explicit so future contracts can populate it without
+        // reviving a second audit store.
+        claims: [],
+      }
+    : null;
+
   return {
     ideaId,
     currentVersion: meta.currentVersion,
@@ -276,7 +295,7 @@ export async function collectForensicsBundle(
     card,
     mirrors,
     analysis,
-    experimentAudit: await readAudit(root, ideaId),
+    experimentAudit,
     claimAudit: await readClaimAudit(root, ideaId),
     plan,
     currentProtocolId,
