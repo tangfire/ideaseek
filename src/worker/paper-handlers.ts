@@ -1,5 +1,6 @@
 import { IdeaseekError, isIdeaseekError } from '../core/errors.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
+import { parseParsedPaper, type ParsedPaperArtifact } from '../knowledge/parsed-paper.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
 import { extractTables, ocrPdf, parsePdf } from '../knowledge/pdf.js';
@@ -7,14 +8,6 @@ import { verifyPaperEvidence } from '../knowledge/checker.js';
 import { parseLatex } from '../knowledge/latex.js';
 import { sha256OfFile, sha256Of } from '../core/hash.js';
 import { basename, join } from 'node:path';
-
-interface ParsedPaperArtifact {
-  source?: string;
-  sourceHash?: string;
-  parser?: string | null;
-  pageCount: number;
-  pages: { page: number; text: string }[];
-}
 
 /** Reads the upstream `parsed-paper` artifact and adds `[page N]` markers. */
 async function textFromParsedDependency(ctx: TaskContext): Promise<string> {
@@ -24,9 +17,7 @@ async function textFromParsedDependency(ctx: TaskContext): Promise<string> {
     const rows = await ctx.runtime.db.listArtifacts(dep.taskId);
     const parsedRow = rows.find((row) => row.kind === 'parsed-paper' && row.status === 'committed');
     if (!parsedRow) continue;
-    const parsed = JSON.parse(
-      await ctx.runtime.store.readFinalText(parsedRow.contentHash),
-    ) as ParsedPaperArtifact;
+    const parsed = parseParsedPaper(await ctx.runtime.store.readFinalText(parsedRow.contentHash));
     const text = parsed.pages
       .map((page) => `[page ${page.page}]\n${page.text.trim()}`)
       .join('\n\n');
@@ -60,9 +51,7 @@ async function loadParsedByPath(
   for (let index = artifacts.length - 1; index >= 0; index -= 1) {
     const row = artifacts[index]!;
     try {
-      const payload = JSON.parse(
-        await ctx.runtime.store.readFinalText(row.contentHash),
-      ) as ParsedPaperArtifact;
+      const payload = parseParsedPaper(await ctx.runtime.store.readFinalText(row.contentHash));
       if (payload.source === sourcePath && Array.isArray(payload.pages)) return payload;
     } catch {
       continue; // unreadable artifact: keep searching older generations
@@ -133,6 +122,9 @@ export const paperParse: TaskHandler = async (ctx: TaskContext) => {
     parser: parsed.parser,
     ocr: usedOcr,
   };
+  // Cross-language gate: never persist a payload that violates the shared
+  // parsed-paper-v1 contract (schemas/parsed-paper-v1.json).
+  assertAgainstSchema('parsed-paper-v1', payload);
   return {
     artifacts: [
       {
@@ -379,6 +371,7 @@ export const paperLatex: TaskHandler = async (ctx: TaskContext) => {
     title: document.title,
     sectionCount: document.sections.length,
   };
+  assertAgainstSchema('parsed-paper-v1', payload); // same shared contract
   return {
     artifacts: [
       {

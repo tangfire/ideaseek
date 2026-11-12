@@ -1,6 +1,7 @@
 import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
 import { IdeaseekError } from '../errors.js';
 import papercardV1 from './schemas/papercard-v1.json' with { type: 'json' };
+import parsedPaperV1 from './schemas/parsed-paper-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -29,10 +30,11 @@ export interface SchemaCheck {
 }
 
 /** Registry keys — keep in lockstep with `schemas/*.json`. */
-export type SchemaName = 'papercard-v1';
+export type SchemaName = 'papercard-v1' | 'parsed-paper-v1';
 
 const SCHEMAS: Record<SchemaName, object> = {
   'papercard-v1': papercardV1,
+  'parsed-paper-v1': parsedPaperV1,
 };
 
 let ajv: Ajv | null = null;

@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/parsed-paper-v1.json",
+  "title": "IdeaSeek parsed-paper artifact (parsed-paper-v1)",
+  "description": "Structural contract for the parsed-paper artifact shared by the Python worker (pdf/OCR), the LaTeX parser and every TS reader (extract rehydration, search, evidence). Single authority: Python emits this shape, TypeScript validates it at the persistence boundary and on read. Extra per-parser fields (ocr, title, sectionCount) are allowed; semantic checks (page/text usefulness) stay with consumers.",
+  "type": "object",
+  "required": ["pageCount", "pages"],
+  "properties": {
+    "source": { "type": "string" },
+    "sourceHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "pageCount": { "type": "integer", "minimum": 0 },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["page", "text"],
+        "properties": {
+          "page": { "type": "integer", "minimum": 1 },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "parser": { "type": ["string", "null"] },
+    "ocr": { "type": "boolean" }
+  }
+}
