@@ -133,4 +133,3 @@ export interface HarnessAdapter {
   health(): Promise<HarnessHealth>;
   shutdown(): Promise<void>;
 }
-
