@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import { statfs } from 'node:fs/promises';
+import { runProcess } from '../core/proc.js';
 
 /**
  * Best-effort external command probe. Never throws: a missing binary, a
@@ -22,56 +22,37 @@ export async function probeCommand(
   opts: ProbeOptions = {},
 ): Promise<CommandProbe> {
   const timeoutMs = opts.timeoutMs ?? 4000;
-  return new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      resolve({ available: false, version: null, detail: (error as Error).message });
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const finish = (probe: CommandProbe) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(probe);
+  // Shared subprocess adapter: timeout kills the whole tree; spawn errors
+  // (ENOENT) keep the historical "not found on PATH" detail.
+  let result: Awaited<ReturnType<typeof runProcess>>;
+  try {
+    result = await runProcess(command, args, { timeoutMs });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return {
+      available: false,
+      version: null,
+      detail: code === 'ENOENT' ? `${command} not found on PATH` : (error as Error).message,
     };
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish({ available: false, version: null, detail: `timed out after ${timeoutMs}ms` });
-    }, timeoutMs);
-    child.stdout?.on('data', (chunk) => (stdout += String(chunk)));
-    child.stderr?.on('data', (chunk) => (stderr += String(chunk)));
-    child.on('error', (error) => {
-      const code = (error as NodeJS.ErrnoException).code;
-      finish({
-        available: false,
-        version: null,
-        detail: code === 'ENOENT' ? `${command} not found on PATH` : error.message,
-      });
-    });
-    child.on('close', (code) => {
-      const output = `${stdout}${stderr}`.trim();
-      const firstLine = output.split(/\r?\n/)[0] ?? '';
-      const versionMatch = firstLine.match(/\d+\.\d+(\.\d+)?/);
-      if (code === 0) {
-        finish({
-          available: true,
-          version: versionMatch ? versionMatch[0] : firstLine || null,
-          detail: firstLine || null,
-        });
-      } else {
-        finish({
-          available: false,
-          version: null,
-          detail: output || `exit code ${code ?? 'unknown'}`,
-        });
-      }
-    });
-  });
+  }
+  if (result.timedOut) {
+    return { available: false, version: null, detail: `timed out after ${timeoutMs}ms` };
+  }
+  const output = `${result.stdout}${result.stderr}`.trim();
+  const firstLine = output.split(/\r?\n/)[0] ?? '';
+  const versionMatch = firstLine.match(/\d+\.\d+(\.\d+)?/);
+  if (result.code === 0) {
+    return {
+      available: true,
+      version: versionMatch ? versionMatch[0] : firstLine || null,
+      detail: firstLine || null,
+    };
+  }
+  return {
+    available: false,
+    version: null,
+    detail: output || `exit code ${result.code ?? 'unknown'}`,
+  };
 }
 
 export interface DiskUsage {

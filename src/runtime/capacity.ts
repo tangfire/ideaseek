@@ -1,5 +1,5 @@
-import { spawn } from 'node:child_process';
 import { cpus, freemem } from 'node:os';
+import { runProcess } from '../core/proc.js';
 import { probeDisk } from './detect.js';
 
 /**
@@ -71,31 +71,15 @@ export interface AdmissionOptions {
   minDiskFreeGiB?: number;
 }
 
-function runQuery(args: string[], timeoutMs: number): Promise<string | null> {
-  return new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn('nvidia-smi', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch {
-      resolve(null);
-      return;
-    }
-    let out = '';
-    let done = false;
-    const finish = (value: string | null) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish(null);
-    }, timeoutMs);
-    child.stdout?.on('data', (chunk) => (out += String(chunk)));
-    child.on('error', () => finish(null));
-    child.on('close', (code) => finish(code === 0 ? out : null));
-  });
+async function runQuery(args: string[], timeoutMs: number): Promise<string | null> {
+  // Shared subprocess adapter: timeout is a tree-kill; any spawn failure,
+  // non-zero exit or timeout collapses to null (probe stays best-effort).
+  try {
+    const result = await runProcess('nvidia-smi', args, { timeoutMs });
+    return result.code === 0 && !result.timedOut && !result.canceled ? result.stdout : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Live probe: per-GPU free/total memory + utilization, CPU, RAM, disk. */
