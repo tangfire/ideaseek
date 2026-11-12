@@ -144,7 +144,7 @@ Phase 4：Comparison 复现与统一评测
 - [x] experiment-queue：wave、depends_on、OOM retry、stale cleanup 和公平排队
 - [x] monitor-experiment：心跳、日志、资源和等待原因
 - [x] session recovery：跨会话恢复上下文摘要和 artifact 引用
-- [ ] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入
+- [x] Dataset Discovery Agent、来源/许可证/置信度和用户授权接入（候选发现与来源核验；下载仍需用户明确授权）
 
 ## Phase 4.5C：ARIS P2 论文与发表交付
 

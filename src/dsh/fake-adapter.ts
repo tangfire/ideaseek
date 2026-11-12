@@ -116,6 +116,36 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     if (override != null) return override;
     return JSON.stringify({ candidates: [buildFakeIdeaCard()] });
   }
+  if (request.outputSchema === 'dataset-candidates-v1') {
+    const override = process.env.IDEASEEK_FAKE_DATASET_OUTPUT;
+    if (override != null) return override;
+    const context = readJsonContext(request) as {
+      evidence?: { evidenceId?: string; name?: string; paperKey?: string | null }[];
+    };
+    const evidence = Array.isArray(context.evidence) ? context.evidence : [];
+    return JSON.stringify({
+      candidates: evidence.slice(0, 5).map((item) => ({
+        name: item.name ?? 'unknown',
+        task: 'fake-enriched task (deterministic provider)',
+        unit: 'unknown',
+        scale: null,
+        license: { value: 'unknown', confidence: 0, note: 'not stated in the provided sources' },
+        acquisition: 'unknown',
+        restricted: false,
+        size: 'unknown',
+        url: null,
+        indexId: null,
+        instructions: 'unknown — deterministic provider does not infer access terms',
+        relatedPapers: item.paperKey ? [item.paperKey] : [],
+        evidenceIds: [item.evidenceId ?? 'ev-missing'],
+        relevanceReason: 'grounded in the provided evidence for the research question',
+        confidence: 0.6,
+        confidenceBasis: ['deterministic provider enrichment grounded in one evidence record'],
+        notes: ['fake harness'],
+      })),
+      notes: ['fake harness deterministic enrichment'],
+    });
+  }
   if (request.outputSchema === 'experiment-audit-v1') {
     const override = process.env.IDEASEEK_FAKE_AUDIT_OUTPUT;
     if (override != null) return override;

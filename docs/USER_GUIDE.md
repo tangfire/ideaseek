@@ -198,9 +198,11 @@ IdeaSeek 按内容 hash 和版本增量处理：新增论文只触发受影响�
 ideaseek datasets discover --question "..."
 ideaseek datasets list
 ideaseek datasets explain <candidate-id>
+ideaseek datasets authorize <candidate-id> --grant --confirm --reason "..."
+ideaseek datasets link <candidate-id> --path datasets/<file>
 ```
 
-结果包含用途、字段、规模、许可证、来源论文、获取方式和推荐理由。平台默认只推荐，不自动下载大型或受限数据；用户自行下载或授权挂载后，再运行 `scan` 建立 DatasetSnapshot。
+结果包含用途、字段、规模、许可证、来源论文、获取方式和推荐理由。平台默认只推荐，不自动下载大型或受限数据；大型、受限或获取方式不明的数据集必须显式确认（`datasets authorize --grant --confirm`）。用户自行下载或授权挂载数据后，先运行 `scan`，再用 `datasets link` 把数据绑定到候选——只有绑定后候选才进入 `user-provided`/`validated` 并可用于实验。
 
 ## 在同一项目继续思考新的 idea
 

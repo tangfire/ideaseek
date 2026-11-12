@@ -20,6 +20,7 @@ export type HarnessProfile =
   | 'paper-extractor'
   | 'evidence-checker'
   | 'synthesis-analyst'
+  | 'dataset-discovery'
   | 'idea-generator'
   | 'experiment-designer'
   | 'reviewer'
