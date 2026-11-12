@@ -243,15 +243,59 @@ export class ShellEngine {
 
 /**
  * Renderer routing (checkpoint: plain/json/non-TTY stay TUI-free).
- * Real interactive TTY → Ink; everything else (including the FORCE_TTY
- * test hook, which drives the classic path over pipes) stays line-based.
+ * Real interactive TTY → Ink (the sole interactive renderer). `forceTty`
+ * keeps the classic line path over pipes (legacy keypress tests); `forceInk`
+ * is the test/driver hook that runs the Ink TUI over piped stdio.
  */
 export function interactiveRenderer(opts: {
   isTTY: boolean;
   plain: boolean;
   forceTty: boolean;
+  forceInk?: boolean;
 }): 'ink' | 'classic' {
   if (opts.plain) return 'classic';
+  if (opts.forceInk) return 'ink';
   if (opts.forceTty) return 'classic'; // pipes: line-mode + forced key handling
   return opts.isTTY ? 'ink' : 'classic';
+}
+
+/** Ink key-event shape (`useInput` callback). */
+export interface InkKeyLike {
+  return?: boolean;
+  escape?: boolean;
+  tab?: boolean;
+  upArrow?: boolean;
+  downArrow?: boolean;
+  leftArrow?: boolean;
+  rightArrow?: boolean;
+  pageUp?: boolean;
+  pageDown?: boolean;
+  home?: boolean;
+  end?: boolean;
+  backspace?: boolean;
+  delete?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+}
+
+/** Maps an Ink key event onto the pure ShellEngine key vocabulary. */
+export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
+  if (key.return) return { name: 'return' };
+  if (key.escape) return { name: 'escape' };
+  if (key.tab || input === '\t') return { name: 'tab' };
+  if (key.upArrow) return { name: 'up' };
+  if (key.downArrow) return { name: 'down' };
+  if (key.leftArrow) return { name: 'left' };
+  if (key.rightArrow) return { name: 'right' };
+  if (key.pageUp) return { name: 'pageup' };
+  if (key.pageDown) return { name: 'pagedown' };
+  if (key.home) return { name: 'home' };
+  if (key.end) return { name: 'end' };
+  if (key.backspace || input === '\x7f' || input === '\b') return { name: 'backspace' };
+  if (key.delete) return { name: 'delete' };
+  if (key.ctrl && input === '\x03') return { name: 'c', ctrl: true };
+  if (key.ctrl && input === '\x04') return { name: 'd', ctrl: true };
+  if (key.ctrl && input.length === 1) return { name: input, ctrl: true };
+  if (input.length > 0 && !key.meta) return { sequence: input };
+  return { name: 'unknown' };
 }

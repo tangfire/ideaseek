@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
-import { ShellEngine, type EngineKey, type EngineResult } from './engine.js';
+import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
 import { resolveSlash } from '../slash-menu.js';
+
+export { toEngineKey } from './engine.js';
 
 /**
  * Ink spike (ADR-010): proves the framework covers the interactive shell
@@ -11,45 +13,6 @@ import { resolveSlash } from '../slash-menu.js';
  * stubbed here on purpose; the adoption step wires the SAME engine +
  * view to the existing dispatch/relay use-cases.
  */
-
-interface InkKeyLike {
-  return?: boolean;
-  escape?: boolean;
-  tab?: boolean;
-  upArrow?: boolean;
-  downArrow?: boolean;
-  leftArrow?: boolean;
-  rightArrow?: boolean;
-  pageUp?: boolean;
-  pageDown?: boolean;
-  home?: boolean;
-  end?: boolean;
-  backspace?: boolean;
-  delete?: boolean;
-  ctrl?: boolean;
-  meta?: boolean;
-}
-
-export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
-  if (key.return) return { name: 'return' };
-  if (key.escape) return { name: 'escape' };
-  if (key.tab || input === '\t') return { name: 'tab' };
-  if (key.upArrow) return { name: 'up' };
-  if (key.downArrow) return { name: 'down' };
-  if (key.leftArrow) return { name: 'left' };
-  if (key.rightArrow) return { name: 'right' };
-  if (key.pageUp) return { name: 'pageup' };
-  if (key.pageDown) return { name: 'pagedown' };
-  if (key.home) return { name: 'home' };
-  if (key.end) return { name: 'end' };
-  if (key.backspace || input === '\x7f' || input === '\b') return { name: 'backspace' };
-  if (key.delete) return { name: 'delete' };
-  if (key.ctrl && input === '\x03') return { name: 'c', ctrl: true };
-  if (key.ctrl && input === '\x04') return { name: 'd', ctrl: true };
-  if (key.ctrl && input.length === 1) return { name: input, ctrl: true };
-  if (input.length > 0 && !key.meta) return { sequence: input };
-  return { name: 'unknown' };
-}
 
 interface SpikeState {
   snap: EngineResult;

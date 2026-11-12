@@ -24,9 +24,9 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 
 交互模式可以使用成熟的 TypeScript TUI/terminal renderer，但必须保留 IdeaSeek 的事件、权限和 use-case 边界。不要继续在 readline 上堆叠更多光标逃逸来模拟全屏应用。
 
-## 实现状态：Ink Spike（2026-11-12）
+## 实现状态：Ink 已接入真实 interactive（2026-11-12）
 
-按复用优先门禁，交互壳选用 **Ink**（`ink@6.8.0` + `react@19.1.10`，MIT；选型对比见 ADR-010），不再手写光标/清屏/输入重绘。Spike 已验证（`scripts/spike-drive.mjs` 跨进程驱动 + `tests/shell-spike.test.ts`）：
+按复用优先门禁，交互壳选用 **Ink**（`ink@6.8.0` + `react@19.1.10`，MIT；选型对比见 ADR-010），不再手写光标/清屏/输入重绘。`src/cli/shell/app.tsx` 是**真实交互 TTY 的唯一 interactive renderer**：按键经纯 `ShellEngine`，命令经共享 `InteractiveSession`（`src/cli/shell/session.ts`）——与经典行式路径、非交互 CLI 完全同一批 use-case（slash 转发、自然语言 `ask`、审批块与 `/approve`、`/open` 两步切换、事件回放 + 实时 `attach --json` 流、会话开始/结束标记）。`/quit` 与 Ctrl-D 只杀事件流子进程并写干净结束标记，绝不取消后台 run。渲染路由（`interactiveRenderer` 单测钉住）：真实 TTY → Ink；`--plain`/`--json`/非 TTY/`IDEASEEK_FORCE_TTY=1` → 行式；`IDEASEEK_FORCE_INK=1` 是管道上跑 Ink 的测试/驱动钩子。Spike 验证（`scripts/spike-drive.mjs` 跨进程驱动 + `tests/shell-spike.test.ts`）：
 
 - 备用屏幕进出（`[?1049h/l`）、固定 header / activity pane / 输入行 / footer；
 - 输入内容始终可见（光标块 `▏` 跟随编辑），`/` palette 原地过滤（不滚屏、不重复 prompt）、↑/↓ 选择、Tab 唯一前缀补全、Esc 关闭、Enter 执行、Ctrl-C 提示、Ctrl-D / `/quit` 退出；
@@ -34,7 +34,9 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 - 平台：Windows 直连、Windows PowerShell 宿主、WSL2 Linux Node 三路 `spike-drive` 全 PASS（跨 drvfs 首次 ink 导入可达 ~22s，驱动以 `SPIKE_MOUNT_MS` 容忍）；
 - plain / json / 非 TTY / `IDEASEEK_FORCE_TTY` 管道路径不进入 Ink（`interactiveRenderer` 路由单测钉住），旧 readline 行式路径只服务这些场景。
 
-验证入口：`pnpm shell:spike`（真终端手测）· `node scripts/spike-drive.mjs`（自动化驱动）。下一步：以 Ink 为唯一 interactive renderer 接入真实 dispatch/事件流，删除旧默认交互入口。
+验证入口：`pnpm exec vitest run tests/ink-interactive.test.ts`（构建产物级：布局、palette、真实 dispatch、Ctrl-C/Ctrl-D、`/quit`、会话标记）· `tests/shell-spike.test.ts` + `tests/repl-ux.test.ts` + `tests/interactive.test.ts`（引擎/驱动/行式回归）· `pnpm shell:spike`（真终端手测）· `node scripts/spike-drive.mjs`（自动化驱动）。
+
+已知限制：Ink 在管道上按屏幕模型做增量行改写，原始字节流会残留旧行内容，跨多帧的整句断言不稳定（测试把易碎断言放在新 pane 首行）；真实控制台 PTY 级验证仍无法在本环境分配。
 
 ## Logo
 

@@ -8,6 +8,7 @@ import { renderApprovalBlock, type PendingApproval } from '../approval/pending.j
 import { renderBanner, renderHeader, type HeaderContext } from './banner.js';
 import { formatEventLine, paint, type PaintOptions } from './format.js';
 import { cliEntryPath, runCli, runCliJson } from './runner.js';
+import { interactiveRenderer } from './shell/engine.js';
 import { tokenizeArgs } from './tokens.js';
 import {
   SLASH_COMMANDS,
@@ -137,12 +138,25 @@ interface AttachEventJson {
 
 export async function startInteractive(opts: InteractiveOptions = {}): Promise<number> {
   const plain = opts.plain === true;
+  const isTTY = process.stdin.isTTY === true && process.stdout.isTTY === true;
+  // Renderer routing (ADR-010): a real interactive TTY runs the Ink TUI —
+  // the sole interactive renderer. plain/json/non-TTY stay line-based, and
+  // IDEASEEK_FORCE_TTY=1 keeps the classic readline path over pipes for the
+  // legacy keypress tests; IDEASEEK_FORCE_INK=1 drives the Ink shell over
+  // pipes for the cross-process driver.
+  const renderer = interactiveRenderer({
+    isTTY,
+    plain,
+    forceTty: process.env.IDEASEEK_FORCE_TTY === '1',
+    forceInk: process.env.IDEASEEK_FORCE_INK === '1',
+  });
+  if (renderer === 'ink') {
+    const { startInkInteractive } = await import('./shell/app.js');
+    return startInkInteractive({ plain });
+  }
+
   const paintOpts: PaintOptions = { plain };
-  // IDEASEEK_FORCE_TTY=1 forces terminal key handling (menus, arrows, Tab)
-  // for piped test runs; production uses the real TTY detection.
-  const tty =
-    (process.stdin.isTTY === true && process.stdout.isTTY === true) ||
-    process.env.IDEASEEK_FORCE_TTY === '1';
+  const tty = isTTY || process.env.IDEASEEK_FORCE_TTY === '1';
 
   const banner = renderBanner({ plain });
   process.stdout.write(`${paint(banner, 'brand', paintOpts)}\n`);

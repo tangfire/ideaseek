@@ -43,8 +43,17 @@ const exited = new Promise((resolve) => child.on('close', (code) => resolve(code
   // seconds (drvfs); wait for the mount before feeding keys.
   await sleep(Number(process.env.SPIKE_MOUNT_MS ?? 600));
   for (const key of keys) {
+    const before = out.length;
     child.stdin.write(key);
-    await sleep(180);
+    // Wait for the child to consume the key (it repaints on every meaningful
+    // keystroke) before sending the next one. A fixed sleep is not enough
+    // under parallel-test load: the child's event loop can block long enough
+    // for two chunks to coalesce into a single paste.
+    const started = Date.now();
+    while (out.length === before && Date.now() - started < 800) {
+      await sleep(40);
+    }
+    await sleep(60);
   }
   const code = await Promise.race([
     exited,

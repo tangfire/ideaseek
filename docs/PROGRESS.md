@@ -23,7 +23,7 @@ Phase 4：Comparison 复现与统一评测
 
 - [x] DSH/ARIS/IdeaSeek 的职责边界与复用优先原则
 - [x] Ink 纳入 interactive TTY 的首选框架评估
-- [ ] Ink TUI 应用壳和单一 renderer 收口
+- [x] Ink TUI 应用壳和单一 renderer 收口
 - [ ] JSON Schema 统一 TypeScript/Python/ARIS 契约校验
 - [ ] 跨平台子进程 adapter 评估与超时/取消/进程树测试
 - [ ] GitHub API 元数据 adapter 评估（不替代 Git clone）
@@ -73,8 +73,8 @@ Phase 4：Comparison 复现与统一评测
 - [x] protocol/experiment/权限审批交互
 - [x] `pause/resume/continue/cancel` 交互反馈
 - [x] `--plain` 和 `--json` 输出
-- [ ] TUI 应用壳：备用屏幕、固定输入区、事件 pane 和 footer
-- [ ] command palette 原地过滤，不滚屏不重复 prompt
+- [x] TUI 应用壳：备用屏幕、固定输入区、事件 pane 和 footer
+- [x] command palette 原地过滤，不滚屏不重复 prompt
 - [x] 任务详情、脱敏日志和错误解释
 - [x] 断线重连、终端尺寸变化和后台 supervisor 状态显示
 - [x] Research/Agent 模式切换、权限摘要和 DSH 复用
@@ -342,3 +342,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-12 | Phase 1.5 TUI Spike（复用优先门禁，ADR-010 扩展框架选型）：评估 Ink vs blessed/neo-blessed vs terminal-kit vs 手写 ANSI（否决）→ 选定 ink@6.8.0+react@19.1.10（MIT，锁版本，release-check allowlist 覆盖）；src/cli/shell/engine.ts 纯键盘/补全/palette/滚动/Ctrl-C/D 状态机（单测 7 条）+ spike.tsx（Ink 视图：备用屏幕、固定四区、活动事件尾随、palette 原地过滤、/quit 退出契约）+ spike-drive.mjs 跨进程驱动（逐键分块——管道整块会被 ink 当粘贴解析，已实测）；平台验证：Windows 直连、PowerShell 宿主、WSL2 Linux Node 三路全 PASS（drvfs 冷导入 ink ~22s，SPIKE_MOUNT_MS 容忍）；interactiveRenderer 路由单测钉住 plain/json/非TTY/FORCE_TTY 不进 Ink；tsconfig 开 JSX、eslint 补 scripts/*.mjs globals、顺带格式化主线 review/workflow 集成文件（format:check 曾红）| 本提交 | 门禁：format/lint/typecheck 绿；shell-spike 12/12（引擎7+路由2+视图2+跨进程1）| 真实控制台 PTY 级验证无法在本环境分配（驱动以 fake-TTY 覆盖按键路径）；下一步=接入真实 dispatch 成为唯一 interactive renderer 并删除旧默认入口，完成后勾选 TUI 两 box | 下一模块：Ink interactive 接入（唯一 renderer）
 2026-11-12 | ResearchRun 持久化节点图：idea-round/experiment/analysis ResearchNode、输入依赖、版本失效、成功节点不降级、sync recovery、SQLite migration v8 | a3f48bf | pnpm typecheck + vitest architecture/soak/checkpoint → 19 tests passed | 长周期真实 soak、运行时资源告警和训练器特定 checkpoint 仍待 Phase 7 验收 | 下一模块：long-run soak/告警或 ARIS P1 继续项
 2026-11-12 | Phase 4.5 reviewer/audit 双实现收敛（ADR-009 第三例）：并行交付的 src/review（02a98cb/cc4c23a：fresh-context identity/route/scope/input 哈希、append-only knowledge/reviews/<idea>/<kind>-vN.json、15 条 conformance）与我的 src/idea/review.ts+audit.ts 同占 idea-review-v1/experiment-audit-v1；集成保留了对方 fake 形状致我 5 条 CLI/门禁测试红。收敛：唯一默认=src/review——idea review/audit 改为 runReview 薄封装（保留 HarnessBlockError→exit2 零写入）、新增 src/idea/gates.ts 按对方 artifact 解读门禁（STOP=score≥6 且 ready/almost 阻断实验+--waive-review Decision；audit FAIL 阻断 handoff、WARN/stale 中性）、删除 src/idea/review.ts+audit.ts（净 -770 行）、evidence bundle/session context/豁免事件全部改读对方存储| fd9e98a | 门禁全绿：96 files/700 vitest + 9 python（review 后端 15 条不动 + 改写 idea-review 6/实验 audit 4；全量含 TUI spike 12/12）| 旧 reviews/round-N.json 若有历史文件保持磁盘可读但不再被读取（无运行时 fallback）；DB Artifact 行仍随任务机 | 下一模块：Ink interactive 接入（唯一 renderer）或 long-run soak（另一会话认领中）
+2026-11-12 | Phase 1.5 Ink 接入真实 interactive（唯一 TTY renderer，ADR-010 收口）：src/cli/shell/session.ts 共享 InteractiveSession（slash 转发/NL ask/审批块与 /approve//open 两步切换/attach --json 事件回放+实时流/会话开始与干净结束标记，与行式路径同一批 use-case）+ src/cli/shell/app.tsx Ink 视图（备用屏幕先于首帧进入、banner+上下文+提示 header、activity pane 尾随+PgUp/PgDn、palette 原地过滤覆盖层、固定输入行光标块、footer busy 指示；按键经纯 ShellEngine，submit 严格串行队列，/quit 与 Ctrl-D 只杀事件流子进程并 await 干净结束标记、绝不停后台 run，quit 行留一帧渲染）、repl.ts startInteractive 按 interactiveRenderer 路由（TTY→Ink，plain/json/非TTY/FORCE_TTY→行式，FORCE_INK=1 管道伪 TTY 测试钩子）、spike 复用 engine 的 toEngineKey 去重、spike-drive 键序改为等待子进程消费（并行负载下 chunk 合并成 paste 的偶发修复）| 本提交 | 门禁：format:check/lint/typecheck 绿；全量 vitest 100 files/756 tests 全绿（新增 ink-interactive 2 条：构建产物级布局/palette/真实 dispatch /status+/help/Ctrl-C 提示/Ctrl-D//quit exit0+备用屏恢复+last-session 干净标记，及 Ctrl-D EOF 单独一条）+ python 9/9；shell-spike 12、repl-ux、interactive 55 条回归全绿（extract 与 spike-drive 全量并行下各偶发 1 次，单跑全过，drive 已加固）| Ink 管道字节流按屏幕模型增量改写、跨多帧整句断言不稳定（易碎断言置于新 pane 首行）；真实 PTY 仍无法在本环境分配；行式路径保留服务 plain/json/非 TTY | 下一模块：P0 JSON Schema 统一契约 或 跨平台子进程 adapter
