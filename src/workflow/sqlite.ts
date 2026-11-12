@@ -10,6 +10,10 @@ import type {
   EnqueueTaskInput,
   FinalizeCommitInput,
   HeartbeatResult,
+  NewResearchNode,
+  ResearchNode,
+  ResearchNodeKind,
+  ResearchNodeStatus,
   RunEvent,
   RunPhase,
   RunRecord,
@@ -226,6 +230,26 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_experiment_status ON experiment(status);
     `,
   },
+  {
+    version: 8,
+    sql: `
+      CREATE TABLE IF NOT EXISTS research_node (
+        node_id TEXT NOT NULL,
+        run_id TEXT NOT NULL REFERENCES run(run_id),
+        kind TEXT NOT NULL,
+        object_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        depends_on_json TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        invalidation_reason TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (run_id, node_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_research_node_run ON research_node(run_id, status);
+      CREATE INDEX IF NOT EXISTS idx_research_node_kind ON research_node(run_id, kind);
+    `,
+  },
 ];
 
 const TASK_COLUMNS = `
@@ -309,6 +333,19 @@ interface WorkerRow {
   heartbeat_at: number;
 }
 
+interface ResearchNodeRow {
+  node_id: string;
+  run_id: string;
+  kind: string;
+  object_id: string;
+  status: string;
+  depends_on_json: string;
+  payload_json: string;
+  invalidation_reason: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 interface ProjectRow {
   id: string;
   root: string;
@@ -379,6 +416,21 @@ function rowToEvent(row: EventRow): RunEvent {
     summary: row.summary,
     status: row.status,
     artifactRefs: parseJson<string[]>(row.artifact_refs_json, []),
+  };
+}
+
+function rowToResearchNode(row: ResearchNodeRow): ResearchNode {
+  return {
+    runId: row.run_id,
+    nodeId: row.node_id,
+    kind: row.kind as ResearchNodeKind,
+    objectId: row.object_id,
+    status: row.status as ResearchNodeStatus,
+    dependsOn: parseJson<string[]>(row.depends_on_json, []),
+    payload: parseJson<Record<string, unknown>>(row.payload_json, {}),
+    invalidationReason: row.invalidation_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -1696,6 +1748,125 @@ export class SqliteWorkflowDb implements WorkflowDb {
       .prepare(`SELECT * FROM run_event WHERE run_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`)
       .all(runId, since, limit) as unknown as EventRow[];
     return Promise.resolve(rows.map(rowToEvent));
+  }
+
+  // ------------------------------------------------------- research nodes
+
+  upsertResearchNode(
+    input: NewResearchNode,
+  ): Promise<{ node: ResearchNode; created: boolean; changed: boolean }> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const existing = this.db
+          .prepare('SELECT * FROM research_node WHERE run_id = ? AND node_id = ?')
+          .get(input.runId, input.nodeId) as unknown as ResearchNodeRow | undefined;
+        const now = this.clock.now();
+
+        if (existing) {
+          const current = rowToResearchNode(existing);
+          // 成功节点不重做: a succeeded node is never downgraded to pending by a
+          // re-sync. `invalidated` may be applied from any non-terminal status
+          // and is sticky afterwards (superseded evidence never revives).
+          let nextStatus = input.status;
+          let nextReason = input.invalidationReason ?? null;
+          if (current.status === 'invalidated') {
+            nextStatus = 'invalidated';
+            nextReason = current.invalidationReason;
+          } else if (current.status === 'succeeded' && nextStatus === 'pending') {
+            nextStatus = 'succeeded';
+            nextReason = null;
+          }
+          const changed =
+            nextStatus !== current.status ||
+            JSON.stringify(input.dependsOn) !== JSON.stringify(current.dependsOn) ||
+            JSON.stringify(input.payload) !== JSON.stringify(current.payload) ||
+            nextReason !== current.invalidationReason;
+          if (!changed) {
+            return { node: current, created: false, changed: false };
+          }
+          this.db
+            .prepare(
+              `UPDATE research_node
+                 SET status = ?, depends_on_json = ?, payload_json = ?, invalidation_reason = ?, updated_at = ?
+               WHERE run_id = ? AND node_id = ?`,
+            )
+            .run(
+              nextStatus,
+              JSON.stringify(input.dependsOn),
+              JSON.stringify(input.payload),
+              nextReason,
+              now,
+              input.runId,
+              input.nodeId,
+            );
+          return {
+            node: {
+              ...current,
+              status: nextStatus,
+              invalidationReason: nextReason,
+              dependsOn: input.dependsOn,
+              payload: input.payload,
+              updatedAt: now,
+            },
+            created: false,
+            changed: true,
+          };
+        }
+
+        this.db
+          .prepare(
+            `INSERT INTO research_node
+               (node_id, run_id, kind, object_id, status, depends_on_json, payload_json,
+                invalidation_reason, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            input.nodeId,
+            input.runId,
+            input.kind,
+            input.objectId,
+            input.status,
+            JSON.stringify(input.dependsOn),
+            JSON.stringify(input.payload),
+            input.invalidationReason ?? null,
+            now,
+            now,
+          );
+        const row = this.db
+          .prepare('SELECT * FROM research_node WHERE run_id = ? AND node_id = ?')
+          .get(input.runId, input.nodeId) as unknown as ResearchNodeRow;
+        return { node: rowToResearchNode(row), created: true, changed: true };
+      }),
+    );
+  }
+
+  listResearchNodes(
+    runId: string,
+    filter: { kind?: ResearchNodeKind; status?: ResearchNodeStatus } = {},
+  ): Promise<ResearchNode[]> {
+    const clauses = ['run_id = ?'];
+    const params: (string | number)[] = [runId];
+    if (filter.kind !== undefined) {
+      clauses.push('kind = ?');
+      params.push(filter.kind);
+    }
+    if (filter.status !== undefined) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM research_node WHERE ${clauses.join(' AND ')} ORDER BY created_at ASC, node_id ASC`,
+      )
+      .all(...params) as unknown as ResearchNodeRow[];
+    return Promise.resolve(rows.map(rowToResearchNode));
+  }
+
+  getResearchNode(runId: string, nodeId: string): Promise<ResearchNode | null> {
+    const row = this.db
+      .prepare('SELECT * FROM research_node WHERE run_id = ? AND node_id = ?')
+      .get(runId, nodeId) as unknown as ResearchNodeRow | undefined;
+    return Promise.resolve(row ? rowToResearchNode(row) : null);
   }
 
   // ----------------------------------------------------------------- workers

@@ -5,6 +5,11 @@
  */
 export { ProjectRuntime, type OpenRuntimeOptions } from './workflow/runtime.js';
 export { SqliteWorkflowDb, relPathForHash } from './workflow/sqlite.js';
+export {
+  syncResearchRun,
+  emptyResearchSyncReport,
+  type ResearchSyncReport,
+} from './workflow/research-run.js';
 export type {
   BeginCommitResult,
   CreateRunInput,

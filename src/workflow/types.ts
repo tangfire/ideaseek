@@ -188,6 +188,47 @@ export interface RecoveryReport {
   eventsAppended: number;
 }
 
+/**
+ * Kinds of ResearchRun orchestration nodes (docs/LONG_RUNNING_WORKFLOWS
+ * WorkflowNode subset): the durable graph that spans idea rounds, experiments
+ * and analysis for one ResearchRun.
+ */
+export type ResearchNodeKind = 'idea-round' | 'experiment' | 'analysis';
+
+/**
+ * Node lifecycle. `invalidated` marks superseded evidence (the bound idea
+ * version advanced, or an upstream dependency was invalidated) — the row and
+ * its payload are retained, never deleted (LONG_RUNNING: 保留旧结果).
+ */
+export type ResearchNodeStatus = 'pending' | 'succeeded' | 'failed' | 'invalidated';
+
+export interface ResearchNode {
+  runId: string;
+  /** Stable natural key `${kind}:${objectId}` (e.g. `experiment:idea-x:v1`). */
+  nodeId: string;
+  kind: ResearchNodeKind;
+  objectId: string;
+  status: ResearchNodeStatus;
+  /** Sources this node was derived from (analysis → experiments, round → parent round). */
+  dependsOn: string[];
+  payload: Record<string, unknown>;
+  /** Set iff status is `invalidated` (version supersession or dependency). */
+  invalidationReason: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface NewResearchNode {
+  runId: string;
+  nodeId: string;
+  kind: ResearchNodeKind;
+  objectId: string;
+  status: ResearchNodeStatus;
+  dependsOn: string[];
+  payload: Record<string, unknown>;
+  invalidationReason?: string | null;
+}
+
 export function emptyRecoveryReport(): RecoveryReport {
   return {
     reclaimedLeases: [],

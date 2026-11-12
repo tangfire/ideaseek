@@ -9,6 +9,11 @@ import type { ProjectRecord, WorkflowDb } from './db.js';
 import { SqliteWorkflowDb } from './sqlite.js';
 import type { CommitOutcome, RecoveryReport, StagedArtifactInput } from './types.js';
 import { emptyRecoveryReport } from './types.js';
+import {
+  emptyResearchSyncReport,
+  syncResearchRun,
+  type ResearchSyncReport,
+} from './research-run.js';
 
 export interface OpenRuntimeOptions {
   cwd: string;
@@ -54,6 +59,8 @@ export class ProjectRuntime {
   readonly harness: HarnessAdapter | null;
   /** Filled by {@link recover}; starts empty until the first recovery run. */
   recovery: RecoveryReport;
+  /** Filled by {@link syncResearchNodes}; null until the first sync attempt. */
+  researchSync: ResearchSyncReport | null;
 
   private constructor(args: {
     paths: ProjectPaths;
@@ -74,6 +81,7 @@ export class ProjectRuntime {
     this.clock = args.clock;
     this.recovery = args.recovery;
     this.harness = args.harness;
+    this.researchSync = null;
   }
 
   static async open(opts: OpenRuntimeOptions): Promise<ProjectRuntime> {
@@ -108,8 +116,27 @@ export class ProjectRuntime {
     });
     if (opts.recover !== false) {
       await runtime.recover(opts.workerStaleMs);
+      await runtime.syncResearchNodes();
     }
     return runtime;
+  }
+
+  /**
+   * Projects durable research state (rounds, experiment registry, analysis
+   * files) into this run's ResearchRun node graph (docs/LONG_RUNNING_WORKFLOWS).
+   * Idempotent — succeeded nodes are never reset and unchanged sources append
+   * no events. Called on every recovery-enabled open so each CLI invocation is
+   * a checkpoint boundary for the node ledger; returns a skipped report when
+   * no run exists yet.
+   */
+  async syncResearchNodes(): Promise<ResearchSyncReport> {
+    const run = await this.db.getLatestRun(this.project.id);
+    if (!run) {
+      this.researchSync = emptyResearchSyncReport();
+      return this.researchSync;
+    }
+    this.researchSync = await syncResearchRun(this.db, run.runId, this.paths.root);
+    return this.researchSync;
   }
 
   /** Lease/worker/commit/temp recovery; safe to run concurrently and repeatedly. */

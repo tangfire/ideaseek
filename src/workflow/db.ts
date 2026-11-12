@@ -6,6 +6,10 @@ import type {
   EnqueueTaskInput,
   FinalizeCommitInput,
   HeartbeatResult,
+  NewResearchNode,
+  ResearchNode,
+  ResearchNodeKind,
+  ResearchNodeStatus,
   RunEvent,
   RunPhase,
   RunRecord,
@@ -236,6 +240,21 @@ export interface WorkflowDb {
   // Events
   appendEvent(event: NewRunEvent): Promise<RunEvent>;
   listEvents(runId: string, opts?: ListEventsOptions): Promise<RunEvent[]>;
+
+  // ResearchRun nodes (LONG_RUNNING WorkflowNode: idea-round | experiment | analysis)
+  /**
+   * Idempotent upsert keyed by (run_id, node_id). A `succeeded` node is never
+   * downgraded to `pending` by a re-sync (成功节点不重做); `invalidated` may be
+   * applied from any non-terminal status and is sticky.
+   */
+  upsertResearchNode(
+    input: NewResearchNode,
+  ): Promise<{ node: ResearchNode; created: boolean; changed: boolean }>;
+  listResearchNodes(
+    runId: string,
+    filter?: { kind?: ResearchNodeKind; status?: ResearchNodeStatus },
+  ): Promise<ResearchNode[]>;
+  getResearchNode(runId: string, nodeId: string): Promise<ResearchNode | null>;
 
   // Knowledge index (FTS5, migration v2)
   replacePaperIndex(entry: PaperIndexEntry): Promise<void>;
