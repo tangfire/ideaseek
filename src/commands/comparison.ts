@@ -548,6 +548,130 @@ export function registerComparisonCommand(program: Command): void {
     );
 
   comparison
+    .command('plan')
+    .description(
+      'run the Comparison Planner agent (recent literature, venue, benchmark evidence) → reviewable matrix proposal',
+    )
+    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option('--enqueue-only', 'enqueue the comparison.plan task without executing')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { harness?: string; enqueueOnly?: boolean; json?: boolean }) => {
+        const root = await openRoot();
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const shared = await import('./shared.js');
+        const runtime = await ProjectRuntime.open({
+          cwd: root,
+          harness: shared.buildHarness(opts.harness),
+        });
+        try {
+          shared.assertConfigUsable(runtime.configLoad);
+          const { buildPlannerContext, plannerContextHash } =
+            await import('../comparison/planner.js');
+          const context = await buildPlannerContext(root);
+          if (context.candidates.length === 0) {
+            throw new IdeaseekError(
+              'USER_INPUT_REQUIRED',
+              'planner has no candidates — register a method or create idea cards first',
+            );
+          }
+          const contextHash = plannerContextHash(context);
+
+          // Incremental: a current proposal for this exact context short-circuits.
+          for (const artifact of await runtime.db.listArtifactsByKind(
+            'comparison-matrix-proposal',
+          )) {
+            if (artifact.meta.contextHash === contextHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    action: 'proposal-current',
+                    contextHash,
+                    candidates: context.candidates.length,
+                    literature: context.literature.length,
+                    indexNote: context.indexNote,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `comparison plan: proposal is current for ${context.candidates.length} candidate(s) ` +
+                    `(${context.literature.length} literature source(s); ${context.indexNote})\n`,
+                );
+                process.stdout.write(
+                  'next: ideaseek comparison matrix   (review, then --confirm)\n',
+                );
+              }
+              return 0;
+            }
+          }
+
+          const { ensureActiveRun } = await import('./ingest.js');
+          const { runId } = await ensureActiveRun(runtime);
+          const { created } = await runtime.db.enqueueTask({
+            runId,
+            type: 'comparison.plan',
+            phase: 'DEMO',
+            payload: { contextHash },
+            dependsOn: [],
+            idempotencyKey: `cplan:${contextHash.slice(7, 19)}:v1`,
+            maxAttempts: runtime.config.runtime.maxAttempts,
+          });
+
+          if (opts.enqueueOnly) {
+            if (opts.json) {
+              process.stdout.write(jsonLine({ runId, enqueued: created, contextHash }));
+            } else {
+              process.stdout.write(
+                `comparison plan: ${created ? '1 task enqueued' : 'task already queued'} in run ${runId}\n`,
+              );
+              process.stdout.write('next: ideaseek worker\n');
+            }
+            return 0;
+          }
+
+          const { exit } = await shared.runWorkerInteractive(runtime, runId, {
+            kind: 'inline',
+            handlers: shared.buildHandlers(),
+            onLog: (message: string) => process.stderr.write(`  · ${message}\n`),
+          });
+          const finalRun = await runtime.db.getRun(runId);
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                runId,
+                status: finalRun?.status,
+                exitReason: exit.reason,
+                contextHash,
+                candidates: context.candidates.length,
+                literature: context.literature.length,
+              }),
+            );
+          } else {
+            process.stdout.write(
+              `comparison plan → ${exit.reason} in run ${runId} ` +
+                `(${context.candidates.length} candidate(s), ${context.literature.length} source(s))\n`,
+            );
+            process.stdout.write('next: ideaseek comparison matrix   (review, then --confirm)\n');
+          }
+          switch (exit.reason) {
+            case 'completed':
+              return 0;
+            case 'failed':
+              return 1;
+            case 'blocked':
+              return 2;
+            case 'canceled':
+              return 4;
+            default:
+              return 0;
+          }
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  comparison
     .command('gate')
     .description(
       'required-comparison gate: every required method needs a runnable result before idea generation',

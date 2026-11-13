@@ -27,6 +27,8 @@ export interface MatrixEntry {
   classification: MatrixClassification;
   /** Why this method is in/out (user-editable before --confirm). */
   rationale: string;
+  /** Recency/venue reasoning from the Comparison Planner agent (optional). */
+  plannerNote?: string;
   sources: { source: string; detail: string }[];
   implementation: {
     identity: 'official-code' | 'paper-reimplementation' | 'user' | 'paper-card-only';
@@ -54,6 +56,8 @@ export interface ComparisonMatrix {
   entries: MatrixEntry[];
   /** Must be empty before `--confirm`. */
   blockers: string[];
+  /** Latest agent proposal merged into this draft (when current). */
+  agentProposal?: { contextHash: string; applied: boolean; note?: string };
   confirmed?: { at: number; mode: string; inputHash: string; applied: string[] };
 }
 
@@ -106,7 +110,10 @@ function classifyRegistered(method: {
  * Builds the matrix from persisted state (read-only). Never throws for
  * "nothing to plan yet" — that becomes a blocker with recovery commands.
  */
-export async function buildComparisonMatrix(root: string): Promise<ComparisonMatrix> {
+export async function buildComparisonMatrix(
+  root: string,
+  opts: { ignoreProposal?: boolean } = {},
+): Promise<ComparisonMatrix> {
   const { ProjectRuntime } = await import('../workflow/runtime.js');
   const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
   try {
@@ -225,6 +232,85 @@ export async function buildComparisonMatrix(root: string): Promise<ComparisonMat
       );
     }
 
+    // Merge the latest Comparison Planner proposal (when its candidate set
+    // still matches). The proposal refines rationale/classification; the
+    // user's --confirm remains the only path that touches the registry.
+    // `ignoreProposal` (planner context) skips this so the agent's own
+    // refinements never churn the context hash it was built from.
+    let agentProposal: ComparisonMatrix['agentProposal'];
+    const proposalArtifacts = opts.ignoreProposal
+      ? []
+      : await runtime.db.listArtifactsByKind('comparison-matrix-proposal');
+    const latestProposal = proposalArtifacts[proposalArtifacts.length - 1];
+    if (latestProposal) {
+      try {
+        const proposal = JSON.parse(
+          await runtime.store.readFinalText(latestProposal.contentHash),
+        ) as {
+          contextHash?: unknown;
+          entries?: {
+            methodId?: unknown;
+            classification?: unknown;
+            rationale?: unknown;
+            sources?: unknown;
+            relevanceNote?: unknown;
+          }[];
+        };
+        const contextHash =
+          typeof proposal.contextHash === 'string'
+            ? proposal.contextHash
+            : typeof latestProposal.meta.contextHash === 'string'
+              ? latestProposal.meta.contextHash
+              : '';
+        const byId = new Map(sorted.map((entry) => [entry.methodId, entry]));
+        const proposalEntries = Array.isArray(proposal.entries) ? proposal.entries : [];
+        const unknownIds = proposalEntries
+          .map((entry) => entry.methodId)
+          .filter((id): id is string => typeof id === 'string' && !byId.has(id));
+        if (unknownIds.length > 0) {
+          agentProposal = {
+            contextHash,
+            applied: false,
+            note: `stale planner proposal ignored (candidates changed: ${unknownIds.join(', ')})`,
+          };
+        } else if (proposalEntries.length === 0) {
+          agentProposal = { contextHash, applied: false, note: 'planner proposal has no entries' };
+        } else {
+          for (const item of proposalEntries) {
+            const target = byId.get(String(item.methodId));
+            if (!target) continue;
+            if (
+              ['required', 'reference-only', 'excluded', 'blocked'].includes(
+                String(item.classification),
+              )
+            ) {
+              target.classification = item.classification as MatrixClassification;
+            }
+            if (typeof item.rationale === 'string' && item.rationale.trim()) {
+              target.rationale = item.rationale;
+            }
+            if (Array.isArray(item.sources)) {
+              for (const source of item.sources) {
+                if (typeof source === 'string' && source) {
+                  target.sources.push({ source, detail: 'comparison-planner citation' });
+                }
+              }
+            }
+            if (typeof item.relevanceNote === 'string' && item.relevanceNote.trim()) {
+              target.plannerNote = item.relevanceNote;
+            }
+          }
+          agentProposal = { contextHash, applied: true };
+        }
+      } catch {
+        agentProposal = {
+          contextHash: '',
+          applied: false,
+          note: 'unreadable planner proposal ignored',
+        };
+      }
+    }
+
     const base: Omit<ComparisonMatrix, 'inputHash'> = {
       contract: MATRIX_SCHEMA,
       generatedAt: Date.now(),
@@ -236,6 +322,7 @@ export async function buildComparisonMatrix(root: string): Promise<ComparisonMat
       },
       entries: sorted,
       blockers,
+      ...(agentProposal ? { agentProposal } : {}),
     };
     const inputHash = computeInputHash(base);
     return { ...base, inputHash };

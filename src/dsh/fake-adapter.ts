@@ -476,6 +476,33 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       correlationCaution: true,
     });
   }
+  if (request.outputSchema === 'comparison-matrix-proposal-v1') {
+    const override = process.env.IDEASEEK_FAKE_MATRIX_PLAN_OUTPUT;
+    if (override != null) return override;
+    const context = readJsonContext(request) as {
+      candidates?: {
+        methodId?: unknown;
+        currentClassification?: unknown;
+        currentRationale?: unknown;
+      }[];
+      literature?: { sourceId?: unknown }[];
+    };
+    const cite =
+      Array.isArray(context.literature) && context.literature.length > 0
+        ? String(context.literature[0]?.sourceId ?? '')
+        : '';
+    return JSON.stringify({
+      contract: 'comparison-matrix-proposal-v1',
+      entries: (Array.isArray(context.candidates) ? context.candidates : []).map((candidate) => ({
+        methodId: String(candidate.methodId),
+        classification: String(candidate.currentClassification ?? 'reference-only'),
+        rationale: `planner review: ${String(candidate.currentRationale ?? '')}`.slice(0, 300),
+        sources: cite ? [cite] : [],
+        relevanceNote: 'fake planner (deterministic provider)',
+      })),
+      notes: ['fake harness planner'],
+    });
+  }
   if (request.outputSchema === 'idea-discuss-v1') {
     const override = process.env.IDEASEEK_FAKE_DISCUSS_OUTPUT;
     if (override != null) return override;
