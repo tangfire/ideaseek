@@ -39,6 +39,14 @@
 
 迁移通过 conformance/regression tests 后，应删除旧的重复默认实现；不要长期维护两套默认 workflow 或两套默认 TUI。
 
+## 评估记录（不引入也要留痕）
+
+### GitHub API 元数据 adapter（2026-11-13）→ 暂不引入
+
+- **现状**：比较方法溯源全走 Git CLI（`comparison/importer.ts`：匿名 clone、commit/branch 记录、`GIT_TERMINAL_PROMPT=0`）+ 本地 LICENSE 头分类（`classifyLicense`→permissive/copyleft 等入 method.yaml）；`grep api.github.com src` 零命中——当前没有任何流程消费 stars/forks/releases 元数据。
+- **不引入的理由**：(1) 无消费者即引入=为不存在的需求付 token/限流/缓存成本；(2) 未认证 60 次/小时/IP 会拖垮多项目扫描，认证则新增一处 secret 面（本策略要求凭据最小化，且 user-config 只存 `credentialRef` 不存值）；(3) gate/审批/公平性判定均基于状态与实验结果，不基于仓库热度——热度数据反而可能污染科学判断。
+- **重新评估的触发条件**：出现需要 release/tag 元数据、或无 LICENSE 文件仓库需要许可证 API 兜底的真实功能时。届时做薄 adapter：可选 token 走 user-config credentialRef、响应缓存、限流/失败诚实降级（缺元数据≠缺代码），且永不替代 Git clone。
+
 ## 已引入依赖记录
 
 ### tree-kill 1.2.2（进程树回收）
