@@ -25,7 +25,7 @@ IdeaSeek 不能让用户凭经验手工猜全量论文该比较哪些方法。�
 
 ## 研究材料缺口评估
 
-在深度论文综合、协议锁定和 idea 生成前，IdeaSeek 先对当前研究材料做一次 `ResearchMaterialAssessment`。输入包括研究问题/目标、已有论文、PaperCard/研究地图、数据集与 dataset card、comparison registry、已有 idea、目标任务/场景和用户指定的 venue/时间范围。输出必须逐项回答：是否足以开始协议设计和 smoke/quick 验证；缺少哪些论文、数据集/场景、comparison、指标、split、消融和资源信息；每个缺口的优先级（`blocking`/`recommended`/`optional`）、理由、证据来源、置信度、补充方式和预计成本。
+在深度论文综合、协议锁定和 idea 生成前，IdeaSeek 先对当前研究材料做一次 `ResearchMaterialAssessment`。输入包括研究问题/目标、已有论文、PaperCard/研究地图、数据集与 dataset card、comparison registry、已有 idea、目标任务/场景和用户指定的 venue/时间范围。该评估必须先读取项目中已有且 hash/schema 仍匹配的 PaperCard、DatasetCard、研究地图、comparison 和审计 artifact；只有输入或版本发生变化才增量重建。输出必须逐项回答：是否足以开始协议设计和 smoke/quick 验证；缺少哪些论文、数据集/场景、comparison、指标、split、消融和资源信息；每个缺口的优先级（`blocking`/`recommended`/`optional`）、理由、证据来源、置信度、补充方式和预计成本。
 
 它应告诉用户“请补什么、放到哪个目录、为什么需要、补上后会解锁哪些阶段”，并提供可复制的下一步命令或检索/下载建议。候选论文/数据集/仓库必须带来源、版本、许可证/访问条件和与问题的关联。用户补充材料后重新扫描并只使受影响的下游节点失效；缺少推荐材料可以继续并降低结论等级，缺少 required 数据语义、指标、测试用途、关键 comparison 或协议条件时阻止依赖实验并进入可恢复阻塞。
 

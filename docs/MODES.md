@@ -2,6 +2,18 @@
 
 IdeaSeek 的核心是科研探索。它可以提供一个复用 DSH Runtime 的项目 Agent 模式，不创建第二套 Agent Loop，也不关闭科研安全门禁。
 
+## 三种模式如何协同
+
+Analysis、Research 和 Agent 不是三套互相独立的产品，也不各自创建 PaperCard、研究地图、DatasetCard、comparison 或任务数据库。它们共享同一个项目的输入 manifest、内容 hash、知识 artifact、IdeaSeek workflow DB、RunEvent 和 checkpoint；区别只在于入口、可用工具和允许的写操作。
+
+- Research 已经生成的 PaperCard、证据索引、研究地图、机制库、DatasetCard、comparison 摘要和实验 artifact，Analysis 必须按内容 hash、parser/schema 版本和输入 snapshot 复用，不得重新解析或生成重复版本。
+- Analysis 新增论文、数据画像、候选 comparison 或材料缺口评估后，Research 直接读取这些 artifact；只有输入 hash、解析器/schema、模型路由或研究问题变化时，依赖图上的下游节点才失效。
+- Agent 修改项目代码、配置或测试后，只使依赖该代码/配置的 comparison、idea check、experiment plan 或 run 失效；原始论文、数据、PaperCard 和已提交实验结果保持可读。
+- 模式切换只改变会话权限和任务入口，不重置项目上下文、不创建第二个后台 run，也不复制已有知识。
+- 同一个输入在三个模式下都使用同一份 provenance/hash 和 artifact 引用；用户可以从任一模式查看来源、状态、缺口和下一步。
+
+模式切换是一个增量协作流程：通常先 Analysis 判断材料是否够，再 Research 做科研执行；中途可回 Analysis 补材料，再回 Research 继续；需要修代码或环境时切 Agent，修复后由受影响节点重新检查。
+
 ## Analysis 模式（材料分析与研究准备）
 
 Analysis 是用户准备研究材料时使用的只读准备模式。它不是只问模型“还缺什么”，而是先把已有材料加工成可推理的研究中间层：
