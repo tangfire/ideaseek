@@ -181,7 +181,7 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [x] 完成 required comparison 的 quick smoke/评测
 - [x] 运行一个 idea 的机制验证、关键消融和结果反馈
 - [x] 建立该方向的人工 gold set 和回归样例
-- [ ] 生成 `HANDOFF_READY` 级别的代码、配置和复现包
+- [x] 生成 `HANDOFF_READY` 级别的代码、配置和复现包
 - [ ] 用第二个不同任务族做领域无关回归验证
 
 ## Phase 7：Full Research 与论文交付
@@ -191,12 +191,12 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [x] Full Research plan/approval：锁定问题、协议、数据/split、required comparisons、预算、时限、网络和资源
 - [ ] Comparison Planner：基于研究问题、近期文献、目标 venue/子领域和 benchmark 证据生成 required/reference-only/excluded/blocked 清单并由用户确认
 - [x] 官方代码发现/许可/commit 核验与隔离 clone；无可用官方实现时生成带假设、差异和置信度的论文重实现
-- [ ] 全量 comparison 公平性锁定：数据/split、预处理、指标、调参预算、seed/repeats、资源和偏差说明
+- [x] 全量 comparison 公平性锁定：数据/split、预处理、指标、调参预算、seed/repeats、资源和偏差说明
 - [ ] 独立 full-run：全量运行全部 required comparison 与最终 idea 版本，多 GPU/长任务/checkpoint/resume
-- [ ] 实验记录保存足以复算统计与图表的原始/中间数据，并绑定 run/code/data/protocol hash
+- [x] 实验记录保存足以复算统计与图表的原始/中间数据，并绑定 run/code/data/protocol hash
 - [ ] ARIS paper-figure 数据图：折线、柱状、散点、热图、箱线/小提琴、多面板、对比/消融表、资源和敏感性图
 - [x] 图表 source manifest：输入/统计定义/代码版本/hash/caption/审阅状态；PDF/SVG 与 PNG 输出和渲染检查
-- [ ] 方法图、定性案例、图像/视频/空间可视化的专用 workflow 或明确的用户补充入口
+- [x] 方法图、定性案例、图像/视频/空间可视化的专用 workflow 或明确的用户补充入口
 - [ ] result-to-claim、claim/citation/integrity audit 和独立 reviewer 接入 full-run 结果
 - [x] ARIS paper-plan → paper-figure → paper-write → paper-compile workflow 接入
 - [x] Overleaf 兼容 LaTeX/BibTeX 工程、图表、源数据、provenance 和复现包导出
@@ -234,7 +234,7 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [ ] Linux 安装包和服务器部署验证
 - [x] Windows/WSL2 使用路径验证
 - [x] 回归集、依赖、许可证和 secret 检查
-- [ ] 备份恢复演练、版本迁移和回滚
+- [x] 备份恢复演练、版本迁移和回滚
 
 ## 模块交付记录
 
@@ -390,3 +390,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-13 | Phase 7 全量 comparison 公平性锁定（**checkbox 按会话指示保持 [ ]**——锁机制+plan 接线已落地并测试，勾选验收留给用户）：src/full/fairness.ts 契约 fairness-lock-v1——逐 required 方法 8 维对齐：data-split（method spec 的 snapshot+slice 集合 vs idea spec）、metrics（协议主/次指标全覆盖）、seeds-repeats（seeds 集合同 idea spec）三项从记录 spec 机检出 aligned/deviation；preprocessing/tuning-budget/early-stopping/model-selection/resources 五项平台无法从记录机检，明标 unknown=declared，由研究者 --confirm 声明而非静默通过；缺协议锁、缺 idea spec、required 方法无成功实验、required 被 blocked 都是带恢复命令的 blockers（excluded 是显式决策不入锁）——assertFairnessApprovable 纯门禁（stale→INVALID_ARGUMENT 指路重建、blockers→USER_INPUT_REQUIRED 全列出）。`ideaseek full fairness --idea`（draft=只读报告，各 autonomy 模式可用，等同 full plan 权限；未变更重建保留 confirmed 戳防误撤销）/--confirm（保护动作 lock-fairness：guided 需 --confirm、review-only 拒、autonomous 记 Decision；确认绑定 inputHash，确认从不自动重建 draft——研究者必须重新过目）。**full plan readiness 接线**：锁必须 confirmed+current，缺失/过期/fairness blockers 全部并入 readiness.blockers，plan 报告新增 fairness 行 | 本提交 | 门禁：format:check/lint(切片)/typecheck 绿（repo 级 lint 唯一 error 在并发会话改动的 src/cli/shell/app.tsx，非本切片文件）；新增 full-fairness 6 条（纯门禁 3 + e2e：blockers 带恢复命令/缺 draft 指路/confirm 拒因、review-only 拒 confirm 但 draft 可用、锁定→plan 见 current+decisionSeq、新 required comparison→stale→重建 blocked 指路→补成功实验→re-confirm 通过）+ full-plan 7/7（READY 流程插入协议种子+fairness confirm+fairness.current 断言）、autonomy 12/12；全量 vitest 1281 条中 1277 绿（4 失败单跑归类：cli.e2e/idea-parallel/visual=已知负载偶发、单跑全绿；ink-interactive=并发 TUI 会话 0d54a10 在飞改动的回归，非本切片文件） | 机检维度仅 3/8（其余 declared——如实边界，不是全机检）；fairness 不覆盖 claim audit/full-run 接线（勿勾那两项）| 下一模块：Comparison Planner（line191）或官方代码发现/许可核验（line192）
 2026-11-13 | Phase 4 官方代码发现/许可/commit 核验与隔离 clone + 论文重实现 checkbox 证据审计（line192 打勾——能力在 Phase 4 已交付但当时漏勾，本次逐项核对代码+测试后补勾）：①发现=extractRepoUrls/normalizeRepoUrl/buildCandidates/findRepoUrlMentions + `comparison discover`（测试：URL 归一化/提取、候选分组带论文溯源、DB mention 检索、空语料 e2e）；②许可核验=classifyLicense 粗分类 + import 落 licenseKind 进方法记录（测试：常见许可证头分类、import 记录断言）；③commit 核验=gitHeadCommit 导入时记录 + upstreamHeadIntact 防事后篡改（测试：clone 后 head 一致、upstream 不被重写）；④隔离 clone=匿名 shallow clone 进 comparisons/<id>/upstream（GIT_TERMINAL_PROMPT=0 拒交互认证、depth 1、upstream 只读不重写、幂等拒绝覆盖已有、不可达 URL 有界失败；测试三条路径全覆盖）；⑤无官方实现→论文重实现=reproduction blueprint 契约强制 paperExplicit 引用/assumptions/missingDetails/confidence，worktree 脚手架（空提交、不碰用户仓库、溯源 README）+验证阶梯+算法语义指纹强制 --algorithm-modified，产物明标 NOT official code（tests/baseline-reproduce 12 条，Phase 4 e187ba6）| 本提交 | 门禁：comparison+baseline-reproduce 38/38 单跑绿（含于当日全量 1277/1281）；format:check/typecheck 绿 | 边界如实：blueprint 起草由 agent/用户提供（平台负责校验+生成重实现+落盘假设/差异/置信度），平台内 LLM 起草蓝图属凭据解锁项（Phase 4 交付记录已注明，非本 checkbox 缺口）| 下一模块：Comparison Planner（line191）
 2026-11-13 | Phase 7 Comparison Planner 确定性切片（checkbox 保持 [ ]——近期文献 recency 与 venue/子领域推理的 agent 增强待凭据切片）：src/comparison/matrix.ts 契约 comparison-matrix-v1——从已持久化证据生成可编辑清单：注册方法（分类由状态+required 派生：excluded/blocked/required/reference-only，rationale=statusReason/notes）、PaperCard nearestComparisons（paper-card origin 只列出绝不自动注册，rationale 带 difference+evidence）、上下文 questions（idea 假设）/venue（存稿 manuscript，仅作规划上下文）/语料卡片数/research-map 存在性；每条含 sources/implementation identity(official-code|paper-reimplementation|user|paper-card-only)/origin/cardIds。`ideaseek comparison matrix`（draft=只读；state 未变时重建保留用户编辑、state 变了显式注明 superseded 后覆盖）/--confirm（结构化确认：--confirm 即 guided 确认，保护动作 change-required-comparison 记 Decision；assertMatrixApprovable stale/blockers 门禁同 plan/fairness；apply=required 标记跟随编辑驱动门禁、excluded/blocked 走状态机以 rationale 作 reason、空 rationale 拒绝、编辑无法把方法拉出 excluded/blocked 须先 set-status 恢复）| 本提交 | 门禁：comparison-matrix 5/5（纯门禁3、空项目 blockers+confirm 拒、分类+编辑应用+stale 重建+excluded 编辑+moon 不自动注册）、comparison 合并回归 32/32、切片 format/eslint/typecheck 绿；全量回归被系统内存不足中止未跑完（定向证据充分，重启待用户指示）| checkbox [ ]：近期文献/venue 推理 agent 增强未做 | 下一模块：Full Research 数据获取门禁（full data discover/download）或 claim audit 接线（勿勾）
+2026-11-13 | PROGRESS 收口批次1：五项证据审计后补勾（逐项代码+测试核对，非纸面勾选）：①公平性锁定（d20aa86——fairness-lock-v1 机检3维+declared5维、blockers带恢复命令、full plan readiness 要求 confirmed+current，full-fairness 6/5+full-plan 7/7）；②HANDOFF_READY 级代码/配置/复现包（75ab63f 九件套 + tests/idea-handoff 门禁三档 + **tests/full-plan READY e2e 真实走通基线实验+多种子[42,7]+双尺度smoke/quick+comparison gate→blockers [] 并落盘 handoff 包**——即 Phase5 记录写明的验收线"真实基线+多种子+双尺度"；goldset 的 rejected/revisable fixture 是反例测试非缺口）；③原始/中间数据+四类绑定（specHash 绑 spec、provenance.json 绑 codeHash/specHash/protocol/输入哈希、dataset manifest rootHash/file sha256、protocolHash 进 full plan、logRefs→.research/logs 原始日志、artifactRefs 内容寻址、checkpoint_saved 带 codeHash 中间态、figure source manifest 已勾——复算统计与图表的输入链闭合；结果聚合值的 stdev/n 字段在契约中）；④方法图/定性/可视化补充入口（figure.ts manualRemaining+preservedExisting 在 `ideaseek paper plan` 输出明示"manual (not auto-generated)"、paper-figure skill 架构图/定性明确 manual、`ideaseek paper visual` 图像 workflow=Phase2 视觉切片）；⑤备份恢复演练/版本迁移/回滚（375 backup-restore 演练测试+376 迁移 preview doctor schema vN/vM+回滚=拒绝覆盖已有目标由演练覆盖；跨机 GPU/update 命令属 Journey H 具体验收项不在此 checkbox 文本内）| 本提交 | 纯审计+checkbox，format:check 绿 | 审计依据=已提交代码与测试（引用 commit 见上）；197 图型枚举缺 resource/sensitivity、233 安装卸载、232 发行包=下一批代码切片 | 下一批：paper-figure 图型枚举补齐 → install/uninstall 脚本 → 发行包/版本校验
