@@ -141,7 +141,7 @@ async function db(runId: string, runtime: ProjectRuntime): Promise<string | unde
   return (await runtime.db.getRun(runId))?.status;
 }
 
-async function loadDatasetProfileFile(
+export async function loadDatasetProfileFile(
   runtime: ProjectRuntime,
 ): Promise<Awaited<ReturnType<typeof loadProfileInner>>> {
   return loadProfileInner(runtime);
