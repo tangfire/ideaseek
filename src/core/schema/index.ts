@@ -14,6 +14,9 @@ import datasetCandidatesV1 from './schemas/dataset-candidates-v1.json' with { ty
 import ideaCardV1 from './schemas/idea-card-v1.json' with { type: 'json' };
 import ideaCandidatesV1 from './schemas/idea-candidates-v1.json' with { type: 'json' };
 import integrityForensicsV1 from './schemas/integrity-forensics-v1.json' with { type: 'json' };
+import paperPlanV1 from './schemas/paper-plan-v1.json' with { type: 'json' };
+import paperFigureV1 from './schemas/paper-figure-v1.json' with { type: 'json' };
+import paperWriteV1 from './schemas/paper-write-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -56,7 +59,10 @@ export type SchemaName =
   | 'dataset-candidates-v1'
   | 'idea-card-v1'
   | 'idea-candidates-v1'
-  | 'integrity-forensics-v1';
+  | 'integrity-forensics-v1'
+  | 'paper-plan-v1'
+  | 'paper-figure-v1'
+  | 'paper-write-v1';
 
 const SCHEMAS: Record<SchemaName, object> = {
   'papercard-v1': papercardV1,
@@ -73,6 +79,9 @@ const SCHEMAS: Record<SchemaName, object> = {
   'idea-card-v1': ideaCardV1,
   'idea-candidates-v1': ideaCandidatesV1,
   'integrity-forensics-v1': integrityForensicsV1,
+  'paper-plan-v1': paperPlanV1,
+  'paper-figure-v1': paperFigureV1,
+  'paper-write-v1': paperWriteV1,
 };
 
 let ajv: Ajv | null = null;

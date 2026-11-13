@@ -5,6 +5,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { stableJson } from '../experiment/spec.js';
 import type { LoadedArisSkill } from '../aris/skill.js';
 import { renderArisSkill } from '../aris/skill.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * paper-plan capability (Phase 4.5C): the vendored ARIS paper-plan skill
@@ -420,5 +421,8 @@ export function parsePaperPlanOutput(output: string): PaperPlan {
       { errors: validation.errors },
     );
   }
+  // Defense in depth (JSON Schema authority): the TS validator ran first;
+  // the shared contract re-checks structure as a subset gate.
+  assertAgainstSchema('paper-plan-v1', parsed);
   return parsed as PaperPlan;
 }

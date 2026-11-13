@@ -5,6 +5,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { PaperPlanSnapshot } from './plan.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * paper-figure capability (Phase 4.5C, skill integration): the vendored
@@ -316,6 +317,8 @@ export function parsePaperFigureOutput(output: string, context: FigureContext): 
       { errors: validation.errors },
     );
   }
+  // Defense in depth (JSON Schema authority): the TS validator ran first.
+  assertAgainstSchema('paper-figure-v1', parsed);
   const plan = parsed as PaperFigurePlan;
   if (context.plannedFigureIds.length > 0) {
     const produced = new Set(plan.figures.map((figure) => figure.id));

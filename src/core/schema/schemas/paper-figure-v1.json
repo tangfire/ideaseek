@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/paper-figure-v1.json",
+  "title": "IdeaSeek PaperFigurePlan (paper-figure-v1)",
+  "description": "Structural contract for the paper-figure output. The plan-id pin (every stored plan figure id must appear) is enforced in TS parsePaperFigureOutput — the schema is a sound subset; the TS validator runs first.",
+  "type": "object",
+  "required": [
+    "style",
+    "dpi",
+    "format",
+    "figures",
+    "preservedExisting",
+    "manualRemaining",
+    "reviewerFeedback"
+  ],
+  "properties": {
+    "style": {
+      "enum": ["publication", "poster", "slide"]
+    },
+    "dpi": {
+      "type": "integer",
+      "minimum": 72
+    },
+    "format": {
+      "enum": ["pdf", "png"]
+    },
+    "figures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "title",
+          "caption",
+          "statistics",
+          "dataSources",
+          "script",
+          "latexInclude",
+          "claims"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "enum": ["line", "bar", "scatter", "heatmap", "box", "violin", "table", "multi-panel"]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "caption": {
+            "type": "string",
+            "minLength": 1
+          },
+          "statistics": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "dataSources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["kind", "ref"],
+              "properties": {
+                "kind": {
+                  "enum": ["experiment-spec", "result-file", "existing-figure", "context"]
+                },
+                "ref": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "script": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "matplotlib"
+          },
+          "latexInclude": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claims": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "preservedExisting": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "manualRemaining": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reviewerFeedback": {
+      "type": "object",
+      "required": ["verdict", "notes"],
+      "properties": {
+        "verdict": {
+          "enum": ["ACCEPT", "REVISE", "REVIEW_UNAVAILABLE"]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { PaperPlanSnapshot } from './plan.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * paper-write capability (Phase 4.5C, skill integration): the vendored
@@ -297,6 +298,8 @@ export function parseManuscriptOutput(output: string, context: WriteContext): Ma
       { errors: validation.errors },
     );
   }
+  // Defense in depth (JSON Schema authority): the TS validator ran first.
+  assertAgainstSchema('paper-write-v1', parsed);
   const manuscript = parsed as Manuscript;
   if (context.plan && manuscript.venue !== context.plan.venue) {
     throw new IdeaseekError(
