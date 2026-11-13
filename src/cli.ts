@@ -24,6 +24,7 @@ import { registerIdeaCommand } from './commands/idea.js';
 import { registerIdeateCommands } from './commands/ideate.js';
 import { registerArisCommand } from './commands/aris.js';
 import { registerAskCommand } from './commands/ask.js';
+import { registerAgentCommand } from './commands/agent.js';
 import { registerModeCommand } from './commands/mode.js';
 import { registerOpenCommand } from './commands/open.js';
 import { registerPendingCommand } from './commands/pending.js';
@@ -111,6 +112,7 @@ export function buildProgram(): Command {
   registerIdeateCommands(program);
   registerArisCommand(program);
   registerAskCommand(program);
+  registerAgentCommand(program);
   registerModeCommand(program);
   registerOpenCommand(program);
   registerPendingCommand(program);
