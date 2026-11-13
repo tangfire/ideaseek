@@ -375,6 +375,48 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'idea-discuss-v1') {
+    const override = process.env.IDEASEEK_FAKE_DISCUSS_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const ideaLine =
+      context.split('\n').find((line) => line.startsWith('Idea: ')) ?? 'Idea: unknown v1 []';
+    // "Idea: <id> v<version> [STATUS]"
+    const match = ideaLine.match(/^ Idea: (\S+) v(\d+)/) ?? ideaLine.match(/^Idea: (\S+) v(\d+)/);
+    const ideaId = match ? match[1] : 'unknown';
+    const cardVersion = match ? Number(match[2]) : 1;
+    const sourcesLine =
+      context.split('\n').find((line) => line.startsWith('Allowed evidence sources: ')) ??
+      'Allowed evidence sources: speculation';
+    const sources = sourcesLine
+      .slice('Allowed evidence sources: '.length)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const cite = sources.find((s) => s !== 'speculation') ?? 'speculation';
+    return JSON.stringify({
+      contract: 'idea-discuss-v1',
+      ideaId,
+      cardVersion,
+      position: 'contested',
+      arguments: [
+        {
+          side: 'pro',
+          statement: 'Persisted evidence supports the mechanism chain.',
+          evidence: [{ source: cite, location: 'context' }],
+          confidence: 0.7,
+        },
+        {
+          side: 'con',
+          statement: 'Baseline reproduction is still missing — impact is unproven.',
+          evidence: [{ source: 'speculation', location: 'no reproduced baseline in context' }],
+          confidence: 0.6,
+        },
+      ],
+      openQuestions: ['Does the gain survive on the standard slice?'],
+      recommendation: 'Reproduce the baseline before investing in the mechanism change.',
+    });
+  }
   if (request.outputSchema === 'idea-diagnosis-v1') {
     const override = process.env.IDEASEEK_FAKE_IMPROVE_OUTPUT;
     if (override != null) return override;

@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
@@ -412,6 +412,188 @@ export function registerIdeaCommand(program: Command): void {
           }
           process.stdout.write(
             'next: review the routes — engineering routes refine this idea; a hypothesis change must become a new-idea branch (ideaseek idea branch)\n',
+          );
+          return 0;
+        },
+      ),
+    );
+
+  idea
+    .command('discuss')
+    .description(
+      'structured pro/con discussion of an idea citing persisted evidence (Research Discussant role)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored discussion and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const {
+            collectDiscussContext,
+            buildDiscussRequest,
+            parseDiscussionOutput,
+            IDEA_DISCUSS_SCHEMA,
+          } = await import('../idea/discuss.js');
+          const context = await collectDiscussContext(root, ideaId);
+          const request = buildDiscussRequest(context);
+          const discussionPath = join(root, 'ideas', ideaId, 'discussion.json');
+
+          interface StoredDiscussion {
+            contract: string;
+            inputHash: string;
+            harnessRuntime: string;
+            generatedAt: number;
+            discussion: Record<string, unknown>;
+          }
+
+          if (!opts.force) {
+            let stored: StoredDiscussion | null = null;
+            try {
+              stored = JSON.parse(await readFile(discussionPath, 'utf8')) as StoredDiscussion;
+            } catch {
+              stored = null;
+            }
+            if (stored && stored.inputHash === request.inputHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    contract: stored.contract,
+                    inputHash: stored.inputHash,
+                    reused: true,
+                    discussion: stored.discussion,
+                    path: discussionPath,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `reused discussion for ${ideaId} (same inputHash ${stored.inputHash.slice(0, 12)}…)\n`,
+                );
+                process.stdout.write(`  file: ${discussionPath}\n`);
+                process.stdout.write('next: review both sides; regenerate with --force\n');
+              }
+              return 0;
+            }
+          }
+
+          const { buildHarness } = await import('./shared.js');
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const kind =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+          const harness = buildHarness(kind);
+          await harness.initialize();
+          let output: string;
+          let runtimeKind = kind;
+          try {
+            const result = await harness.runTask({
+              runId: `discuss:${ideaId}`,
+              taskId: `idea-discuss-${ideaId}`,
+              profile: 'reviewer',
+              instruction: request.instruction,
+              inputs: [{ kind: 'text', name: 'discuss_context', content: request.instruction }],
+              outputSchema: IDEA_DISCUSS_SCHEMA,
+              budget: { timeoutMs: 180_000, maxOutputTokens: 12_288 },
+              idempotencyKey: request.idempotencyKey,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'HarnessBlockError') {
+              const block = (error as { block?: string }).block ?? 'BLOCKED';
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({ blocked: block, written: false, contract: IDEA_DISCUSS_SCHEMA }),
+                );
+              } else {
+                process.stderr.write(
+                  `idea discuss blocked [${block}]: ${(error as Error).message}\n` +
+                    'nothing was written — restore quota/auth/network and rerun the same command\n',
+                );
+              }
+              return 2;
+            }
+            throw error;
+          } finally {
+            await harness.shutdown().catch(() => undefined);
+          }
+
+          // Envelope + evidence-source binding: revised ideas force a fresh
+          // discussion; invented sources fail closed.
+          const discussion = parseDiscussionOutput(output, context);
+          const stored: StoredDiscussion = {
+            contract: IDEA_DISCUSS_SCHEMA,
+            inputHash: request.inputHash,
+            harnessRuntime: runtimeKind,
+            generatedAt: Date.now(),
+            discussion: discussion as unknown as Record<string, unknown>,
+          };
+          const { ensureDir, writeFileAtomic } = await import('../core/atomic.js');
+          await ensureDir(join(root, 'ideas', ideaId, 'discussions'));
+          // Keep the canonical single-file pointer plus immutable versioned
+          // copies (append-only history like analysis-vN).
+          const versionDir = join(root, 'ideas', ideaId, 'discussions');
+          const existing = await readdir(versionDir).catch(() => [] as string[]);
+          const version =
+            existing.filter((name) => /^discussion-v\d+\.json$/.test(name)).length + 1;
+          await writeFileAtomic(
+            join(versionDir, `discussion-v${version}.json`),
+            `${JSON.stringify(stored, null, 2)}\n`,
+          );
+          await writeFileAtomic(discussionPath, `${JSON.stringify(stored, null, 2)}\n`);
+
+          let eventSeq: number | null = null;
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            if (run) {
+              const event = await runtime.db.appendEvent({
+                runId: run.runId,
+                phase: 'IDEATION',
+                objectId: ideaId,
+                role: 'system',
+                eventType: 'idea_discuss',
+                summary: `discussion for ${ideaId}: position=${discussion.position}, ${discussion.arguments.length} argument(s) (${discussion.arguments.filter((a) => a.side === 'pro').length} pro / ${discussion.arguments.filter((a) => a.side === 'con').length} con)`,
+                status: 'generated',
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await runtime.close();
+          }
+
+          const proCount = discussion.arguments.filter((a) => a.side === 'pro').length;
+          const conCount = discussion.arguments.filter((a) => a.side === 'con').length;
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                contract: stored.contract,
+                inputHash: stored.inputHash,
+                harnessRuntime: stored.harnessRuntime,
+                reused: false,
+                eventSeq,
+                discussion,
+                path: discussionPath,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `discussion written: ideas/${ideaId}/discussion.json (position ${discussion.position}, ${proCount} pro / ${conCount} con)\n`,
+          );
+          process.stdout.write(
+            `  inputHash ${stored.inputHash.slice(0, 19)}… · harness ${runtimeKind}\n`,
+          );
+          process.stdout.write(
+            `  open questions: ${discussion.openQuestions.slice(0, 2).join(' | ')}\n`,
+          );
+          process.stdout.write(
+            'next: act on the recommendation — revise (engineering), branch (scientific), or drop with reason\n',
           );
           return 0;
         },
