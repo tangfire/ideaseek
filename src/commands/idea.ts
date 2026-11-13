@@ -1610,6 +1610,66 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('result-to-claim')
+    .description(
+      'derive what the full-run results actually support (deterministic; feeds claim audit and review)',
+    )
+    .argument('<ideaId>', 'kebab-case idea id')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (ideaId: string, opts: { json?: boolean }) => {
+        const root = await openRoot();
+        const { runResultToClaim, writeResultToClaim, resultToClaimPath } =
+          await import('../idea/result-to-claim.js');
+        const claim = await runResultToClaim(root, ideaId);
+        await writeResultToClaim(root, claim);
+
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              ideaId,
+              contract: claim.contract,
+              planInputHash: claim.planInputHash,
+              claims: claim.claims,
+              gaps: claim.gaps,
+              path: `ideas/${ideaId}/experiments/result-to-claim.json`,
+            }),
+          );
+          return claim.gaps.length > 0 ? 2 : 0;
+        }
+        process.stdout.write(
+          `result-to-claim ${ideaId}: ${claim.claims.length} claim(s), ${claim.gaps.length} gap(s)\n`,
+        );
+        if (claim.planInputHash) {
+          process.stdout.write(`  full-run plan: ${claim.planInputHash.slice(0, 19)}…\n`);
+        }
+        for (const derived of claim.claims) {
+          process.stdout.write(`  [${derived.support}] ${derived.claimId}: ${derived.statement}\n`);
+          if (derived.delta !== null && derived.baselineValue !== null) {
+            process.stdout.write(
+              `         delta=${derived.delta} (${derived.direction}), evidence: ` +
+                `${derived.evidence.map((e) => `${e.specId}#${e.specHash?.slice(7, 15) ?? '?'}`).join(', ')}\n`,
+            );
+          }
+          if (derived.protocolCriteria.length > 0) {
+            process.stdout.write(`         criteria: ${derived.protocolCriteria[0]}\n`);
+          }
+        }
+        for (const gap of claim.gaps) process.stdout.write(`  gap: ${gap}\n`);
+        process.stdout.write(
+          `  file: ${resultToClaimPath(root, ideaId).replace(`${root}/`, '')}\n`,
+        );
+        process.stdout.write(
+          claim.gaps.length > 0
+            ? 'next: clear the gaps above (full run / protocol), then rerun\n'
+            : 'next: ideaseek idea claim-audit ' +
+                `${ideaId}   (then ideaseek idea review ${ideaId})\n`,
+        );
+        return claim.gaps.length > 0 ? 2 : 0;
+      }),
+    );
+
+  idea
     .command('forensics')
     .description(
       'integrity forensics sweep over persisted evidence → typed policy gate (ARIS integrity-forensics backend)',

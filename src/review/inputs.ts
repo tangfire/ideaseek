@@ -224,6 +224,40 @@ export async function collectReviewInputs(
         content,
       });
     }
+    // Full-run results live in the unified registry (comparison specs have
+    // idea=null and never write workspace mirrors) — the reviewer must see
+    // them or it judges an idea without its full-scale evidence.
+    const reports = await runtime.db.listArtifactsByKind('full-run-report');
+    for (const artifact of reports) {
+      if ((artifact.meta as { ideaId?: unknown } | null)?.ideaId !== ideaId) continue;
+      try {
+        const reportText = await runtime.store.readFinalText(artifact.contentHash);
+        inputs.push({
+          kind: 'run-result',
+          ref: `artifact:full-run-report/${artifact.artifactId}`,
+          sha256: artifact.contentHash.startsWith('sha256:')
+            ? artifact.contentHash
+            : sha256Of(reportText),
+          content: reportText,
+        });
+        found = true;
+        const parsed = JSON.parse(reportText) as { items?: { specId?: unknown }[] };
+        for (const item of parsed.items ?? []) {
+          if (typeof item.specId !== 'string') continue;
+          const doc = await runtime.db.getExperiment(item.specId);
+          if (!doc) continue;
+          const content = JSON.stringify({ spec: doc.spec, result: doc.result }, null, 2);
+          inputs.push({
+            kind: 'run-result',
+            ref: `registry:${item.specId}`,
+            sha256: sha256Of(content),
+            content,
+          });
+        }
+      } catch {
+        // unreadable report → stays an honest gap below
+      }
+    }
     if (!found) unavailable.push(`ideas/${ideaId}/experiments/*-v*.json (no run results)`);
   }
 

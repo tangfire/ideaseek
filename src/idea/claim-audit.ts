@@ -20,7 +20,7 @@ export type ClaimAuditVerdict = 'pass' | 'warn' | 'fail';
 export type EvidenceCheckVerdict = 'found' | 'missing' | 'unverified';
 
 export interface EvidenceCheck {
-  kind: 'paper-evidence' | 'nearest-comparison';
+  kind: 'paper-evidence' | 'nearest-comparison' | 'full-run-result';
   ref: string;
   verdict: EvidenceCheckVerdict;
   detail: string;
@@ -119,6 +119,53 @@ export async function runClaimAudit(root: string, ideaId: string): Promise<Evide
           : `comparison "${comparison.methodId}" is cited but not registered — import or drop it`,
         page: null,
       });
+    }
+
+    // Full-run integrity: every item the full-run report claims must have
+    // a succeeded registry row (report ↔ registry agreement — the audit
+    // that consumes full-run results instead of ignoring them).
+    const reports = await runtime.db.listArtifactsByKind('full-run-report');
+    let latestReport: { items?: unknown } | null = null;
+    for (const artifact of reports) {
+      if ((artifact.meta as { ideaId?: unknown } | null)?.ideaId !== ideaId) continue;
+      try {
+        latestReport = JSON.parse(await runtime.store.readFinalText(artifact.contentHash)) as {
+          items?: unknown;
+        };
+      } catch {
+        continue;
+      }
+    }
+    // Only when a full-run report EXISTS: pre-full-run audits keep their
+    // original card-evidence semantics (absence is not a defect — the
+    // recovery hint lives in `idea result-to-claim` gaps instead).
+    if (latestReport) {
+      const items = Array.isArray(latestReport.items)
+        ? (latestReport.items as { specId?: unknown; status?: unknown }[])
+        : [];
+      for (const item of items) {
+        if (typeof item.specId !== 'string') continue;
+        const doc = await runtime.db.getExperiment(item.specId);
+        const ok = Boolean(doc && doc.status === 'succeeded' && doc.result);
+        checks.push({
+          kind: 'full-run-result',
+          ref: item.specId,
+          verdict: ok ? 'found' : 'missing',
+          detail: ok
+            ? `full-run report item backed by a succeeded registry result (specHash ${String(doc?.specHash).slice(0, 19)}…)`
+            : `full-run report lists ${item.specId} as ${String(item.status)} but the registry has no succeeded result — rerun full or discard the stale report`,
+          page: null,
+        });
+      }
+      if (items.length === 0) {
+        checks.push({
+          kind: 'full-run-result',
+          ref: 'full-run-report',
+          verdict: 'unverified',
+          detail: 'full-run report contains no items',
+          page: null,
+        });
+      }
     }
   } finally {
     await runtime.close();
