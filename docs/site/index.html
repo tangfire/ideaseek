@@ -173,7 +173,57 @@
         min-width: 0;
       }
       .hero {
-        padding: 34px 0 28px;
+        position: relative;
+        overflow: hidden;
+        margin: -8px 0 30px;
+        padding: 50px 20px 38px;
+        border: 1px solid #283b43;
+        border-radius: 18px;
+        background:
+          radial-gradient(ellipse at 50% 18%, rgb(72 153 139 / 19%), transparent 55%),
+          linear-gradient(145deg, #151c25, #10151d 68%);
+        text-align: center;
+      }
+      .hero::after {
+        position: absolute;
+        right: 8%;
+        bottom: -90px;
+        left: 8%;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #74cbbb, transparent);
+        content: '';
+        box-shadow: 0 0 45px 8px rgb(87 187 169 / 13%);
+      }
+      .hero-logo {
+        position: relative;
+        margin: 0 auto 22px;
+        color: #91e4d6;
+        filter: drop-shadow(0 0 18px rgb(94 201 181 / 17%));
+      }
+      .hero-logo pre {
+        overflow: hidden;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font:
+          750 clamp(6px, 0.92vw, 10px) / 1.08 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+        white-space: pre;
+      }
+      .hero-logo .wordmark-mobile {
+        display: none;
+      }
+      .hero-tagline {
+        margin-top: 13px;
+        color: #aabac8;
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
       }
       .eyebrow {
         color: var(--brand);
@@ -191,12 +241,15 @@
       }
       .hero p {
         max-width: 670px;
+        margin-right: auto;
+        margin-left: auto;
         color: #b4c0cf;
         font-size: 18px;
       }
       .hero-actions {
         display: flex;
         flex-wrap: wrap;
+        justify-content: center;
         gap: 10px;
         margin-top: 23px;
       }
@@ -481,6 +534,16 @@
         .hero {
           padding-top: 16px;
         }
+        .hero-logo pre {
+          display: none;
+        }
+        .hero-logo .wordmark-mobile {
+          display: inline-block;
+          color: var(--brand);
+          font-size: clamp(36px, 12vw, 64px);
+          font-weight: 850;
+          letter-spacing: 0.12em;
+        }
         .cards {
           grid-template-columns: 1fr;
         }
@@ -524,8 +587,19 @@
       </aside>
       <main>
         <div class="hero">
-          <div class="eyebrow">IdeaSeek · User Guide</div>
-          <h1>让研究从证据<br />一步步走向实验。</h1>
+          <div class="hero-logo" aria-label="IdeaSeek">
+            <pre aria-hidden="true">
+██╗    ██████╗     ███████╗     █████╗     ███████╗    ███████╗    ███████╗    ██╗  ██╗
+██║    ██╔══██╗    ██╔════╝    ██╔══██╗    ██╔════╝    ██╔════╝    ██╔════╝    ██║ ██╔╝
+██║    ██║  ██║    █████╗      ███████║    ███████╗    █████╗      █████╗      █████╔╝
+██║    ██║  ██║    ██╔══╝      ██╔══██║    ╚════██║    ██╔══╝      ██╔══╝      ██╔═██╗
+██║    ██████╔╝    ███████╗    ██║  ██║    ███████║    ███████╗    ███████╗    ██║  ██╗
+╚═╝    ╚═════╝     ╚══════╝    ╚═╝  ╚═╝    ╚══════╝    ╚══════╝    ╚══════╝    ╚═╝  ╚═╝</pre>
+            <span class="wordmark-mobile">IDEASEEK</span>
+            <div class="hero-tagline">Research from evidence</div>
+          </div>
+          <div class="eyebrow">OFFICIAL USER GUIDE</div>
+          <h1>从研究问题，走向可验证的发现。</h1>
           <p>
             IdeaSeek 帮你整理论文、数据和对比方法，提出有依据的研究
             idea，在小规模实验中快速验证；你认可后，它再规划并执行全量 comparison 与 idea
@@ -843,6 +917,14 @@ ideaseek plan --question "你的研究问题"</code></pre>
       <span style="float: right">本地静态文档 · 无需外部前端依赖</span>
     </footer>
     <script>
+      const logo = document.querySelector('.hero-logo pre');
+      if (logo) {
+        logo.textContent = logo.textContent
+          .trim()
+          .split('\n')
+          .map((line) => line.trim())
+          .join('\n');
+      }
       const search = document.querySelector('#search');
       const sections = [
         ...document.querySelectorAll('main section, main .hero, main .cards, .notice'),
