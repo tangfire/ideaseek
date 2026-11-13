@@ -67,6 +67,85 @@ async function readCardFile(path: string): Promise<IdeaCard> {
  * reported as blocked from the experiment queue (add --require-candidate to
  * make that a failing exit, for pre-experiment checks).
  */
+/**
+ * Shared HANDOFF_READY delivery used by BOTH `idea handoff` and
+ * `experiment handoff` (docs/CLI_SPEC documents the latter; it was never
+ * wired until now). One implementation — the commands are aliases.
+ */
+export async function runIdeaHandoffDelivery(
+  root: string,
+  ideaId: string,
+  opts: { confirm?: boolean; json?: boolean },
+): Promise<number> {
+  const { ProjectRuntime } = await import('../workflow/runtime.js');
+  const runtime = await ProjectRuntime.open({ cwd: root });
+  try {
+    const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+    if (mode === 'review-only') {
+      // Review-only never delivers packages (analysis only).
+      assertAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
+    }
+    const result = await buildIdeaHandoff(root, ideaId, runtime.db);
+    if (result.gate.handoffReady) {
+      const check = checkAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
+      if (!check.allowed) {
+        process.stdout.write(
+          `handoff ${ideaId}: package written (${result.files.length} files) but ` +
+            'the HANDOFF_READY delivery is NOT accepted yet\n',
+        );
+        process.stdout.write(`  reason: ${check.reason ?? ''}\n`);
+        process.stdout.write(
+          `next: ideaseek idea handoff ${ideaId} --confirm   (records a Decision/Event)\n`,
+        );
+        return 2;
+      }
+      if (check.needsDecision) {
+        const decision = await recordDecision(runtime.db, runtime.project.id, {
+          action: 'finalize-handoff',
+          target: `${ideaId} ${result.gate.level}`,
+          mode,
+        });
+        if (decision) {
+          process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
+        }
+      }
+    }
+    if (opts.json) {
+      process.stdout.write(
+        jsonLine({
+          ideaId,
+          level: result.gate.level,
+          handoffReady: result.gate.handoffReady,
+          blockers: result.gate.blockers,
+          analysisVerdict: result.analysisVerdict,
+          dir: result.dir,
+          files: result.files,
+        }),
+      );
+      return 0;
+    }
+    process.stdout.write(
+      `handoff ${ideaId}: ${result.gate.level}` +
+        `${result.gate.handoffReady ? ' (HANDOFF_READY)' : ''}\n`,
+    );
+    process.stdout.write(`  dir: ${result.dir}\n`);
+    for (const file of result.files) process.stdout.write(`  + ${file}\n`);
+    for (const blocker of result.gate.blockers) {
+      process.stdout.write(`  blocker: ${blocker}\n`);
+    }
+    if (result.gate.handoffReady) {
+      process.stdout.write(
+        'next: confirm delivery (guided gate) — the package is ready for your full-scale run\n',
+      );
+    } else {
+      process.stdout.write('next: clear the blockers above, then rerun ideaseek idea handoff\n');
+    }
+    return 0;
+  } finally {
+    await runtime.close();
+  }
+}
+
 export function registerIdeaCommand(program: Command): void {
   const idea = program
     .command('idea')
@@ -2520,78 +2599,9 @@ export function registerIdeaCommand(program: Command): void {
     .option('--confirm', 'accept a HANDOFF_READY delivery (guided mode; Decision/Event recorded)')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (ideaId: string, opts: { confirm?: boolean; json?: boolean }) => {
-        const root = await openRoot();
-        const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const runtime = await ProjectRuntime.open({ cwd: root });
-        try {
-          const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-          if (mode === 'review-only') {
-            // Review-only never delivers packages (analysis only).
-            assertAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
-          }
-          const result = await buildIdeaHandoff(root, ideaId, runtime.db);
-          if (result.gate.handoffReady) {
-            const check = checkAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
-            if (!check.allowed) {
-              process.stdout.write(
-                `handoff ${ideaId}: package written (${result.files.length} files) but ` +
-                  'the HANDOFF_READY delivery is NOT accepted yet\n',
-              );
-              process.stdout.write(`  reason: ${check.reason ?? ''}\n`);
-              process.stdout.write(
-                `next: ideaseek idea handoff ${ideaId} --confirm   (records a Decision/Event)\n`,
-              );
-              return 2;
-            }
-            if (check.needsDecision) {
-              const decision = await recordDecision(runtime.db, runtime.project.id, {
-                action: 'finalize-handoff',
-                target: `${ideaId} ${result.gate.level}`,
-                mode,
-              });
-              if (decision) {
-                process.stdout.write(`  decision recorded (event #${decision.seq})\n`);
-              }
-            }
-          }
-          if (opts.json) {
-            process.stdout.write(
-              jsonLine({
-                ideaId,
-                level: result.gate.level,
-                handoffReady: result.gate.handoffReady,
-                blockers: result.gate.blockers,
-                analysisVerdict: result.analysisVerdict,
-                dir: result.dir,
-                files: result.files,
-              }),
-            );
-            return 0;
-          }
-          process.stdout.write(
-            `handoff ${ideaId}: ${result.gate.level}` +
-              `${result.gate.handoffReady ? ' (HANDOFF_READY)' : ''}\n`,
-          );
-          process.stdout.write(`  dir: ${result.dir}\n`);
-          for (const file of result.files) process.stdout.write(`  + ${file}\n`);
-          for (const blocker of result.gate.blockers) {
-            process.stdout.write(`  blocker: ${blocker}\n`);
-          }
-          if (result.gate.handoffReady) {
-            process.stdout.write(
-              'next: confirm delivery (guided gate) — the package is ready for your full-scale run\n',
-            );
-          } else {
-            process.stdout.write(
-              'next: clear the blockers above, then rerun ideaseek idea handoff\n',
-            );
-          }
-          return 0;
-        } finally {
-          await runtime.close();
-        }
-      }),
+      action(async (ideaId: string, opts: { confirm?: boolean; json?: boolean }) =>
+        runIdeaHandoffDelivery(await openRoot(), ideaId, opts),
+      ),
     );
 
   idea

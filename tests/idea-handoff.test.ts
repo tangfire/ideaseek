@@ -157,6 +157,33 @@ describe('ideaseek idea handoff (CLI)', () => {
     expect(init.code).toBe(0);
   }, 60_000);
 
+  it('experiment handoff --idea is a true alias of idea handoff (docs/CLI_SPEC)', async () => {
+    await setupToAnalyzing();
+
+    // Documented command (CLI_SPEC/README) delegates to the SAME delivery.
+    const alias = await runCli(project, [
+      'experiment',
+      'handoff',
+      '--idea',
+      'calib-reweight',
+      '--json',
+    ]);
+    expect(alias.code, alias.stdout + alias.stderr).toBe(0);
+    const payload = JSON.parse(alias.stdout) as {
+      ideaId: string;
+      level: string;
+      files: string[];
+    };
+    expect(payload.ideaId).toBe('calib-reweight');
+    expect(payload.level).toBe('PROMISING');
+    expect(payload.files.length).toBeGreaterThan(0);
+
+    // Unknown idea: identical refusal path as `idea handoff`.
+    const missing = await runCli(project, ['experiment', 'handoff', '--idea', 'ghost']);
+    expect(missing.code).not.toBe(0);
+    expect(missing.stderr).toContain('ghost');
+  }, 180_000);
+
   it('builds the full package with the gate recorded (PROMISING at single seed)', async () => {
     await setupToAnalyzing();
 

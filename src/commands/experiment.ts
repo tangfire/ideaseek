@@ -610,4 +610,23 @@ export function registerExperimentCommand(program: Command): void {
         },
       ),
     );
+
+  experiment
+    .command('handoff')
+    .description(
+      'build the full-scale reproduction package for an idea (alias of `idea handoff`; docs/CLI_SPEC)',
+    )
+    .requiredOption('--idea <ideaId>', 'idea id')
+    .option('--confirm', 'accept a HANDOFF_READY delivery (guided mode; Decision/Event recorded)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { idea: string; confirm?: boolean; json?: boolean }) => {
+        const root = await openRoot();
+        const { runIdeaHandoffDelivery } = await import('./idea.js');
+        return runIdeaHandoffDelivery(root, opts.idea, {
+          confirm: opts.confirm,
+          json: opts.json,
+        });
+      }),
+    );
 }
