@@ -845,6 +845,53 @@ export function registerPaperCommand(program: Command): void {
         return 0;
       }),
     );
+
+  paper
+    .command('export-overleaf')
+    .description(
+      'bundle main.tex + references.bib + figures + provenance into an Overleaf-ready ZIP (no secrets)',
+    )
+    .option('--to <dir>', 'target directory (default: reports/paper/overleaf-<ts>)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { to?: string; json?: boolean }) => {
+        const root = await findRoot();
+        const { buildOverleafExport } = await import('../paper/overleaf.js');
+        // Source data behind the figures: experiment registry + protocol
+        // locks (read-only dumps into provenance/).
+        const extraProvenance: Record<string, string> = {};
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const experiments = await runtime.db.listExperiments();
+          const locks = await runtime.db.listProtocolLocks();
+          extraProvenance['experiments.json'] = `${JSON.stringify(experiments, null, 2)}\n`;
+          extraProvenance['protocol-locks.json'] = `${JSON.stringify(locks, null, 2)}\n`;
+        } finally {
+          await runtime.close();
+        }
+        const manifest = await buildOverleafExport(root, {
+          to: opts.to,
+          extraProvenance,
+        });
+        if (opts.json) {
+          process.stdout.write(jsonLine(manifest));
+          return 0;
+        }
+        const figureCount = manifest.files.filter((file) =>
+          file.path.startsWith('figures/'),
+        ).length;
+        process.stdout.write(`overleaf bundle: ${manifest.bundleDir}\n`);
+        process.stdout.write(
+          `  zip: ${manifest.zipPath} · ${manifest.files.length} file(s), ${figureCount} figure(s), ${manifest.provenance.length} provenance record(s)\n`,
+        );
+        process.stdout.write(`  ${manifest.notes.join('\n  ')}\n`);
+        process.stdout.write(
+          'next: upload the ZIP to Overleaf (or extract and sync); full-scale runs stay in the handoff package\n',
+        );
+        return 0;
+      }),
+    );
 }
 
 /* ------------------------------------------------------------------ */

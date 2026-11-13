@@ -121,5 +121,37 @@ describe('paper delivery workflow chain (plan → figure → write → compile �
       expect(stored.skill.name).toMatch(/^paper-/);
       expect(stored.skill.sha256).toMatch(/^[0-9a-f]{64}$/); // manifest hashes are bare hex
     }
+
+    // 6) Overleaf export — bundle + zip + sha256 manifest, no secrets.
+    const exported = await runCli(dir, ['paper', 'export-overleaf', '--json']);
+    expect(exported.code, exported.stdout + exported.stderr).toBe(0);
+    const bundle = JSON.parse(exported.stdout) as {
+      contract: string;
+      bundleDir: string;
+      zipPath: string;
+      files: { path: string; sha256: string }[];
+      provenance: string[];
+    };
+    expect(bundle.contract).toBe('overleaf-export-v1');
+    expect(bundle.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining([
+        'main.tex',
+        'references.bib',
+        'README.md',
+        'manifest.json',
+        'provenance/experiments.json',
+        'provenance/protocol-locks.json',
+      ]),
+    );
+    expect(bundle.provenance.length).toBeGreaterThan(0);
+    expect(bundle.files.every((file) => file.sha256.startsWith('sha256:'))).toBe(true);
+    const main = await readFile(join(bundle.bundleDir, 'main.tex'), 'utf8');
+    expect(main).toContain('\\begin{document}');
+    const zip = await readFile(bundle.zipPath);
+    expect(zip.subarray(0, 2).toString('latin1')).toBe('PK');
+    for (const file of bundle.files) {
+      const content = await readFile(join(bundle.bundleDir, ...file.path.split('/')), 'utf8');
+      expect(content).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
+    }
   }, 600_000);
 });
