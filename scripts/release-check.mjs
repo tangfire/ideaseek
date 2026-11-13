@@ -203,9 +203,13 @@ function checkVersionConsistency(pkg) {
   if (typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(pkg.version)) {
     problems.push(`package.json version "${pkg.version}" is not semver`);
   }
-  const binPath = pkg.bin?.ideaseek;
-  if (binPath !== './dist/cli.js') {
-    problems.push(`package.json bin.ideaseek must be ./dist/cli.js (got ${binPath ?? 'missing'})`);
+  // bin target only applies to the ideaseek package itself (fixtures and
+  // consumers legitimately have no bin.ideaseek).
+  if (pkg.name === 'ideaseek') {
+    const binPath = pkg.bin?.ideaseek;
+    if (binPath !== './dist/cli.js') {
+      problems.push(`package.json bin.ideaseek must be ./dist/cli.js (got ${binPath ?? 'missing'})`);
+    }
   }
   const cli = join(root, 'dist', 'cli.js');
   const cliChecked = existsSync(cli);

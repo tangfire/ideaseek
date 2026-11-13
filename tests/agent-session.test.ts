@@ -10,7 +10,7 @@ import {
   redactAgentText,
   recordAgentSession,
   agentSessionsPath,
-} from '../src/agent/dsh-session.js';
+} from '../src/dsh/session.js';
 
 /**
  * Agent mode → real DSH coding session (rule: no fixed greetings, no

@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { normalizeApiKey } from '@deepseek-ai/dsh-llm';
+import { normalizeApiKey } from '../dsh/api-key.js';
 import { IdeaseekError } from '../core/errors.js';
 
 /**

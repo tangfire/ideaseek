@@ -50,10 +50,8 @@ export default tseslint.config(
       'src/commands/**', // application layer: wires everything (composition)
       'src/dsh/**', // adapter boundary (HarnessAdapter impls)
       'src/dsh-plugins/**', // DSH plugin surfaces (cordis/dsh-tools)
-      'src/agent/**', // sanctioned DSH session surface (agent mode)
       'src/cli.ts', // composition entry: registers every command
       'src/cli/**', // TUI/session surfaces (sanctioned DSH consumers)
-      'src/models/setup.ts', // DSH provider credential-shape authority
       'src/index.ts', // public export surface (re-exports the port)
       'src/workflow/**', // owns the sqlite adapter
       'src/runtime/backup.ts', // documented adapter exports (vacuum/rebind)

@@ -43,7 +43,7 @@
 |---|---|---|
 | `**/commands/*` | domain 层（knowledge/idea/comparison/experiment/paper/full/agent/review/artifact…）不得 import 应用层命令 | 无——违例即把调用上移进命令或把 port 下传 |
 | `**/workflow/sqlite.js` | 直接 sqlite adapter 访问收口在 workflow 包 | `index.ts`（公开 port 导出）、`runtime/backup.ts`（vacuum/rebind 属 adapter 导出，Journey H 已记录）、`artifact/store.ts`（`relPathForHash` 必须与 DB 落盘布局逐字节一致——同址是故意的） |
-| `@deepseek-ai/*` | DSH SDK 消费面收口 | `src/dsh`（HarnessAdapter 实现）、`src/dsh-plugins`（cordis 插件）、`src/agent`（agent 会话）、`src/cli`（TUI 会话）、`src/models/setup.ts`（provider 凭据形状权威） |
+| `@deepseek-ai/*` | DSH SDK 消费面收口 | `src/dsh`（HarnessAdapter 实现 + agent coding session `src/dsh/session.ts` + `api-key.ts` 形状权威转出口——ADR-001：SDK 只在 adapter 层，models setup 经此引用）、`src/dsh-plugins`（cordis 插件）、`src/cli`（TUI 会话） |
 
 **composition root**：应用层唯一接线点是 `src/cli.ts`（注册全部命令）+
 `commands/shared.buildHarness(kind)`（fake/dsh harness 工厂）+

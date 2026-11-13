@@ -51,7 +51,7 @@ export function registerAgentCommand(program: Command): void {
             );
           }
 
-          const { agentSessionsPath, recordAgentSession } = await import('../agent/dsh-session.js');
+          const { agentSessionsPath, recordAgentSession } = await import('../dsh/session.js');
 
           if (opts.list) {
             const { readFile } = await import('node:fs/promises');
@@ -88,7 +88,7 @@ export function registerAgentCommand(program: Command): void {
             );
           }
 
-          const { runAgentTurn, redactAgentText } = await import('../agent/dsh-session.js');
+          const { runAgentTurn, redactAgentText } = await import('../dsh/session.js');
           const result = await runAgentTurn({
             cwd: root,
             prompt,
