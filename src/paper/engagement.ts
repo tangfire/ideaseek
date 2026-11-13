@@ -4,6 +4,7 @@ import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import { WRITE_VENUES, type Manuscript } from './write.js';
 import type { PaperPlanSnapshot } from './plan.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * Rebuttal / slides / talk workflows (Phase 4.5C, skill integration):
@@ -579,11 +580,17 @@ function parseAndValidate(
 }
 
 export function parseRebuttal(output: string): Rebuttal {
-  return parseAndValidate(output, REBUTTAL_SCHEMA, validateRebuttal) as Rebuttal;
+  const parsed = parseAndValidate(output, REBUTTAL_SCHEMA, validateRebuttal);
+  // Defense in depth (JSON Schema authority): TS validator ran first.
+  assertAgainstSchema('rebuttal-v1', parsed);
+  return parsed as Rebuttal;
 }
 
 export function parseSlidesDeck(output: string, context: EngagementContext): SlidesDeck {
-  const deck = parseAndValidate(output, SLIDES_SCHEMA, validateSlidesDeck) as SlidesDeck;
+  const raw = parseAndValidate(output, SLIDES_SCHEMA, validateSlidesDeck);
+  // Defense in depth (JSON Schema authority): TS validator ran first.
+  assertAgainstSchema('paper-slides-v1', raw);
+  const deck = raw as SlidesDeck;
   if (context.plan && deck.venue !== context.plan.venue) {
     throw new IdeaseekError(
       'PARSE_FAILED',
@@ -595,7 +602,10 @@ export function parseSlidesDeck(output: string, context: EngagementContext): Sli
 }
 
 export function parseTalkPlan(output: string): TalkPlan {
-  return parseAndValidate(output, TALK_SCHEMA, validateTalkPlan) as TalkPlan;
+  const parsed = parseAndValidate(output, TALK_SCHEMA, validateTalkPlan);
+  // Defense in depth (JSON Schema authority): TS validator ran first.
+  assertAgainstSchema('paper-talk-v1', parsed);
+  return parsed as TalkPlan;
 }
 
 /** Every persisted artifact this engagement context is built from. */

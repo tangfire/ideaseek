@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/rebuttal-v1.json",
+  "title": "IdeaSeek Rebuttal (rebuttal-v1)",
+  "description": "Structural contract for the rebuttal output. The rule that persisted idea reviews are the ONLY reviewer input (no invented quotes) stays TS/prompt-side; the schema is a sound subset; the TS validator runs first.",
+  "type": "object",
+  "required": [
+    "overallResponse",
+    "pointResponses",
+    "newEvidence",
+    "revisedClaims",
+    "reviewerFeedback"
+  ],
+  "properties": {
+    "overallResponse": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pointResponses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["point", "response", "evidence"],
+        "properties": {
+          "point": {
+            "type": "string",
+            "minLength": 1
+          },
+          "response": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["source", "location"],
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "location": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "newEvidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "location", "what"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "what": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "revisedClaims": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reviewerFeedback": {
+      "type": "object",
+      "required": ["verdict", "notes"],
+      "properties": {
+        "verdict": {
+          "enum": ["ACCEPT", "REVISE", "REVIEW_UNAVAILABLE"]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

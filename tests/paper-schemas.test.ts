@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { validatePaperPlan } from '../src/paper/plan.js';
 import { validatePaperFigurePlan } from '../src/paper/figure.js';
 import { validateManuscript } from '../src/paper/write.js';
+import { validateRebuttal, validateSlidesDeck, validateTalkPlan } from '../src/paper/engagement.js';
 import {
   assertAgainstSchema,
   listSchemaNames,
@@ -277,6 +278,211 @@ describe('paper-write-v1 schema', () => {
     it(`both ${testCase.ok ? 'accept' : 'reject'}: ${testCase.name}`, () => {
       expect(validateAgainstSchema('paper-write-v1', testCase.ms).ok).toBe(testCase.ok);
       expect(validateManuscript(testCase.ms).ok).toBe(testCase.ok);
+    });
+  }
+});
+
+describe('rebuttal-v1 schema', () => {
+  const valid = (): Record<string, unknown> => ({
+    overallResponse: 'Locked evidence answers the concerns.',
+    pointResponses: [
+      {
+        point: 'thin evidence',
+        response: 'Grounded in repro-fedavg.',
+        evidence: [{ source: 'repro-fedavg', location: 'metrics' }],
+      },
+    ],
+    newEvidence: [],
+    revisedClaims: [],
+    reviewerFeedback: { verdict: 'REVIEW_UNAVAILABLE', notes: ['none'] },
+  });
+
+  it('is registered and accepts a valid rebuttal', () => {
+    expect(listSchemaNames()).toContain('rebuttal-v1');
+    expect(validateAgainstSchema('rebuttal-v1', valid()).ok).toBe(true);
+    expect(validateRebuttal(valid()).ok).toBe(true);
+    expect(() => assertAgainstSchema('rebuttal-v1', valid())).not.toThrow();
+  });
+
+  const cases: { name: string; value: unknown; ok: boolean }[] = [
+    { name: 'null', value: null, ok: false },
+    {
+      name: 'empty overallResponse',
+      value: mutate(valid(), (r) => (r.overallResponse = '')),
+      ok: false,
+    },
+    {
+      name: 'no pointResponses',
+      value: mutate(valid(), (r) => (r.pointResponses = [])),
+      ok: false,
+    },
+    {
+      name: 'point without evidence',
+      value: mutate(
+        valid(),
+        (r) => ((r.pointResponses as Record<string, unknown>[])[0]!.evidence = []),
+      ),
+      ok: false,
+    },
+    {
+      name: 'bad newEvidence entry',
+      value: mutate(valid(), (r) => (r.newEvidence = [{ source: 'x', location: 'y' }])),
+      ok: false,
+    },
+    {
+      name: 'bad reviewer verdict',
+      value: mutate(
+        valid(),
+        (r) => ((r.reviewerFeedback as Record<string, unknown>).verdict = 'LGTM'),
+      ),
+      ok: false,
+    },
+    {
+      name: 'revisedClaims with number',
+      value: mutate(valid(), (r) => (r.revisedClaims = [42])),
+      ok: false,
+    },
+  ];
+  for (const testCase of cases) {
+    it(`both ${testCase.ok ? 'accept' : 'reject'}: ${testCase.name}`, () => {
+      expect(validateAgainstSchema('rebuttal-v1', testCase.value).ok).toBe(testCase.ok);
+      expect(validateRebuttal(testCase.value).ok).toBe(testCase.ok);
+    });
+  }
+});
+
+describe('paper-slides-v1 schema', () => {
+  const valid = (): Record<string, unknown> => ({
+    venue: 'ICLR',
+    talkType: 'conference',
+    slideCount: 3,
+    slides: [1, 2, 3].map((number) => ({
+      number,
+      title: `Slide ${number}`,
+      bullets: [`Point ${number}`],
+      speakerNotes: `Notes ${number}.`,
+      claimSources: ['plan-claim'],
+    })),
+    talkScript: 'Word-for-word script.',
+    timeBudgetMinutes: 15,
+    qaPrep: [{ question: 'Q?', answer: 'A.', source: 'protocol' }],
+    reviewerFeedback: { verdict: 'REVIEW_UNAVAILABLE', notes: ['none'] },
+  });
+
+  it('is registered and accepts a valid deck', () => {
+    expect(listSchemaNames()).toContain('paper-slides-v1');
+    expect(validateAgainstSchema('paper-slides-v1', valid()).ok).toBe(true);
+    expect(validateSlidesDeck(valid()).ok).toBe(true);
+  });
+
+  const cases: { name: string; value: unknown; ok: boolean; schemaOnly?: boolean }[] = [
+    { name: 'null', value: null, ok: false },
+    { name: 'bad venue', value: mutate(valid(), (s) => (s.venue = 'arXiv')), ok: false },
+    { name: 'bad talkType', value: mutate(valid(), (s) => (s.talkType = 'webinar')), ok: false },
+    {
+      name: 'two slides',
+      value: mutate(valid(), (s) => {
+        s.slides = (s.slides as unknown[]).slice(0, 2);
+        s.slideCount = 2;
+      }),
+      ok: false,
+    },
+    {
+      name: 'empty bullets',
+      value: mutate(valid(), (s) => ((s.slides as Record<string, unknown>[])[0]!.bullets = [])),
+      ok: false,
+    },
+    { name: 'no qaPrep', value: mutate(valid(), (s) => (s.qaPrep = [])), ok: false },
+    {
+      name: 'zero time budget',
+      value: mutate(valid(), (s) => (s.timeBudgetMinutes = 0)),
+      ok: false,
+    },
+    { name: 'empty talkScript', value: mutate(valid(), (s) => (s.talkScript = '')), ok: false },
+    {
+      name: 'count mismatch is TS-only (schema accepts)',
+      value: mutate(valid(), (s) => (s.slideCount = 5)),
+      ok: false,
+      schemaOnly: true,
+    },
+  ];
+  for (const testCase of cases) {
+    it(`${testCase.schemaOnly ? 'TS-only rule (documented subset)' : `both ${testCase.ok ? 'accept' : 'reject'}`}: ${testCase.name}`, () => {
+      if (testCase.schemaOnly) {
+        // slideCount === slides.length is relational — schema accepts,
+        // the TS validator rejects; runtime order runs TS first.
+        expect(validateAgainstSchema('paper-slides-v1', testCase.value).ok).toBe(true);
+        expect(validateSlidesDeck(testCase.value).ok).toBe(false);
+        return;
+      }
+      expect(validateAgainstSchema('paper-slides-v1', testCase.value).ok).toBe(testCase.ok);
+      expect(validateSlidesDeck(testCase.value).ok).toBe(testCase.ok);
+    });
+  }
+});
+
+describe('paper-talk-v1 schema', () => {
+  const valid = (): Record<string, unknown> => ({
+    readiness: 'draft',
+    checklist: [{ item: 'slides present', status: 'pass', detail: 'stored deck found' }],
+    talkTrack: 'Question → evidence → takeaway.',
+    qAndA: [{ question: 'Q?', answer: 'A.', source: 'plan-claim' }],
+    blockers: [],
+    reviewerFeedback: { verdict: 'REVIEW_UNAVAILABLE', notes: ['none'] },
+  });
+
+  it('is registered and accepts a valid draft', () => {
+    expect(listSchemaNames()).toContain('paper-talk-v1');
+    expect(validateAgainstSchema('paper-talk-v1', valid()).ok).toBe(true);
+    expect(validateTalkPlan(valid()).ok).toBe(true);
+  });
+
+  const cases: { name: string; value: unknown; ok: boolean }[] = [
+    { name: 'null', value: null, ok: false },
+    { name: 'bad readiness', value: mutate(valid(), (t) => (t.readiness = 'maybe')), ok: false },
+    { name: 'empty checklist', value: mutate(valid(), (t) => (t.checklist = [])), ok: false },
+    {
+      name: 'bad checklist status',
+      value: mutate(
+        valid(),
+        (t) => ((t.checklist as Record<string, unknown>[])[0]!.status = 'meh'),
+      ),
+      ok: false,
+    },
+    { name: 'no qAndA', value: mutate(valid(), (t) => (t.qAndA = [])), ok: false },
+    { name: 'empty talkTrack', value: mutate(valid(), (t) => (t.talkTrack = '')), ok: false },
+    {
+      name: 'ready with blocker',
+      value: mutate(valid(), (t) => {
+        t.readiness = 'ready';
+        (t.blockers as string[]).push('x');
+      }),
+      ok: false,
+    },
+    {
+      name: 'ready with failing item',
+      value: mutate(valid(), (t) => {
+        t.readiness = 'ready';
+        (t.checklist as Record<string, unknown>[])[0]!.status = 'fail';
+      }),
+      ok: false,
+    },
+    {
+      name: 'blocked without blocker',
+      value: mutate(valid(), (t) => (t.readiness = 'blocked')),
+      ok: false,
+    },
+    { name: 'draft with blocker', value: mutate(valid(), (t) => (t.blockers = ['x'])), ok: false },
+    {
+      name: 'clean ready is fine',
+      value: mutate(valid(), (t) => (t.readiness = 'ready')),
+      ok: true,
+    },
+  ];
+  for (const testCase of cases) {
+    it(`both ${testCase.ok ? 'accept' : 'reject'}: ${testCase.name}`, () => {
+      expect(validateAgainstSchema('paper-talk-v1', testCase.value).ok).toBe(testCase.ok);
+      expect(validateTalkPlan(testCase.value).ok).toBe(testCase.ok);
     });
   }
 });

@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/paper-slides-v1.json",
+  "title": "IdeaSeek SlidesDeck (paper-slides-v1)",
+  "description": "Structural contract for the paper-slides output. The venue pin against the stored plan stays TS (parseSlidesDeck); the schema is a sound subset; the TS validator runs first.",
+  "type": "object",
+  "required": [
+    "venue",
+    "talkType",
+    "slideCount",
+    "slides",
+    "talkScript",
+    "timeBudgetMinutes",
+    "qaPrep",
+    "reviewerFeedback"
+  ],
+  "properties": {
+    "venue": {
+      "enum": ["ICLR", "NeurIPS", "ICML", "CVPR", "ACL", "AAAI", "ACM", "IEEE_JOURNAL", "IEEE_CONF"]
+    },
+    "talkType": {
+      "enum": ["conference", "seminar", "poster-pitch"]
+    },
+    "slideCount": {
+      "type": "integer",
+      "minimum": 3
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["number", "title", "bullets", "speakerNotes", "claimSources"],
+        "properties": {
+          "number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bullets": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "speakerNotes": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claimSources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "talkScript": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeBudgetMinutes": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "qaPrep": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["question", "answer", "source"],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "reviewerFeedback": {
+      "type": "object",
+      "required": ["verdict", "notes"],
+      "properties": {
+        "verdict": {
+          "enum": ["ACCEPT", "REVISE", "REVIEW_UNAVAILABLE"]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

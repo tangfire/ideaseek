@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/paper-talk-v1.json",
+  "title": "IdeaSeek TalkPlan (paper-talk-v1)",
+  "description": "Structural contract for the paper-talk output. Readiness invariants (ready => zero blockers and no failing checklist items; blocked => >=1 blocker; draft => no blockers) are enforced by the TS validator via cross-field checks expressible here only partly — the schema enforces the blocker/readiness basics and the TS validator runs first.",
+  "type": "object",
+  "required": ["readiness", "checklist", "talkTrack", "qAndA", "blockers", "reviewerFeedback"],
+  "properties": {
+    "readiness": {
+      "enum": ["draft", "ready", "blocked"]
+    },
+    "checklist": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["item", "status", "detail"],
+        "properties": {
+          "item": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": ["pass", "fail", "na"]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "talkTrack": {
+      "type": "string",
+      "minLength": 1
+    },
+    "qAndA": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["question", "answer", "source"],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reviewerFeedback": {
+      "type": "object",
+      "required": ["verdict", "notes"],
+      "properties": {
+        "verdict": {
+          "enum": ["ACCEPT", "REVISE", "REVIEW_UNAVAILABLE"]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "readiness": {
+            "const": "ready"
+          }
+        },
+        "required": ["readiness"]
+      },
+      "then": {
+        "properties": {
+          "blockers": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "checklist": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "not": {
+                "properties": {
+                  "status": {
+                    "const": "fail"
+                  }
+                },
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "readiness": {
+            "const": "blocked"
+          }
+        },
+        "required": ["readiness"]
+      },
+      "then": {
+        "properties": {
+          "blockers": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "readiness": {
+            "const": "draft"
+          }
+        },
+        "required": ["readiness"]
+      },
+      "then": {
+        "properties": {
+          "blockers": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}
