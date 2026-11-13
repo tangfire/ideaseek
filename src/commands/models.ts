@@ -175,6 +175,309 @@ export function registerModelsCommand(program: Command): void {
         return 0;
       }),
     );
+
+  models
+    .command('setup')
+    .description(
+      'interactive provider/API key wiring: hidden input, DSH credential store (apiKeyEnv NAME), connection test — never stores the key value',
+    )
+    .option('--provider <id>', 'DSH provider id (kebab-case)', 'deepseek')
+    .option(
+      '--api-key-env <name>',
+      'environment VARIABLE NAME holding the key (never the value itself)',
+      'DEEPSEEK_API_KEY',
+    )
+    .option('--base-url <url>', 'provider base URL (required when creating a new provider)')
+    .option('--api-key-stdin', 'read the key from stdin (hidden automation path; never argv)')
+    .option(
+      '--prompt-key',
+      'prompt for the key with hidden input (TTY only; value stays in memory)',
+    )
+    .option('--test', 'run the minimal connection test before writing anything')
+    .option('--no-dsh', 'skip the DSH settings write (only user-config credentialRef)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (opts: {
+          provider: string;
+          apiKeyEnv: string;
+          baseUrl?: string;
+          apiKeyStdin?: boolean;
+          promptKey?: boolean;
+          test?: boolean;
+          dsh?: boolean;
+          json?: boolean;
+        }) => {
+          const {
+            assertEnvName,
+            assertProviderId,
+            readDshProvider,
+            writeDshApiKeyEnv,
+            connectionTest,
+            normalizeSuppliedKey,
+            resolveTestKey,
+            dshHome,
+          } = await import('../models/setup.js');
+          assertProviderId(opts.provider);
+          assertEnvName(opts.apiKeyEnv);
+
+          // Key acquisition: stdin (automation) or hidden TTY prompt.
+          // The value NEVER touches argv, config files, logs or events.
+          let supplied: string | null = null;
+          if (opts.apiKeyStdin) {
+            const chunks: Buffer[] = [];
+            for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+            supplied = Buffer.concat(chunks).toString('utf8');
+            if (!supplied.trim()) {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                '--api-key-stdin was given but stdin was empty',
+              );
+            }
+          } else if (opts.promptKey) {
+            if (!process.stdin.isTTY) {
+              throw new IdeaseekError(
+                'ENV_UNSUPPORTED',
+                '--prompt-key needs an interactive TTY — use --api-key-stdin in automation',
+              );
+            }
+            supplied = await promptHidden('API key (input hidden): ');
+            if (!supplied.trim()) {
+              throw new IdeaseekError('USER_INPUT_REQUIRED', 'empty API key');
+            }
+          }
+          if (supplied !== null) {
+            const normalized = normalizeSuppliedKey(supplied);
+            if (!normalized.ok) {
+              throw new IdeaseekError(
+                'INVALID_ARGUMENT',
+                `supplied API key rejected (${normalized.reason}) — nothing was written`,
+              );
+            }
+            supplied = normalized.value;
+          }
+
+          // Connection test FIRST (when requested): a failing test writes
+          // nothing, so a bad key never leaves partial wiring behind.
+          let tested: { ok: boolean; status: number | null; detail: string } | null = null;
+          if (opts.test) {
+            const providerView = await readDshProvider(opts.provider);
+            const baseUrl = opts.baseUrl ?? providerView.baseURL;
+            if (!baseUrl) {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `no base URL known for provider "${opts.provider}" — pass --base-url`,
+              );
+            }
+            const resolved = resolveTestKey(supplied, opts.apiKeyEnv);
+            if (!resolved.present || resolved.value === null) {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `no key available for the test — export ${opts.apiKeyEnv} or pipe the key via --api-key-stdin (the value is never stored)`,
+              );
+            }
+            tested = await connectionTest(baseUrl, resolved.value);
+            // Drop the in-memory copy before any writes.
+            supplied = null;
+            if (!tested.ok) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({ ok: false, stage: 'connection-test', tested, wrote: [] }),
+                );
+                return 1;
+              }
+              process.stderr.write(`connection test FAILED: ${tested.detail}\n`);
+              process.stderr.write(
+                `next: check ${opts.apiKeyEnv} value and --base-url, then rerun ideaseek models setup --test\n`,
+              );
+              return 1;
+            }
+          }
+
+          const wrote: string[] = [];
+          let dshWrite: { path: string; created: boolean } | null = null;
+          if (opts.dsh !== false) {
+            const result = await writeDshApiKeyEnv(opts.provider, opts.apiKeyEnv, {
+              baseUrl: opts.baseUrl,
+            });
+            dshWrite = { path: result.path, created: result.created };
+            wrote.push(`dsh-settings:${result.path} (providers.${opts.provider}.apiKeyEnv)`);
+          }
+          const credentialRef =
+            opts.dsh === false ? `env:${opts.apiKeyEnv}` : `env:${opts.apiKeyEnv}`;
+          const { saveUserModelsPatch } = await import('../config/user-config.js');
+          const saved = await saveUserModelsPatch({
+            provider: opts.provider,
+            credentialRef,
+          });
+          wrote.push(`user-config:${saved.path} (${saved.changed.join(', ')})`);
+
+          const payload = {
+            ok: true,
+            provider: opts.provider,
+            apiKeyEnv: opts.apiKeyEnv,
+            credentialRef,
+            dshHome: dshHome(),
+            dsh: dshWrite,
+            tested,
+            wrote,
+          };
+          if (opts.json) {
+            process.stdout.write(jsonLine(payload));
+            return 0;
+          }
+          process.stdout.write(
+            `models setup: provider=${opts.provider} apiKeyEnv=${opts.apiKeyEnv} credentialRef=${credentialRef}\n`,
+          );
+          if (dshWrite) {
+            process.stdout.write(
+              `  DSH credential store: ${dshWrite.path} → providers.${opts.provider}.apiKeyEnv (NAME only — no value stored)\n`,
+            );
+          }
+          if (tested) {
+            process.stdout.write(`  connection: ${tested.detail}\n`);
+          }
+          process.stdout.write(`  wrote: ${wrote.join('; ')}\n`);
+          process.stdout.write(
+            `next: export ${opts.apiKeyEnv}=<your key> in your shell or secret manager, then: ideaseek models test\n`,
+          );
+          process.stdout.write(
+            'boundary: IdeaSeek never writes the key value to config, git, prompts, events or logs\n',
+          );
+          return 0;
+        },
+      ),
+    );
+
+  models
+    .command('test')
+    .description(
+      'minimal connectivity check for the configured credential reference (presence + GET /models; never prints the key)',
+    )
+    .option('--base-url <url>', 'override the provider base URL')
+    .option('--timeout <ms>', 'request timeout', (value) => Number(value), 10_000)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { baseUrl?: string; timeout: number; json?: boolean }) => {
+        const { loadUserConfig, resolveCredentialPresence } =
+          await import('../config/user-config.js');
+        const { readDshProvider, connectionTest, resolveTestKey } =
+          await import('../models/setup.js');
+        const user = await loadUserConfig();
+        if (user.errors.length > 0) {
+          throw new IdeaseekError(
+            'INVALID_STATE',
+            `user config errors: ${user.errors.join('; ')} — fix ${user.path}`,
+          );
+        }
+        const ref = user.config.models.credentialRef;
+        const presence = resolveCredentialPresence(ref);
+        let envName: string | null = null;
+        if (ref?.startsWith('env:')) envName = ref.slice(4);
+        else if (ref?.startsWith('dsh:')) {
+          // dsh:<id> resolves through the provider's apiKeyEnv NAME (the
+          // pinned DSH credential mechanism) — value still comes from env.
+          const view = await readDshProvider(ref.slice(4));
+          envName = view.apiKeyEnv;
+        }
+        const resolved = envName
+          ? resolveTestKey(null, envName)
+          : { present: false, value: null, source: 'none' as const };
+        if (!opts.baseUrl && !envName) {
+          const payload = {
+            ok: false,
+            stage: 'resolve',
+            ref,
+            presence: presence.presence,
+            detail: 'no credential reference or provider apiKeyEnv configured',
+          };
+          if (opts.json) process.stdout.write(jsonLine(payload));
+          else {
+            process.stderr.write(`models test: ${payload.detail}\n`);
+            process.stderr.write('next: ideaseek models setup --api-key-env <NAME> --test\n');
+          }
+          return 2;
+        }
+        if (!resolved.present || resolved.value === null) {
+          const payload = {
+            ok: false,
+            stage: 'key-present',
+            ref,
+            presence: presence.presence,
+            envName,
+            detail: `key value not present in environment (${envName ?? 'unknown NAME'}) — export it or use your secret manager`,
+          };
+          if (opts.json) process.stdout.write(jsonLine(payload));
+          else {
+            process.stderr.write(`models test: ${payload.detail}\n`);
+            process.stderr.write(`next: export ${envName ?? 'DEEPSEEK_API_KEY'}=<your key>\n`);
+          }
+          return 2;
+        }
+        const providerView = envName ? await readDshProvider(user.config.models.provider) : null;
+        const baseUrl = opts.baseUrl ?? providerView?.baseURL ?? null;
+        if (!baseUrl) {
+          const payload = {
+            ok: false,
+            stage: 'base-url',
+            detail: `no base URL known for provider "${user.config.models.provider}" — pass --base-url`,
+          };
+          if (opts.json) process.stdout.write(jsonLine(payload));
+          else process.stderr.write(`models test: ${payload.detail}\n`);
+          return 2;
+        }
+        const result = await connectionTest(baseUrl, resolved.value, opts.timeout);
+        const payload = {
+          ok: result.ok,
+          ref,
+          presence: presence.presence,
+          envName,
+          keySource: resolved.source,
+          baseUrl,
+          status: result.status,
+          detail: result.detail,
+        };
+        if (opts.json) process.stdout.write(jsonLine(payload));
+        else {
+          process.stdout.write(`models test: ${result.ok ? 'OK' : 'FAILED'} — ${result.detail}\n`);
+          process.stdout.write(
+            `  ref=${ref ?? 'none'} [${presence.presence}] env=${envName ?? 'none'} (value never printed)\n`,
+          );
+          if (!result.ok) {
+            process.stderr.write(
+              'next: check the key value, provider baseURL and network; retry ideaseek models test\n',
+            );
+          }
+        }
+        return result.ok ? 0 : 1;
+      }),
+    );
+}
+
+/** Hidden input: the prompt is shown, typed characters are never echoed. */
+async function promptHidden(question: string): Promise<string> {
+  const readline = await import('node:readline');
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true,
+  });
+  const out = process.stdout;
+  const originalWrite = out.write.bind(out);
+  out.write = ((chunk: unknown, ...rest: unknown[]) => {
+    const text = String(chunk);
+    // Echo the prompt itself; swallow everything else (the secret).
+    if (text.includes(question)) return originalWrite(chunk as never, ...(rest as never[]));
+    return true;
+  }) as typeof out.write;
+  try {
+    return await new Promise<string>((resolve) => {
+      rl.question('', (answer) => resolve(answer));
+    });
+  } finally {
+    out.write = originalWrite;
+    rl.close();
+  }
 }
 
 async function findRoot(): Promise<string> {

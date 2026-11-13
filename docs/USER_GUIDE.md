@@ -46,7 +46,7 @@ ideaseek setup
 ideaseek doctor
 ```
 
-IdeaSeek 会检测 Node、Python、容器、CUDA、GPU、磁盘、DSH provider 和可选本地 embedding。当前 `/models` 用于查看模型 route/凭据状态和切换项目 route；API key 需通过 DSH credential store、系统 secret manager 或已配置的环境变量提供。不要把 key 写入项目文件。交互式 key 配置向导尚未提供。
+IdeaSeek 会检测 Node、Python、容器、CUDA、GPU、磁盘、DSH provider 和可选本地 embedding。`/models`（`ideaseek models`）用于查看模型 route/凭据状态、切换项目 route，以及 `ideaseek models setup`（隐藏输入配置向导：写 DSH credential store 的变量名与 user-config 引用，key 值从不落盘）和 `ideaseek models test`（最小连接测试，输出永不含 key）。不要把 key 写入项目文件。
 
 ### 放入输入
 

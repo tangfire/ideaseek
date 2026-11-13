@@ -96,16 +96,14 @@ models:
 - 最近连接测试、额度/限速状态和成本累计；
 - 当前项目哪些角色使用该 route。
 
-API key 当前通过 DSH credential store、系统 secret manager 或允许的环境变量配置；`/models` 目前不提供隐藏 key 输入向导，也不能据此声称 key 已安全写入。新手配置向导属于待办，设计目标是使用隐藏输入并写入 DSH credential store：
+API key 通过 DSH credential store、系统 secret manager 或允许的环境变量配置。配置向导已交付：`ideaseek models setup`——隐藏输入（`--prompt-key` TTY 或 `--api-key-stdin` 自动化，key 永不进 argv/配置/日志）、写入 DSH credential store 的 **`apiKeyEnv` 变量名**（pinned DSH 自身的凭据机制，IdeaSeek 从不落盘 key 值）、同步 user-config `credentialRef`（env:NAME）、可选 `--test` 最小连接测试（先测后写，失败零落盘），`ideaseek models test` 随时复测（presence + GET /models，输出永不含 key）：
 
 ```text
-Provider: deepseek
-API key: ********
-Save to: DSH credential store
-Test connection? [Y/n]
+ideaseek models setup --api-key-env DEEPSEEK_API_KEY --prompt-key --test
+ideaseek models test
 ```
 
-模型 route 切换只影响新任务和未开始的步骤；正在运行的任务保留其 run snapshot。切换 project route 会记录 Decision/Event。provider/model/key 的完整交互式管理尚未实现，具体可用命令以 `ideaseek models --help` 为准。
+模型 route 切换只影响新任务和未开始的步骤；正在运行的任务保留其 run snapshot。切换 project route 会记录 Decision/Event。具体可用命令以 `ideaseek models --help` 为准。
 
 ## 路由规则
 

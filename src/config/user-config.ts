@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { IdeaseekError } from '../core/errors.js';
 import { join } from 'node:path';
 
 /**
@@ -227,6 +228,80 @@ export async function loadUserConfig(): Promise<LoadedUserConfig> {
     sources: validated.sources,
     errors: validated.errors,
   };
+}
+
+/**
+ * Safely patches the models block of the user config (the missing setter
+ * `models setup` needs). Reuses validateUserConfig as the authority:
+ * unknown keys, secret-shaped values and bad refs are hard errors — the
+ * file on disk is re-validated as a WHOLE before any write, and the
+ * write is atomic. Never accepts or stores a key VALUE.
+ */
+export async function saveUserModelsPatch(patch: {
+  provider?: string;
+  credentialRef?: string;
+  defaultRoute?: string;
+}): Promise<{ path: string; changed: string[] }> {
+  const path = userConfigPath();
+  const { readFile } = await import('node:fs/promises');
+  const { parse } = await import('yaml');
+  let text: string | null = null;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch {
+    text = null; // missing file → defaults
+  }
+  let raw: unknown = null;
+  if (text !== null) {
+    try {
+      raw = parse(text);
+    } catch (error) {
+      // Invalid existing YAML must NEVER be clobbered by a patch.
+      throw new IdeaseekError(
+        'INVALID_ARGUMENT',
+        `refusing to patch unreadable user config ${path}: ${(error as Error).message}`,
+      );
+    }
+  }
+  const base =
+    raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const modelsRaw =
+    base.models && typeof base.models === 'object' && !Array.isArray(base.models)
+      ? { ...(base.models as Record<string, unknown>) }
+      : {};
+  const changed: string[] = [];
+  if (patch.provider !== undefined) {
+    modelsRaw.provider = patch.provider;
+    changed.push('models.provider');
+  }
+  if (patch.credentialRef !== undefined) {
+    modelsRaw.credentialRef = patch.credentialRef;
+    changed.push('models.credentialRef');
+  }
+  if (patch.defaultRoute !== undefined) {
+    modelsRaw.defaultRoute = patch.defaultRoute;
+    changed.push('models.defaultRoute');
+  }
+  const nextRaw: Record<string, unknown> = { ...base, models: modelsRaw };
+  if (nextRaw.version === undefined) nextRaw.version = 1;
+  const validated = validateUserConfig(nextRaw);
+  if (validated.errors.length > 0) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `refusing to save user config: ${validated.errors.join('; ')}`,
+      { errors: validated.errors },
+    );
+  }
+  const { stringify } = await import('yaml');
+  const { writeFileAtomic, ensureDir } = await import('../core/atomic.js');
+  const { dirname } = await import('node:path');
+  await ensureDir(dirname(path));
+  await writeFileAtomic(
+    path,
+    `${stringify(nextRaw)}
+`,
+  );
+  return { path, changed };
 }
 
 /** Resolves a credential reference to presence-only status (never the value). */
