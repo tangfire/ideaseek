@@ -160,6 +160,21 @@ ideaseek archive/export → 另一台 Linux → restore → doctor → continue
 - 另一台机器恢复时验证 DSH、Python、容器、GPU 和 artifact hash；
 - 输入/模型/代码版本变化只使依赖图上的下游失效。
 
+## 实施状态（2026-11-13，append-only）
+
+自动化验收：`tests/journey-acceptance.test.ts`（4 条）+ 既有套件覆盖——
+
+- **Journey A ✅（自动）**：`--version` 对齐 package 版本；`doctor` 空目录人话提示 init、零 secret；`init` 幂等（already initialized）；`start` 空项目给出最小输入与可复制 `next:`。安装通道当前为 source build（npm 发布见 Phase 9 待办）。
+- **Journey B ✅（自动）**：`models list` 显示 fast/balanced/deep/deterministic 四层与角色绑定、凭据只报 presence；`models list --json` 可解析且 `sk-`/`ghp_` 零命中。
+- **Journey C ✅（自动）**：论文/数据/comparison/歧义分组、重复内容识别、原始文件字节不变；`plan --question --json` 给出 paperFiles/manifestFiles/comparisons/ideas.limit/model.route 且为 dry-run。
+- **Journey E ✅（自动，非交互核心）**：run 存在时 `ask` 查询有回答；高影响 ask 落 pending/Decision 且 `idea list` 无副作用；`--plain/--json` 脱敏由既有 interactive/models 套件覆盖（REPL 交互面见 repl-ux/interactive）。
+- **Journey D ◐**：starter 管线、协议 propose→confirm→lock、comparison gate 停滞均有 e2e（protocol/inputs/cli.start/gate 测试）；端到端“一次真实 start→quick 实验”演示链由 cli.start + demo pipeline 测试覆盖，真实模型链待凭据批量回归。
+- **Journey F ◐**：事件/租约/checkpoint/崩溃恢复/额度阻断有 soak、supervisor、cli.e2e、quota 测试；“备份恢复后 hash 一致”依赖 restore 工具（见 Journey H/备份恢复待办）。
+- **Journey G ◐**：工程 vs 科学分支、失败保留、handoff 门禁与 PROMISING 拒绝均有测试（revision-loop/handoff）；真实 HANDOFF_READY 需要真实证据门槛（研究项，非本套件可伪造）。
+- **Journey H ⏳**：`ideaseek update`/迁移 preview/跨机 restore 工具未建（Phase 9 备份恢复 checkbox）；export 脱敏与迁移 schema 已有基础（maintenance/config）。
+
+未通过项的阻塞性质：H/F 的 restore 工具（可开发）、G 的真实证据门槛（需真实研究）、npm 安装通道（需发布账号）。产品规则复验：以上自动项均断言“有下一步命令、无 secret、无静默副作用”。
+
 ## 发现问题时的产品规则
 
 如果用户必须阅读源代码、猜内部状态、手工修数据库、手工清缓存、重新运行已完成任务，或不知道下一步命令，该旅程不算通过。
