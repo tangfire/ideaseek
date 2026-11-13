@@ -188,7 +188,7 @@ export function registerModeCommand(program: Command): void {
             }
             for (const line of renderSessionSummary(summary)) process.stdout.write(`${line}\n`);
             process.stdout.write(
-              `switch: ideaseek mode ${SESSION_MODES.join(' | ')} · strategy: ideaseek mode --strategy <mode> --confirm
+              `switch: ideaseek mode ${SESSION_MODES.join('|')} · strategy: ideaseek mode --strategy <mode> --confirm
 `,
             );
             return 0;

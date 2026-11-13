@@ -68,7 +68,7 @@ describe('ideaseek mode (session mode)', () => {
     expect(human.code).toBe(0);
     expect(human.stdout).toContain('session mode : research');
     expect(human.stdout).toContain('read-only inputs');
-    expect(human.stdout).toContain('ideaseek mode research|agent');
+    expect(human.stdout).toContain('ideaseek mode research|analysis|agent');
   });
 
   it('switches research → agent, persists, and records a Decision/Event', async () => {
@@ -102,7 +102,7 @@ describe('ideaseek mode (session mode)', () => {
     const dir = await makeProjectDir();
     const bad = await runCli(dir, ['mode', 'banana']);
     expect(bad.code).not.toBe(0);
-    expect(bad.stderr).toContain('research | agent');
+    expect(bad.stderr).toContain('research | analysis | agent');
   });
 
   it('refuses to run outside an IdeaSeek project', async () => {

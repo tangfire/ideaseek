@@ -244,6 +244,10 @@ async function setupApprovedFullProject(dir: string): Promise<void> {
   const trainPath = join(dir, 'ideas', 'alpha', 'config', 'train.json');
   const train = JSON.parse(await readFile(trainPath, 'utf8')) as Record<string, unknown>;
   train.seeds = [42, 7];
+  // Modest declared resources: the full-run admission gate needs
+  // headroom + this request under the host's free memory — keep the
+  // fixture friendly to small-RAM CI boxes (gpus 0 → no GPU required).
+  train.resources = { gpus: 0, memoryGiB: 0.5 };
   await writeFile(trainPath, JSON.stringify(train), 'utf8');
   expect((await runCli(dir, ['idea', 'check', 'alpha'])).code).toBe(0);
   expect(
