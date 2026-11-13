@@ -114,7 +114,15 @@ ideaseek interactive
 /quit         退出交互界面，不取消后台任务
 ```
 
-交互提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。高影响操作会变成待确认 Decision。当前 Agent 模式切换只改变会话模式与权限摘要；持续对话的通用编码 Agent 尚未完成。
+交互提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。高影响操作会变成待确认 Decision。
+
+IdeaSeek 有三个会话模式：
+
+- `Analysis`：准备材料。读取论文、数据和 comparison，告诉你还缺什么；只写知识与缺口报告，不启动正式实验。
+- `Research`：执行科研工作流，设计协议、提出 idea、运行受控的 smoke/quick/standard 实验并形成 handoff。
+- `Agent`：通用项目工程 Agent，复用 DSH 处理授权范围内的代码、测试和环境任务。
+
+按 `Shift+Tab` 循环切换，或使用 `/mode analysis`、`/mode research`、`/mode agent`。
 
 ## IdeaSeek 会做什么
 

@@ -1084,6 +1084,11 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
               </thead>
               <tbody>
                 <tr>
+                  <td><span class="pill">ANALYSIS</span></td>
+                  <td>读取论文、数据和 comparison，评估研究材料缺口。</td>
+                  <td>只写知识与缺口报告；不启动正式实验或锁定科学协议。</td>
+                </tr>
+                <tr>
                   <td>必须补</td>
                   <td>没有测试标签语义、主指标或 required baseline</td>
                   <td>阻止依赖它的正式实验，给出原因和下一步</td>
@@ -1154,8 +1159,10 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
             </table>
           </div>
           <p>
-            交互界面底部显示当前模式；按 <kbd>Shift</kbd>+<kbd>Tab</kbd> 切换，或输入
-            <code>/mode research</code>、<code>/mode agent</code>。切换后顶部状态与审计输出会更新。
+            交互界面底部显示当前模式；按 <kbd>Shift</kbd>+<kbd>Tab</kbd> 在
+            Analysis、Research、Agent 之间循环，或输入 <code>/mode analysis</code>、<code
+              >/mode research</code
+            >、<code>/mode agent</code>。切换后顶部状态与审计输出会更新。
           </p>
           <p>
             Agent 模式的命令行入口是
@@ -1278,6 +1285,18 @@ ideaseek plan --question "你的研究问题"</code></pre>
               idea，程序错误不能冒充科学结论。
             </p>
           </div>
+        </section>
+        <section
+          id="assessment"
+          data-search="Analysis mode material assessment research material gaps 缺论文 数据集 comparison"
+        >
+          <div class="eyebrow">05.5 · Analysis</div>
+          <h2>先问 IdeaSeek：还缺什么材料？</h2>
+          <p>
+            进入 Analysis 模式后，IdeaSeek
+            会读取已有研究问题和材料，列出必须补、建议补和可选补的论文、数据集、comparison、指标和场景，并说明来源、理由、成本和下一步。补齐材料后再切到
+            Research，让正式科研流程开始。
+          </p>
         </section>
         <section
           id="observe"
