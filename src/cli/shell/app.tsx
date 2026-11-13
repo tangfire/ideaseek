@@ -19,6 +19,11 @@ const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
 const QUIT_LINE = 'bye — background runs keep going (reconnect with ideaseek)';
 const STARTING_LINE = 'starting…';
 const MAX_ACTIVITY = 500;
+const PROMPT_TEXT = 'ideaseek › ';
+/** Input-bar background: one shade above the terminal black. */
+const INPUT_BG = '#171b22';
+/** Braille spinner cycled on the input line while a command runs. */
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /**
  * Activity/header store the session writes into before (and while) React is
@@ -92,6 +97,18 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
     rows: Number(process.env.IDEASEEK_TTY_ROWS ?? '') || stdout.rows || 24,
     columns: Number(process.env.IDEASEEK_TTY_COLS ?? '') || stdout.columns || 80,
   }));
+  // Input-line liveness: idle = blinking cursor block, busy = spinner in
+  // the same cell so "working" is visible exactly where the user looks.
+  const [cursorOn, setCursorOn] = useState(true);
+  const [spin, setSpin] = useState(0);
+  useEffect(() => {
+    if (busy) {
+      const id = setInterval(() => setSpin((value) => value + 1), 90);
+      return () => clearInterval(id);
+    }
+    const id = setInterval(() => setCursorOn((value) => !value), 530);
+    return () => clearInterval(id);
+  }, [busy]);
 
   // Alternate screen restore on unmount (enter happens synchronously in
   // startInkInteractive BEFORE the first frame — these are the only raw
@@ -273,11 +290,21 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
         </Box>
       ) : null}
       <Box flexShrink={0}>
-        <Text wrap="truncate">
-          <Text color="cyan">{'ideaseek › '}</Text>
+        {/* Styled composer: full-width tinted bar, bold brand prompt, and a
+            live cursor cell (blink when idle, spinner while busy) — the
+            input line reads as an input, not as another content row. */}
+        <Text wrap="truncate" backgroundColor={INPUT_BG}>
+          <Text color="cyan" bold>
+            {PROMPT_TEXT}
+          </Text>
           {snap.line.slice(0, snap.cursor)}
-          <Text color="cyan">{'▏'}</Text>
+          <Text color="cyan">{busy ? SPINNER[spin % SPINNER.length] : cursorOn ? '▏' : ' '}</Text>
           {snap.line.slice(snap.cursor)}
+          {/* Pad with Braille blanks (U+2800): Ink trimEnds trailing
+              ASCII spaces on every line, but U+2800 is not whitespace —
+              it keeps its cell (and the bar's background) to the right
+              edge while rendering as an empty glyph. */}
+          {'⠀'.repeat(Math.max(0, size.columns - (PROMPT_TEXT.length + snap.line.length + 1)))}
         </Text>
       </Box>
       <Box flexShrink={0}>

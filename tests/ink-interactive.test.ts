@@ -100,6 +100,10 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       expect(repl.output().indexOf('\x1b[?1049h')).toBeLessThan(
         repl.output().indexOf('ideaseek ›'),
       );
+      // The composer is a full-width tinted bar: prompt + cursor cell +
+      // Braille-blank padding to the terminal edge (colors are stripped
+      // on pipes; the U+2800 padding cells survive Ink's trimEnd).
+      expect(repl.output()).toMatch(/ideaseek › ▏⠀{5,}/);
 
       // Ctrl-C FIRST, while the activity pane is still fresh: ink's piped
       // byte stream keeps only partial rows once later frames rewrite them,
@@ -122,6 +126,8 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // Enter dispatches through the shared session → real CLI relay.
       await repl.write('\r');
       await repl.waitFor(/Run/); // `ideaseek status` output
+      // While the relay ran, the input line itself carried the spinner.
+      expect(repl.output()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 
       // Shift+Tab cycles session mode through the audited /mode use-case.
       await repl.write('\x1b[Z');
@@ -140,10 +146,13 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       expect(repl.output()).not.toContain('change-session-mode');
 
       // Delete at end-of-line removes the previous character in the TUI.
+      // The cursor cell blinks (▏ ⇄ space), so accept either state — the
+      // contract is that the row shows `ab` followed by the cursor cell,
+      // never the pre-delete `abc`.
       await repl.write('abc');
       await repl.write('\x1b[3~');
       await repl.waitFor(/ideaseek › abc/);
-      await repl.waitFor(/ideaseek › ab▏/);
+      await repl.waitFor(/ideaseek › ab[▏ ]/);
       await repl.write('\x15'); // Ctrl-U clears the test input before /help
 
       // Local dispatch (/help) needs no subprocess — proves the Ink path
