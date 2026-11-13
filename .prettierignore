@@ -4,6 +4,9 @@ coverage/
 .research/
 pnpm-lock.yaml
 
+# Shell entrypoints are hand-written; prettier has no shell parser
+*.sh
+
 # Repository docs are hand-maintained; keep their diffs reviewable
 **/*.md
 
