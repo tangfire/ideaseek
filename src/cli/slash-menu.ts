@@ -12,23 +12,17 @@ export interface SlashCommand {
   description: string;
 }
 
+/**
+ * Order is the palette's default order: the two orientation commands stay
+ * first (unit tests pin /help selected and /status second), then the
+ * research workflow (what needs my decision → what is the state → what can
+ * I act on), then session/control. Descriptions and help sections are
+ * derived from this single registry.
+ */
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/help', usage: '/help', description: 'show this help' },
   { name: '/status', usage: '/status', description: 'run state, tasks, workers, recent events' },
   { name: '/next', usage: '/next', description: 'state-aware suggestion for the next command' },
-  { name: '/papers', usage: '/papers', description: 'paper indexing progress and parse failures' },
-  {
-    name: '/comparisons',
-    usage: '/comparisons',
-    description: 'comparison methods, sources and blockers',
-  },
-  { name: '/ideas', usage: '/ideas', description: 'idea list with status and versions' },
-  {
-    name: '/experiments',
-    usage: '/experiments',
-    description: 'recorded experiment specs and results',
-  },
-  { name: '/logs', usage: '/logs <task-id>', description: 'task detail with redacted logs' },
   {
     name: '/pending',
     usage: '/pending',
@@ -44,25 +38,17 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: '/reject <reason>',
     description: 'reject the pending proposal with a reason',
   },
-  { name: '/pause', usage: '/pause', description: 'stop claiming new tasks (safe pause)' },
-  { name: '/resume', usage: '/resume', description: 'resume a paused run' },
-  { name: '/continue', usage: '/continue', description: 'continue a run blocked on quota/auth' },
-  { name: '/cancel', usage: '/cancel', description: 'cancel the run (artifacts and events kept)' },
-  { name: '/report', usage: '/report', description: 'write the factual run report' },
+  { name: '/papers', usage: '/papers', description: 'paper indexing progress and parse failures' },
   {
-    name: '/models',
-    usage: '/models [list|use <route>]',
-    description: 'model tier routes, roles, credential presence',
+    name: '/comparisons',
+    usage: '/comparisons',
+    description: 'comparison methods, sources and blockers',
   },
+  { name: '/ideas', usage: '/ideas', description: 'idea list with status and versions' },
   {
-    name: '/mode',
-    usage: '/mode [research|agent]',
-    description: 'show mode, project and permissions; switch session mode',
-  },
-  {
-    name: '/open',
-    usage: '/open [project]',
-    description: 'switch the session project (confirm with --confirm) or read a document',
+    name: '/experiments',
+    usage: '/experiments',
+    description: 'recorded experiment specs and results',
   },
   {
     name: '/rounds',
@@ -79,6 +65,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: '/feedback <label> --idea <id>',
     description: 'record user feedback on an idea',
   },
+  { name: '/logs', usage: '/logs <task-id>', description: 'task detail with redacted logs' },
+  { name: '/report', usage: '/report', description: 'write the factual run report' },
+  {
+    name: '/models',
+    usage: '/models [list|use <route>]',
+    description: 'model tier routes, roles, credential presence',
+  },
+  {
+    name: '/mode',
+    usage: '/mode [research|agent]',
+    description: 'show mode, project and permissions; switch session mode',
+  },
+  {
+    name: '/open',
+    usage: '/open [project]',
+    description: 'switch the session project (confirm with --confirm) or read a document',
+  },
+  { name: '/pause', usage: '/pause', description: 'stop claiming new tasks (safe pause)' },
+  { name: '/resume', usage: '/resume', description: 'resume a paused run' },
+  { name: '/continue', usage: '/continue', description: 'continue a run blocked on quota/auth' },
+  { name: '/cancel', usage: '/cancel', description: 'cancel the run (artifacts and events kept)' },
   { name: '/quit', usage: '/quit', description: 'exit the UI (background runs keep going)' },
 ];
 
@@ -105,17 +112,30 @@ export function resolveSlash(input: string): SlashResolution {
   return { kind: 'unknown' };
 }
 
+/** Help sections: how a researcher actually walks through a session. */
+const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
+  { title: 'overview', names: ['/help', '/status', '/next'] },
+  { title: 'approvals', names: ['/pending', '/approve', '/reject'] },
+  { title: 'research', names: ['/papers', '/comparisons', '/ideas', '/experiments', '/logs'] },
+  { title: 'ideation', names: ['/rounds', '/ideate', '/feedback'] },
+  { title: 'session', names: ['/models', '/mode', '/open', '/report'] },
+  { title: 'control', names: ['/pause', '/resume', '/continue', '/cancel', '/quit'] },
+];
+
+/**
+ * Compact grouped map — one line per section. Per-command descriptions
+ * live in the `/` palette (which shows name + purpose while filtering);
+ * a full per-command dump would overflow the activity pane window and
+ * bury the first line off-screen.
+ */
 export function helpText(): string {
   const lines = ['Ideaseek commands:'];
-  for (const cmd of SLASH_COMMANDS) {
-    lines.push(`  ${cmd.usage.padEnd(22)} ${cmd.description}`);
+  for (const section of HELP_SECTIONS) {
+    lines.push(`  ${section.title.padEnd(11)}${section.names.join(' · ')}`);
   }
   lines.push('');
-  lines.push('Tab completes; a unique prefix works too (e.g. /sta → /status).');
-  lines.push('Natural language: queries like "为什么 method-x 还没通过" answer from state;');
-  lines.push(
-    'high-impact requests ("优先验证 idea-001") become pending-approval Decisions — never silent.',
-  );
+  lines.push('Type / to browse commands with descriptions · Tab completes · unique prefix works.');
+  lines.push('Natural language: queries answer from state; high-impact requests need approval.');
   lines.push('Every command has an equivalent non-interactive CLI form.');
   return lines.join('\n');
 }
@@ -190,15 +210,5 @@ export function renderMenu(state: MenuState, opts: MenuRenderOptions = {}): stri
 
 /** Static help listing (also used for `/help` and non-TTY `/` fallback). */
 export function menuHelpLines(): string[] {
-  const lines = ['Ideaseek commands:'];
-  for (const cmd of SLASH_COMMANDS) {
-    lines.push(`  ${cmd.usage.padEnd(34)} ${cmd.description}`);
-  }
-  lines.push('');
-  lines.push('Type / to open the menu · Tab completes · a unique prefix works (/sta → /status).');
-  lines.push(
-    'Natural language: queries answer from state; high-impact requests become pending-approval Decisions.',
-  );
-  lines.push('Every command has an equivalent non-interactive CLI form.');
-  return lines;
+  return helpText().split('\n');
 }
