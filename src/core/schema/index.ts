@@ -20,6 +20,7 @@ import paperWriteV1 from './schemas/paper-write-v1.json' with { type: 'json' };
 import rebuttalV1 from './schemas/rebuttal-v1.json' with { type: 'json' };
 import paperSlidesV1 from './schemas/paper-slides-v1.json' with { type: 'json' };
 import paperTalkV1 from './schemas/paper-talk-v1.json' with { type: 'json' };
+import protocolProposalV1 from './schemas/protocol-proposal-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -68,7 +69,8 @@ export type SchemaName =
   | 'paper-write-v1'
   | 'rebuttal-v1'
   | 'paper-slides-v1'
-  | 'paper-talk-v1';
+  | 'paper-talk-v1'
+  | 'protocol-proposal-v1';
 
 const SCHEMAS: Record<SchemaName, object> = {
   'papercard-v1': papercardV1,
@@ -91,6 +93,7 @@ const SCHEMAS: Record<SchemaName, object> = {
   'rebuttal-v1': rebuttalV1,
   'paper-slides-v1': paperSlidesV1,
   'paper-talk-v1': paperTalkV1,
+  'protocol-proposal-v1': protocolProposalV1,
 };
 
 let ajv: Ajv | null = null;

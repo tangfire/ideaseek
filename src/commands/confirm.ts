@@ -4,6 +4,7 @@ import { ProjectRuntime } from '../workflow/runtime.js';
 import { lockProtocolProposal, validateProtocolProposal } from '../experiment/protocol.js';
 import { checkLeakage } from '../experiment/leakage.js';
 import { action, jsonLine } from './shared.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * `ideaseek confirm protocol` — validates the latest committed protocol
@@ -58,6 +59,10 @@ export function registerConfirmCommand(program: Command): void {
             }
             return 2;
           }
+
+          // Defense in depth (JSON Schema authority): semantic checks ran
+          // first; the shared contract re-checks structure as a subset gate.
+          assertAgainstSchema('protocol-proposal-v1', proposal);
 
           // Deterministic leakage/validity gate over registered slices: a
           // blocker finding stops the lock (pending items become confirmations).

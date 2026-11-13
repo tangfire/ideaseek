@@ -1,0 +1,423 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/protocol-proposal-v1.json",
+  "title": "IdeaSeek ExperimentalProtocolProposal (protocol-proposal-v1)",
+  "description": "Structural contract for the protocol proposal. Low-confidence agent-inference confirmations are UX items collected by the TS validator (never errors) — the schema mirrors the error rules only; validateProtocolProposal runs first.",
+  "type": "object",
+  "required": [
+    "protocolId",
+    "version",
+    "generator",
+    "generatedAt",
+    "taskDefinition",
+    "sampleUnit",
+    "labelSemantics",
+    "splitRules",
+    "leakageChecks",
+    "preprocessing",
+    "baselineEntries",
+    "primaryMetrics",
+    "secondaryMetrics",
+    "statisticalSummary",
+    "smokeTest",
+    "resourceEstimate",
+    "ablations",
+    "supportCriteria",
+    "refuteCriteria",
+    "invalidRunCriteria",
+    "stopConditions"
+  ],
+  "properties": {
+    "protocolId": {
+      "type": "string",
+      "pattern": "^proto-"
+    },
+    "version": {
+      "type": "number",
+      "minimum": 1
+    },
+    "generator": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generatedAt": {
+      "type": "number"
+    },
+    "taskDefinition": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "not": {
+            "anyOf": [
+              {
+                "enum": [null, ""]
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "sampleUnit": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "not": {
+            "anyOf": [
+              {
+                "enum": [null, ""]
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "labelSemantics": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "not": {
+            "anyOf": [
+              {
+                "enum": [null, ""]
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "splitRules": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "not": {
+            "anyOf": [
+              {
+                "enum": [null, ""]
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "smokeTest": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "not": {
+            "anyOf": [
+              {
+                "enum": [null, ""]
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "resourceEstimate": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "not": {
+            "anyOf": [
+              {
+                "enum": [null, ""]
+              },
+              {
+                "type": "array",
+                "maxItems": 0
+              }
+            ]
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "leakageChecks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "preprocessing": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "statisticalSummary": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "ablations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "supportCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "refuteCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "invalidRunCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "stopConditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "primaryMetrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "direction", "source"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "direction": {
+            "enum": ["higher", "lower"]
+          },
+          "source": {
+            "enum": [
+              "paper-evidence",
+              "code",
+              "data-probe",
+              "adapter-rule",
+              "agent-inference",
+              "user"
+            ]
+          },
+          "confidence": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "secondaryMetrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "direction", "source"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "direction": {
+            "enum": ["higher", "lower"]
+          },
+          "source": {
+            "enum": [
+              "paper-evidence",
+              "code",
+              "data-probe",
+              "adapter-rule",
+              "agent-inference",
+              "user"
+            ]
+          },
+          "confidence": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "baselineEntries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["methodId", "entry", "source"],
+        "properties": {
+          "methodId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entry": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "enum": [
+              "paper-evidence",
+              "code",
+              "data-probe",
+              "adapter-rule",
+              "agent-inference",
+              "user"
+            ]
+          },
+          "confidence": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

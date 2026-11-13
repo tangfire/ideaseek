@@ -11,6 +11,7 @@ import {
 import { validateProtocolProposal } from '../experiment/protocol.js';
 import type { TaskContext, TaskHandler } from './types.js';
 import { applyFaults } from './handlers.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 async function loadDatasetProfile(ctx: TaskContext): Promise<DatasetProfileSummary | null> {
   try {
@@ -135,6 +136,8 @@ export const protocolPropose: TaskHandler = async (ctx: TaskContext) => {
     if (!validation.ok) {
       throw new Error(`protocol proposal invalid: ${validation.errors.slice(0, 3).join('; ')}`);
     }
+    // Defense in depth (JSON Schema authority): semantic checks ran first.
+    assertAgainstSchema('protocol-proposal-v1', proposal);
     output = `${JSON.stringify(proposal, null, 2)}\n`;
   }
 
