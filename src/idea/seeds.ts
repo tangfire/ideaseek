@@ -196,6 +196,58 @@ export async function registerIdeaSeed(
   return { registration, changed: true };
 }
 
+/**
+ * Intake confirmation gate (docs/IDEA_IMPROVEMENT.md 用户选择后才创建正式
+ * Idea 对象): the source must be scanned and EVERY group touching it
+ * confirmed against its CURRENT bytes before import/improve may proceed.
+ * Shared by `idea import` and `idea improve`.
+ */
+export async function assertSeedIntakeConfirmed(
+  projectRoot: string,
+  sourceRel: string,
+): Promise<void> {
+  const { readManifest } = await import('../knowledge/organize.js');
+  const { readConfirmRegistry, isGroupConfirmedWith } =
+    await import('../knowledge/intake-confirm.js');
+  const manifest = await readManifest(join(projectRoot, 'knowledge', 'input-manifest.json'));
+  if (!manifest) {
+    throw new IdeaseekError('USER_INPUT_REQUIRED', 'no input manifest yet; run: ideaseek scan');
+  }
+  const underSource = manifest.files.filter(
+    (file) => file.relPath === sourceRel || file.relPath.startsWith(`${sourceRel}/`),
+  );
+  if (underSource.length === 0) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `nothing scanned under ${sourceRel} — run: ideaseek scan`,
+    );
+  }
+  const confirmRegistry = await readConfirmRegistry(projectRoot);
+  // Confirmation binds reviewed BYTES: hash the source's CURRENT content so
+  // edits after the last confirm invalidate it (a stale manifest must never
+  // wave through changed files).
+  const current = await snapshotSeedDir(join(projectRoot, ...sourceRel.split('/')), projectRoot);
+  const currentHashes = new Map(
+    current.files.map((file) => [file.relPath, file.sha256 ?? `unhashed:${file.bytes}`]),
+  );
+  const unconfirmed = manifest.groups.filter(
+    (group) =>
+      group.files.some((file) => file === sourceRel || file.startsWith(`${sourceRel}/`)) &&
+      !isGroupConfirmedWith(confirmRegistry, manifest, group, currentHashes),
+  );
+  if (unconfirmed.length > 0) {
+    const hints = unconfirmed
+      .map((group) => `ideaseek intake --confirm ${group.files[0] ?? group.groupId}`)
+      .join(' ; ');
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `unconfirmed intake group(s) for ${sourceRel}: ` +
+        unconfirmed.map((group) => `${group.groupId} (${group.kind})`).join(', ') +
+        ` — confirm first: ${hints}`,
+    );
+  }
+}
+
 export async function readIdeaSeedRegistry(projectRoot: string): Promise<IdeaSeedRegistry> {
   return readRegistry(projectRoot);
 }

@@ -375,6 +375,47 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'idea-diagnosis-v1') {
+    const override = process.env.IDEASEEK_FAKE_IMPROVE_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const questionLine =
+      context.split('\n').find((line) => line.startsWith('User question: ')) ?? 'User question: ';
+    const seedLine = context.split('\n').find((line) => line.startsWith('Idea seed: ')) ?? '';
+    const question = questionLine.slice('User question: '.length);
+    // "Idea seed: <path> (rootHash <hash>)"
+    const seedMatch =
+      seedLine.match(/^ Idea seed: (\S+) \(rootHash (\S+)\)$/) ??
+      seedLine.match(/^Idea seed: (\S+) \(rootHash (\S+)\)$/);
+    const sourcePath = seedMatch ? seedMatch[1] : 'unknown';
+    const sourceHash = seedMatch ? seedMatch[2] : 'unknown';
+    return JSON.stringify({
+      contract: 'idea-diagnosis-v1',
+      question,
+      source: { path: sourcePath, rootHash: sourceHash },
+      baselineStatus: 'not_attempted',
+      mechanismSummary:
+        'Fake diagnosis: mechanism inferred from the registered seed files and persisted evidence.',
+      failureCategories: ['insufficient_evidence'],
+      findings: [
+        {
+          area: 'evidence',
+          finding: 'No reproduced baseline is present in the persisted evidence yet.',
+          evidence: [{ source: sourcePath, location: 'seed files' }],
+        },
+      ],
+      routes: [
+        {
+          kind: 'engineering',
+          summary: 'Reproduce the seed baseline on a smoke slice first.',
+          expectedChange: 'A trustworthy reference number for later comparisons.',
+          risks: 'Environment drift may block reproduction (baseline_unavailable).',
+          discriminatingExperiment: 'Run the seed entry on the smoke slice and compare metrics.',
+          stopConditions: ['baseline still unreproducible after two environment fixes'],
+        },
+      ],
+    });
+  }
   if (request.outputSchema === 'rebuttal-v1') {
     const override = process.env.IDEASEEK_FAKE_REBUTTAL_OUTPUT;
     if (override != null) return override;

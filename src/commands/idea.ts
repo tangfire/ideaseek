@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { assessIdeaCard, type IdeaCard } from '../idea/card.js';
 import type { CandidatesIndex } from '../idea/generate.js';
@@ -90,57 +91,12 @@ export function registerIdeaCommand(program: Command): void {
             'no IdeaSeek project here; run: ideaseek init',
           );
         }
-        const { registerIdeaSeed, normalizeSeedSource, snapshotSeedDir } =
+        const { registerIdeaSeed, normalizeSeedSource, assertSeedIntakeConfirmed } =
           await import('../idea/seeds.js');
         const sourceRel = normalizeSeedSource(root, opts.source);
 
-        // Intake confirmation gate (docs/IDEA_IMPROVEMENT.md 用户选择后才
-        // 创建正式 Idea 对象): every group touching this source must have
-        // been reviewed with its EXACT current membership first.
-        const { join } = await import('node:path');
-        const { readManifest } = await import('../knowledge/organize.js');
-        const { readConfirmRegistry, isGroupConfirmedWith } =
-          await import('../knowledge/intake-confirm.js');
-        const manifest = await readManifest(join(root, 'knowledge', 'input-manifest.json'));
-        if (!manifest) {
-          throw new IdeaseekError(
-            'USER_INPUT_REQUIRED',
-            'no input manifest yet; run: ideaseek scan',
-          );
-        }
-        const underSource = manifest.files.filter(
-          (file) => file.relPath === sourceRel || file.relPath.startsWith(`${sourceRel}/`),
-        );
-        if (underSource.length === 0) {
-          throw new IdeaseekError(
-            'INVALID_ARGUMENT',
-            `nothing scanned under ${sourceRel} — run: ideaseek scan`,
-          );
-        }
-        const confirmRegistry = await readConfirmRegistry(root);
-        // Confirmation binds reviewed BYTES: hash the source's CURRENT
-        // content so edits after the last confirm invalidate it (a stale
-        // manifest must never wave through changed files).
-        const current = await snapshotSeedDir(join(root, ...sourceRel.split('/')), root);
-        const currentHashes = new Map(
-          current.files.map((file) => [file.relPath, file.sha256 ?? `unhashed:${file.bytes}`]),
-        );
-        const unconfirmed = manifest.groups.filter(
-          (group) =>
-            group.files.some((file) => file === sourceRel || file.startsWith(`${sourceRel}/`)) &&
-            !isGroupConfirmedWith(confirmRegistry, manifest, group, currentHashes),
-        );
-        if (unconfirmed.length > 0) {
-          const hints = unconfirmed
-            .map((group) => `ideaseek intake --confirm ${group.files[0] ?? group.groupId}`)
-            .join(' ; ');
-          throw new IdeaseekError(
-            'INVALID_ARGUMENT',
-            `unconfirmed intake group(s) for ${sourceRel}: ` +
-              unconfirmed.map((group) => `${group.groupId} (${group.kind})`).join(', ') +
-              ` — confirm first: ${hints}`,
-          );
-        }
+        // Intake confirmation gate — shared with `idea improve`.
+        await assertSeedIntakeConfirmed(root, sourceRel);
 
         const { registration, changed } = await registerIdeaSeed(root, opts.source);
         const { snapshot } = registration;
@@ -166,6 +122,221 @@ export function registerIdeaCommand(program: Command): void {
         process.stdout.write(`${lines.join('\n')}\n`);
         return 0;
       }),
+    );
+
+  idea
+    .command('improve')
+    .description(
+      'diagnose an imported idea seed against persisted evidence and propose improvement routes (docs/IDEA_IMPROVEMENT.md)',
+    )
+    .requiredOption(
+      '--source <path>',
+      'project-relative seed directory (idea-seeds/<name> or incoming/ideas/<name>)',
+    )
+    .requiredOption('--question <text>', 'what to improve and why (the diagnosis binds it)')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored diagnosis and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (opts: {
+          source: string;
+          question: string;
+          harness?: string;
+          force?: boolean;
+          json?: boolean;
+        }) => {
+          const root = await openRoot();
+          const { normalizeSeedSource, assertSeedIntakeConfirmed, readIdeaSeedRegistry } =
+            await import('../idea/seeds.js');
+          const sourceRel = normalizeSeedSource(root, opts.source);
+          const question = opts.question.trim();
+          if (!question) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--question must be non-empty');
+          }
+
+          // Gate chain: scanned → confirmed (exact bytes) → registered.
+          await assertSeedIntakeConfirmed(root, sourceRel);
+          const registry = await readIdeaSeedRegistry(root);
+          const registration = registry.seeds.find((seed) => seed.source === sourceRel);
+          if (!registration) {
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              `seed not registered — run: ideaseek idea import --source ${opts.source}`,
+            );
+          }
+
+          const { collectPaperPlanSnapshot } = await import('../paper/plan.js');
+          const snapshot = await collectPaperPlanSnapshot(root);
+          const evidenceLines = [
+            ...(snapshot.protocol
+              ? [`protocol:${snapshot.protocol.protocolId} (${snapshot.protocol.protocolHash})`]
+              : []),
+            ...snapshot.experiments.map(
+              (entry) => `spec:${entry.specId} v${entry.version} [${entry.status}]`,
+            ),
+            ...snapshot.ideas.map((idea) => `idea:${idea.ideaId} ${idea.verdict ?? 'unanalyzed'}`),
+          ];
+          const context = {
+            question,
+            sourceRel,
+            sourceRootHash: registration.snapshot.rootHash,
+            files: registration.snapshot.files.map((file) => file.relPath),
+            evidenceLines,
+          };
+
+          const { buildImproveRequest, parseDiagnosisOutput, IDEA_DIAGNOSIS_SCHEMA } =
+            await import('../idea/improve.js');
+          const request = buildImproveRequest({ question, context });
+          const seedName = sourceRel.split('/').filter(Boolean).pop() ?? 'seed';
+          const diagnosisPath = join(root, 'knowledge', 'improve', `${seedName}.json`);
+
+          interface StoredDiagnosis {
+            contract: string;
+            inputHash: string;
+            harnessRuntime: string;
+            generatedAt: number;
+            diagnosis: Record<string, unknown>;
+          }
+
+          if (!opts.force) {
+            let stored: StoredDiagnosis | null = null;
+            try {
+              stored = JSON.parse(await readFile(diagnosisPath, 'utf8')) as StoredDiagnosis;
+            } catch {
+              stored = null;
+            }
+            if (stored && stored.inputHash === request.inputHash) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    contract: stored.contract,
+                    inputHash: stored.inputHash,
+                    reused: true,
+                    diagnosis: stored.diagnosis,
+                    path: diagnosisPath,
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `reused diagnosis for ${sourceRel} (same inputHash ${stored.inputHash.slice(0, 12)}…)\n`,
+                );
+                process.stdout.write(`  file: ${diagnosisPath}\n`);
+                process.stdout.write('next: review the routes; regenerate with --force\n');
+              }
+              return 0;
+            }
+          }
+
+          const { buildHarness } = await import('./shared.js');
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const kind =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+          const harness = buildHarness(kind);
+          await harness.initialize();
+          let output: string;
+          let runtimeKind = kind;
+          try {
+            const result = await harness.runTask({
+              runId: `improve:${sourceRel}`,
+              taskId: `idea-improve-${seedName}`,
+              profile: 'idea-generator',
+              instruction: request.instruction,
+              inputs: [{ kind: 'text', name: 'improve_context', content: request.instruction }],
+              outputSchema: IDEA_DIAGNOSIS_SCHEMA,
+              budget: { timeoutMs: 180_000, maxOutputTokens: 16_384 },
+              idempotencyKey: request.idempotencyKey,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+          } catch (error) {
+            if (error instanceof Error && error.name === 'HarnessBlockError') {
+              const block = (error as { block?: string }).block ?? 'BLOCKED';
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({ blocked: block, written: false, contract: IDEA_DIAGNOSIS_SCHEMA }),
+                );
+              } else {
+                process.stderr.write(
+                  `idea improve blocked [${block}]: ${(error as Error).message}\n` +
+                    'nothing was written — restore quota/auth/network and rerun the same command\n',
+                );
+              }
+              return 2;
+            }
+            throw error;
+          } finally {
+            await harness.shutdown().catch(() => undefined);
+          }
+
+          // Envelope + contract gate: source binding must match the
+          // registered snapshot; a changed seed fails here (re-import).
+          const diagnosis = parseDiagnosisOutput(output, context);
+          const stored: StoredDiagnosis = {
+            contract: IDEA_DIAGNOSIS_SCHEMA,
+            inputHash: request.inputHash,
+            harnessRuntime: runtimeKind,
+            generatedAt: Date.now(),
+            diagnosis: diagnosis as unknown as Record<string, unknown>,
+          };
+          const { ensureDir, writeFileAtomic } = await import('../core/atomic.js');
+          await ensureDir(join(root, 'knowledge', 'improve'));
+          await writeFileAtomic(diagnosisPath, `${JSON.stringify(stored, null, 2)}\n`);
+
+          let eventSeq: number | null = null;
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            if (run) {
+              const event = await runtime.db.appendEvent({
+                runId: run.runId,
+                phase: 'IDEATION',
+                objectId: sourceRel,
+                role: 'system',
+                eventType: 'idea_improve',
+                summary: `diagnosis for ${sourceRel}: ${diagnosis.failureCategories.length} failure category(ies), ${diagnosis.routes.length} route(s) (baseline ${diagnosis.baselineStatus})`,
+                status: 'generated',
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await runtime.close();
+          }
+
+          const routes = diagnosis.routes as { kind: string; summary: string }[];
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                contract: stored.contract,
+                inputHash: stored.inputHash,
+                harnessRuntime: stored.harnessRuntime,
+                reused: false,
+                eventSeq,
+                diagnosis,
+                path: diagnosisPath,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `diagnosis written: knowledge/improve/${seedName}.json (baseline ${diagnosis.baselineStatus}, ${diagnosis.failureCategories.length} categor(ies), ${routes.length} route(s))\n`,
+          );
+          process.stdout.write(`  question bound: "${question.slice(0, 80)}"\n`);
+          for (const [index, route] of routes.entries()) {
+            process.stdout.write(
+              `  route ${index + 1} [${route.kind}] ${route.summary.slice(0, 120)}\n`,
+            );
+          }
+          process.stdout.write(
+            'next: review the routes — engineering routes refine this idea; a hypothesis change must become a new-idea branch (ideaseek idea branch)\n',
+          );
+          return 0;
+        },
+      ),
     );
 
   idea
