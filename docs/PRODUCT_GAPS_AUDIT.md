@@ -81,6 +81,16 @@ ideaseek export --run <run_id> --to <path>
 
 当前仍未完成的能力以 `PROGRESS.md` 未勾选项为唯一实施来源，重点包括：真实 `HANDOFF_READY` 与第二任务族的研究验收、Full Research comparison 规划/公平性/全量执行与证据审计、完整用户旅程的剩余真实环境验收、分层硬化，以及发行包/安装/升级/恢复演练。依赖真实研究材料、GPU、外部凭据或发布环境的项目必须标为外部验收，不能用模拟测试勾选完成。
 
+### 9. 步骤级 Agent 过程可视化（2026-11-13 登记）
+
+任务级事件流已经齐全：用户能在 TUI activity pane、`attach`/`watch`/`events`、`status`/`next`、`monitor`、`explain`、`logs` 中看到每个环节的任务开始/结束/失败/阻塞、Decision、artifact 提交和领域事件摘要。但与通用 coding agent 的“逐步看到它在干什么”相比，**步骤级**（单次模型调用内部的工具调用、参数摘要、训练 step/epoch 心跳）尚未进入实时事件流：
+
+- `HarnessEvent` 已定义 `tool_call` 类型，但 DSH/fake adapter 只发出 `started`/`completed`，`onEvent` 摘要仅进任务日志（`ctx.log`），不落 RunEvent；
+- `harness_tool_call` RunEvent 目前仅 paper.extract 一处，且是任务完成后批量落盘，不是实时流；
+- 实验训练进度心跳只写 `progress-<specId>.json`，由 `ideaseek monitor` 快照展示，不进事件流。
+
+要求：模型中间步骤以脱敏摘要实时进入 RunEvent 流并在 TUI/attach 可见；摘要必须有长度上限且经过脱敏，完整内容仍落 artifact。对应 `PROGRESS.md` Phase 1.5 未勾选项。
+
 ## 产品验收原则
 
 用户任何时候都应该知道：平台在做什么、为什么做、花了多少、卡在哪里、下一步是什么、怎样暂停、怎样恢复、哪些结果已经可信、哪些仍然未知。若只能从日志和源代码猜答案，产品功能不算完成。
