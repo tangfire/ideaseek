@@ -7,6 +7,7 @@ import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import { validateIdeaCard, type IdeaCard } from './card.js';
 import { ideaFingerprint, type IdeationRound } from './rounds.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * ARIS skill-backed candidate generation (Phase 4.5 capability 1,
@@ -187,6 +188,9 @@ export function parseCandidatesOutput(output: string, round: IdeationRound): Par
   if (!Array.isArray(record.candidates)) {
     throw new IdeaseekError('PARSE_FAILED', 'idea generator output is missing a candidates array');
   }
+  // Envelope contract (subset defense — the semantic loop runs below and
+  // still collects per-card rejections for partial batches).
+  assertAgainstSchema('idea-candidates-v1', record);
   const reason = typeof record.reason === 'string' ? record.reason : null;
 
   const cards: IdeaCard[] = [];
@@ -201,6 +205,11 @@ export function parseCandidatesOutput(output: string, round: IdeationRound): Par
         ? (raw as { ideaId: string }).ideaId
         : null;
     const errors = [...validation.errors];
+    if (validation.ok) {
+      // Defense in depth: structurally-valid cards must also satisfy the
+      // shared contract before they can land.
+      assertAgainstSchema('idea-card-v1', raw);
+    }
     if (validation.ok && ideaId) {
       if (seenIds.has(ideaId)) errors.push(`duplicate ideaId in output: ${ideaId}`);
       const fingerprint = ideaFingerprint(raw as IdeaCard);

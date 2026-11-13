@@ -11,6 +11,8 @@ import noveltyCheckV1 from './schemas/novelty-check-v1.json' with { type: 'json'
 import ideaReviewV1 from './schemas/idea-review-v1.json' with { type: 'json' };
 import experimentAuditV1 from './schemas/experiment-audit-v1.json' with { type: 'json' };
 import datasetCandidatesV1 from './schemas/dataset-candidates-v1.json' with { type: 'json' };
+import ideaCardV1 from './schemas/idea-card-v1.json' with { type: 'json' };
+import ideaCandidatesV1 from './schemas/idea-candidates-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -50,7 +52,9 @@ export type SchemaName =
   | 'novelty-check-v1'
   | 'idea-review-v1'
   | 'experiment-audit-v1'
-  | 'dataset-candidates-v1';
+  | 'dataset-candidates-v1'
+  | 'idea-card-v1'
+  | 'idea-candidates-v1';
 
 const SCHEMAS: Record<SchemaName, object> = {
   'papercard-v1': papercardV1,
@@ -64,6 +68,8 @@ const SCHEMAS: Record<SchemaName, object> = {
   'idea-review-v1': ideaReviewV1,
   'experiment-audit-v1': experimentAuditV1,
   'dataset-candidates-v1': datasetCandidatesV1,
+  'idea-card-v1': ideaCardV1,
+  'idea-candidates-v1': ideaCandidatesV1,
 };
 
 let ajv: Ajv | null = null;
@@ -74,8 +80,14 @@ function validatorFor(name: SchemaName): ValidateFunction {
   if (cached) return cached;
   if (!ajv) {
     ajv = new Ajv({ allErrors: true, strict: true });
+    // Register every schema up front so $ref links between contracts
+    // (e.g. idea-candidates-v1 -> idea-card-v1.json#) resolve by $id.
+    for (const schema of Object.values(SCHEMAS)) ajv.addSchema(schema);
   }
-  const validate = ajv.compile(SCHEMAS[name]);
+  const validate = ajv.getSchema((SCHEMAS[name] as { $id: string }).$id);
+  if (!validate) {
+    throw new IdeaseekError('INTERNAL', `schema $id not registered: ${name}`);
+  }
   compiled.set(name, validate);
   return validate;
 }

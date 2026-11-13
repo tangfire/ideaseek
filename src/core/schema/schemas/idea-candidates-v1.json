@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/idea-candidates-v1.json",
+  "title": "IdeaSeek idea candidates envelope (idea-candidates-v1)",
+  "description": "Envelope for the ARIS idea-creator output: a candidates array (may be honestly empty, with an optional reason). Envelope-level check only — per-card structural validation is idea-card-v1 applied inside the parse loop so partial batches keep their rejected-card semantics; the mechanism gate and fingerprint/duplicate checks stay TS.",
+  "type": "object",
+  "required": ["candidates"],
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "description": "Item shape is validated per card by idea-card-v1 inside the parse loop so partial batches keep their rejected-card semantics (an invalid card is collected, not fatal).",
+      "items": {}
+    },
+    "reason": { "type": "string" }
+  }
+}

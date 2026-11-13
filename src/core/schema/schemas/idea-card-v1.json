@@ -1,0 +1,199 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/idea-card-v1.json",
+  "title": "IdeaSeek IdeaCard (idea-card-v1)",
+  "description": "Structural contract for a single IdeaCard. Semantic rules stay in TS: the DRAFT_COMPOSITION mechanism gate (complete chain kinds, necessary-mechanism for multi-component ideas), status cross-check, novelty-without-uncertainty gate — the schema is a sound subset; assessIdeaCard runs first. parentVersion is always required: null at version 1, an integer < version afterwards (mirrors the validator).",
+  "type": "object",
+  "required": [
+    "ideaId",
+    "version",
+    "parentVersion",
+    "status",
+    "hypothesis",
+    "paperEvidence",
+    "contradictions",
+    "novelty",
+    "mechanismChain",
+    "nearestComparisons",
+    "componentNecessity",
+    "competingExplanations",
+    "boundaryConditions",
+    "risks",
+    "minimalExperiment",
+    "falsification",
+    "budget",
+    "stopConditions",
+    "createdAt"
+  ],
+  "properties": {
+    "ideaId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "parentVersion": { "type": ["integer", "null"], "minimum": 1 },
+    "status": { "enum": ["DRAFT_COMPOSITION", "CANDIDATE"] },
+    "hypothesis": {
+      "type": "object",
+      "required": ["statement", "targetProblem"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "targetProblem": { "type": "string", "minLength": 1 }
+      }
+    },
+    "paperEvidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["paperRef", "statement", "evidence"],
+        "properties": {
+          "paperRef": { "type": "string", "minLength": 1 },
+          "statement": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "contradictions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "novelty": {
+      "type": "object",
+      "required": ["claim", "uncertainty", "whyNotRestatement"],
+      "properties": {
+        "claim": { "type": "string", "minLength": 1 },
+        "uncertainty": { "type": "string", "minLength": 1 },
+        "whyNotRestatement": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mechanismChain": {
+      "type": "object",
+      "required": ["designPrincipleLink", "steps"],
+      "properties": {
+        "designPrincipleLink": { "type": "string", "minLength": 1 },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["kind", "text"],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "observation",
+                  "hypothesis",
+                  "intervention",
+                  "expected-change",
+                  "baseline-difference",
+                  "falsifier"
+                ]
+              },
+              "text": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "nearestComparisons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["methodId", "difference", "evidence"],
+        "properties": {
+          "methodId": { "type": "string", "minLength": 1 },
+          "difference": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "componentNecessity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["component", "removeEffect", "role"],
+        "properties": {
+          "component": { "type": "string", "minLength": 1 },
+          "removeEffect": { "type": "string", "minLength": 1 },
+          "role": {
+            "enum": ["necessary-mechanism", "alternative-explanation", "engineering"]
+          }
+        }
+      }
+    },
+    "competingExplanations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "boundaryConditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "risks": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "minimalExperiment": {
+      "type": "object",
+      "required": ["code", "data", "baselines", "metrics", "ablations"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "data": { "type": "string", "minLength": 1 },
+        "baselines": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "ablations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "falsification": {
+      "type": "object",
+      "required": ["conditions"],
+      "properties": {
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["maxRounds", "maxGpuMinutes"],
+      "properties": {
+        "maxRounds": { "type": "integer", "minimum": 1 },
+        "maxGpuMinutes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "stopConditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "createdAt": { "type": "number" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "version": { "type": "integer", "const": 1 } },
+        "required": ["version"]
+      },
+      "then": { "properties": { "parentVersion": { "type": "null" } } }
+    },
+    {
+      "if": {
+        "properties": { "version": { "type": "integer", "minimum": 2 } },
+        "required": ["version"]
+      },
+      "then": { "properties": { "parentVersion": { "type": "integer", "minimum": 1 } } }
+    }
+  ]
+}
