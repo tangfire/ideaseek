@@ -375,6 +375,57 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'synthesis-lead-v1') {
+    const override = process.env.IDEASEEK_FAKE_CONSOLIDATE_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const refsLine =
+      context.split('\n').find((line) => line.startsWith('Input refs requiring a selection: ')) ??
+      '';
+    const refsPart = refsLine.slice('Input refs requiring a selection: '.length).trim();
+    const refs =
+      refsPart && refsPart !== '(none)'
+        ? refsPart
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+    const failureLine =
+      context.split('\n').find((line) => line.startsWith('Failure opinions in context: ')) ??
+      'Failure opinions in context: 0';
+    const failureCount = Number(failureLine.split(':').pop()?.trim() ?? '0');
+    const sourcesLine =
+      context.split('\n').find((line) => line.startsWith('Allowed evidence sources: ')) ??
+      'Allowed evidence sources: speculation';
+    const cite =
+      sourcesLine
+        .slice('Allowed evidence sources: '.length)
+        .split(',')
+        .map((s) => s.trim())
+        .find((s) => s && s !== 'speculation') ?? 'speculation';
+    return JSON.stringify({
+      contract: 'synthesis-lead-v1',
+      selections: refs.map((ref) => ({
+        ref,
+        decision: 'advance',
+        rationale: 'Persisted evidence supports continued investment.',
+        evidence: [{ source: cite, location: 'context' }],
+      })),
+      mergedInto: [],
+      retainedCompetingExplanations: ['lr schedule explains the gain (kept)'],
+      retainedFailureOpinions:
+        failureCount > 0
+          ? Array.from(
+              { length: failureCount },
+              (_, i) => `failure opinion ${i + 1} retained from context`,
+            )
+          : [],
+      recommendation:
+        refs.length > 0
+          ? 'Advance the top candidate into implementation.'
+          : 'Create an ideation round first, then consolidate.',
+    });
+  }
   if (request.outputSchema === 'mechanism-analysis-v1') {
     const override = process.env.IDEASEEK_FAKE_MECH_OUTPUT;
     if (override != null) return override;

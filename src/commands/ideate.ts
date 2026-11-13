@@ -130,6 +130,182 @@ export function registerIdeateCommands(program: Command): void {
       ),
     );
 
+  program
+    .command('consolidate')
+    .description(
+      'final candidate set with tradeoff reasons over rounds/discussions/failures (Synthesis Lead role)',
+    )
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored consolidation and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { harness?: string; force?: boolean; json?: boolean }) => {
+        const { findProjectRoot } = await import('../config/paths.js');
+        const root = await findProjectRoot(process.cwd());
+        if (!root) {
+          throw new IdeaseekError(
+            'NOT_INITIALIZED',
+            'no IdeaSeek project here; run: ideaseek init',
+          );
+        }
+        const {
+          CONSOLIDATION_SCHEMA,
+          collectConsolidationContext,
+          buildConsolidationRequest,
+          parseConsolidationOutput,
+        } = await import('../idea/consolidate.js');
+        const context = await collectConsolidationContext(root);
+        const request = buildConsolidationRequest(context);
+        const { join } = await import('node:path');
+        const { readFile } = await import('node:fs/promises');
+        const path = join(root, 'knowledge', 'consolidation.json');
+
+        interface StoredConsolidation {
+          contract: string;
+          inputHash: string;
+          harnessRuntime: string;
+          generatedAt: number;
+          consolidation: Record<string, unknown>;
+        }
+
+        if (!opts.force) {
+          let stored: StoredConsolidation | null = null;
+          try {
+            stored = JSON.parse(await readFile(path, 'utf8')) as StoredConsolidation;
+          } catch {
+            stored = null;
+          }
+          if (stored && stored.inputHash === request.inputHash) {
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  contract: stored.contract,
+                  inputHash: stored.inputHash,
+                  reused: true,
+                  consolidation: stored.consolidation,
+                  path,
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `reused consolidation (same inputHash ${stored.inputHash.slice(0, 12)}…)\n`,
+              );
+              process.stdout.write(`  file: ${path}\n`);
+              process.stdout.write('next: act on the recommendation; regenerate with --force\n');
+            }
+            return 0;
+          }
+        }
+
+        const { buildHarness } = await import('./shared.js');
+        const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+        const kind =
+          opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+        const harness = buildHarness(kind);
+        await harness.initialize();
+        let output: string;
+        let runtimeKind = kind;
+        try {
+          const result = await harness.runTask({
+            runId: 'consolidation',
+            taskId: 'consolidation',
+            profile: 'synthesis-analyst',
+            instruction: request.instruction,
+            inputs: [{ kind: 'text', name: 'consolidation_context', content: request.instruction }],
+            outputSchema: CONSOLIDATION_SCHEMA,
+            budget: { timeoutMs: 180_000, maxOutputTokens: 16_384 },
+            idempotencyKey: request.idempotencyKey,
+          });
+          output = result.output;
+          runtimeKind = result.runtime.kind;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'HarnessBlockError') {
+            const block = (error as { block?: string }).block ?? 'BLOCKED';
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({ blocked: block, written: false, contract: CONSOLIDATION_SCHEMA }),
+              );
+            } else {
+              process.stderr.write(
+                `consolidate blocked [${block}]: ${(error as Error).message}\n` +
+                  'nothing was written — restore quota/auth/network and rerun the same command\n',
+              );
+            }
+            return 2;
+          }
+          throw error;
+        } finally {
+          await harness.shutdown().catch(() => undefined);
+        }
+
+        // Coverage + retention + source bindings (anti-deletion rules).
+        const consolidation = parseConsolidationOutput(output, context);
+        const stored: StoredConsolidation = {
+          contract: CONSOLIDATION_SCHEMA,
+          inputHash: request.inputHash,
+          harnessRuntime: runtimeKind,
+          generatedAt: Date.now(),
+          consolidation: consolidation as unknown as Record<string, unknown>,
+        };
+        const { ensureDir, writeFileAtomic } = await import('../core/atomic.js');
+        await ensureDir(join(root, 'knowledge'));
+        await writeFileAtomic(path, `${JSON.stringify(stored, null, 2)}\n`);
+
+        let eventSeq: number | null = null;
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'IDEATION',
+              objectId: 'consolidation',
+              role: 'system',
+              eventType: 'consolidation',
+              summary: `consolidation: ${consolidation.selections.length} selection(s) (${consolidation.selections.filter((s) => s.decision === 'advance').length} advance / ${consolidation.selections.filter((s) => s.decision === 'drop').length} drop), ${consolidation.retainedFailureOpinions.length} failure opinion(s) retained`,
+              status: 'generated',
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        const advances = consolidation.selections.filter((s) => s.decision === 'advance').length;
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              contract: stored.contract,
+              inputHash: stored.inputHash,
+              harnessRuntime: stored.harnessRuntime,
+              reused: false,
+              eventSeq,
+              consolidation,
+              path,
+            }),
+          );
+          return 0;
+        }
+        process.stdout.write(
+          `consolidation written: knowledge/consolidation.json (${consolidation.selections.length} selection(s), ${advances} advance)\n`,
+        );
+        process.stdout.write(
+          `  retained: ${consolidation.retainedCompetingExplanations.length} competing explanation(s), ${consolidation.retainedFailureOpinions.length} failure opinion(s)\n`,
+        );
+        process.stdout.write(
+          `  inputHash ${stored.inputHash.slice(0, 19)}… · harness ${runtimeKind}\n`,
+        );
+        process.stdout.write(
+          'next: advance winners into idea workspaces; drops keep their rationale in this record\n',
+        );
+        return 0;
+      }),
+    );
+
   const rounds = program.command('rounds').description('inspect ideation rounds (read-only)');
 
   rounds
