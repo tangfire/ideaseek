@@ -255,6 +255,22 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     expect(done.stdout).toContain('bye');
   }, 60_000);
 
+  it('Ctrl-C interrupts the command that is currently running', async () => {
+    const dir = await makeProjectDir();
+    // Stretch the relay's abortable window (env test seam) so the
+    // interrupt does not race a fast command.
+    const repl = startTtyRepl(dir, [], { IDEASEEK_RELAY_DELAY_MS: '8000' });
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('check status please\r');
+    await repl.waitFor(/check status please/); // echoed by readline
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    repl.write('\x03'); // Ctrl-C while the relay is mid-flight
+    await repl.waitFor(/interrupted — the running command was stopped/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('recorded pending-approval'); // ask never ran
+  }, 60_000);
+
   it('EOF exits cleanly without cancelling anything', async () => {
     const dir = await makeProjectDir();
     const child = spawn(process.execPath, [CLI_BIN, 'interactive'], {
@@ -359,10 +375,13 @@ describe('new slash commands and NL routing (CLI)', () => {
 
   it('agent mode routes plain text to the real DSH agent turn, never ask', async () => {
     const project = await makeProjectDir();
-    // Empty (but defined) key beats the repo .env on load — the real turn
-    // must fail honestly without spending credentials, and its failure
-    // text comes from the agent CLI, not from the ask supervisor.
-    const repl = startTtyRepl(project, ['--mode', 'agent'], { DEEPSEEK_API_KEY: '' });
+    // A bogus model name makes the real turn fail honestly in ~4s BEFORE
+    // any model call (never spend credentials implicitly) — and its
+    // failure text comes from the agent CLI, not from the ask supervisor.
+    const repl = startTtyRepl(project, ['--mode', 'agent'], {
+      DEEPSEEK_API_KEY: '',
+      IDEASEEK_AGENT_MODEL: 'ideaseek-no-such-model',
+    });
     await repl.waitFor(/ideaseek ›/);
     repl.write('hello there\r');
     await repl.waitFor(/DSH session failed|agent turn failed|models setup|doctor/, 60_000);

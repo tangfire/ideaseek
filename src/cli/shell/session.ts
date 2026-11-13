@@ -69,6 +69,33 @@ export function extractAgentSessionId(output: string): string | null {
 }
 
 /**
+ * Frames a byte stream into complete lines for prompt-safe printing:
+ * output lands in the activity pane AS IT ARRIVES (Claude-Code style
+ * live output) instead of all at once when the subprocess exits.
+ * Exported for unit tests.
+ */
+export function createLineStream(onLine: (line: string) => void): {
+  push(chunk: string): void;
+  flush(): void;
+} {
+  let buffer = '';
+  return {
+    push(chunk: string): void {
+      buffer += chunk;
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() ?? '';
+      for (const line of parts) onLine(line);
+    },
+    flush(): void {
+      if (!buffer) return;
+      const line = buffer;
+      buffer = '';
+      onLine(line);
+    },
+  };
+}
+
+/**
  * Unpainted project/run context header (renderer decides styling).
  * Startup stays to two lines — project · mode · run state, plus the
  * question; everything else (stage, tasks, papers, GPU, supervisor) is a
@@ -134,6 +161,20 @@ export class InteractiveSession {
   private lastSeq = 0;
   /** DSH session id for agent-mode continuation (null → next turn is new). */
   private agentSessionId: string | null = null;
+  /** Abort handle for the in-flight relay/agent turn (Ctrl-C interrupts). */
+  private relayAbort: AbortController | null = null;
+
+  /**
+   * Stops the command currently running through this session, if any —
+   * Claude-Code style interrupt. Returns whether something was actually
+   * stopped (idle Ctrl-C keeps the plain exit hint instead).
+   */
+  async interrupt(): Promise<boolean> {
+    if (!this.relayAbort) return false;
+    this.relayAbort.abort();
+    this.relayAbort = null;
+    return true;
+  }
 
   constructor(opts: InteractiveSessionOptions) {
     this.plain = opts.plain;
@@ -241,40 +282,75 @@ export class InteractiveSession {
   private async runAgentTurn(message: string): Promise<void> {
     const args = ['agent', message];
     if (this.agentSessionId) args.push('--resume', this.agentSessionId);
-    const result = await runCli(args, { timeoutMs: 300_000 });
-    if (result.stderr) {
-      const text = result.stderr.endsWith('\n') ? result.stderr.slice(0, -1) : result.stderr;
-      for (const line of text.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        const tone = /^error:/.test(line.trim()) ? ('error' as const) : ('dim' as const);
-        this.println(paint(line, tone, { plain: this.plain }));
-      }
-    }
-    if (result.stdout) {
-      const text = result.stdout.endsWith('\n') ? result.stdout.slice(0, -1) : result.stdout;
-      const sessionId = extractAgentSessionId(text);
+    // Default provider/model routes for TUI turns. IDEASEEK_AGENT_MODEL
+    // doubles as the test hook for a cheap model-free failure (a bogus
+    // model name refuses in ~4s BEFORE any model call — never spend
+    // credentials implicitly in tests).
+    const provider = process.env.IDEASEEK_AGENT_PROVIDER;
+    if (provider) args.push('--provider', provider);
+    const model = process.env.IDEASEEK_AGENT_MODEL;
+    if (model) args.push('--model', model);
+    // Stream: DSH progress logs (` · dsh runtime started`, approvals)
+    // land live while the turn runs instead of after it finishes.
+    const out = createLineStream((line) => this.println(line));
+    const err = createLineStream((line) => {
+      if (!line.trim()) return;
+      const tone = /^error:/.test(line.trim()) ? ('error' as const) : ('dim' as const);
+      this.println(paint(line, tone, { plain: this.plain }));
+    });
+    const abort = new AbortController();
+    this.relayAbort = abort;
+    try {
+      const result = await runCli(args, {
+        timeoutMs: 300_000,
+        signal: abort.signal,
+        onStdout: (chunk) => out.push(chunk),
+        onStderr: (chunk) => err.push(chunk),
+      });
+      const sessionId = extractAgentSessionId(result.stdout);
       if (sessionId) this.agentSessionId = sessionId;
-      for (const line of text.split(/\r?\n/)) this.println(line);
-    }
-    if (result.code !== 0 && !result.stdout && !result.stderr) {
-      this.println(
-        paint(`agent turn failed (exit ${result.code})`, 'error', { plain: this.plain }),
-      );
+      if (result.code !== 0 && !result.stdout && !result.stderr) {
+        this.println(
+          paint(`agent turn failed (exit ${result.code})`, 'error', { plain: this.plain }),
+        );
+      }
+    } finally {
+      out.flush();
+      err.flush();
+      if (this.relayAbort === abort) this.relayAbort = null;
     }
   }
 
-  /** Relays a CLI command; its stdout/stderr becomes session output. */
+  /**
+   * Relays a CLI command; its stdout/stderr streams into the session
+   * output line by line as the subprocess produces them — a long
+   * `extract`/`report` shows progress live instead of appearing all at
+   * once when it exits.
+   */
   private async relay(args: string[]): Promise<void> {
-    const result = await runCli(args, { timeoutMs: 60_000 });
-    if (result.stdout) {
-      const text = result.stdout.endsWith('\n') ? result.stdout.slice(0, -1) : result.stdout;
-      for (const line of text.split(/\r?\n/)) this.println(line);
-    }
-    if (result.stderr) {
-      const text = result.stderr.endsWith('\n') ? result.stderr.slice(0, -1) : result.stderr;
-      for (const line of text.split(/\r?\n/)) {
-        this.println(paint(line, 'error', { plain: this.plain }));
+    const out = createLineStream((line) => this.println(line));
+    const err = createLineStream((line) =>
+      this.println(paint(line, 'error', { plain: this.plain })),
+    );
+    const abort = new AbortController();
+    this.relayAbort = abort;
+    try {
+      // Test seam: stretch the abortable window so the Ctrl-C interrupt
+      // e2e does not race a fast command (env-gated, default off).
+      const delay = Number(process.env.IDEASEEK_RELAY_DELAY_MS ?? '0');
+      if (Number.isFinite(delay) && delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
+      await runCli(args, {
+        timeoutMs: 60_000,
+        signal: abort.signal,
+        onStdout: (chunk) => out.push(chunk),
+        onStderr: (chunk) => err.push(chunk),
+      });
+    } finally {
+      out.flush();
+      err.flush();
+      if (this.relayAbort === abort) this.relayAbort = null;
     }
   }
 

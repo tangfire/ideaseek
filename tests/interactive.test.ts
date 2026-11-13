@@ -2,7 +2,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { BLOCK_BANNER, PLAIN_MARK, renderBanner } from '../src/cli/banner.js';
 import { formatEventLine, paint } from '../src/cli/format.js';
-import { isSessionUiNoise } from '../src/cli/shell/session.js';
+import {
+  createLineStream,
+  InteractiveSession,
+  isSessionUiNoise,
+} from '../src/cli/shell/session.js';
 import { resolveSlash, slashCompleter, SLASH_COMMANDS } from '../src/cli/repl.js';
 import type { RunEvent } from '../src/workflow/types.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
@@ -199,6 +203,31 @@ describe('banner and event formatting (unit)', () => {
     expect(leaky).not.toContain('sk-secret123456789');
     expect(leaky).not.toContain('abc123');
     expect(leaky).toContain('***');
+  });
+
+  it('frames streamed subprocess chunks into lines and flushes the tail', () => {
+    const lines: string[] = [];
+    const stream = createLineStream((line) => lines.push(line));
+    stream.push('he');
+    stream.push('llo\nwor');
+    stream.push('ld\r\n');
+    stream.flush();
+    expect(lines).toEqual(['hello', 'world']);
+    // Unterminated tail is emitted on flush, not lost.
+    stream.push('tail-without-newline');
+    stream.flush();
+    expect(lines).toEqual(['hello', 'world', 'tail-without-newline']);
+    // Idempotent flush never duplicates.
+    stream.flush();
+    expect(lines).toHaveLength(3);
+  });
+
+  it('interrupt reports false when no command is running', async () => {
+    const session = new InteractiveSession({
+      plain: true,
+      sink: { println: () => undefined },
+    });
+    expect(await session.interrupt()).toBe(false);
   });
 
   it('keeps session-mode audit decisions out of the TUI event stream', () => {

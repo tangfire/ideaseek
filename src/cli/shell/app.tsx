@@ -202,7 +202,14 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
     }
     if (result.interrupt) {
       setSnap(result);
-      bus.push(INTERRUPT_HINT);
+      // Ctrl-C while a command is running stops it (Claude-Code style
+      // interrupt); with nothing running, keep the plain exit hint.
+      void session
+        .interrupt()
+        .then((aborted) =>
+          bus.push(aborted ? 'interrupted — the running command was stopped' : INTERRUPT_HINT),
+        )
+        .catch(() => bus.push(INTERRUPT_HINT));
       return;
     }
     if (result.eof) {

@@ -350,8 +350,28 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
         clearInputLine();
         return;
       }
-      println(paint('Ctrl-C: use /quit to exit (background runs keep going)', 'warn', paintOpts));
-      showPrompt();
+      // Ctrl-C while a command runs stops it (Claude-Code style);
+      // idle Ctrl-C keeps the exit hint.
+      void session
+        .interrupt()
+        .then((aborted) => {
+          println(
+            paint(
+              aborted
+                ? 'interrupted — the running command was stopped'
+                : 'Ctrl-C: use /quit to exit (background runs keep going)',
+              'warn',
+              paintOpts,
+            ),
+          );
+          showPrompt();
+        })
+        .catch(() => {
+          println(
+            paint('Ctrl-C: use /quit to exit (background runs keep going)', 'warn', paintOpts),
+          );
+          showPrompt();
+        });
     });
 
     rl.on('close', () => {

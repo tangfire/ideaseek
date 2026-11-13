@@ -25,7 +25,15 @@ export function cliEntryPath(): string {
 
 export async function runCli(
   args: string[],
-  opts: { cwd?: string; timeoutMs?: number } = {},
+  opts: {
+    cwd?: string;
+    timeoutMs?: number;
+    /** Incremental chunks as they arrive — line framing is the caller's job. */
+    onStdout?: (chunk: string) => void;
+    onStderr?: (chunk: string) => void;
+    /** Abort kills the whole tree; the promise still resolves with what ran. */
+    signal?: AbortSignal;
+  } = {},
 ): Promise<CliRunResult> {
   // Shared subprocess adapter: timeout kills the WHOLE tree (a relay child
   // may itself have spawned python workers) instead of orphaning them.
@@ -36,6 +44,9 @@ export async function runCli(
     cwd: opts.cwd ?? process.cwd(),
     env: { ...process.env, IDEASEEK_CLI: '1' },
     timeoutMs,
+    ...(opts.onStdout ? { onStdout: opts.onStdout } : {}),
+    ...(opts.onStderr ? { onStderr: opts.onStderr } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (result.timedOut) {
     throw new Error(`ideaseek ${args.join(' ')} timed out`);
