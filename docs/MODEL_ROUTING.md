@@ -114,6 +114,19 @@ Test connection? [Y/n]
 - 模型不可用、额度耗尽或 provider 失败时进入可恢复状态；已成功结果不重做。
 - 涉及私有论文/数据时，路由必须遵守外发策略；本地 provider 和远程 provider 不能静默切换。
 
+## 图像输入能力（Phase 2 视觉切片）
+
+图片能否进入 prompt 取决于**实际能力**，绝不凭模型名推断（`src/models/image-capability.ts`）：
+
+1. **显式声明优先**：`TierBinding.imageInput`（路由配置里的部署决定）为 true/false 时直接采信；
+2. **pinned DSH 目录事实**（runtime-lock 对应的 DSH `DEFAULT_MODELS`）：`deepseek-flash = ['text','image']`、`deepseek-v4-pro = ['text']`；
+3. **未编目 id 一律 text-only**——与 DSH `llm-deepseek` 自身规则一致（uncatalogued endpoint 安全降级）；
+4. 运行时兜底：DSH/provider 对 text-only 模型发图片会返回 typed failure，调用方降级而非崩溃。
+
+视觉分析角色 `paper_vision` 默认路由 `fast`。图片字节**不落 IdeaSeek 私有存储**：走 DSH durable image attachment（`SdkEncodedImageBlock` → admission 归一化 → provider 解析），本机只记录 `attachmentSha256`。
+
+**降级语义**：能力不足时 `paper visual` 不调用模型，改用已提交 parsed-paper 的正文（若有），`confidence ≤ 0.35`、`source=text-fallback`、`needsUserReview=true`，uncertainty 明确写“视觉未核验”；vision 路径 `confidence < 0.7` 同样打用户复核项。结果绑定 paperHash/页码/figureId/附件哈希/模型/route（平台盖章，模型不可自报）；模型只产 caption/observations——**数值结论必须来自表格与结构化实验文件，禁止目测像素估值**。
+
 ## 成本与质量报告
 
 报告同时显示各角色的模型层级、总 token、费用估算、平均延迟和 fallback 次数。IdeaSeek 不用更强模型替代证据和实验；`deep` 只能提高推理预算，不能把无证据的主张变成事实。

@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
 import type { RunResult } from '@deepseek-ai/dsh-sdk-client';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
+import type { SdkPromptContentBlock } from '@deepseek-ai/dsh-sdk-protocol';
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
 import { writeCapabilityPatch } from './capability.js';
 import {
@@ -146,9 +147,16 @@ function collectToolCalls(events: SessionEvent[]): HarnessToolCallSummary[] {
   return calls;
 }
 
-function composePrompt(request: HarnessTaskRequest): string {
-  const inputs = request.inputs.map((input) => `### ${input.name}\n${input.content}`).join('\n\n');
-  return [
+function composeInput(request: HarnessTaskRequest): string | SdkPromptContentBlock[] {
+  const textInputs = request.inputs.filter((input) => input.kind === 'text');
+  const imageInputs = request.inputs.filter((input) => input.kind === 'image');
+  const inputs = textInputs
+    .map(
+      (input) => `### ${input.name}
+${input.content}`,
+    )
+    .join('\\n');
+  const text = [
     request.instruction,
     '',
     '## Inputs',
@@ -157,7 +165,22 @@ function composePrompt(request: HarnessTaskRequest): string {
     '## Output contract',
     `Return ONLY a JSON object matching schema "${request.outputSchema}".`,
     'No prose, no markdown fences, no commentary outside the JSON.',
-  ].join('\n');
+  ].join('\\n');
+  // No images → the exact string path (byte-identical to the text-only
+  // behavior). Images → SDK content blocks; the DSH admission validates
+  // and normalizes them into the durable attachment store, and the
+  // provider refuses text-only models with a typed failure the caller
+  // degrades on.
+  if (imageInputs.length === 0) return text;
+  return [
+    { type: 'text', text },
+    ...imageInputs.map((input) => ({
+      type: 'image' as const,
+      data: input.data,
+      mimeType: input.mimeType,
+      name: input.name,
+    })),
+  ];
 }
 
 /**
@@ -254,10 +277,13 @@ export class DshHarnessAdapter implements HarnessAdapter {
       summary: `dsh ${request.profile} started (${request.outputSchema})`,
     });
 
-    const prompt = composePrompt(request);
     let result: RunResult;
     try {
-      result = await this.withTimeout(harness.run(prompt), request.budget.timeoutMs, signal);
+      result = await this.withTimeout(
+        harness.run(composeInput(request)),
+        request.budget.timeoutMs,
+        signal,
+      );
     } catch (error) {
       if ((error as Error).name === 'AbortError') throw error;
       // Timeout/abort cannot cancel a turn over the SDK: reap the runtime.

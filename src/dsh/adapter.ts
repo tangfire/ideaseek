@@ -27,6 +27,25 @@ export type HarnessProfile =
   | 'reviewer'
   | 'demo';
 
+export interface HarnessTextInput {
+  kind: 'text';
+  name: string;
+  content: string;
+}
+
+export interface HarnessImageInput {
+  kind: 'image';
+  name: string;
+  /** Canonical base64 (no data: prefix) of a PNG/JPEG/WebP/GIF raster. */
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  /**
+   * Provenance echoed into analysis results (paper hash / page / figure
+   * id) — stamped by the platform, never trusted from model output.
+   */
+  source?: { paperHash?: string; page?: number; figureId?: string };
+}
+
 export interface HarnessBudget {
   timeoutMs: number;
   maxOutputTokens?: number;
@@ -40,13 +59,29 @@ export interface HarnessTaskRequest {
   profile: HarnessProfile;
   /** Structured instruction; must never contain secrets. */
   instruction: string;
-  /** Textual input fragments (paper excerpts in Phase 2; short in Phase 1). */
-  inputs: { kind: 'text'; name: string; content: string }[];
+  /**
+   * Input fragments. Backward compatible: text inputs behave exactly as
+   * before; image inputs (Phase 2 vision slice) are canonical-base64
+   * rasters that the DSH adapter forwards as SDK image blocks ONLY when
+   * the routed model declares image capability.
+   */
+  inputs: (HarnessTextInput | HarnessImageInput)[];
   /** Expected structured output schema id, e.g. 'papercard-v1'. */
   outputSchema: string;
   budget: HarnessBudget;
   /** Stable key so a retried workflow task maps to one logical agent call. */
   idempotencyKey: string;
+}
+
+/** Text input at `index` among TEXT inputs only (image blocks never count). */
+export function textInputAt(request: HarnessTaskRequest, index: number): string | undefined {
+  const texts = request.inputs.filter((input): input is HarnessTextInput => input.kind === 'text');
+  return texts[index]?.content;
+}
+
+/** First text input, or '' — the common fake/real context lookup. */
+export function firstTextInput(request: HarnessTaskRequest): string {
+  return textInputAt(request, 0) ?? '';
 }
 
 export interface HarnessUsage {

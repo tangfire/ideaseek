@@ -27,6 +27,7 @@ export const ROLE_TIERS: Record<string, ModelTier> = {
   code_implementer: 'balanced',
   result_analyst: 'deep',
   workflow_supervisor: 'deterministic',
+  paper_vision: 'fast',
 };
 
 export interface TierBinding {
@@ -37,6 +38,12 @@ export interface TierBinding {
   overrideEnv?: string;
   roles: string[];
   capabilities: { toolCalling: string; structuredOutput: string; longContext: string };
+  /**
+   * Explicit image-input declaration for this binding (Phase 2 vision).
+   * Optional: when absent, capability falls back to the pinned DSH
+   * catalog facts (see image-capability.ts) — never name inference.
+   */
+  imageInput?: boolean;
 }
 
 function envOverride(tier: ModelTier): string | null {

@@ -7,6 +7,7 @@ import {
   type HarnessTaskRequest,
   type HarnessTaskResult,
 } from './adapter.js';
+import { firstTextInput, textInputAt } from './adapter.js';
 
 export interface FakeHarnessOptions {
   /** Tool-call summaries to report on successful results (audit tests). */
@@ -37,7 +38,8 @@ export interface FakeHarnessOptions {
  * runs end to end against the fake harness without a model.
  */
 function readJsonContext(request: HarnessTaskRequest): Record<string, unknown> {
-  for (const input of [...request.inputs].reverse()) {
+  const texts = request.inputs.filter((input) => input.kind === 'text');
+  for (const input of [...texts].reverse()) {
     try {
       const value = JSON.parse(input.content) as unknown;
       if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -107,7 +109,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       answer: '',
       cliArgs: null,
       reason: 'fake-supervisor',
-      summary: `supervisor classified: ${(request.inputs[0]?.content ?? '').slice(0, 120)}`,
+      summary: `supervisor classified: ${firstTextInput(request).slice(0, 120)}`,
     });
   }
   if (request.outputSchema === 'idea-candidates-v1') {
@@ -231,7 +233,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'novelty-check-v1') {
     const override = process.env.IDEASEEK_FAKE_NOVELTY_OUTPUT;
     if (override != null) return override;
-    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+    const context = JSON.parse(textInputAt(request, 0) ?? '{}') as {
       ideaId?: string;
       cardVersion?: number;
       candidateRefs?: string[];
@@ -260,11 +262,11 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'ablation-plan-v1') {
     const override = process.env.IDEASEEK_FAKE_ABLATION_PLAN_OUTPUT;
     if (override != null) return override;
-    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+    const context = JSON.parse(textInputAt(request, 0) ?? '{}') as {
       ideaId?: string;
       cardVersion?: number;
     };
-    const card = JSON.parse(request.inputs[1]?.content ?? '{}') as {
+    const card = JSON.parse(textInputAt(request, 1) ?? '{}') as {
       componentNecessity?: { component?: string; role?: string }[];
       minimalExperiment?: { ablations?: string[] };
     };
@@ -326,7 +328,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PAPER_FIGURE_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const idLine =
       context
         .split('\n')
@@ -375,10 +377,23 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'page-visual-v1') {
+    const override = process.env.IDEASEEK_FAKE_VISUAL_OUTPUT;
+    if (override != null) return override;
+    const imageCount = request.inputs.filter((input) => input.kind === 'image').length;
+    return JSON.stringify({
+      caption: 'A bar chart compares two methods on the locked split.',
+      confidence: 0.82,
+      uncertainty: 'axis labels are small but readable.',
+      observations: ['one figure with two bars', 'y-axis is accuracy'],
+      // Test hook: proves the image block actually reached the harness.
+      imageInputsReceived: imageCount,
+    });
+  }
   if (request.outputSchema === 'synthesis-lead-v1') {
     const override = process.env.IDEASEEK_FAKE_CONSOLIDATE_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const refsLine =
       context.split('\n').find((line) => line.startsWith('Input refs requiring a selection: ')) ??
       '';
@@ -429,7 +444,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'mechanism-analysis-v1') {
     const override = process.env.IDEASEEK_FAKE_MECH_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const sourcesLine =
       context.split('\n').find((line) => line.startsWith('Allowed evidence sources: ')) ??
       'Allowed evidence sources: speculation';
@@ -464,7 +479,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'idea-discuss-v1') {
     const override = process.env.IDEASEEK_FAKE_DISCUSS_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const ideaLine =
       context.split('\n').find((line) => line.startsWith('Idea: ')) ?? 'Idea: unknown v1 []';
     // "Idea: <id> v<version> [STATUS]"
@@ -506,7 +521,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'idea-diagnosis-v1') {
     const override = process.env.IDEASEEK_FAKE_IMPROVE_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const questionLine =
       context.split('\n').find((line) => line.startsWith('User question: ')) ?? 'User question: ';
     const seedLine = context.split('\n').find((line) => line.startsWith('Idea seed: ')) ?? '';
@@ -547,7 +562,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'rebuttal-v1') {
     const override = process.env.IDEASEEK_FAKE_REBUTTAL_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const specLine =
       context.split('\n').find((line) => line.startsWith('  - repro-')) ??
       '  - repro-fake [succeeded]';
@@ -573,7 +588,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
   if (request.outputSchema === 'paper-slides-v1') {
     const override = process.env.IDEASEEK_FAKE_SLIDES_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const venueLine =
       context.split('\n').find((line) => line.startsWith('Stored plan: venue=')) ?? '';
     const venueMatch = venueLine.match(/venue=(\S+)/);
@@ -641,7 +656,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PAPER_WRITE_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const venueLine =
       context.split('\n').find((line) => line.startsWith('Venue: ')) ?? 'Venue: none stored';
     const venue = venueLine.includes('none stored')
@@ -678,7 +693,7 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_PAPER_PLAN_OUTPUT;
     if (override != null) return override;
-    const context = request.inputs[0]?.content ?? '';
+    const context = firstTextInput(request);
     const questionLine =
       context.split(/\r?\n/).find((line) => line.startsWith('Research question:')) ??
       'Research question: unknown';
@@ -732,7 +747,7 @@ function buildFakeExperimentPlan(request: HarnessTaskRequest): Record<string, un
   let cardMetric = 'accuracy';
   const directions = new Map<string, 'higher' | 'lower'>();
   try {
-    const context = JSON.parse(request.inputs[0]?.content ?? '{}') as {
+    const context = JSON.parse(textInputAt(request, 0) ?? '{}') as {
       minimalExperiment?: { metrics?: unknown };
       protocol?: { primaryMetrics?: { name?: unknown; direction?: unknown }[] };
       budget?: { maxGpuMinutes?: unknown };
@@ -865,7 +880,7 @@ function buildFakeIdeaCard(): Record<string, unknown> {
   };
 }
 function buildFakeCard(request: HarnessTaskRequest, call: number): string {
-  const content = request.inputs[0]?.content ?? '';
+  const content = firstTextInput(request);
   const line =
     content
       .split(/\r?\n/)

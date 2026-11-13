@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
+import type { HarnessAdapter } from '../dsh/adapter.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { action, buildHarness, jsonLine } from './shared.js';
 
@@ -891,6 +892,162 @@ export function registerPaperCommand(program: Command): void {
         );
         return 0;
       }),
+    );
+
+  paper
+    .command('visual')
+    .description(
+      'analyze a PDF page/figure via DSH image attachment when the route supports images, else low-confidence text fallback',
+    )
+    .requiredOption('--pdf <path>', 'project-relative PDF path')
+    .requiredOption('--page <n>', '1-based page number', (value) => Number(value))
+    .option('--figure <id>', 'figure id to bind in the result')
+    .option('--question <text>', 'what to ask about the page')
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (opts: {
+          pdf: string;
+          page: number;
+          figure?: string;
+          question?: string;
+          harness?: string;
+          json?: boolean;
+        }) => {
+          const root = await findRoot();
+          if (!Number.isInteger(opts.page) || opts.page < 1) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--page must be an integer >= 1');
+          }
+          const { join: joinPath } = await import('node:path');
+          const pdfPath = joinPath(root, ...opts.pdf.split('/'));
+          const { sha256OfFile } = await import('../core/hash.js');
+          const paperHash = await sha256OfFile(pdfPath).catch(() => {
+            throw new IdeaseekError('FILE_NOT_FOUND', `PDF not found: ${opts.pdf}`);
+          });
+
+          // Capability BEFORE any model call — never inferred from the name.
+          const { describeTierBindings } = await import('../models/routing.js');
+          const { resolveImageCapability } = await import('../models/image-capability.js');
+          const fast = describeTierBindings().find((binding) => binding.tier === 'fast');
+          const capability = resolveImageCapability({
+            model: fast?.model ?? 'deepseek-v4-flash',
+            provider: fast?.provider ?? undefined,
+            declaredImageInput: fast?.imageInput,
+          });
+
+          // Fallback text: the committed parsed-paper artifact for this PDF.
+          let pageText: string | undefined;
+          if (!capability.supported) {
+            try {
+              const { readFile: read } = await import('node:fs/promises');
+              const artifacts = await (
+                await import('../workflow/runtime.js')
+              ).ProjectRuntime.open({ cwd: root, recover: false }).then(async (runtime) => {
+                try {
+                  const rows = await runtime.db.listArtifactsByKind('parsed-paper');
+                  for (const row of rows) {
+                    const parsed = JSON.parse(
+                      await runtime.store.readFinalText(row.contentHash),
+                    ) as {
+                      source?: string;
+                      sourceHash?: string;
+                      pages?: { page: number; text: string }[];
+                    };
+                    if (parsed.sourceHash === paperHash && Array.isArray(parsed.pages)) {
+                      return parsed.pages.find((p) => p.page === opts.page)?.text ?? '';
+                    }
+                  }
+                  return '';
+                } finally {
+                  await runtime.close();
+                }
+              });
+              pageText = artifacts;
+              void read;
+            } catch {
+              pageText = undefined;
+            }
+          }
+
+          // Vision path only when capability passed; harness built lazily.
+          let harness: HarnessAdapter | null = null;
+          if (capability.supported) {
+            const { buildHarness } = await import('./shared.js');
+            const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+            const kind =
+              opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+            harness = buildHarness(kind);
+          }
+          const { analyzePageVisual, PAGE_VISUAL_SCHEMA } = await import('../knowledge/visual.js');
+          let result: Awaited<ReturnType<typeof analyzePageVisual>>;
+          try {
+            result = await analyzePageVisual({
+              paperHash,
+              page: opts.page,
+              pdfPath,
+              capability,
+              figureId: opts.figure ?? null,
+              question: opts.question,
+              pageTextFallback: pageText,
+              harness,
+            });
+          } finally {
+            await harness?.shutdown().catch(() => undefined);
+          }
+
+          // Persist the hash-bound analysis (knowledge/visual/…).
+          const { visualInputHash } = await import('../knowledge/visual.js');
+          const inputHash = visualInputHash(result);
+          const fileName = `${paperHash.slice(7, 19)}-p${opts.page}${opts.figure ? `-fig-${opts.figure}` : ''}.json`;
+          const { ensureDir, writeFileAtomic } = await import('../core/atomic.js');
+          await ensureDir(joinPath(root, 'knowledge', 'visual'));
+          await writeFileAtomic(
+            joinPath(root, 'knowledge', 'visual', fileName),
+            `${JSON.stringify(
+              { contract: PAGE_VISUAL_SCHEMA, inputHash, generatedAt: Date.now(), ...result },
+              null,
+              2,
+            )}\n`,
+          );
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                contract: PAGE_VISUAL_SCHEMA,
+                inputHash,
+                capability: { supported: capability.supported, basis: capability.basis },
+                path: `knowledge/visual/${fileName}`,
+                result,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `page visual [${result.source}]: p.${result.page} conf=${result.confidence.toFixed(2)} model=${result.model ?? 'none'}\n`,
+          );
+          process.stdout.write(`  route: ${result.route}\n`);
+          process.stdout.write(`  caption: ${result.caption.slice(0, 200) || '(none)'}\n`);
+          process.stdout.write(`  uncertainty: ${result.uncertainty.slice(0, 200)}\n`);
+          if (result.attachmentSha256) {
+            process.stdout.write(`  attachment: ${result.attachmentSha256}\n`);
+          }
+          process.stdout.write(`  file: knowledge/visual/${fileName}\n`);
+          if (result.needsUserReview) {
+            process.stdout.write(
+              `next: REVIEW REQUIRED — ${result.source === 'text-fallback' ? 'vision unavailable on this route; provide an image-capable route or OCR' : 'low confidence; verify the caption against the page'}\n`,
+            );
+          } else {
+            process.stdout.write(
+              'next: caption accepted (confidence ≥ 0.7); cite it with the page hash\n',
+            );
+          }
+          return 0;
+        },
+      ),
     );
 }
 
