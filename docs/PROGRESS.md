@@ -101,6 +101,7 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 目标：从论文、comparison 代码和用户数据自动生成可审查的实验协议。
 
 - [x] Dataset Analyst 和 dataset card
+- [ ] Research Material Assessment：根据研究问题、论文、数据、comparison 和目标场景列出必须补/建议补/可选补的材料缺口、依据和下一步
 - [x] Protocol Synthesis Agent
 - [x] Leakage/Validity Checker
 - [x] ExperimentalProtocolProposal schema

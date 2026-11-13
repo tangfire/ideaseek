@@ -23,6 +23,12 @@ Dataset Discovery Agent 可以从论文、代码 README 和允许的学术索引
 
 IdeaSeek 不能让用户凭经验手工猜全量论文该比较哪些方法。进入 Full Research 前，Comparison Planner 综合研究问题、PaperCard/研究地图、近期相关工作、目标 venue/子领域、用户提供的 comparison、数据集与社区 benchmark protocol，提出可审查的 comparison matrix。目标 venue（例如用户指定的 CCF A/B 会议或期刊）是规划上下文，不是录用保证；venue 要求和近期论文证据必须带来源与时间，用户确认最终清单。
 
+## 研究材料缺口评估
+
+在深度论文综合、协议锁定和 idea 生成前，IdeaSeek 先对当前研究材料做一次 `ResearchMaterialAssessment`。输入包括研究问题/目标、已有论文、PaperCard/研究地图、数据集与 dataset card、comparison registry、已有 idea、目标任务/场景和用户指定的 venue/时间范围。输出必须逐项回答：是否足以开始协议设计和 smoke/quick 验证；缺少哪些论文、数据集/场景、comparison、指标、split、消融和资源信息；每个缺口的优先级（`blocking`/`recommended`/`optional`）、理由、证据来源、置信度、补充方式和预计成本。
+
+它应告诉用户“请补什么、放到哪个目录、为什么需要、补上后会解锁哪些阶段”，并提供可复制的下一步命令或检索/下载建议。候选论文/数据集/仓库必须带来源、版本、许可证/访问条件和与问题的关联。用户补充材料后重新扫描并只使受影响的下游节点失效；缺少推荐材料可以继续并降低结论等级，缺少 required 数据语义、指标、测试用途、关键 comparison 或协议条件时阻止依赖实验并进入可恢复阻塞。
+
 每个候选方法标为 `required`、`reference-only`、`excluded` 或 `blocked`，并记录纳入理由、来源论文及定位、官方/作者代码候选、实现身份、许可证、协议适配差异、数据/指标、算力和失败/不可复现风险。清单至少检查代表性经典基线、近期强基线、直接最近邻方法、同类方法和适用的公开 benchmark；不相关或无法公平比较的方法必须给出理由，不能机械复现论文库中的所有方法。只有用户确认的 required 项进入全量比较门禁。平台侧 `ideaseek comparison plan` 先跑 Comparison Planner agent（合成分析员 profile）：上下文含研究问题、语料文献（`research.external_search` 开启时接入学术索引做年份排序的近期文献）、存稿 venue/子领域、benchmark 证据，提案经硬校验（只许引用上下文内 source、禁止发明引用/未知方法/空理由），产物为可复核的 comparison-matrix-proposal；`ideaseek comparison matrix [--confirm]` 在确定性草稿上合并该提案（候选集变化则拒收过期提案）生成可编辑清单；`--confirm` 把（可能被用户编辑过的）分类应用到注册表——required 标记驱动门禁、excluded/blocked 走状态机并以纳入理由作 reason，paper-card 候选只列出、绝不自动注册。近期文献与 venue 推理的 agent 增强依赖模型凭据，属后续切片。
 
 实现来源顺序：官方/作者仓库可用时，核验论文与仓库关联、commit/release、许可证、数据/入口和配置；隔离 clone，先修环境、smoke 和小切片，再锁定复现版本。没有可用代码时才按论文重实现，并记录假设、缺失细节、实现差异和置信度，标为 `paper-reimplementation — NOT official code`。关键细节不足时标为 blocked/request-details，不伪造论文细节或结果。

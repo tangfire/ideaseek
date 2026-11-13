@@ -960,7 +960,7 @@
         <div class="navgroup">
           <div class="navtitle">核心概念</div>
           <a href="#modes">工作模式</a><a href="#models">模型与凭据</a
-          ><a href="#inputs">论文、数据与代码</a>
+          ><a href="#inputs">论文、数据与代码</a><a href="#gaps">材料缺口</a>
         </div>
         <div class="navgroup">
           <div class="navtitle">工作流程</div>
@@ -1060,6 +1060,49 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
               >incoming/</code
             >
             和平台管理的结果目录。它不会移动或覆盖你的原始文件。
+          </p>
+        </section>
+        <section
+          id="gaps"
+          data-search="材料缺口 research material assessment 缺论文 缺数据集 comparison 指标 split 推荐"
+        >
+          <div class="eyebrow">05.5 · Material assessment</div>
+          <h2>不知道还缺什么？让 IdeaSeek 先做材料缺口评估</h2>
+          <p>
+            你不需要一开始就知道该准备哪些论文、数据集或 comparison。IdeaSeek
+            会根据研究问题、已有论文、研究地图、数据画像、comparison
+            和目标场景，列出当前缺口以及它们对研究的影响。
+          </p>
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>缺口类型</th>
+                  <th>例子</th>
+                  <th>IdeaSeek 的处理</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>必须补</td>
+                  <td>没有测试标签语义、主指标或 required baseline</td>
+                  <td>阻止依赖它的正式实验，给出原因和下一步</td>
+                </tr>
+                <tr>
+                  <td>建议补</td>
+                  <td>缺少近期强基线、反例论文或第二个数据场景</td>
+                  <td>说明它会影响哪些 claim，用户补充后提高覆盖</td>
+                </tr>
+                <tr>
+                  <td>可选补</td>
+                  <td>额外数据集、定性样例或扩展图表</td>
+                  <td>记录为后续增强，不阻塞当前探索</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            每个建议都附来源、版本、许可证/访问条件、置信度、预计成本和放置目录。补充新材料后重新运行扫描，成功处理过的内容会复用。
           </p>
         </section>
         <section
