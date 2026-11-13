@@ -33,3 +33,21 @@
 4. 第 5 处 walk 出现时再抽共享（现在抽会为 4 种不同规则造一个配置怪物）。
 
 审查方式：后续每次新增依赖或新能力域，先在本文追加一行结论（append-only），并同步 DEPENDENCY_POLICY 的依赖记录。
+
+## 分层硬化与 composition root（2026-11-13，机器强制）
+
+三层契约（application / domain / adapter）不再靠自觉——`eslint.config.js` 用一条
+`no-restricted-imports` 三条 pattern 编码（负向探针实测 3/3 命中）：
+
+| 规则 | 约束 | 白名单例外（及理由） |
+|---|---|---|
+| `**/commands/*` | domain 层（knowledge/idea/comparison/experiment/paper/full/agent/review/artifact…）不得 import 应用层命令 | 无——违例即把调用上移进命令或把 port 下传 |
+| `**/workflow/sqlite.js` | 直接 sqlite adapter 访问收口在 workflow 包 | `index.ts`（公开 port 导出）、`runtime/backup.ts`（vacuum/rebind 属 adapter 导出，Journey H 已记录）、`artifact/store.ts`（`relPathForHash` 必须与 DB 落盘布局逐字节一致——同址是故意的） |
+| `@deepseek-ai/*` | DSH SDK 消费面收口 | `src/dsh`（HarnessAdapter 实现）、`src/dsh-plugins`（cordis 插件）、`src/agent`（agent 会话）、`src/cli`（TUI 会话）、`src/models/setup.ts`（provider 凭据形状权威） |
+
+**composition root**：应用层唯一接线点是 `src/cli.ts`（注册全部命令）+
+`commands/shared.buildHarness(kind)`（fake/dsh harness 工厂）+
+`ProjectRuntime.open({ harness })`（把 adapter 注入 runtime；domain handler
+一律通过 `ctx.runtime` / 参数拿到 port，从不自行构造）。domain 层现有 import
+面已审计为零违例（`grep commands` 于 domain 目录 = 0），本次硬化是把该现状
+变成 CI 可执行的不变量；后续新增文件若踩线，lint 直接失败。
