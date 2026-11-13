@@ -969,7 +969,8 @@
         </div>
         <div class="navgroup">
           <div class="navtitle">帮助</div>
-          <a href="#recovery">暂停与恢复</a><a href="#limits">状态与边界</a>
+          <a href="#recovery">暂停与恢复</a><a href="#troubleshoot">故障排除</a
+          ><a href="#limits">状态与边界</a>
         </div>
       </aside>
       <main>
@@ -1113,6 +1114,25 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
             交互界面底部显示当前模式；按 <kbd>Shift</kbd>+<kbd>Tab</kbd> 切换，或输入
             <code>/mode research</code>、<code>/mode agent</code>。切换后顶部状态与审计输出会更新。
           </p>
+          <p>
+            Agent 模式的命令行入口是
+            <code>ideaseek agent "&lt;任务&gt;"</code>：在项目目录里启动<strong
+              >真实的 DSH coding session</strong
+            >（项目内读写、受限 shell、测试工具由 DSH 运行时提供），每回合记录审计事件，
+            <code>--resume &lt;sessionId&gt;</code> 续跑多步任务。工具审批默认安全拒绝：只有交互 TTY
+            会逐次询问 <kbd>y</kbd>/N（一次性授权），脚本环境用
+            <code>--deny-tools</code> 显式全拒。需要模型凭据（<code
+              >ideaseek models setup --test</code
+            >）。
+          </p>
+          <div class="codeframe">
+            <div class="codehead">
+              <span class="lang">bash</span><button class="copy">复制</button>
+            </div>
+            <pre><code>ideaseek agent "run the test suite and fix the failing unit"
+ideaseek agent --list
+ideaseek agent "continue where you stopped" --resume &lt;sessionId&gt;</code></pre>
+          </div>
         </section>
         <section
           id="models"
@@ -1136,8 +1156,18 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
               <span class="lang">bash</span><button class="copy">复制</button>
             </div>
             <pre><code>ideaseek models
+ideaseek models setup --api-key-env DEEPSEEK_API_KEY --prompt-key --test
+ideaseek models test
 ideaseek models use deep --confirm
 ideaseek doctor</code></pre>
+            <p>
+              <code>models setup</code> 用隐藏输入收 key（自动化用
+              <code>--api-key-stdin</code>），写入 DSH credential store 的是<strong
+                >环境变量名</strong
+              >
+              与 user-config 引用；key 值只在内存里做一次连接测试，从不落盘。连接失败时零写入。
+              <code>models test</code> 随时复测，输出只有 presence 和状态，永不含 key。
+            </p>
           </div>
         </section>
         <section
@@ -1265,6 +1295,14 @@ ideaseek plan --question "你的研究问题"</code></pre>
             <code>HANDOFF_READY</code>
             需要真实证据门槛通过；小规模正向结果不等于创新已证明，也不保证全量结果或论文录用。
           </p>
+          <p>
+            <strong>补充实验</strong>：结果分析给出的缺口用消融与补充运行补齐，而不是改口径——
+            <code>ideaseek idea ablation-plan &lt;id&gt;</code> 从机制链生成消融计划，
+            <code>ideaseek idea ablate &lt;id&gt; --scale quick</code> 按计划执行消融矩阵（每项绑定
+            idea 版本、spec 与代码哈希）； claim 侧用
+            <code>ideaseek idea result-to-claim &lt;id&gt;</code> 看全量结果实际支持什么，
+            <code>ideaseek idea claim-audit &lt;id&gt;</code> 核对证据引用。
+          </p>
         </section>
         <section
           id="full"
@@ -1281,6 +1319,25 @@ ideaseek plan --question "你的研究问题"</code></pre>
           <div class="callout">
             结果分析会识别缺少的多种子、关键消融、comparison、数据或场景证据，并生成补充实验计划；在已授权预算和数据范围内继续运行、分析并更新主张与图表。需要新数据、权限、资源或改变科学协议时先向你说明并等待决定，不编造结果，也不无限试验直到出现正向结果。
           </div>
+          <p>批准后由<strong>平台内</strong>执行（探索管线永远没有 full 规模开关）：</p>
+          <div class="codeframe">
+            <div class="codehead">
+              <span class="lang">bash</span><button class="copy">复制</button>
+            </div>
+            <pre><code>ideaseek full fairness --idea &lt;id&gt;          # 逐方法对齐报告（可编辑）
+ideaseek full fairness --idea &lt;id&gt; --confirm
+ideaseek full plan --idea &lt;id&gt;              # 可审查的全量计划锁
+ideaseek full approve --idea &lt;id&gt; --confirm  # 只批准，绝不自动开跑
+ideaseek full run --idea &lt;id&gt; --confirm --detach   # 平台内全量执行
+ideaseek attach --run &lt;runId&gt;               # 观察长任务</code></pre>
+          </div>
+          <p>
+            任何状态变化都会让旧批准失效（必须重新 fairness/plan/approve）；
+            <code>handoff</code> 包保留为你自跑全量的替代路径（你的结果记为
+            <code>USER_FULL_RESULT</code>）。全量结果进入
+            <code>ideaseek idea result-to-claim</code>、claim audit 与独立 reviewer
+            后才进入图表与论文。
+          </p>
           <p>
             证据补齐后，IdeaSeek 复用 ARIS 的论文规划、绘图、写作与编译流程，交付带
             BibTeX、图表源数据和 provenance 的 Overleaf 兼容工程。论文草稿由研究者审核，不承诺 venue
@@ -1300,8 +1357,81 @@ ideaseek plan --question "你的研究问题"</code></pre>
             <code>ideaseek continue</code>。已提交 artifact 和成功任务不应重做。
           </p>
         </section>
+        <section
+          id="troubleshoot"
+          data-search="故障排除 排错 error failed blocked stale doctor recovery troubleshooting"
+        >
+          <div class="eyebrow">11 · Troubleshooting</div>
+          <h2>故障排除</h2>
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>症状</th>
+                  <th>先跑</th>
+                  <th>说明与恢复</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>命令报「no IdeaSeek project here」</td>
+                  <td><code>ideaseek init</code></td>
+                  <td>在研究方向的根目录初始化后再运行。</td>
+                </tr>
+                <tr>
+                  <td>模型调用失败 / 无凭据</td>
+                  <td><code>ideaseek models setup --test</code></td>
+                  <td>
+                    隐藏输入配置并测连通；<code>ideaseek models test</code> 复测，输出永不含 key。
+                  </td>
+                </tr>
+                <tr>
+                  <td>full plan/approve 报 stale</td>
+                  <td><code>ideaseek full plan --idea &lt;id&gt;</code></td>
+                  <td>状态变了旧批准自动失效；重新 fairness → plan → approve 后再 run。</td>
+                </tr>
+                <tr>
+                  <td>full run 拒绝：缺 entry / fairness 未确认</td>
+                  <td><code>ideaseek baseline repair --method &lt;id&gt; --entry "..."</code></td>
+                  <td>每个 required 方法必须有可运行入口；按提示补齐后重试。</td>
+                </tr>
+                <tr>
+                  <td>run 显示 QUOTA_EXHAUSTED / NETWORK_BLOCKED</td>
+                  <td><code>ideaseek continue</code></td>
+                  <td>补额度或恢复网络后继续；已成功的任务不会重做。</td>
+                </tr>
+                <tr>
+                  <td>worker 断线 / 任务卡住</td>
+                  <td><code>ideaseek status --detail</code></td>
+                  <td>租约过期自动恢复；<code>ideaseek watchdog</code> 报告存活问题。</td>
+                </tr>
+                <tr>
+                  <td>claim audit FAIL</td>
+                  <td><code>ideaseek idea claim-audit &lt;id&gt;</code></td>
+                  <td>
+                    引用对不上论文或注册表——修证据或注册 comparison，handoff 会被挡住直到通过。
+                  </td>
+                </tr>
+                <tr>
+                  <td>环境 / GPU / 依赖可疑</td>
+                  <td><code>ideaseek doctor</code></td>
+                  <td>版本、schema、权限、容量与凭据 presence 一次性体检（不打印 secret）。</td>
+                </tr>
+                <tr>
+                  <td>备份与回滚</td>
+                  <td><code>ideaseek backup</code> / <code>ideaseek restore &lt;dir&gt;</code></td>
+                  <td>恢复前逐文件哈希校验；拒绝覆盖已有项目。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            任何恢复动作都应在 <a href="../PROGRESS.md">开发进度</a> 与事件流里留下可审计记录；
+            不确定时先 <code>ideaseek next</code>，它只解释阻塞与下一步，不启动高成本工作。
+          </p>
+        </section>
         <section id="limits" data-search="limits status roadmap implemented planned future">
-          <div class="eyebrow">11 · Product status</div>
+          <div class="eyebrow">12 · Product status</div>
           <h2>如何判断一个功能是否已完成</h2>
           <p>
             看
@@ -1319,7 +1449,8 @@ ideaseek plan --question "你的研究问题"</code></pre>
         ><a href="#models">模型与凭据</a><a href="#inputs">输入材料</a
         ><a href="#explore">快速探索</a><a href="#observe">交互与监控</a
         ><a href="#results">结果与 handoff</a><a href="#full">全量研究路线</a
-        ><a href="#recovery">暂停与恢复</a><a href="#limits">状态与边界</a>
+        ><a href="#recovery">暂停与恢复</a><a href="#troubleshoot">故障排除</a
+        ><a href="#limits">状态与边界</a>
       </aside>
     </div>
     <footer>
