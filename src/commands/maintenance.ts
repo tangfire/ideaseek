@@ -362,4 +362,90 @@ export function registerMaintenanceCommands(program: Command): void {
         }
       }),
     );
+
+  program
+    .command('backup')
+    .description(
+      'snapshot workflow DB + config + artifacts with a sha256 manifest (append-only outcome log)',
+    )
+    .option('--list', 'list recorded backup outcomes instead of creating one')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { list?: boolean; json?: boolean }) => {
+        const { runProjectBackup, listBackupRecords } = await import('../runtime/backup.js');
+        if (opts.list) {
+          const root = await openRoot();
+          const records = await listBackupRecords(root);
+          if (opts.json) {
+            process.stdout.write(jsonLine({ records }));
+            return 0;
+          }
+          if (records.length === 0) {
+            process.stdout.write('no backups recorded yet — run: ideaseek backup\n');
+            return 0;
+          }
+          for (const record of records.slice(-20)) {
+            const when = new Date(record.at).toISOString();
+            process.stdout.write(
+              `  [${record.status}] ${when} ${record.dir ?? '(failed)'} ${
+                record.error ? `— ${record.error.slice(0, 80)}` : `(${record.files.length} files)`
+              }\n`,
+            );
+          }
+          return 0;
+        }
+        const root = await openRoot();
+        const record = await runProjectBackup(root);
+        if (opts.json) {
+          process.stdout.write(jsonLine(record));
+          return record.status === 'ok' ? 0 : 1;
+        }
+        if (record.status === 'ok') {
+          process.stdout.write(
+            `backup ok: ${record.dir} (${record.files.length} files incl. manifest)\n`,
+          );
+          process.stdout.write(
+            '  workflow.db (VACUUM INTO) + research.yaml + artifacts/, no secrets\n',
+          );
+          process.stdout.write(
+            `next: restore elsewhere with: ideaseek restore <project>/${record.dir}   ·   list: ideaseek backup --list\n`,
+          );
+          return 0;
+        }
+        process.stderr.write(
+          `backup FAILED (recorded in .research/backups.jsonl): ${record.error}\n`,
+        );
+        process.stderr.write('next: free disk/permissions, then rerun ideaseek backup\n');
+        return 1;
+      }),
+    );
+
+  program
+    .command('restore')
+    .description(
+      'restore a backup into a FRESH directory (hash-verified; never overwrites an existing project)',
+    )
+    .argument(
+      '<backupDir>',
+      'backup directory (e.g. .research/backups/b-<ts> from another machine)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (backupDir: string, opts: { json?: boolean }) => {
+        // Deliberately cwd-based: restore runs on a machine with NO project yet.
+        const { restoreProjectBackup } = await import('../runtime/backup.js');
+        const result = await restoreProjectBackup(backupDir, process.cwd());
+        if (opts.json) {
+          process.stdout.write(jsonLine({ restored: true, ...result }));
+        } else {
+          process.stdout.write(
+            `restored ${result.files} file(s) into ${result.target} (every file hash-verified)\n`,
+          );
+          process.stdout.write(
+            'next: ideaseek doctor   →   ideaseek status   →   ideaseek attach\n',
+          );
+        }
+        return 0;
+      }),
+    );
 }

@@ -502,6 +502,21 @@ export function relPathForHash(hash: string): string {
  * module may import node:sqlite (ADR ports/adapters guard); callers never
  * touch a connection themselves.
  */
+/**
+ * Rebinds the project row's absolute root after a cross-machine restore
+ * (Journey H): `ensureProject` matches by root path, so a restored DB
+ * pointing at the OLD path would insert a fresh empty project instead of
+ * finding the restored runs. Only this adapter touches connections.
+ */
+export function rebindProjectRoot(dbPath: string, root: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare('UPDATE project SET root = ?').run(root);
+  } finally {
+    db.close();
+  }
+}
+
 export function vacuumSqliteInto(sourcePath: string, destPath: string): void {
   const source = new DatabaseSync(sourcePath, { readOnly: true });
   try {
