@@ -410,6 +410,144 @@ export function registerComparisonCommand(program: Command): void {
     );
 
   comparison
+    .command('matrix')
+    .description(
+      'build the reviewable comparison matrix (required/reference-only/excluded/blocked) from persisted evidence',
+    )
+    .option('--confirm', 'apply the reviewed matrix to the registry and stamp it')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { confirm?: boolean; json?: boolean }) => {
+        const root = await openRoot();
+        const { buildComparisonMatrix, assertMatrixApprovable, applyComparisonMatrix } =
+          await import('../comparison/matrix.js');
+        const { readFile } = await import('node:fs/promises');
+        const path = join(root, 'knowledge', 'comparison-matrix.json');
+        await ensureDir(join(root, 'knowledge'));
+
+        const fresh = await buildComparisonMatrix(root);
+        let stored: typeof fresh | null = null;
+        try {
+          stored = JSON.parse(await readFile(path, 'utf8')) as typeof fresh;
+        } catch {
+          stored = null;
+        }
+        // State unchanged → keep the reviewed file as-is: the researcher
+        // may have edited classifications, and a rebuild would clobber them.
+        const stateCurrent = stored !== null && stored.inputHash === fresh.inputHash;
+
+        if (!opts.confirm) {
+          if (!stateCurrent) {
+            if (stored) {
+              process.stdout.write(
+                'note: project state changed — previous matrix and its edits are superseded\n',
+              );
+            }
+            await writeFileAtomic(path, `${JSON.stringify(fresh, null, 2)}\n`);
+          }
+          const shown = stateCurrent ? stored! : fresh;
+          if (opts.json) {
+            process.stdout.write(jsonLine({ path, inputHash: shown.inputHash, matrix: shown }));
+            return 0;
+          }
+          const registeredCount = shown.entries.filter((e) => e.origin === 'registered').length;
+          process.stdout.write(
+            `comparison matrix: ${shown.blockers.length === 0 ? 'READY to confirm' : 'NOT READY'} ` +
+              `(${shown.entries.length} entries · ${registeredCount} registered · ${shown.entries.length - registeredCount} paper-card-only)\n`,
+          );
+          process.stdout.write(
+            `  context: venue=${shown.context.venue ?? 'none'} · corpus cards=${shown.context.corpusPaperCards} · ` +
+              `research map=${shown.context.researchMapPresent ? 'yes' : 'no'} · questions=${shown.context.questions.length}\n`,
+          );
+          for (const blocker of shown.blockers) {
+            process.stdout.write(`  blocker: ${blocker}\n`);
+          }
+          for (const entry of shown.entries.slice(0, 20)) {
+            process.stdout.write(
+              `  ${entry.methodId.padEnd(20)} ${entry.classification.padEnd(15)} ${entry.rationale.slice(0, 90)}\n`,
+            );
+          }
+          if (shown.entries.length > 20) {
+            process.stdout.write(`  … ${shown.entries.length - 20} more in the file\n`);
+          }
+          process.stdout.write('  file: knowledge/comparison-matrix.json\n');
+          process.stdout.write(
+            shown.blockers.length === 0
+              ? 'next: review/edit classifications in the file, then ideaseek comparison matrix --confirm\n'
+              : 'next: clear the blockers above, then rerun ideaseek comparison matrix\n',
+          );
+          return 0;
+        }
+
+        // Confirm: the reviewed (possibly edited) matrix must still match
+        // current state, then apply classifications and stamp it.
+        if (!stored) {
+          throw new IdeaseekError(
+            'USER_INPUT_REQUIRED',
+            'no comparison matrix — run: ideaseek comparison matrix',
+          );
+        }
+        assertMatrixApprovable(stored, fresh.inputHash);
+
+        const runtime = await openRuntime(root);
+        try {
+          const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+          // Structural confirm: --confirm IS the guided confirmation; the
+          // protected action records the Decision (never silent).
+          const check = assertAutonomy(mode, 'change-required-comparison', { confirmed: true });
+          const { applied } = await applyComparisonMatrix(root, stored);
+          const now = Date.now();
+          const stamped = {
+            ...stored,
+            confirmed: { at: now, mode, inputHash: stored.inputHash, applied },
+          };
+          await writeFileAtomic(path, `${JSON.stringify(stamped, null, 2)}\n`);
+
+          let decisionSeq: number | null = null;
+          if (check.needsDecision) {
+            const decision = await recordDecision(runtime.db, runtime.project.id, {
+              action: 'change-required-comparison',
+              target: `comparison matrix (${stored.entries.length} entries, ${applied.length} applied)`,
+              mode,
+            });
+            decisionSeq = decision?.seq ?? null;
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                confirmed: true,
+                mode,
+                decisionSeq,
+                inputHash: stored.inputHash,
+                applied,
+                path,
+              }),
+            );
+            return 0;
+          }
+          process.stdout.write(
+            `comparison matrix CONFIRMED [${mode}] (${stored.inputHash.slice(0, 12)}…, ` +
+              `${stored.entries.length} entries)\n`,
+          );
+          process.stdout.write(`  applied: ${applied.length} registry change(s)\n`);
+          for (const change of applied) {
+            process.stdout.write(`    ${change}\n`);
+          }
+          if (decisionSeq !== null) {
+            process.stdout.write(`  decision recorded (event #${decisionSeq})\n`);
+          }
+          process.stdout.write(
+            'next: ideaseek comparison gate   (required flags now drive the gate)\n',
+          );
+          return 0;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  comparison
     .command('gate')
     .description(
       'required-comparison gate: every required method needs a runnable result before idea generation',

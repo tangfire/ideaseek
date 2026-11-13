@@ -23,7 +23,7 @@ Dataset Discovery Agent 可以从论文、代码 README 和允许的学术索引
 
 IdeaSeek 不能让用户凭经验手工猜全量论文该比较哪些方法。进入 Full Research 前，Comparison Planner 综合研究问题、PaperCard/研究地图、近期相关工作、目标 venue/子领域、用户提供的 comparison、数据集与社区 benchmark protocol，提出可审查的 comparison matrix。目标 venue（例如用户指定的 CCF A/B 会议或期刊）是规划上下文，不是录用保证；venue 要求和近期论文证据必须带来源与时间，用户确认最终清单。
 
-每个候选方法标为 `required`、`reference-only`、`excluded` 或 `blocked`，并记录纳入理由、来源论文及定位、官方/作者代码候选、实现身份、许可证、协议适配差异、数据/指标、算力和失败/不可复现风险。清单至少检查代表性经典基线、近期强基线、直接最近邻方法、同类方法和适用的公开 benchmark；不相关或无法公平比较的方法必须给出理由，不能机械复现论文库中的所有方法。只有用户确认的 required 项进入全量比较门禁。
+每个候选方法标为 `required`、`reference-only`、`excluded` 或 `blocked`，并记录纳入理由、来源论文及定位、官方/作者代码候选、实现身份、许可证、协议适配差异、数据/指标、算力和失败/不可复现风险。清单至少检查代表性经典基线、近期强基线、直接最近邻方法、同类方法和适用的公开 benchmark；不相关或无法公平比较的方法必须给出理由，不能机械复现论文库中的所有方法。只有用户确认的 required 项进入全量比较门禁。平台侧命令 `ideaseek comparison matrix [--confirm]` 从已持久化证据（注册方法、PaperCard 最近邻、语料卡片数、存稿 venue）生成可编辑清单；`--confirm` 把（可能被用户编辑过的）分类应用到注册表——required 标记驱动门禁、excluded/blocked 走状态机并以纳入理由作 reason，paper-card 候选只列出、绝不自动注册。近期文献与 venue 推理的 agent 增强依赖模型凭据，属后续切片。
 
 实现来源顺序：官方/作者仓库可用时，核验论文与仓库关联、commit/release、许可证、数据/入口和配置；隔离 clone，先修环境、smoke 和小切片，再锁定复现版本。没有可用代码时才按论文重实现，并记录假设、缺失细节、实现差异和置信度，标为 `paper-reimplementation — NOT official code`。关键细节不足时标为 blocked/request-details，不伪造论文细节或结果。
 
