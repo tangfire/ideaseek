@@ -58,6 +58,14 @@ export interface FullPlan {
   network: { allowNetwork: boolean; externalSearch: boolean; basis: string };
   resources: { gpus: number; memoryGiB: number; diskFreeGiB: number | null; basis: string };
   licenses: { kinds: string[]; policyNote: string };
+  /** Fairness lock status (src/full/fairness.ts) — must be confirmed+current. */
+  fairness: {
+    present: boolean;
+    confirmed: boolean;
+    current: boolean;
+    inputHash: string | null;
+    blockers: string[];
+  };
   /** What the researcher must confirm before `full approve`. */
   approvalsNeeded: string[];
   boundaries: string[];
@@ -86,22 +94,76 @@ export async function buildFullPlan(root: string, ideaId: string): Promise<FullP
   try {
     // Readiness evidence = the handoff gate (writes the package — the
     // same artifact `idea handoff` produces; idempotent by design).
-    let readiness: FullPlanReadiness;
+    let gateReadiness: FullPlanReadiness;
     try {
       const { buildIdeaHandoff } = await import('../idea/handoff.js');
       const result = await buildIdeaHandoff(root, ideaId, runtime.db);
-      readiness = {
+      gateReadiness = {
         ready: result.gate.handoffReady,
         handoffLevel: result.gate.level,
         blockers: result.gate.blockers,
       };
     } catch (error) {
-      readiness = {
+      gateReadiness = {
         ready: false,
         handoffLevel: 'UNKNOWN',
         blockers: [`handoff evidence unavailable: ${(error as Error).message}`],
       };
     }
+
+    // Fairness lock: read-only rebuild + stored-draft check. Missing,
+    // stale or unconfirmed locks — and any fairness blockers — gate
+    // readiness (the researcher confirms fairness BEFORE full approve).
+    let fairness: FullPlan['fairness'];
+    const fairnessBlockers: string[] = [];
+    try {
+      const { buildFairnessLock } = await import('./fairness.js');
+      const freshFairness = await buildFairnessLock(root, ideaId);
+      let storedFairness: typeof freshFairness | null = null;
+      try {
+        const { readFile } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        storedFairness = JSON.parse(
+          await readFile(join(root, 'knowledge', `fairness-${ideaId}.json`), 'utf8'),
+        ) as typeof freshFairness;
+      } catch {
+        storedFairness = null;
+      }
+      const confirmed = storedFairness !== null && storedFairness.confirmed !== undefined;
+      const current = confirmed && storedFairness?.inputHash === freshFairness.inputHash;
+      fairness = {
+        present: storedFairness !== null,
+        confirmed,
+        current,
+        inputHash: freshFairness.inputHash,
+        blockers: freshFairness.blockers,
+      };
+      if (!current) {
+        fairnessBlockers.push(
+          storedFairness
+            ? `fairness lock stale or unconfirmed for ${ideaId} — run: ideaseek full fairness --idea ${ideaId} (review, then --confirm)`
+            : `fairness lock missing for ${ideaId} — run: ideaseek full fairness --idea ${ideaId} (review, then --confirm)`,
+        );
+      }
+      for (const blocker of freshFairness.blockers) {
+        fairnessBlockers.push(`fairness: ${blocker}`);
+      }
+    } catch (error) {
+      fairness = {
+        present: false,
+        confirmed: false,
+        current: false,
+        inputHash: null,
+        blockers: [`fairness evidence unavailable: ${(error as Error).message}`],
+      };
+      fairnessBlockers.push(`fairness evidence unavailable: ${(error as Error).message}`);
+    }
+
+    const readiness: FullPlanReadiness = {
+      ready: gateReadiness.ready && fairnessBlockers.length === 0,
+      handoffLevel: gateReadiness.handoffLevel,
+      blockers: [...gateReadiness.blockers, ...fairnessBlockers],
+    };
 
     const locks = await runtime.db.listProtocolLocks();
     const protocol = locks.length > 0 ? locks[locks.length - 1]! : null;
@@ -139,6 +201,7 @@ export async function buildFullPlan(root: string, ideaId: string): Promise<FullP
       generatedAt: Date.now(),
       question,
       readiness,
+      fairness,
       lock: {
         protocol: protocol
           ? {

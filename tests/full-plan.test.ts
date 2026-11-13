@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CLI_BIN, makeProjectDir } from './helpers.js';
+import { CLI_BIN, createDemoRun, makeProjectDir, openRuntime } from './helpers.js';
 import { assertApprovable, type FullPlan } from '../src/full/plan.js';
 
 /**
@@ -74,6 +74,88 @@ function makeCard(ideaId: string): Record<string, unknown> {
   };
 }
 
+/** Known-valid protocol proposal (same shape pending-approval seeds). */
+function validProposal(): Record<string, unknown> {
+  return {
+    protocolId: 'proto-fullplan-v1',
+    version: 1,
+    taskDefinition: {
+      value: 'binary classification of user churn',
+      source: 'paper-evidence',
+      confidence: 0.9,
+    },
+    sampleUnit: { value: 'one customer row', source: 'data-probe', confidence: 0.85 },
+    labelSemantics: { value: 'churned = cancelled within 30 days', source: 'user', confidence: 1 },
+    splitRules: {
+      value: ['time-based 70/15/15 split on signup date'],
+      source: 'adapter-rule',
+      confidence: 0.8,
+    },
+    leakageChecks: ['no post-cutoff features in train split'],
+    preprocessing: ['median imputation fit on train only'],
+    baselineEntries: [
+      {
+        methodId: 'fedavg',
+        entry: 'python train.py --model fedavg',
+        source: 'code',
+        confidence: 0.9,
+      },
+    ],
+    primaryMetrics: [
+      { name: 'rare-class recall', direction: 'higher', source: 'paper-evidence', confidence: 0.9 },
+    ],
+    secondaryMetrics: [
+      { name: 'F1', direction: 'higher', source: 'paper-evidence', confidence: 0.8 },
+    ],
+    statisticalSummary: ['mean ± std over 5 seeds'],
+    smokeTest: { value: '500 rows, 1 epoch', source: 'adapter-rule', confidence: 0.85 },
+    resourceEstimate: {
+      value: '1 GPU-hour per quick run',
+      source: 'agent-inference',
+      confidence: 0.6,
+    },
+    ablations: ['w/o reweighting head'],
+    supportCriteria: ['rare-class recall ≥ baseline + 0.02 on quick slice'],
+    refuteCriteria: ['rare-class recall < baseline on 3 seeds'],
+    invalidRunCriteria: ['data loader produced NaN'],
+    stopConditions: ['budget exhausted or 3 rounds without gain'],
+    generatedAt: 1,
+    generator: 'protocol-synth-v1',
+  };
+}
+
+async function seedProtocolProposal(dir: string): Promise<void> {
+  const rt = await openRuntime(dir, { recover: false });
+  try {
+    const run = await createDemoRun(rt, 'full-plan protocol seed');
+    const task = await rt.db.claimNextTask(run.runId, 'seed-worker', { leaseMs: 60_000 });
+    const staged = await rt.store.stage(
+      'protocol-proposal',
+      `${JSON.stringify(validProposal(), null, 2)}\n`,
+      {},
+    );
+    await rt.db.beginCommit({
+      taskId: task!.taskId,
+      workerId: 'seed-worker',
+      attempt: task!.attempt,
+      artifacts: [
+        {
+          kind: 'protocol-proposal',
+          tempPath: staged.tempPath,
+          contentHash: staged.contentHash,
+          size: staged.size,
+          meta: staged.meta,
+        },
+      ],
+      result: { summary: 'seeded', artifacts: [] },
+    });
+    await rt.store.promote([staged]);
+    await rt.db.finalizeCommit({ taskId: task!.taskId, workerId: 'seed-worker' });
+  } finally {
+    await rt.close();
+  }
+}
+
 function basePlan(overrides: Partial<FullPlan> = {}): FullPlan {
   return {
     contract: 'full-plan-v1',
@@ -96,6 +178,13 @@ function basePlan(overrides: Partial<FullPlan> = {}): FullPlan {
     network: { allowNetwork: false, externalSearch: false, basis: 'test' },
     resources: { gpus: 1, memoryGiB: 16, diskFreeGiB: 100, basis: 'test' },
     licenses: { kinds: ['MIT'], policyNote: 'ok' },
+    fairness: {
+      present: true,
+      confirmed: true,
+      current: true,
+      inputHash: 'sha256:' + 'c'.repeat(64),
+      blockers: [],
+    },
     approvalsNeeded: ['confirm question'],
     boundaries: ['draft'],
     ...overrides,
@@ -303,11 +392,32 @@ describe('ideaseek full plan / approve (e2e)', () => {
       (await runCli(dir, ['run', '--question', 'full approve run', '--enqueue-only'])).code,
     ).toBe(0);
 
+    // Plan readiness requires a confirmed+current fairness lock, which in
+    // turn requires a locked protocol and succeeded specs on both sides.
+    await seedProtocolProposal(dir);
+    expect((await runCli(dir, ['confirm', 'protocol', '--json'])).code).toBe(0);
+    expect((await runCli(dir, ['full', 'fairness', '--idea', 'alpha', '--json'])).code).toBe(0);
+    const fairness = await runCli(dir, [
+      'full',
+      'fairness',
+      '--idea',
+      'alpha',
+      '--confirm',
+      '--json',
+    ]);
+    expect(fairness.code, fairness.stdout + fairness.stderr).toBe(0);
+
     const plan = await runCli(dir, ['full', 'plan', '--idea', 'alpha', '--json']);
     expect(plan.code, plan.stdout + plan.stderr).toBe(0);
     const planned = JSON.parse(plan.stdout) as {
-      plan: { readiness: { ready: boolean; blockers: string[] }; inputHash: string };
+      plan: {
+        readiness: { ready: boolean; blockers: string[] };
+        inputHash: string;
+        fairness: { current: boolean; confirmed: boolean };
+      };
     };
+    expect(planned.plan.fairness.confirmed).toBe(true);
+    expect(planned.plan.fairness.current).toBe(true);
     expect(planned.plan.readiness.blockers).toEqual([]);
     expect(planned.plan.readiness.ready).toBe(true);
 

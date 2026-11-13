@@ -21,7 +21,8 @@ export type ProtectedAction =
   | 'change-model-route'
   | 'change-research-mode'
   | 'finalize-handoff'
-  | 'full-research';
+  | 'full-research'
+  | 'lock-fairness';
 
 /** Actions that write code or launch runs (blocked outright in review-only). */
 export type MutationAction = 'start-experiment' | 'write-code';
@@ -65,6 +66,7 @@ const PROTECTED: ReadonlySet<string> = new Set<ProtectedAction>([
   'change-research-mode',
   'finalize-handoff',
   'full-research',
+  'lock-fairness',
 ]);
 
 const MUTATIONS: ReadonlySet<string> = new Set<MutationAction>(['start-experiment', 'write-code']);
@@ -91,7 +93,12 @@ export function checkAutonomy(
   const confirmed = opts.confirmed === true;
 
   if (mode === 'review-only') {
-    if (MUTATIONS.has(action) || action === 'finalize-handoff' || action === 'full-research') {
+    if (
+      MUTATIONS.has(action) ||
+      action === 'finalize-handoff' ||
+      action === 'full-research' ||
+      action === 'lock-fairness'
+    ) {
       return {
         allowed: false,
         needsDecision: false,

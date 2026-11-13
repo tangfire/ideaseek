@@ -27,7 +27,7 @@ IdeaSeek 不能让用户凭经验手工猜全量论文该比较哪些方法。�
 
 实现来源顺序：官方/作者仓库可用时，核验论文与仓库关联、commit/release、许可证、数据/入口和配置；隔离 clone，先修环境、smoke 和小切片，再锁定复现版本。没有可用代码时才按论文重实现，并记录假设、缺失细节、实现差异和置信度，标为 `paper-reimplementation — NOT official code`。关键细节不足时标为 blocked/request-details，不伪造论文细节或结果。
 
-锁定前逐方法对齐数据版本与 split、预处理、训练/验证/测试用途、主/次指标、模型选择规则、调参预算、随机种子/重复次数、早停规则和计算资源。文献原报告与本地复现结果分开呈现；无法统一的条件显式记录 deviation 并交研究者确认。
+锁定前逐方法对齐数据版本与 split、预处理、训练/验证/测试用途、主/次指标、模型选择规则、调参预算、随机种子/重复次数、早停规则和计算资源。文献原报告与本地复现结果分开呈现；无法统一的条件显式记录 deviation 并交研究者确认。`ideaseek full fairness --idea <id>` 把该对齐固化为可复核的 fairness lock：可机检维度（data/split、指标、seeds）从记录的 spec 自动比对，平台无法机检的维度（预处理、调参预算、早停、模型选择、资源）明标为 declared、由研究者 `--confirm` 声明；缺协议锁、缺 idea spec、required 方法无成功实验都是带恢复命令的 blocker。`full plan` 要求该锁已确认且随状态变化自动失效。
 
 ## 全量实验
 
@@ -71,6 +71,8 @@ paper/
 ## CLI
 
 ```bash
+ideaseek full fairness --idea <idea-id>
+ideaseek full fairness --idea <idea-id> --confirm
 ideaseek full plan --idea <idea-id>
 ideaseek full approve --idea <idea-id> --confirm
 ideaseek full data discover --idea <idea-id>
