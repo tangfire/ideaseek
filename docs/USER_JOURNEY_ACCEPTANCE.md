@@ -164,7 +164,7 @@ ideaseek archive/export → 另一台 Linux → restore → doctor → continue
 
 自动化验收：`tests/journey-acceptance.test.ts`（4 条）+ 既有套件覆盖——
 
-- **Journey A ✅（自动）**：`--version` 对齐 package 版本；`doctor` 空目录人话提示 init、零 secret；`init` 幂等（already initialized）；`start` 空项目给出最小输入与可复制 `next:`。安装通道当前为 source build（npm 发布见 Phase 9 待办）。
+- **Journey A ✅（自动）**：`--version` 对齐 package 版本；`doctor` 空目录人话提示 init、零 secret；`init` 幂等（already initialized）；`start` 空项目给出最小输入与可复制 `next:`。当前安装通道为 source build；最终可复现发行包的分发渠道（npm、私有 Git 或实验室镜像）尚未决定，不把公开 npm 发布作为产品前置。
 - **Journey B ✅（自动）**：`models list` 显示 fast/balanced/deep/deterministic 四层与角色绑定、凭据只报 presence；`models list --json` 可解析且 `sk-`/`ghp_` 零命中。
 - **Journey C ✅（自动）**：论文/数据/comparison/歧义分组、重复内容识别、原始文件字节不变；`plan --question --json` 给出 paperFiles/manifestFiles/comparisons/ideas.limit/model.route 且为 dry-run。
 - **Journey E ✅（自动，非交互核心）**：run 存在时 `ask` 查询有回答；高影响 ask 落 pending/Decision 且 `idea list` 无副作用；`--plain/--json` 脱敏由既有 interactive/models 套件覆盖（REPL 交互面见 repl-ux/interactive）。

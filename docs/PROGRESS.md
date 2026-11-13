@@ -225,21 +225,13 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 
 - [x] README Quickstart 与 USER_GUIDE 从零机器验证
 - [ ] 文档站分层、搜索和版本发布流程
-- [ ] npm CLI/package 发布和版本校验
+- [ ] 可复现 CLI 发行包、版本校验和升级路径（分发渠道可选，不以公开 npm 发布为前置）
 - [ ] 一键安装/卸载和 `ideaseek doctor`
 - [ ] Linux 安装包和服务器部署验证
 - [x] Windows/WSL2 使用路径验证
 - [x] 回归集、依赖、许可证和 secret 检查
 - [ ] 备份恢复演练、版本迁移和回滚
 
-## 可选扩展 Backlog
-
-这里只保留确实按用户/实验室具体需求启用的扩展。ARIS 已覆盖的科研 workflow 不在此重复列项；Full Research 所需的多 GPU/资源准入、跨方向验收和长任务能力属于核心路线，分别列在 Phase 6–8，不是可选 backlog。
-
-- [ ] 可选插件 SDK、安装/启用/doctor 和权限 manifest
-- [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter 的插件 SDK
-- [ ] 连接实验室自有模型推理服务的额外部署优化（核心模型路由与 DSH provider 已属于 Phase 1）
-- [ ] 超出当前统一协议的专有数据格式/工作流集成；按真实用户需求通过插件提供
 ## 模块交付记录
 
 每个完成模块追加一行：

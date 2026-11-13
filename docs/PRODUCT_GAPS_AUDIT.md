@@ -75,16 +75,11 @@ ideaseek export --run <run_id> --to <path>
 
 报告和 CLI 都能标记：有用、无效、已有工作、实验协议错误、数据解析错误、baseline 不公平。反馈进入 Decision/Event，可选择加入 gold set；默认不把私有项目上传到平台共享评测集。
 
-## 仍需实现的产品项
+## 当前未完成项
 
-- 自然语言 REPL 与高影响操作确认；
-- plan/dry-run 和成本预估；
-- 用户级/项目级配置分层；
-- 多项目注册、项目锁和目录守卫；
-- cleanup/archive/export；
-- 通知 webhook 和无心跳检测；
-- 运行中暂停单个 idea/comparison 和调整优先级；
-- 结果反馈入口和 gold set 导入。
+原有清单中的自然语言 REPL、plan/dry-run、用户/项目配置、多项目锁、cleanup/archive/export、通知、反馈和部分用户旅程已在后续阶段实现，逐项状态以 `docs/PROGRESS.md` 为准。
+
+当前仍未完成的能力以 `PROGRESS.md` 未勾选项为唯一实施来源，重点包括：真实 `HANDOFF_READY` 与第二任务族的研究验收、Full Research comparison 规划/公平性/全量执行与证据审计、完整用户旅程的剩余真实环境验收、分层硬化，以及发行包/安装/升级/恢复演练。依赖真实研究材料、GPU、外部凭据或发布环境的项目必须标为外部验收，不能用模拟测试勾选完成。
 
 ## 产品验收原则
 
