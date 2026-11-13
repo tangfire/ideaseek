@@ -126,12 +126,17 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     void session
       .begin()
       .then((startup) => {
-        if (!cancelled) bus.setStartup(startup);
+        // Serialize startup BEFORE the event stream opens: both paths
+        // open the project DB, and overlapping connections can hit
+        // "database is locked" under load (attach recovery writes while
+        // status is still reading).
+        if (cancelled) return;
+        bus.setStartup(startup);
+        session.startStream();
       })
       .catch((error: unknown) => {
         if (!cancelled) bus.push(`startup: ${(error as Error).message}`);
       });
-    session.startStream();
     return () => {
       cancelled = true;
       session.stopStream();
