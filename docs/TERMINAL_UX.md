@@ -121,6 +121,8 @@ ideaseek ›
 
 备用屏幕没有终端原生回滚，因此 TUI 开启鼠标上报（1000+1006）接管滚轮：上滑按 6 行/格回看历史，PgUp/PgDn 仍可整页翻动；滚动时视图锚定（新到达的事件不会把正在读的内容推走），下滑到底恢复实时跟随，滚到顶自动钳制不越界。点击/拖拽上报被吞掉，绝不落进输入行。代价是终端原生拖选被接管（多数终端 Shift+拖拽仍可选中复制）。
 
+活动区 transcript 有三类可区分的行：**用户输入**以 `❯ ` 前缀回显（青色加粗——输入行提交后即清空，不回显就只剩响应，用户无法对照自己问了什么）；**响应**为普通行，紧跟在 `❯` 行之后；**事件**带 `[HH:MM:SS]` 时间戳与阶段标签。错误行红色。行式 `--plain` 路径由 readline 原生回显输入，无需此机制。
+
 ### 实现状态：事件粒度为任务级（2026-11-13）
 
 当前实时流覆盖任务/阶段级事件（task/run 生命周期、Decision、artifact 提交与各领域事件），TUI activity pane、`attach`/`watch`/`events` 均按此粒度展示。**步骤级**（单次模型调用内的工具调用与训练 step/epoch 心跳）尚未进 RunEvent 流：`HarnessEvent.tool_call` 已定义但 DSH/fake adapter 只发 `started`/`completed`，`onEvent` 摘要仅进任务日志；`harness_tool_call` 事件目前仅 paper.extract 在任务完成后批量落盘；实验进度心跳写 `progress-<specId>.json` 由 `ideaseek monitor` 快照展示。该缺口登记于 `PROGRESS.md` Phase 1.5 未勾选项与 `PRODUCT_GAPS_AUDIT.md` 缺口 9。会话级 UI 决策（如 Research/Agent 切换的 `change-session-mode` 审计事件）入 DB 供 `ideaseek events` 查询，但不进 TUI 事件流——切换确认行已即时显示该动作，回放它们只会用同款 DECISION 行淹没首屏。

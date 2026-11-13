@@ -214,6 +214,10 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
       const line = result.submit;
       // Bare "/" — the engine already keeps the palette open; nothing to run.
       if (line === '/') return;
+      // Echo the utterance into the transcript (Claude-Code style): the
+      // input line clears on submit, so without this the pane shows only
+      // responses/events and the user cannot tell what was asked.
+      bus.push(`❯ ${line}`);
       // Strictly ordered dispatch: a piped burst must not overtake an
       // in-flight command's output (same queue discipline as classic).
       setBusy(true);
@@ -277,11 +281,23 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
         ))}
       </Box>
       <Box flexDirection="column" flexGrow={1}>
-        {pane.map((line, index) => (
-          <Text key={`p-${start + index}`} wrap="truncate">
-            {line}
-          </Text>
-        ))}
+        {pane.map((line, index) => {
+          // Transcript grammar: `❯ …` = what the user submitted (bold
+          // cyan), timestamped `[HH:MM:SS] …` = persisted events, plain
+          // lines = command/agent responses — three visually distinct
+          // kinds so ask/agent replies never blur into the event stream.
+          const isUser = line.startsWith('❯ ');
+          return (
+            <Text
+              key={`p-${start + index}`}
+              wrap="truncate"
+              color={isUser ? 'cyan' : undefined}
+              bold={isUser}
+            >
+              {line}
+            </Text>
+          );
+        })}
         {effOffset > 0 ? (
           <Text
             dimColor

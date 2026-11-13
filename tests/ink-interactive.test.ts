@@ -148,6 +148,9 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // Enter dispatches through the shared session → real CLI relay.
       await repl.write('\r');
       await repl.waitFor(/Run/); // `ideaseek status` output
+      // The utterance is echoed into the transcript (❯ + bold cyan), so
+      // user input, responses and timestamped events stay distinguishable.
+      expect(repl.output()).toContain('❯ /status');
       // While the relay ran, the input line itself carried the spinner.
       expect(repl.output()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 
