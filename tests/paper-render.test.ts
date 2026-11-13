@@ -73,6 +73,11 @@ describe('ideaseek paper render-figures (e2e)', () => {
         id: string;
         ok: boolean;
         outputs: { path: string; bytes: number; sha256: string }[];
+        formats: string[];
+        caption: string;
+        statistics: string[];
+        scriptSha256: string;
+        review: { status: string };
         error: string | null;
       }[];
       python: string;
@@ -95,11 +100,79 @@ describe('ideaseek paper render-figures (e2e)', () => {
     // The rendered file really exists on disk.
     expect(await exists(join(dir, figure.outputs[0]!.path))).toBe(true);
 
+    // Source-manifest fields: dual formats (script writes pdf+png), caption,
+    // statistics definition, code-version hash and review status.
+    expect(figure.formats).toContain('pdf');
+    expect(figure.formats).toContain('png');
+    expect(figure.caption).toContain('Fake caption');
+    expect(figure.statistics.length).toBeGreaterThan(0);
+    expect(figure.scriptSha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(figure.review.status).toBe('unreviewed');
+
     const persisted = JSON.parse(
       await readFile(join(dir, 'reports', 'paper', 'figure-render.json'), 'utf8'),
     ) as { contract: string; status: string };
     expect(persisted.contract).toBe('figure-render-v1');
     expect(persisted.status).toBe('rendered');
+  }, 300_000);
+
+  it('records human review status per figure (source manifest)', async () => {
+    const dir = await makeProjectDir();
+    await seedFigurePlan(dir);
+    expect((await runCli(dir, ['paper', 'render-figures'])).code).toBe(0);
+
+    const approved = await runCli(dir, [
+      'paper',
+      'review-figure',
+      'fig-1',
+      '--status',
+      'approved',
+      '--note',
+      'caption matches the plan claim',
+    ]);
+    expect(approved.code).toBe(0);
+    expect(approved.stdout).toContain('figure fig-1 review: approved');
+
+    const stored = JSON.parse(
+      await readFile(join(dir, 'reports', 'paper', 'figure-render.json'), 'utf8'),
+    ) as {
+      figures: {
+        id: string;
+        review: { status: string; note: string | null; history: unknown[] };
+      }[];
+    };
+    const review = stored.figures.find((figure) => figure.id === 'fig-1')!.review;
+    expect(review.status).toBe('approved');
+    expect(review.note).toContain('caption matches');
+    expect(review.history).toHaveLength(1); // previous unreviewed kept
+
+    // Re-review flips again and appends history (append-only trail).
+    expect(
+      (
+        await runCli(dir, [
+          'paper',
+          'review-figure',
+          'fig-1',
+          '--status',
+          'rejected',
+          '--note',
+          'blurry',
+        ])
+      ).code,
+    ).toBe(0);
+    const after = JSON.parse(
+      await readFile(join(dir, 'reports', 'paper', 'figure-render.json'), 'utf8'),
+    ) as { figures: { id: string; review: { status: string; history: unknown[] } }[] };
+    expect(after.figures.find((figure) => figure.id === 'fig-1')!.review.status).toBe('rejected');
+    expect(after.figures.find((figure) => figure.id === 'fig-1')!.review.history).toHaveLength(2);
+
+    // Unknown id and bad status are hard errors.
+    const unknown = await runCli(dir, ['paper', 'review-figure', 'nope', '--status', 'approved']);
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.stderr).toContain('unknown figure id');
+    const badStatus = await runCli(dir, ['paper', 'review-figure', 'fig-1', '--status', 'meh']);
+    expect(badStatus.code).not.toBe(0);
+    expect(badStatus.stderr).toContain('approved | rejected');
   }, 300_000);
 
   it('fails scripts honestly (exit != 0 → failed report, exit 1)', async () => {
@@ -115,6 +188,8 @@ describe('ideaseek paper render-figures (e2e)', () => {
           id: 'fig-1',
           type: 'bar',
           title: 'Broken',
+          caption: 'Broken figure.',
+          statistics: ['always fails'],
           dataSources: [{ kind: 'context', ref: 'x' }],
           script: 'import matplotlib.pyplot as plt\nraise SystemExit(3)\n',
           latexInclude: '\\includegraphics{figures/fig-1}',

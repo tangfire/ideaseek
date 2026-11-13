@@ -30,6 +30,8 @@ function validFigurePlan(): Record<string, unknown> {
         id: 'fig-1',
         type: 'bar',
         title: 'Main comparison',
+        caption: 'Main comparison under the locked protocol.',
+        statistics: ['bar height = final accuracy'],
         dataSources: [{ kind: 'experiment-spec', ref: 'repro-fedavg' }],
         script: 'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n',
         latexInclude: '\\includegraphics{figures/fig-1}',
@@ -140,6 +142,22 @@ describe('validatePaperFigurePlan (contract)', () => {
       })(),
     },
     {
+      name: 'missing caption',
+      plan: (() => {
+        const p = validFigurePlan();
+        delete (p.figures as Record<string, unknown>[])[0]!.caption;
+        return p;
+      })(),
+    },
+    {
+      name: 'empty statistics',
+      plan: (() => {
+        const p = validFigurePlan();
+        (p.figures as Record<string, unknown>[])[0]!.statistics = [];
+        return p;
+      })(),
+    },
+    {
       name: 'bad source kind',
       plan: (() => {
         const p = validFigurePlan();
@@ -204,6 +222,8 @@ describe('parsePaperFigureOutput (plan pin)', () => {
       id: 'fig-2',
       type: 'line',
       title: 'Curves',
+      caption: 'Training curves.',
+      statistics: ['y = metric over steps'],
       dataSources: [{ kind: 'result-file', ref: 'logs/run.json' }],
       script: 'import matplotlib.pyplot as plt\n',
       latexInclude: '\\includegraphics{figures/fig-2}',
@@ -285,6 +305,12 @@ describe('ideaseek paper figure (e2e, fake harness)', () => {
     expect(stored.figures.figures.map((figure) => figure.id)).toEqual(['fig-1']);
     expect(stored.figures.figures[0]!.script).toContain('matplotlib');
     expect(stored.figures.figures[0]!.latexInclude).toContain('\\includegraphics');
+    const firstFigure = stored.figures.figures[0] as unknown as {
+      caption: string;
+      statistics: string[];
+    };
+    expect(firstFigure.caption).toContain('Fake caption');
+    expect(firstFigure.statistics.length).toBeGreaterThan(0);
     expect(stored.figures.manualRemaining.length).toBeGreaterThan(0);
     expect(stored.figures.reviewerFeedback.verdict).toBe('REVIEW_UNAVAILABLE');
 

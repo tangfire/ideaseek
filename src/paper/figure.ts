@@ -41,7 +41,11 @@ export interface FigureSpec {
   id: string;
   type: (typeof FIGURE_TYPES)[number];
   title: string;
+  /** Publication caption (source-manifest field). */
+  caption: string;
   dataSources: FigureDataSource[];
+  /** What the figure computes — the statistics definition (source-manifest field). */
+  statistics: string[];
   /** Python plotting source (matplotlib) — persisted, not executed here. */
   script: string;
   /** LaTeX snippet placing the rendered figure/table. */
@@ -67,7 +71,7 @@ export const PAPER_FIGURE_OUTPUT_CONTRACT = [
   '  "style": "publication" | "poster" | "slide",',
   '  "dpi": integer ≥ 72,',
   '  "format": "pdf" | "png",',
-  '  "figures": [{"id": string, "type": "line"|"bar"|"scatter"|"heatmap"|"box"|"violin"|"table"|"multi-panel", "title": string, "dataSources": [{"kind": "experiment-spec"|"result-file"|"existing-figure"|"context", "ref": string}], "script": string, "latexInclude": string, "claims": [string]}] — at least 1; every id from the stored plan figure list MUST appear exactly once',
+  '  "figures": [{"id": string, "type": "line"|"bar"|"scatter"|"heatmap"|"box"|"violin"|"table"|"multi-panel", "title": string, "caption": string (publication caption), "statistics": [string] (what the figure computes — at least 1), "dataSources": [{"kind": "experiment-spec"|"result-file"|"existing-figure"|"context", "ref": string}], "script": string (save BOTH a vector pdf/svg and a png via savefig), "latexInclude": string, "claims": [string]}] — at least 1; every id from the stored plan figure list MUST appear exactly once',
   '  "preservedExisting": [string],  // existing manual figures you detected and did not overwrite',
   '  "manualRemaining": [string],    // hero/architecture/qualitative figures a human must draw',
   '  "reviewerFeedback": {"verdict": "ACCEPT"|"REVISE"|"REVIEW_UNAVAILABLE", "notes": [string]}',
@@ -117,6 +121,14 @@ export function validatePaperFigurePlan(value: unknown): { ok: boolean; errors: 
         errors.push(`figures[${index}].type must be one of ${FIGURE_TYPES.join(' | ')}`);
       }
       if (!nonEmpty(figure.title)) errors.push(`figures[${index}].title must be non-empty`);
+      if (!nonEmpty(figure.caption)) errors.push(`figures[${index}].caption must be non-empty`);
+      if (
+        !Array.isArray(figure.statistics) ||
+        figure.statistics.length === 0 ||
+        figure.statistics.some((stat) => !nonEmpty(stat))
+      ) {
+        errors.push(`figures[${index}].statistics must be non-empty strings`);
+      }
       if (!nonEmpty(figure.script)) errors.push(`figures[${index}].script must be non-empty`);
       else if (!figure.script.trim().includes('matplotlib')) {
         errors.push(`figures[${index}].script must be a matplotlib source`);

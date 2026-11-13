@@ -762,6 +762,89 @@ export function registerPaperCommand(program: Command): void {
         return report.status === 'rendered' ? 0 : 1;
       }),
     );
+
+  paper
+    .command('review-figure')
+    .description('record the human review status of a rendered figure (source manifest)')
+    .argument('<id>', 'figure id from the render report')
+    .requiredOption('--status <status>', 'approved | rejected')
+    .option('--note <text>', 'review note')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (id: string, opts: { status: string; note?: string; json?: boolean }) => {
+        const root = await findRoot();
+        if (opts.status !== 'approved' && opts.status !== 'rejected') {
+          throw new IdeaseekError('INVALID_ARGUMENT', '--status must be approved | rejected');
+        }
+        const path = join(root, 'reports', 'paper', 'figure-render.json');
+        let stored: {
+          contract: string;
+          figures: {
+            id: string;
+            review?: {
+              status: string;
+              note: string | null;
+              at: number | null;
+              history: { status: string; note: string | null; at: number }[];
+            };
+          }[];
+        };
+        try {
+          stored = JSON.parse(await readFile(path, 'utf8'));
+        } catch {
+          throw new IdeaseekError(
+            'USER_INPUT_REQUIRED',
+            'no figure render report — run: ideaseek paper render-figures',
+          );
+        }
+        if (stored.contract !== 'figure-render-v1') {
+          throw new IdeaseekError(
+            'INVALID_ARTIFACT',
+            'reports/paper/figure-render.json is not a figure-render-v1 artifact',
+          );
+        }
+        const figure = stored.figures.find((entry) => entry.id === id);
+        if (!figure) {
+          const known = stored.figures.map((entry) => entry.id).join(', ') || 'none';
+          throw new IdeaseekError(
+            'INVALID_ARGUMENT',
+            `unknown figure id "${id}" — rendered figures: ${known}`,
+          );
+        }
+        const now = Date.now();
+        const previous = figure.review ?? {
+          status: 'unreviewed',
+          note: null,
+          at: null,
+          history: [],
+        };
+        figure.review = {
+          status: opts.status,
+          note: opts.note ?? null,
+          at: now,
+          history: [
+            ...previous.history,
+            { status: previous.status, note: previous.note, at: previous.at ?? now },
+          ],
+        };
+        await writeFileAtomic(path, `${JSON.stringify(stored, null, 2)}\n`);
+
+        if (opts.json) {
+          process.stdout.write(jsonLine({ id, review: figure.review, path }));
+        } else {
+          process.stdout.write(
+            `figure ${id} review: ${opts.status}${opts.note ? ` — ${opts.note}` : ''}\n`,
+          );
+          process.stdout.write(
+            `  previous: ${previous.status} · history kept in reports/paper/figure-render.json\n`,
+          );
+          process.stdout.write(
+            'next: include the caption in the paper; re-render only after regenerating the plan\n',
+          );
+        }
+        return 0;
+      }),
+    );
 }
 
 /* ------------------------------------------------------------------ */

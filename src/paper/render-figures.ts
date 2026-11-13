@@ -1,24 +1,34 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
-import { sha256OfFile } from '../core/hash.js';
+import { sha256Of, sha256OfFile } from '../core/hash.js';
 import { redactSecrets } from '../core/redact.js';
 import { runProcess } from '../core/proc.js';
 import { pythonBinary } from '../knowledge/pdf.js';
 
 /**
- * Phase 7 figure pipeline slice: EXECUTES the plotting scripts persisted
- * by `paper figure` inside figures/, through the shared subprocess adapter
+ * Phase 7 figure pipeline: EXECUTES the plotting scripts persisted by
+ * `paper figure` inside figures/, through the shared subprocess adapter
  * (timeout + tree-kill), with MPLBACKEND=Agg so nothing opens a window.
- * Outputs are discovered by directory diff (any new non-script file under
- * figures/), hashed into the report for the source-manifest trail.
  *
- * Honest status: rendered (every figure produced outputs) | partial |
- * failed — a script that exits 0 without writing anything is a failure,
- * never a silent pass.
+ * Source-manifest coverage (PROGRESS Phase 7 图表 source manifest):
+ * - inputs: carried in the figure plan (dataSources), bound via
+ *   planInputHash;
+ * - statistics definitions + caption: copied from the plan per figure;
+ * - code version: sha256 of the executed script;
+ * - outputs: every produced file hashed (path/bytes/sha256), a vector
+ *   (pdf/svg) output required for success, PNG auto-derived via pdftoppm
+ *   when the script did not write one;
+ * - review status: starts `unreviewed`, flipped by `paper review-figure`.
+ *
+ * Honest status: rendered (every figure produced a vector output) |
+ * partial | failed — a script that exits 0 without writing anything is a
+ * failure, never a silent pass.
  */
 
 export const FIGURE_RENDER_SCHEMA = 'figure-render-v1';
+
+export type FigureReviewStatus = 'unreviewed' | 'approved' | 'rejected';
 
 export interface RenderedOutput {
   path: string;
@@ -26,10 +36,25 @@ export interface RenderedOutput {
   sha256: string;
 }
 
+export interface FigureReview {
+  status: FigureReviewStatus;
+  note: string | null;
+  at: number | null;
+  history: { status: FigureReviewStatus; note: string | null; at: number }[];
+}
+
 export interface FigureRenderResult {
   id: string;
   ok: boolean;
   outputs: RenderedOutput[];
+  /** Extensions actually on disk (e.g. ['pdf','png']). */
+  formats: string[];
+  /** Source-manifest fields copied from the figure plan. */
+  caption: string;
+  statistics: string[];
+  /** sha256 of the executed script (code-version manifest field). */
+  scriptSha256: string;
+  review: FigureReview;
   error: string | null;
   durationMs: number;
 }
@@ -48,7 +73,12 @@ interface StoredFigurePlan {
   inputHash: string;
   skill: { name: string; sha256: string };
   figures: {
-    figures: { id: string; script: string }[];
+    figures: {
+      id: string;
+      script: string;
+      caption?: string;
+      statistics?: string[];
+    }[];
   };
 }
 
@@ -81,6 +111,61 @@ async function listFigureFiles(dir: string): Promise<Set<string>> {
   }
 }
 
+function formatsOf(outputs: RenderedOutput[]): string[] {
+  const exts = new Set<string>();
+  for (const output of outputs) {
+    const match = output.path.match(/\.([a-z0-9]+)$/i);
+    if (match) exts.add(match[1]!.toLowerCase());
+  }
+  return [...exts].sort();
+}
+
+/**
+ * Ensures a PNG exists next to the vector output: uses the script's own
+ * png when present, otherwise derives one with pdftoppm (texlive ships it;
+ * absence degrades to vector-only formats, never a crash).
+ */
+async function ensurePng(
+  figuresDir: string,
+  id: string,
+  outputs: RenderedOutput[],
+  seen: Set<string>,
+): Promise<void> {
+  if (outputs.some((output) => output.path.endsWith('.png'))) return;
+  const vector = outputs.find((output) => output.path.endsWith('.pdf'));
+  if (!vector) return;
+  const pdfName = vector.path.split('/').pop()!;
+  const prefix = join(figuresDir, `${id}-conv`);
+  try {
+    const result = await runProcess(
+      'pdftoppm',
+      ['-png', '-r', '144', join(figuresDir, pdfName), prefix],
+      { cwd: figuresDir, timeoutMs: 60_000, env: process.env },
+    );
+    if (result.timedOut || result.code !== 0) return;
+    const files = (await readdir(figuresDir)).filter(
+      (name) => name.startsWith(`${id}-conv`) && name.endsWith('.png'),
+    );
+    if (files.length === 0) return;
+    files.sort();
+    const target = `${id}.png`;
+    await rename(join(figuresDir, files[0]!), join(figuresDir, target));
+    for (const extra of files.slice(1)) {
+      await rm(join(figuresDir, extra), { force: true });
+    }
+    const abs = join(figuresDir, target);
+    const info = await import('node:fs/promises').then((fs) => fs.stat(abs));
+    seen.add(target);
+    outputs.push({
+      path: `figures/${target}`,
+      bytes: info.size,
+      sha256: await sha256OfFile(abs),
+    });
+  } catch {
+    // pdftoppm not installed → formats stay vector-only (reported honestly)
+  }
+}
+
 export interface RenderOptions {
   /** Per-figure execution bound (tree-killed on timeout). */
   timeoutMs?: number;
@@ -106,6 +191,7 @@ export async function renderFigures(
   for (const spec of specs) {
     const scriptPath = join(figuresDir, `${spec.id}.py`);
     await writeFile(scriptPath, spec.script, 'utf8');
+    const scriptSha256 = sha256Of(spec.script);
     const started = Date.now();
     const env = { ...process.env, MPLBACKEND: 'Agg' };
     let outcome: Awaited<ReturnType<typeof runProcess>>;
@@ -120,6 +206,11 @@ export async function renderFigures(
         id: spec.id,
         ok: false,
         outputs: [],
+        formats: [],
+        caption: spec.caption ?? '',
+        statistics: spec.statistics ?? [],
+        scriptSha256,
+        review: { status: 'unreviewed', note: null, at: null, history: [] },
         error: `python could not be started: ${(error as Error).message}`,
         durationMs: Date.now() - started,
       });
@@ -141,11 +232,20 @@ export async function renderFigures(
     }
 
     const durationMs = Date.now() - started;
+    const base = {
+      caption: spec.caption ?? '',
+      statistics: spec.statistics ?? [],
+      scriptSha256,
+      review: { status: 'unreviewed' as const, note: null, at: null, history: [] },
+    };
+
     if (outcome.timedOut) {
       results.push({
         id: spec.id,
         ok: false,
         outputs,
+        formats: formatsOf(outputs),
+        ...base,
         error: `timed out after ${opts.timeoutMs ?? 120_000} ms (process tree killed)`,
         durationMs,
       });
@@ -156,6 +256,8 @@ export async function renderFigures(
         id: spec.id,
         ok: false,
         outputs,
+        formats: formatsOf(outputs),
+        ...base,
         error: redactSecrets(
           `${outcome.stderr}\n${outcome.stdout}`.trim().slice(-2_000) || `exit ${outcome.code}`,
         ),
@@ -163,17 +265,44 @@ export async function renderFigures(
       });
       continue;
     }
+
+    // Success path: derive PNG when the script only wrote a vector.
+    await ensurePng(figuresDir, spec.id, outputs, seenOutputs);
+    const formats = formatsOf(outputs);
+    const hasVector = formats.includes('pdf') || formats.includes('svg');
     if (outputs.length === 0) {
       results.push({
         id: spec.id,
         ok: false,
-        outputs: [],
+        outputs,
+        formats,
+        ...base,
         error: 'script exited 0 but produced no new files under figures/',
         durationMs,
       });
       continue;
     }
-    results.push({ id: spec.id, ok: true, outputs, error: null, durationMs });
+    if (!hasVector) {
+      results.push({
+        id: spec.id,
+        ok: false,
+        outputs,
+        formats,
+        ...base,
+        error: 'script produced no vector output (pdf/svg) — publication figure missing',
+        durationMs,
+      });
+      continue;
+    }
+    results.push({
+      id: spec.id,
+      ok: true,
+      outputs,
+      formats,
+      ...base,
+      error: null,
+      durationMs,
+    });
   }
 
   const okCount = results.filter((result) => result.ok).length;

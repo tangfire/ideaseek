@@ -347,6 +347,8 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
         id,
         type: 'bar',
         title: `Fake ${id}`,
+        caption: `Fake caption for ${id} grounded in persisted results.`,
+        statistics: ['bar height = single fake metric value'],
         dataSources: [{ kind: 'context', ref: 'experiment-results' }],
         script:
           'import matplotlib.pyplot as plt' +
@@ -357,7 +359,11 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
           String.fromCharCode(10) +
           "fig.savefig('" +
           id +
-          ".pdf')",
+          ".pdf')" +
+          String.fromCharCode(10) +
+          "fig.savefig('" +
+          id +
+          ".png')",
         latexInclude: '\\includegraphics{figures/' + id + '}',
         claims: ['The persisted results bear on the research question'],
       })),
