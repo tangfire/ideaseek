@@ -10,7 +10,7 @@ import { tokenizeArgs } from '../tokens.js';
 import { resolveSlash, helpText } from '../slash-menu.js';
 import { findProjectRoot } from '../../config/paths.js';
 import { readLastSession, writeSessionEnd, writeSessionStart } from '../../session/context.js';
-import { renderSessionSummary } from '../../session/mode.js';
+import { readSessionMode, renderSessionSummary } from '../../session/mode.js';
 
 /**
  * Shared interactive session (ADR-006/ADR-010): owns command dispatch, the
@@ -102,7 +102,14 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
       ? `pid ${status.data.daemon.pid} ${status.data.daemon.state}`
       : null,
   };
-  return { lines: renderHeader(ctx).split('\n'), tone: 'dim' };
+  const lines = renderHeader(ctx).split('\n');
+  const projectRoot = await findProjectRoot(process.cwd()).catch(() => null);
+  if (projectRoot) {
+    const sessionMode = await readSessionMode(projectRoot).catch(() => null);
+    if (sessionMode)
+      lines.splice(1, 0, `Session : ${sessionMode === 'agent' ? 'Agent' : 'Research'}`);
+  }
+  return { lines, tone: 'dim' };
 }
 
 /** Classic line-mode paint for a header block. */
@@ -204,6 +211,13 @@ export class InteractiveSession {
     const { readSessionMode } = await import('../../session/mode.js');
     const current = await readSessionMode(root);
     await this.relay(['mode', current === 'research' ? 'agent' : 'research']);
+    await this.refreshHeader();
+  }
+
+  private async refreshHeader(): Promise<void> {
+    const header = await buildHeaderLines();
+    if (this.sink.onHeader) this.sink.onHeader(header);
+    else this.println(paintHeader(header, this.plain));
   }
 
   /** Relays a CLI command; its stdout/stderr becomes session output. */
@@ -373,6 +387,7 @@ export class InteractiveSession {
         return 'continue';
       case '/mode':
         await this.relay(['mode', ...restArgs]);
+        await this.refreshHeader();
         return 'continue';
       case '/open': {
         if (!rest) {

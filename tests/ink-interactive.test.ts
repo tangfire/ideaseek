@@ -3,6 +3,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CLI_BIN, makeProjectDir } from './helpers.js';
+import { ActivityBus } from '../src/cli/shell/app.js';
 
 /**
  * Ink interactive shell conformance (ADR-010): the built CLI runs the Ink
@@ -13,6 +14,14 @@ import { CLI_BIN, makeProjectDir } from './helpers.js';
  */
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe('Ink activity rendering input normalization', () => {
+  it('splits multiline output and strips embedded ANSI before Ink renders it', () => {
+    const bus = new ActivityBus();
+    bus.push('first\n\u001b[31msecond\u001b[0m\r\nthird');
+    expect(bus.lines).toEqual(['first', 'second', 'third']);
+  });
+});
 
 interface InkRepl {
   child: ChildProcessWithoutNullStreams;
@@ -115,8 +124,10 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // Shift+Tab cycles session mode through the audited /mode use-case.
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: research → agent/);
+      await repl.waitFor(/Session : Agent/);
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: agent → research/);
+      await repl.waitFor(/Session : Research/);
 
       // Delete at end-of-line removes the previous character in the TUI.
       await repl.write('abc');

@@ -37,7 +37,12 @@ export class ActivityBus {
   }
 
   push(line: string): void {
-    this.lines = [...this.lines, line].slice(-MAX_ACTIVITY);
+    // CLI relays may return several lines in one stdout chunk and may carry
+    // ANSI styling from downstream commands. Ink owns the terminal screen,
+    // so keep each logical line separate and strip embedded control codes
+    // before rendering; raw ANSI inside <Text> can corrupt later frames.
+    const safe = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r\n?/g, '\n');
+    this.lines = [...this.lines, ...safe.split('\n')].slice(-MAX_ACTIVITY);
     this.emit();
   }
 
