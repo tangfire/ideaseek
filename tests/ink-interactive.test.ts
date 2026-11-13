@@ -92,7 +92,7 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // First ink import over a cold/cross-OS filesystem can take seconds.
       await repl.waitFor(/ideaseek ›/, 60_000);
       // Header context arrives from `status --json` after the first frame.
-      await repl.waitFor(/Project/, 60_000);
+      await repl.waitFor(/ink-interactive · RESEARCH/, 60_000);
       await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
       expect(repl.output()).toContain('\x1b[?1049h'); // alternate screen ON
       expect(repl.output()).toContain('[IS]'); // short mark at 100 cols
@@ -111,12 +111,13 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
 
       // `/` opens the palette in place; typing filters it; arrows select.
       await repl.write('/');
-      await repl.waitFor(/> \/help/);
+      await repl.waitFor(/› \/help/);
       await repl.write('st');
       await repl.waitFor(/ideaseek › \/st/);
       expect(repl.output()).toContain('/status');
+      expect(repl.output()).toContain('run state, tasks, workers, recent events');
       await repl.write('\x1b[B'); // down → fill input with /status
-      await repl.waitFor(/> \/status/);
+      await repl.waitFor(/› \/status/);
 
       // Enter dispatches through the shared session → real CLI relay.
       await repl.write('\r');
@@ -125,11 +126,11 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // Shift+Tab cycles session mode through the audited /mode use-case.
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: research → agent/);
-      await repl.waitFor(/Session : Agent/);
+      await repl.waitFor(/ink-interactive · AGENT/);
       await repl.waitFor(/AGENT.*Shift\+Tab mode/);
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: agent → research/);
-      await repl.waitFor(/Session : Research/);
+      await repl.waitFor(/ink-interactive · RESEARCH/);
       await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
 
       // Delete at end-of-line removes the previous character in the TUI.

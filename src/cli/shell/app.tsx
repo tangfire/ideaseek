@@ -3,6 +3,7 @@ import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
 import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
 import { InteractiveSession, type HeaderInfo, type SessionStartup } from './session.js';
 import { renderBanner, PLAIN_MARK } from '../banner.js';
+import { SLASH_COMMANDS } from '../slash-menu.js';
 
 /**
  * Ink interactive shell (ADR-010, docs/TERMINAL_UX.md): the sole renderer
@@ -83,6 +84,32 @@ function bannerLines(columns: number, rows: number, plain: boolean): string[] {
   void rows;
   const text = renderBanner({ columns });
   return text.split('\n');
+}
+
+/** Compress the verbose status header into a stable, scannable TUI block. */
+function compactHeader(lines: string[]): string[] {
+  const fields = new Map<string, string>();
+  for (const line of lines) {
+    const split = line.indexOf(':');
+    if (split < 0) continue;
+    fields.set(line.slice(0, split).trim(), line.slice(split + 1).trim());
+  }
+  const project = fields.get('Project');
+  if (!project) return lines.slice(0, 2);
+  const session = fields.get('Session') ?? 'Research';
+  const strategy = fields.get('Mode');
+  const run = fields.get('Run') ?? 'none';
+  const question = fields.get('Question');
+  const activity = [fields.get('Stage'), fields.get('Agents'), fields.get('Papers')]
+    .filter(Boolean)
+    .join(' · ');
+  const resources = [fields.get('GPU'), fields.get('Supervisor')].filter(Boolean).join(' · ');
+  return [
+    `${project} · ${session.toUpperCase()}${strategy ? ` · ${strategy}` : ''} · ${run}`,
+    ...(question ? [`Question: ${question}`] : []),
+    ...(activity ? [activity] : []),
+    ...(resources ? [resources] : []),
+  ];
 }
 
 function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
@@ -208,12 +235,10 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   });
 
   const banner = bannerLines(size.columns, size.rows, plain);
-  const ctxLines = bus.header?.lines ?? [STARTING_LINE];
-  const modeLine = ctxLines.find((line) => line.startsWith('Session : '));
-  const modeLabel = modeLine?.slice('Session : '.length) ?? 'Research';
+  const ctxLines = compactHeader(bus.header?.lines ?? [STARTING_LINE]);
+  const modeLabel = ctxLines[0]?.includes('AGENT') ? 'Agent' : 'Research';
   const tone = bus.header?.tone ?? 'dim';
-  const hint = bus.startup?.hint ?? null;
-  const headerLines = [...banner, ...ctxLines, ...(hint ? [hint] : [])];
+  const headerLines = [...banner, ...ctxLines];
   stateRef.current.headerLines = headerLines.length;
 
   const inputAndFooterRows = 2;
@@ -245,11 +270,6 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
             {line}
           </Text>
         ))}
-        {hint ? (
-          <Text key="hint" dimColor wrap="truncate">
-            {hint}
-          </Text>
-        ) : null}
       </Box>
       <Box flexDirection="column" flexGrow={1}>
         {pane.map((line, index) => (
@@ -261,15 +281,28 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
       </Box>
       {shownPalette.length > 0 ? (
         <Box flexDirection="column" flexShrink={0}>
-          {shownPalette.map((name, index) => (
-            <Text
-              key={`c-${name}`}
-              color={index === snap.paletteIndex ? 'cyan' : undefined}
-              wrap="truncate"
-            >
-              {index === snap.paletteIndex ? `> ${name}` : `  ${name}`}
-            </Text>
-          ))}
+          {shownPalette.map((name, index) => {
+            const description =
+              SLASH_COMMANDS.find((command) => command.name === name)?.description ?? '';
+            return (
+              <Box key={`c-${name}`} flexDirection="row">
+                <Box width={22} flexShrink={0}>
+                  <Text
+                    color={index === snap.paletteIndex ? 'cyan' : undefined}
+                    bold={index === snap.paletteIndex}
+                    wrap="truncate"
+                  >
+                    {index === snap.paletteIndex ? `› ${name}` : `  ${name}`}
+                  </Text>
+                </Box>
+                <Box flexGrow={1}>
+                  <Text dimColor wrap="truncate">
+                    {description}
+                  </Text>
+                </Box>
+              </Box>
+            );
+          })}
           {paletteTruncated ? (
             <Text
               dimColor

@@ -22,6 +22,8 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 
 输入编辑区必须始终固定在同一行；命令菜单是覆盖层，不能把输入复制成多行。用户继续输入时只更新候选和高亮，不滚动整个终端。上下键、Tab、Enter、Esc、Ctrl-C 和终端 resize 由 TUI 输入层统一处理。
 
+TUI 的顶部状态区保持紧凑：项目、当前 Research/Agent 会话模式、run 状态、研究问题、阶段和资源分组显示；完整细节由 `/status` 提供。底部固定显示高对比度的当前模式徽标和 `Shift+Tab` 切换提示。输入 `/` 时，命令面板同时显示命令名与简短用途，选择态清晰突出；活动区把命令输出按逻辑行呈现并移除内嵌 ANSI 控制码，防止外部 CLI 输出破坏 Ink 重绘。
+
 交互模式可以使用成熟的 TypeScript TUI/terminal renderer，但必须保留 IdeaSeek 的事件、权限和 use-case 边界。不要继续在 readline 上堆叠更多光标逃逸来模拟全屏应用。
 
 ## 实现状态：Ink 已接入真实 interactive（2026-11-12）
