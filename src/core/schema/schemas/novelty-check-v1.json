@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/novelty-check-v1.json",
+  "title": "IdeaSeek NoveltyReport (novelty-check-v1)",
+  "description": "Structural contract for the ARIS novelty-check output. Context-bound rules stay in the TS validator (ideaId/cardVersion equality, closestPaperRef membership in the provided candidate list, trim semantics) — the schema is a sound subset; the runtime validator runs first. The ABANDON closestPaperRef rule is self-contained (same object) and IS expressed here via if/then.",
+  "type": "object",
+  "required": [
+    "ideaId",
+    "cardVersion",
+    "verdict",
+    "score",
+    "positioning",
+    "claims",
+    "patents",
+    "priorArtDegraded",
+    "notes"
+  ],
+  "properties": {
+    "ideaId": { "type": "string", "minLength": 1 },
+    "cardVersion": { "type": "integer", "minimum": 1 },
+    "verdict": { "enum": ["PROCEED", "PROCEED_WITH_CAUTION", "ABANDON"] },
+    "score": { "type": "integer", "minimum": 1, "maximum": 10 },
+    "positioning": { "type": "string", "minLength": 1 },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["claim", "closestPaperRef", "overlap", "delta"],
+        "properties": {
+          "claim": { "type": "string", "minLength": 1 },
+          "closestPaperRef": { "type": ["string", "null"] },
+          "overlap": { "type": "string", "minLength": 1 },
+          "delta": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "patents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["patentNumber", "overlapRisk", "notes"],
+        "properties": {
+          "patentNumber": { "type": "string", "minLength": 1 },
+          "overlapRisk": { "enum": ["HIGH", "MEDIUM", "LOW"] },
+          "notes": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "priorArtDegraded": { "type": "boolean" },
+    "notes": { "type": "array" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "verdict": { "const": "ABANDON" } },
+        "required": ["verdict"]
+      },
+      "then": {
+        "properties": {
+          "claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "closestPaperRef": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

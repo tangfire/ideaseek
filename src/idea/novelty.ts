@@ -5,6 +5,7 @@ import { sha256Of } from '../core/hash.js';
 import { writeFileAtomic } from '../core/atomic.js';
 import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * ARIS novelty-check + prior-art-search backend (Phase 4.5 capability 4).
@@ -261,6 +262,9 @@ export function parseNoveltyOutput(
       `novelty report failed validation: ${validation.errors.slice(0, 4).join('; ')}`,
     );
   }
+  // Defense in depth (JSON Schema authority): context-bound checks ran
+  // first; the shared contract re-checks structure as a subset gate.
+  assertAgainstSchema('novelty-check-v1', parsed);
   const record = parsed as Omit<
     NoveltyReport,
     'contract' | 'inputHash' | 'skills' | 'generatedAt' | 'harnessRuntime' | 'candidateRefs'
