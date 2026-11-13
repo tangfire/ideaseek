@@ -31,6 +31,8 @@ export const FIGURE_TYPES = [
   'violin',
   'table',
   'multi-panel',
+  'resource',
+  'sensitivity',
 ] as const;
 
 export interface FigureDataSource {
@@ -72,7 +74,7 @@ export const PAPER_FIGURE_OUTPUT_CONTRACT = [
   '  "style": "publication" | "poster" | "slide",',
   '  "dpi": integer ≥ 72,',
   '  "format": "pdf" | "png",',
-  '  "figures": [{"id": string, "type": "line"|"bar"|"scatter"|"heatmap"|"box"|"violin"|"table"|"multi-panel", "title": string, "caption": string (publication caption), "statistics": [string] (what the figure computes — at least 1), "dataSources": [{"kind": "experiment-spec"|"result-file"|"existing-figure"|"context", "ref": string}], "script": string (save BOTH a vector pdf/svg and a png via savefig), "latexInclude": string, "claims": [string]}] — at least 1; every id from the stored plan figure list MUST appear exactly once',
+  '  "figures": [{"id": string, "type": "line"|"bar"|"scatter"|"heatmap"|"box"|"violin"|"table"|"multi-panel"|"resource"|"sensitivity", "title": string, "caption": string (publication caption), "statistics": [string] (what the figure computes — at least 1), "dataSources": [{"kind": "experiment-spec"|"result-file"|"existing-figure"|"context", "ref": string}], "script": string (save BOTH a vector pdf/svg and a png via savefig), "latexInclude": string, "claims": [string]}] — at least 1; every id from the stored plan figure list MUST appear exactly once',
   '  "preservedExisting": [string],  // existing manual figures you detected and did not overwrite',
   '  "manualRemaining": [string],    // hero/architecture/qualitative figures a human must draw',
   '  "reviewerFeedback": {"verdict": "ACCEPT"|"REVISE"|"REVIEW_UNAVAILABLE", "notes": [string]}',

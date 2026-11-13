@@ -67,6 +67,37 @@ describe('validatePaperFigurePlan (contract)', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts resource and sensitivity figure types (Phase 7 chart coverage)', () => {
+    const plan = validFigurePlan();
+    (plan.figures as Record<string, unknown>[]).push(
+      {
+        id: 'fig-res',
+        type: 'resource',
+        title: 'GPU-hours per method',
+        caption: 'Total GPU-hours under the locked budget.',
+        statistics: ['bar height = gpu-hours'],
+        dataSources: [{ kind: 'result-file', ref: 'result-1' }],
+        script: 'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n',
+        latexInclude: '\\includegraphics{figures/fig-res}',
+        claims: ['Method A costs less than the baseline'],
+      },
+      {
+        id: 'fig-sens',
+        type: 'sensitivity',
+        title: 'Recall vs drift weight',
+        caption: 'Sensitivity of rare-class recall to the drift coefficient.',
+        statistics: ['x = drift weight, y = rare-class recall'],
+        dataSources: [{ kind: 'result-file', ref: 'result-2' }],
+        script: 'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n',
+        latexInclude: '\\includegraphics{figures/fig-sens}',
+        claims: ['Recall peaks at weight 0.5'],
+      },
+    );
+    const result = validatePaperFigurePlan(plan);
+    expect(result.errors).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
   const rejected: { name: string; plan: unknown }[] = [
     { name: 'null', plan: null },
     {

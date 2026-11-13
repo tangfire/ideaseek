@@ -46,7 +46,18 @@
             "minLength": 1
           },
           "type": {
-            "enum": ["line", "bar", "scatter", "heatmap", "box", "violin", "table", "multi-panel"]
+            "enum": [
+              "line",
+              "bar",
+              "scatter",
+              "heatmap",
+              "box",
+              "violin",
+              "table",
+              "multi-panel",
+              "resource",
+              "sensitivity"
+            ]
           },
           "title": {
             "type": "string",
