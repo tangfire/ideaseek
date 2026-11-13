@@ -9,9 +9,11 @@ IdeaSeek 的默认定位是快速科研发现、idea 验证和代码交付，不
 | `smoke` | 检查代码、数据、指标和资源 | 极少样本/少量 batch/短训练 | 否，仅工程有效性 |
 | `quick` | 快速比较多个 idea 和消融 | 代表性小切片、少量种子 | 只能作为初步机制证据 |
 | `standard` | 稳定性和场景验证 | 更大切片、多种子/多场景 | 可作为当前数据的阶段性结论 |
-| `handoff` | 生成用户后续全量实验的配置和命令 | 全量数据路径、完整 split、资源建议和复现脚本 | 只交付配置，不在 IdeaSeek 内执行 |
+| `handoff` | 生成全量实验的配置和命令（用户自跑或平台 full-run 共用） | 全量数据路径、完整 split、资源建议和复现脚本 | 交付配置；执行见下方 Full Research 路线 |
 
-默认策略：代码修改/参数探索使用 `smoke`/`quick`；通过快速门槛后在多个用户数据集上运行 `standard` 小切片；最后生成 `handoff` 包。IdeaSeek 根据协议和当前机器资源估算 smoke/quick/standard 的安全并发和资源需求；用户最终的 full-scale 多 GPU 训练只在 handoff 中交付。IdeaSeek 不提供“平台内 full 训练”开关，避免探索流程被长时间全量任务阻塞。
+默认策略：代码修改/参数探索使用 `smoke`/`quick`；通过快速门槛后在多个用户数据集上运行 `standard` 小切片；达到 `HANDOFF_READY` 后生成 `handoff` 包。IdeaSeek 根据协议和当前机器资源估算 smoke/quick/standard 的安全并发和资源需求。
+
+**探索管线与 Full Research 的边界（产品路线已定）**：探索管线（run/idea experiment）不提供 full 规模选项，避免被长时间全量任务阻塞——这不是能力上限。小数据探索达到 `HANDOFF_READY`、研究者通过 `ideaseek full approve` 明确批准后，**全量 comparison 与最终 idea 实验由平台在 Full Research 模式内执行**（`ideaseek full run --idea <id> --detach`）：绑定已批准的 plan 与 fairness lock，按 required 清单生成 full 规模 ExperimentSpec，复用同一条 ExperimentRunner/ResearchRun/GPU admission/checkpoint/pause-resume/quota 门禁与审计链路，不新建第二套队列。`handoff` 包同时保留为用户自跑的替代路径；用户自跑结果记 `USER_FULL_RESULT`，平台 full-run 结果按普通 RunResult 落盘并绑定 run/code/data/protocol 哈希。
 
 ## 切片原则
 
@@ -71,11 +73,14 @@ USER_FULL_RESULT  用户自行完成 full-scale 后的结果，不由 IdeaSeek �
 
 ```bash
 ideaseek run --question "..." --data-scale quick
-ideaseek experiment promote --idea idea-001 --to standard
+ideaseek full plan --idea idea-001
+ideaseek full fairness --idea idea-001 --confirm
+ideaseek full approve --idea idea-001 --confirm
+ideaseek full run --idea idea-001 --detach
 ideaseek experiment handoff --idea idea-001
 ```
 
-`research.yaml` 可以设置 `default_data_scale: quick`、每级预算、最大样本/客户端/步数和晋级门槛。`handoff` 生成完整数据集实验的 split、命令、环境和资源建议，但不在 IdeaSeek 内执行。用户可以查看：
+`research.yaml` 可以设置 `default_data_scale: quick`、每级预算、最大样本/客户端/步数和晋级门槛。`handoff` 生成完整数据集实验的 split、命令、环境和资源建议（用户可自跑）；平台内全量执行走 `ideaseek full run`（需先 `full plan`/`full approve`，见 FULL_RESEARCH_MODE.md）。用户可以查看：
 
 ```bash
 ideaseek data describe
