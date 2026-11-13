@@ -1,0 +1,37 @@
+{
+  "paper_id": "synth-seg-0001",
+  "document_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "title": "Synthetic Study of Boundary-Aware Supervision for Organ Segmentation (fixture)",
+  "problem": "plain Dice loss under-segments small organs on low-contrast CT slices",
+  "method": {
+    "summary": "add a boundary-aware auxiliary loss to the segmentation objective",
+    "steps": ["compute Dice loss", "compute boundary loss", "weighted sum of both"],
+    "motivation": ["Dice alone ignores boundary precision"]
+  },
+  "datasets": ["SyntheticAbdominalCT (fixture)"],
+  "metrics": ["dice", "hd95"],
+  "baselines": ["U-Net (fixture reference)"],
+  "limitations": ["single synthetic organ shape family", "no multi-site data"],
+  "claims": [
+    {
+      "text": "boundary supervision raises Dice by at least 0.03 on small organs",
+      "evidence": [
+        {
+          "page": 7,
+          "quote": "raises Dice by at least 0.03 on small organs"
+        }
+      ]
+    },
+    {
+      "text": "HD95 improves most on low-contrast slices",
+      "evidence": [
+        {
+          "section": "Section 4.1"
+        }
+      ]
+    }
+  ],
+  "unknowns": ["behavior on pathological anatomy"],
+  "parser_version": "pdf-1-fixture",
+  "prompt_schema_version": "papercard-v1-fixture"
+}

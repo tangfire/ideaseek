@@ -1,0 +1,71 @@
+{
+  "protocolId": "proto-seg-v1",
+  "version": 1,
+  "taskDefinition": {
+    "value": "organ segmentation on abdominal CT volumes",
+    "source": "paper-evidence",
+    "confidence": 0.9
+  },
+  "sampleUnit": {
+    "value": "one patient volume",
+    "source": "data-probe",
+    "confidence": 0.85
+  },
+  "labelSemantics": {
+    "value": "foreground = organ voxels annotated by radiologists",
+    "source": "user",
+    "confidence": 1
+  },
+  "splitRules": {
+    "value": ["patient-level 70/15/15 split — no patient in more than one split"],
+    "source": "adapter-rule",
+    "confidence": 0.85
+  },
+  "leakageChecks": [
+    "no patient appears in both train and test",
+    "no post-operative slices in preoperative splits"
+  ],
+  "preprocessing": ["HU windowing constants fit on train only", "per-volume z-score"],
+  "baselineEntries": [
+    {
+      "methodId": "unet-fixture",
+      "entry": "python train.py --model unet",
+      "source": "code",
+      "confidence": 0.9
+    }
+  ],
+  "primaryMetrics": [
+    {
+      "name": "dice",
+      "direction": "higher",
+      "source": "paper-evidence",
+      "confidence": 0.9
+    }
+  ],
+  "secondaryMetrics": [
+    {
+      "name": "hd95",
+      "direction": "lower",
+      "source": "paper-evidence",
+      "confidence": 0.85
+    }
+  ],
+  "statisticalSummary": ["mean ± std over 5 seeds"],
+  "smokeTest": {
+    "value": "2 patients, 1 epoch",
+    "source": "adapter-rule",
+    "confidence": 0.85
+  },
+  "resourceEstimate": {
+    "value": "1 GPU-hour per quick run",
+    "source": "agent-inference",
+    "confidence": 0.6
+  },
+  "ablations": ["w/o boundary loss"],
+  "supportCriteria": ["dice ≥ baseline + 0.03 on quick slice"],
+  "refuteCriteria": ["dice < baseline on 3 seeds"],
+  "invalidRunCriteria": ["prediction mask all background"],
+  "stopConditions": ["budget exhausted or 3 rounds without gain"],
+  "generatedAt": 1,
+  "generator": "protocol-synth-v1"
+}
