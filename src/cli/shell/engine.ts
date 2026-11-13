@@ -10,7 +10,7 @@ import { SLASH_COMMANDS } from '../slash-menu.js';
  */
 
 export interface EngineKey {
-  /** Named keys: up/down/left/right/return/tab/escape/backspace/delete/home/end/pageup/pagedown. */
+  /** Named keys: up/down/left/right/return/tab/escape/backspace/delete/home/end/pageup/pagedown/wheelup/wheeldown. */
   name?: string;
   /** Printable character(s), including paste bursts. */
   sequence?: string;
@@ -25,6 +25,8 @@ export interface EngineResult {
   paletteItems: string[];
   /** +1 page up / -1 page down over the activity pane (0 = no change). */
   scrollDelta: number;
+  /** +1 wheel notch up / -1 wheel notch down (0 = no change). */
+  wheelDelta: number;
   /** Line to dispatch (Enter); null when nothing should run. */
   submit: string | null;
   /** Ctrl-C on an empty line → host prints the exit hint. */
@@ -56,6 +58,7 @@ export class ShellEngine {
       paletteIndex: this.paletteIndex,
       paletteItems: [...this.paletteItems],
       scrollDelta: 0,
+      wheelDelta: 0,
       submit: null,
       interrupt: false,
       eof: false,
@@ -171,6 +174,10 @@ export class ShellEngine {
         return this.snapshot({ scrollDelta: 1 });
       case 'pagedown':
         return this.snapshot({ scrollDelta: -1 });
+      case 'wheelup':
+        return this.snapshot({ wheelDelta: 1 });
+      case 'wheeldown':
+        return this.snapshot({ wheelDelta: -1 });
       case 'backspace': {
         if (this.cursor > 0) {
           this.line = this.line.slice(0, this.cursor - 1) + this.line.slice(this.cursor);
@@ -291,8 +298,27 @@ export interface InkKeyLike {
   meta?: boolean;
 }
 
+/**
+ * SGR mouse reports (tracking modes 1000+1006). The alternate screen has
+ * no scrollback, so the wheel is the only way back up through history —
+ * wheel notches scroll, clicks/drags are swallowed (they must never fall
+ * through to the paste/sequence branch and type garbage into the line).
+ * Ink strips one leading ESC from the sequence before we see it; accept
+ * both forms.
+ */
+// The control character is the point: this matches ESC-prefixed mouse reports.
+// eslint-disable-next-line no-control-regex
+const SGR_MOUSE = /^(?:\x1b)?\[<(\d+);\d+;\d+[Mm]$/;
+
 /** Maps an Ink key event onto the pure ShellEngine key vocabulary. */
 export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
+  const mouse = SGR_MOUSE.exec(input);
+  if (mouse) {
+    const button = Number(mouse[1]);
+    if (button === 64) return { name: 'wheelup' };
+    if (button === 65) return { name: 'wheeldown' };
+    return { name: 'unknown' };
+  }
   // Some terminal/IME combinations report Delete as a raw CSI sequence
   // instead of Ink's named key. Check it before `key.escape`, because the
   // sequence begins with ESC and must not merely dismiss the palette.

@@ -133,6 +133,23 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
     expect(engine.handle(key('pagedown')).scrollDelta).toBe(-1);
     expect(engine.handle({ sequence: 'a' }).scrollDelta).toBe(0);
   });
+
+  it('SGR mouse wheel scrolls history; clicks never type into the line', () => {
+    // Both raw and ESC-stripped forms (Ink drops one leading ESC).
+    expect(toEngineKey('\x1b[<64;10;5M', {})).toEqual({ name: 'wheelup' });
+    expect(toEngineKey('[<65;10;5M', {})).toEqual({ name: 'wheeldown' });
+    const engine = new ShellEngine();
+    expect(engine.handle({ name: 'wheelup' }).wheelDelta).toBe(1);
+    expect(engine.handle({ name: 'wheeldown' }).wheelDelta).toBe(-1);
+    // Button press/release reports are swallowed — without this they fell
+    // through to the paste branch and typed `[<0;10;5M` into the input.
+    engine.handle({ sequence: 'x' });
+    const click = engine.handle(toEngineKey('\x1b[<0;10;5M', {}));
+    expect(click.line).toBe('x');
+    expect(click.wheelDelta).toBe(0);
+    const release = engine.handle(toEngineKey('\x1b[<0;10;5m', {}));
+    expect(release.line).toBe('x');
+  });
 });
 
 describe('interactive renderer routing (checkpoint: no TUI on plain/non-TTY)', () => {

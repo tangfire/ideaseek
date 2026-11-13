@@ -2,8 +2,30 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CLI_BIN, makeProjectDir } from './helpers.js';
+import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
 import { ActivityBus } from '../src/cli/shell/app.js';
+
+/** One-shot CLI call for test setup (create runs, enqueue tasks). */
+function runCli(cwd: string, args: string[]): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI_BIN, ...args], {
+      cwd,
+      env: { ...process.env, IDEASEEK_CLI: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`cli ${args.join(' ')} timed out`));
+    }, 60_000);
+    child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? -1, stderr });
+    });
+  });
+}
 
 /**
  * Ink interactive shell conformance (ADR-010): the built CLI runs the Ink
@@ -181,6 +203,76 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await cleanup(dir, repl.child);
     }
   }, 150_000);
+
+  it('mouse wheel scrolls history on the alt screen; live events still follow', async () => {
+    const dir = await makeProjectDir('ink-wheel');
+    const enqueued = await runCli(dir, ['run', '--question', 'wheel scroll', '--enqueue-only']);
+    expect(enqueued.code, enqueued.stderr).toBe(0);
+
+    // Enough replayed events to overflow one screen (visible ≈ 36 rows).
+    const runtime = await openRuntime(dir);
+    try {
+      const run = await runtime.db.getLatestRun(runtime.project.id);
+      for (let i = 0; i < 60; i += 1) {
+        await runtime.db.appendEvent({
+          runId: run!.runId,
+          phase: 'DEMO',
+          objectId: null,
+          role: 'tester',
+          eventType: 'note',
+          summary: `scroll-marker ${i}`,
+          status: null,
+        });
+      }
+    } finally {
+      await runtime.close();
+    }
+
+    const repl = startInk(dir);
+    try {
+      await repl.waitFor(/ideaseek ›/, 60_000);
+      await repl.waitFor(/ink-wheel · RESEARCH/, 60_000);
+      // Button-event tracking + SGR: the alternate screen has NO
+      // scrollback, so the wheel only works if the app reports it.
+      expect(repl.output()).toContain('\x1b[?1000;1006h');
+      // Replay fills the pane past one screen (marker 40 sits in the tail).
+      await repl.waitFor(/scroll-marker 40/, 60_000);
+
+      // Wheel up ×8 → 48 lines back → the scrolled hint appears.
+      for (let i = 0; i < 8; i += 1) await repl.write('\x1b[<64;10;5M');
+      await repl.waitFor(/scrolled up/);
+
+      // Wheel down past the top clamp → back at the bottom (offset 0).
+      for (let i = 0; i < 15; i += 1) await repl.write('\x1b[<65;10;5M');
+
+      // A fresh live event renders again — proof the pane is following
+      // (while anchored mid-history the tail would stay out of the window).
+      const follow = await openRuntime(dir);
+      try {
+        const run = await follow.db.getLatestRun(follow.project.id);
+        await follow.db.appendEvent({
+          runId: run!.runId,
+          phase: 'DEMO',
+          objectId: null,
+          role: 'tester',
+          eventType: 'note',
+          summary: 'scroll-live-follow',
+          status: null,
+        });
+      } finally {
+        await follow.close();
+      }
+      await repl.waitFor(/scroll-live-follow/);
+
+      // /quit exits cleanly (the Ink helper awaits the `done` promise).
+      await repl.write('/');
+      await repl.write('quit');
+      await repl.write('\r');
+      expect(await repl.done).toBe(0);
+    } finally {
+      await cleanup(dir, repl.child);
+    }
+  }, 180_000);
 
   it('Ctrl-D exits without cancelling anything and restores the screen', async () => {
     const dir = await makeProjectDir('ink-interactive-eof');

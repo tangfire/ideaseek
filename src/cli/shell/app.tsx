@@ -14,11 +14,19 @@ import { SLASH_COMMANDS } from '../slash-menu.js';
  */
 
 const FOOTER =
-  'Shift+Tab mode · Tab complete · ↑/↓ palette · Esc close · PgUp/PgDn scroll · Ctrl-D or /quit exits';
+  'Shift+Tab mode · Tab complete · ↑/↓ palette · Esc close · wheel/PgUp scrolls history · Ctrl-D or /quit exits';
+/** Lines the wheel scrolls per notch (terminals already repeat events). */
+const WHEEL_SCROLL_LINES = 6;
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
 const QUIT_LINE = 'bye — background runs keep going (reconnect with ideaseek)';
 const STARTING_LINE = 'starting…';
-const MAX_ACTIVITY = 500;
+/**
+ * History buffer for the activity pane (lines kept in memory). The wheel
+ * must reach "any history" a session can reasonably produce — 5000 lines
+ * ≈ hours of events — while rendering stays O(visible) because the pane
+ * only ever slices one screenful.
+ */
+const MAX_ACTIVITY = 5000;
 const PROMPT_TEXT = 'ideaseek › ';
 /** Input-bar background: one shade above the terminal black. */
 const INPUT_BG = '#171b22';
@@ -93,6 +101,7 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   useSyncExternalStore(bus.subscribe, () => bus.version);
   const stateRef = useRef({ offset: 0, headerLines: 0 });
   const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const prevLineCountRef = useRef(0);
   const [size, setSize] = useState(() => ({
     rows: Number(process.env.IDEASEEK_TTY_ROWS ?? '') || stdout.rows || 24,
     columns: Number(process.env.IDEASEEK_TTY_COLS ?? '') || stdout.columns || 80,
@@ -110,13 +119,13 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
     return () => clearInterval(id);
   }, [busy]);
 
-  // Alternate screen restore on unmount (enter happens synchronously in
-  // startInkInteractive BEFORE the first frame — these are the only raw
-  // sequences this adapter owns; layout/diffing is Ink's job).
+  // Alternate screen + mouse-tracking restore on unmount (both are entered
+  // synchronously in startInkInteractive BEFORE the first frame — these
+  // are the only raw sequences this adapter owns; layout/diffing is Ink's).
   useEffect(() => {
     return () => {
       try {
-        stdout.write('\x1b[?1049l');
+        stdout.write('\x1b[?1006l\x1b[?1000l\x1b[?1049l');
       } catch {
         // stream already closed
       }
@@ -135,6 +144,15 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
       stdout.off('resize', onResize);
     };
   }, [stdout]);
+
+  // While scrolled up, anchor the viewed window: without this, every live
+  // event would shift the history under the reader's eyes (offset counts
+  // from the end). At the bottom (offset 0) the pane keeps following.
+  useEffect(() => {
+    const delta = bus.lines.length - prevLineCountRef.current;
+    prevLineCountRef.current = bus.lines.length;
+    if (delta > 0 && offset > 0) setOffset((prev) => prev + delta);
+  }, [bus.lines.length, offset]);
 
   // Startup (header, session marker, pending approvals) + live event stream.
   // stopStream on unmount only kills THIS child — background runs keep going.
@@ -171,6 +189,10 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
           bus.push(`error: ${(error as Error).message}`);
         })
         .finally(() => setBusy(false));
+      return;
+    }
+    if (result.wheelDelta !== 0) {
+      setOffset((prev) => Math.max(0, prev + result.wheelDelta * WHEEL_SCROLL_LINES));
       return;
     }
     if (result.scrollDelta !== 0) {
@@ -232,7 +254,11 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   const paletteRows = shownPalette.length + (paletteTruncated ? 1 : 0);
   const visible = Math.max(1, size.rows - headerLines.length - paletteRows - inputAndFooterRows);
   const all = bus.lines;
-  const end = all.length - offset;
+  // Over-scroll clamp: never scroll past the top of the buffer (when the
+  // whole history fits on screen there is nothing to scroll at all).
+  const maxOffset = Math.max(0, all.length - Math.min(visible, all.length));
+  const effOffset = Math.min(offset, maxOffset);
+  const end = all.length - effOffset;
   const start = Math.max(0, end - visible);
   const pane = all.slice(start, Math.max(start, end));
 
@@ -256,7 +282,11 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
             {line}
           </Text>
         ))}
-        {offset > 0 ? <Text dimColor>{`— scrolled ${offset} page(s), ↓ to follow —`}</Text> : null}
+        {effOffset > 0 ? (
+          <Text
+            dimColor
+          >{`— scrolled up ${effOffset} lines · ↓ / wheel down to follow live events —`}</Text>
+        ) : null}
       </Box>
       {shownPalette.length > 0 ? (
         <Box flexDirection="column" flexShrink={0}>
@@ -367,8 +397,12 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
 
   // Enter the alternate screen BEFORE the first frame so no startup output
   // ever lands on the primary screen (restore lives in ShellApp unmount).
+  // Mouse reporting (button events + SGR): the alternate screen has NO
+  // scrollback, so the wheel only works if the app owns it — that is how
+  // users scroll back through history Claude-Code style.
   const out = opts.streams?.stdout ?? process.stdout;
   out.write('\x1b[?1049h\x1b[H');
+  out.write('\x1b[?1000;1006h');
 
   let app: ReturnType<typeof render>;
   try {
@@ -379,7 +413,7 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
     });
   } catch (error) {
     try {
-      out.write('\x1b[?1049l');
+      out.write('\x1b[?1006l\x1b[?1000l\x1b[?1049l');
     } catch {
       // stream already closed
     }
