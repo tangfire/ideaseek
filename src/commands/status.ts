@@ -75,7 +75,6 @@ export function registerStatusCommand(program: Command): void {
                   total: 0,
                   liveWorkers: 0,
                   failed: [],
-                  recovery: runtime.recovery,
                   events: [],
                   exitCode: 0,
                 }),
@@ -95,6 +94,16 @@ export function registerStatusCommand(program: Command): void {
           const events = await runtime.db.listEvents(run.runId, {
             limit: opts.detail ? 20 : 5,
           });
+          const usageSummary = async () => {
+            const { summarizeUsage } = await import('../runtime/usage.js');
+            const all = await runtime.db.listEvents(run.runId, { limit: 100_000 });
+            return summarizeUsage(
+              run.runId,
+              all,
+              runtime.config.resources.modelRates,
+              runtime.config.resources.maxModelCost,
+            );
+          };
           const failed = tasks.filter((task) => task.status === 'failed');
           const total = tasks.length;
           const done = counts.succeeded ?? 0;
@@ -124,6 +133,7 @@ export function registerStatusCommand(program: Command): void {
                     ? { ...task.error, message: redactSecrets(task.error.message) }
                     : null,
                 })),
+                usage: await usageSummary(),
                 recovery: runtime.recovery,
                 events: events.map((event) => ({
                   seq: event.seq,
@@ -145,6 +155,11 @@ export function registerStatusCommand(program: Command): void {
           process.stdout.write(
             `任务：${done}/${total} 完成 · 排队 ${counts.queued ?? 0} · 执行中 ${(counts.leased ?? 0) + (counts.running ?? 0) + (counts.committing ?? 0)} · 失败 ${counts.failed ?? 0} · 取消 ${counts.canceled ?? 0}\n`,
           );
+          {
+            const { formatUsageLine } = await import('../runtime/usage.js');
+            process.stdout.write(`${formatUsageLine(await usageSummary())}
+`);
+          }
           process.stdout.write(`活动 Worker：${liveWorkers.length}\n`);
           const daemon = describeDaemon(runtime.paths.researchDir, run.runId);
           if (daemon) {

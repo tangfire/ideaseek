@@ -1,6 +1,8 @@
 import type { Command } from 'commander';
 import { IdeaseekError, exitCodeForError } from '../core/errors.js';
 import type { LoadedConfig } from '../config/config.js';
+import type { UsageRecorderDeps } from '../runtime/usage-recorder.js';
+import { UsageRecordingHarness } from '../runtime/usage-recorder.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import { FakeHarnessAdapter } from '../dsh/fake-adapter.js';
 import { DshHarnessAdapter } from '../dsh/dsh-adapter.js';
@@ -210,6 +212,40 @@ export async function runWorkerInteractive(
 }
 
 /** Builds the agent harness for CLI commands (Phase 1: fake only). */
+/**
+ * Composition root for harnesses (docs/BUILD_VS_REUSE_REVIEW 分层硬化):
+ * EVERY harness — worker-borne or CLI-direct — is wrapped with the usage
+ * recorder here, so cost telemetry and the QUOTA pause gate cannot be
+ * bypassed by calling buildHarness directly. Deps resolve lazily against
+ * a project runtime on first use (null outside a project → pass-through).
+ */
+function wrapWithUsageRecording(inner: HarnessAdapter): HarnessAdapter {
+  let cached: UsageRecorderDeps | null | undefined;
+  const getDeps = async () => {
+    if (cached !== undefined) return cached;
+    try {
+      const [{ ProjectRuntime }, { usageRecorderDeps }] = await Promise.all([
+        import('../workflow/runtime.js'),
+        import('../runtime/usage-recorder.js'),
+      ]);
+      const rt = await ProjectRuntime.open({ cwd: process.cwd(), recover: false });
+      // Intentionally not closed: CLI processes exit right after the
+      // command; workers already own their own runtime (this path is
+      // for direct harness callers like `ask`).
+      cached = usageRecorderDeps({
+        maxModelCost: rt.config.resources.maxModelCost,
+        rates: rt.config.resources.modelRates,
+        projectId: rt.project.id,
+        db: rt.db,
+      });
+    } catch {
+      cached = null; // no project → no budget context (honest pass-through)
+    }
+    return cached;
+  };
+  return new UsageRecordingHarness(inner, getDeps);
+}
+
 export function buildHarness(kind: string | undefined): HarnessAdapter {
   const selected = kind ?? 'fake';
   if (selected === 'fake') {
@@ -218,14 +254,16 @@ export function buildHarness(kind: string | undefined): HarnessAdapter {
     const block = process.env.IDEASEEK_FAKE_BLOCK;
     const valid =
       block === 'QUOTA_EXHAUSTED' || block === 'AUTH_REQUIRED' || block === 'NETWORK_BLOCKED';
-    return new FakeHarnessAdapter(valid ? { block, blockTimes: 1 } : {});
+    return wrapWithUsageRecording(new FakeHarnessAdapter(valid ? { block, blockTimes: 1 } : {}));
   }
   if (selected === 'dsh') {
     const researchDir = projectPaths(process.cwd()).researchDir;
-    return new DshHarnessAdapter({
-      dshHome: join(researchDir, 'dsh-home'),
-      cwd: process.cwd(),
-    });
+    return wrapWithUsageRecording(
+      new DshHarnessAdapter({
+        dshHome: join(researchDir, 'dsh-home'),
+        cwd: process.cwd(),
+      }),
+    );
   }
   throw new IdeaseekError('INVALID_ARGUMENT', `unknown harness kind: ${selected}`);
 }

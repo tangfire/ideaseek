@@ -39,6 +39,11 @@ export function registerMonitorCommand(program: Command): void {
         } else {
           process.stdout.write('no run yet\n');
         }
+        if (report.usage) {
+          const { formatUsageLine } = await import('../runtime/usage.js');
+          process.stdout.write(`${formatUsageLine(report.usage)}
+`);
+        }
         if (report.workers.length > 0) {
           process.stdout.write(`workers (${report.workers.length} active):\n`);
           for (const worker of report.workers) {

@@ -103,7 +103,9 @@ export class ProjectRuntime {
       staleTempMs: opts.staleTempMs ?? 60_000,
     });
     // Harness startup is lazy: only harness-backed tasks spawn the runtime,
-    // so demo-only commands never pay for a DSH subprocess.
+    // so demo-only commands never pay for a DSH subprocess. Usage
+    // recording (cost telemetry, PROGRESS 212) wraps at the composition
+    // root — buildHarness — so CLI-direct harness callers are covered too.
     const runtime = new ProjectRuntime({
       paths,
       configLoad,

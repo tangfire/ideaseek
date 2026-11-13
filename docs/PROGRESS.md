@@ -212,7 +212,7 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [x] ResearchRun 跨 idea 版本/多轮实验的持久化编排（ResearchNode graph；长周期 soak 仍待验收）
 - [x] ExperimentRunner 训练内部 checkpoint/resume capability 和兼容校验
 - [x] stale heartbeat、磁盘阈值、备份失败和长期预算告警（事实型告警，不替代科学判定）
-- [ ] 成本遥测与预算执行：累计已用 token/费用（按 run/idea 归属）、status/monitor 显示已用/剩余 max_model_cost、接近阈值暂停新任务（现状=max_model_cost 仅 plan 展示天花板零累计，alerts.ts 自注 cost telemetry does not exist yet——PRODUCT_REQUIREMENTS P0 欠账）
+- [x] 成本遥测与预算执行：累计已用 token/费用（按 run/idea 归属）、status/monitor 显示已用/剩余 max_model_cost、接近阈值暂停新任务（现状=max_model_cost 仅 plan 展示天花板零累计，alerts.ts 自注 cost telemetry does not exist yet——PRODUCT_REQUIREMENTS P0 欠账）
 - [ ] 告警与运行中异常的用户可见面：collectRuntimeAlerts 接入 status/doctor/next；心跳丢失/stalled/磁盘将满等未终态异常触发通知（现状=alerts 仅测试消费、通知仅 run 终态、watchdog/monitor 需手动执行——PRODUCT_GAPS_AUDIT #7 欠账）
 - [x] 提示注入回归测试：论文正文/第三方仓库内容中的指令注入不得改变系统指令与工具白名单，需对抗性 fixtures 钉住（现状=plan.md 有承诺、capability guard 管工具面、tests 零覆盖）
 - [x] 报告导出补全：全文 JSON + 引用/BibTeX（PRODUCT_REQUIREMENTS P0；现状=仅 .md + 摘要 JSON）
@@ -431,3 +431,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 ⑥ Linux：打包机 `pnpm build && node scripts/pack.mjs --verify-reproducible` → 安装验证 `./install.sh && ideaseek doctor && ideaseek --version`（勾240）；
 ⑦ Journey A–H 终验（勾227）：D=真实模型链凭据批量回归、G=真实证据、H=跨机 restore——逐条按 USER_JOURNEY_ACCEPTANCE 签字；
 ⑧ 全量回归基线：本环境最终态=全量 1353 条中 1346 绿（6 失败单跑归类：cli.e2e/visual=已知负载偶发单跑绿；architecture+release-check=本会话已修（93174a4）；ink/repl-ux=并发会话 TUI/agent 接线在飞，其提交后应绿）。| 本提交 | 纯文档 | 无 | 下一步=按上述清单在服务器逐项执行并回填 checkbox
+2026-11-13 | 成本遥测与预算执行（212 checkbox 打勾，PRODUCT_REQUIREMENTS P0）：①账本=**RunEvent 单流**（eventType model_usage，summary 紧凑 JSON {in,out,cost,model,taskId}——零第二事件日志/零新表）；②记录=**buildHarness 组合根统一包 UsageRecordingHarness**（ask/data/idea 等直连 harness 调用与 worker 任务全覆盖，惰性解析 deps、无项目=诚实透传）；**合成 runId 归一**（ask-session/idea:<id> 等映射到项目最近真实 run——run_event 有 run FK，不归一即静默丢账）；③计价=可选 `resources.model_rates:{input_per_mtok,output_per_mtok}`（缺省 null→**dollar 天花板如实标注 NOT enforced**，绝不发明价格；事件带 recorded cost 时即使 rates 已移除也照实累计）；④预算门=调用前聚合本 run 成本 ≥90%×max_model_cost → 抛 QUOTA_EXHAUSTED → **复用 worker 既有 blockExternal 停车机制**（消息带 research.yaml 恢复+ideaseek continue）；⑤展示=status json+human 与 monitor json+human 均有 usage 行（tokens/calls/$已用/$上限/百分比/pause at 90%）；fake 钩子 IDEASEEK_FAKE_USAGE | 本提交 | 门禁：usage-telemetry 9/9（聚合按模型分组+坏行跳过、按 token 重算、无费率如实 null、90% 边界 0.89/0.9、e2e 真实 run 记账 0.014/次+human 行、无费率 NOT enforced、**停车 e2e：seed $0.024≥90%×$0.013 → ask 被拒带恢复文案+status 显示超限**）+config/monitor/architecture 回归 26/26、typecheck/eslint/prettier 绿 | 归一后 pre-run（项目尚无 run）的模型调用不入账（v1 如实边界）；按 idea 归属经 objectId=task payload.ideaId | 下一模块：213 告警可见面

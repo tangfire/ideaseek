@@ -43,6 +43,8 @@ export interface ResolvedConfig {
     maxParallelIdeas: number;
     maxGpuHours: number;
     maxModelCost: number;
+    /** USD per million tokens (input/output). null = dollar ceiling not enforced. */
+    modelRates: { inputPerMtok: number; outputPerMtok: number } | null;
     maxIterationRounds: number;
   };
   policy: {
@@ -103,6 +105,7 @@ export function defaultConfig(projectName: string): ResolvedConfig {
       maxParallelIdeas: 2,
       maxGpuHours: 20,
       maxModelCost: 50,
+      modelRates: null,
       maxIterationRounds: 3,
     },
     policy: {
@@ -138,6 +141,7 @@ const SHAPE: Record<string, readonly string[]> = {
     'max_parallel_ideas',
     'max_gpu_hours',
     'max_model_cost',
+    'model_rates',
     'max_iteration_rounds',
   ],
   policy: [
@@ -503,6 +507,35 @@ export async function loadConfig(
     resolved.resources.maxModelCost,
     coercePositiveNumber,
   );
+  const ratesRaw = sections.resources.model_rates;
+  if (ratesRaw === undefined || ratesRaw === null) {
+    resolved.resources.modelRates = null;
+    sources['resources.model_rates'] = 'default';
+  } else if (typeof ratesRaw === 'object' && !Array.isArray(ratesRaw)) {
+    const input = (ratesRaw as Record<string, unknown>).input_per_mtok;
+    const output = (ratesRaw as Record<string, unknown>).output_per_mtok;
+    if (
+      typeof input === 'number' &&
+      Number.isFinite(input) &&
+      input >= 0 &&
+      typeof output === 'number' &&
+      Number.isFinite(output) &&
+      output >= 0
+    ) {
+      resolved.resources.modelRates = { inputPerMtok: input, outputPerMtok: output };
+      sources['resources.model_rates'] = 'file';
+    } else {
+      resolved.resources.modelRates = null;
+      sources['resources.model_rates'] = 'file';
+      errors.push(
+        'resources.model_rates must be {input_per_mtok: number >= 0, output_per_mtok: number >= 0}',
+      );
+    }
+  } else {
+    resolved.resources.modelRates = null;
+    sources['resources.model_rates'] = 'file';
+    errors.push('resources.model_rates must be a mapping or null');
+  }
   resolved.resources.maxIterationRounds = take(
     'resources',
     'max_iteration_rounds',

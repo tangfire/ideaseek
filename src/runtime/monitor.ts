@@ -1,3 +1,4 @@
+import type { UsageSummary } from './usage.js';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -49,6 +50,8 @@ export interface MonitorReport {
     diskFreeGiB: number | null;
   } | null;
   waiting: MonitorWaiting[];
+  /** Cost telemetry for the current run (null when no run exists). */
+  usage: UsageSummary | null;
 }
 
 export async function collectMonitor(
@@ -162,6 +165,18 @@ export async function collectMonitor(
       resources = null; // probe is advisory — absence never fails the snapshot
     }
 
+    let usage: MonitorReport['usage'] = null;
+    if (run) {
+      const { summarizeUsage } = await import('./usage.js');
+      const usageEvents = await runtime.db.listEvents(run.runId, { limit: 100_000 });
+      usage = summarizeUsage(
+        run.runId,
+        usageEvents,
+        runtime.config.resources.modelRates,
+        runtime.config.resources.maxModelCost,
+      );
+    }
+
     return {
       checkedAt: now,
       run: run
@@ -172,6 +187,7 @@ export async function collectMonitor(
       logs: recentLogs,
       resources,
       waiting,
+      usage,
     };
   } finally {
     await runtime.close();

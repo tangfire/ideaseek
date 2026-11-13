@@ -37,6 +37,28 @@ export interface FakeHarnessOptions {
  * Schema-aware deterministic outputs so workflow e2e (including synthesis)
  * runs end to end against the fake harness without a model.
  */
+/** Test hook: IDEASEEK_FAKE_USAGE='{"inputTokens":1000,"outputTokens":200}'. */
+function readFakeUsage(): { inputTokens: number; outputTokens: number; cost?: number } {
+  const raw = process.env.IDEASEEK_FAKE_USAGE;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as {
+        inputTokens?: unknown;
+        outputTokens?: unknown;
+        cost?: unknown;
+      };
+      return {
+        inputTokens: typeof parsed.inputTokens === 'number' ? parsed.inputTokens : 0,
+        outputTokens: typeof parsed.outputTokens === 'number' ? parsed.outputTokens : 0,
+        ...(typeof parsed.cost === 'number' ? { cost: parsed.cost } : {}),
+      };
+    } catch {
+      // fall through to zeros — a bad hook value never invents spend
+    }
+  }
+  return { inputTokens: 0, outputTokens: 0, cost: 0 };
+}
+
 function readJsonContext(request: HarnessTaskRequest): Record<string, unknown> {
   const texts = request.inputs.filter((input) => input.kind === 'text');
   for (const input of [...texts].reverse()) {
@@ -1017,7 +1039,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       runId: request.runId,
       taskId: request.taskId,
       output: payload, // buildFakeOutput already returns JSON text
-      usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
+      usage: readFakeUsage(),
       model: 'fake-model',
       toolCalls: this.opts.toolCalls ?? [],
       runtime: { kind: 'fake', version: this.version },
