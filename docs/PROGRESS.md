@@ -81,7 +81,7 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [x] 断线重连、终端尺寸变化和后台 supervisor 状态显示
 - [x] Research/Agent 模式切换、权限摘要和 DSH 复用
 - [x] 当前模式 footer 徽标、Shift+Tab 提示和命令用途面板
-- [ ] Analysis 模式：只读论文/数据/comparison 材料分析、ResearchMaterialAssessment 缺口报告和 Analysis→Research 准备门禁
+- [ ] Analysis 模式：只读论文/数据/comparison 准备管线（PaperCard、证据、研究地图、机制库、DatasetCard、comparison 摘要）+ ResearchMaterialAssessment 缺口报告和 Analysis→Research 准备门禁
 - [ ] 步骤级 Agent 过程可视化：harness 工具调用/训练进度心跳等中间步骤实时脱敏进 RunEvent 流并在 TUI/attach 可见（现状=任务级事件全链可见；`HarnessEvent.tool_call` 未接线、`harness_tool_call` 仅 paper.extract 完成后批量落盘、训练心跳仅 monitor 快照——见 PRODUCT_GAPS_AUDIT 缺口 9）
 
 ## Phase 2：论文知识与证据

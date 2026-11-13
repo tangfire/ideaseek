@@ -4,9 +4,15 @@ IdeaSeek 的核心是科研探索。它可以提供一个复用 DSH Runtime 的�
 
 ## Analysis 模式（材料分析与研究准备）
 
-Analysis 是用户准备研究材料时使用的只读准备模式。它读取研究问题、已有论文、PaperCard、研究地图、数据画像、comparison 和已有 idea，解析论文并形成 `ResearchMaterialAssessment`：告诉用户哪些论文、数据集/场景、comparison、指标、split、标签语义、消融或资源信息还缺，按 `blocking`/`recommended`/`optional` 分类，附来源、许可证/访问条件、置信度、预计成本、放置目录和可复制下一步。
+Analysis 是用户准备研究材料时使用的只读准备模式。它不是只问模型“还缺什么”，而是先把已有材料加工成可推理的研究中间层：
 
-Analysis 可以继续处理本地材料、发现候选数据集/论文/仓库、更新知识 artifact 和重新评估缺口，但不能写科研代码、锁定正式协议、启动实验、改变 comparison 清单或生成未经确认的科学结论。用户补充材料后重新 `scan`/`intake`，它只重做受影响的节点；当材料和协议足够时，用户切到 Research。
+1. 扫描和解析论文、图表、LaTeX 与附件，生成 `PaperCard`、证据定位、全文/混合检索索引；
+2. 对 PaperCard 做主题综合、研究地图、方法谱系、机制库和证据冲突整理；
+3. 读取用户数据并生成 `DatasetCard`、字段/样本单位、标签候选、分布、缺失/重复/异常和可用场景画像；
+4. 整理已有 comparison、代码入口、许可证、环境和可复现性状态；
+5. 在这些结构化结果之上生成 `ResearchMaterialAssessment`：告诉用户哪些论文、数据集/场景、comparison、指标、split、标签语义、消融或资源信息还缺。
+
+Analysis 可以继续处理本地材料、发现候选数据集/论文/仓库、更新知识 artifact 和重新评估缺口，也可以生成尚未锁定的切片/协议建议，但不能写科研代码、锁定正式协议、启动实验、改变 comparison 清单或生成未经确认的科学结论。用户补充材料后重新 `scan`/`intake`，它只重做受影响的节点；当材料和协议足够时，用户切到 Research。
 
 ## Research 模式（科研执行）
 
