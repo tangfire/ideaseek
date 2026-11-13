@@ -13,6 +13,7 @@ import experimentAuditV1 from './schemas/experiment-audit-v1.json' with { type: 
 import datasetCandidatesV1 from './schemas/dataset-candidates-v1.json' with { type: 'json' };
 import ideaCardV1 from './schemas/idea-card-v1.json' with { type: 'json' };
 import ideaCandidatesV1 from './schemas/idea-candidates-v1.json' with { type: 'json' };
+import integrityForensicsV1 from './schemas/integrity-forensics-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -54,7 +55,8 @@ export type SchemaName =
   | 'experiment-audit-v1'
   | 'dataset-candidates-v1'
   | 'idea-card-v1'
-  | 'idea-candidates-v1';
+  | 'idea-candidates-v1'
+  | 'integrity-forensics-v1';
 
 const SCHEMAS: Record<SchemaName, object> = {
   'papercard-v1': papercardV1,
@@ -70,6 +72,7 @@ const SCHEMAS: Record<SchemaName, object> = {
   'dataset-candidates-v1': datasetCandidatesV1,
   'idea-card-v1': ideaCardV1,
   'idea-candidates-v1': ideaCandidatesV1,
+  'integrity-forensics-v1': integrityForensicsV1,
 };
 
 let ajv: Ajv | null = null;

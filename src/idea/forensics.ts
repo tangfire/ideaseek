@@ -8,6 +8,7 @@ import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { IdeaCard } from './card.js';
 import type { IdeaAnalysis } from './analysis.js';
 import type { EvidenceAudit } from './claim-audit.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /** Minimal projection of the current reviewer-owned audit artifact.
  * The old idea/audit backend carried claim impacts; the ADR-009 reviewer
@@ -897,6 +898,9 @@ export function parseForensicsOutput(
       `integrity-forensics output failed validation: ${validation.errors.slice(0, 4).join('; ')}`,
     );
   }
+  // Defense in depth (JSON Schema authority): context-bound checks ran
+  // first; the shared contract re-checks structure as a subset gate.
+  assertAgainstSchema('integrity-forensics-v1', parsed);
   const record = parsed as {
     findings: ForensicsFinding[];
     summary: string;

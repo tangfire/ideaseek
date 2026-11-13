@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/integrity-forensics-v1.json",
+  "title": "IdeaSeek integrity forensics model output (integrity-forensics-v1)",
+  "description": "Structural contract for the ARIS integrity-forensics MODEL output (before the platform merges deterministic sweep findings). Context-bound rules stay TS (ideaId/cardVersion equality, unique finding ids) — the schema is a sound subset; the runtime validator runs first.",
+  "type": "object",
+  "required": ["ideaId", "cardVersion", "findings", "summary"],
+  "properties": {
+    "ideaId": { "type": "string", "minLength": 1 },
+    "cardVersion": { "type": "integer", "minimum": 1 },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "family", "severity", "detail", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "family": {
+            "enum": [
+              "result-selection",
+              "failure-hiding",
+              "drift",
+              "claim-evidence",
+              "anomalous-narrative",
+              "coverage"
+            ]
+          },
+          "severity": { "enum": ["critical", "major", "minor"] },
+          "detail": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "summary": { "type": "string", "minLength": 1 }
+  }
+}
