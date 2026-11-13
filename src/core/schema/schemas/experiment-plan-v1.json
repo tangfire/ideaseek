@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/experiment-plan-v1.json",
+  "title": "IdeaSeek ExperimentPlan (experiment-plan-v1)",
+  "description": "Structural contract for the ARIS experiment-plan output. Relational rules stay in the TS validator (runOrder covers every block, claims link to real blocks, budgetMinutes vs IdeaCard ceiling, protocol primary metrics planned) — the schema is a sound subset: everything validateExperimentPlan accepts passes this schema. Cross-language consumers read this file.",
+  "type": "object",
+  "required": [
+    "problem",
+    "thesis",
+    "claims",
+    "blocks",
+    "runOrder",
+    "seeds",
+    "budgetMinutes",
+    "risks"
+  ],
+  "properties": {
+    "problem": { "type": "string", "minLength": 1 },
+    "thesis": { "type": "string", "minLength": 1 },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["claimId", "statement", "linkedBlocks"],
+        "properties": {
+          "claimId": { "type": "string", "minLength": 1 },
+          "statement": { "type": "string", "minLength": 1 },
+          "linkedBlocks": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": [
+          "blockId",
+          "name",
+          "claimTested",
+          "priority",
+          "scale",
+          "dataScale",
+          "metrics",
+          "successCriterion",
+          "failureInterpretation"
+        ],
+        "properties": {
+          "blockId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "claimTested": { "type": "string", "minLength": 1 },
+          "priority": { "enum": ["MUST-RUN", "NICE-TO-HAVE"] },
+          "scale": { "enum": ["smoke", "quick"] },
+          "dataScale": { "enum": ["smoke", "quick", "standard"] },
+          "metrics": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name", "direction"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "direction": { "enum": ["higher", "lower"] }
+              }
+            }
+          },
+          "successCriterion": { "type": "string", "minLength": 1 },
+          "failureInterpretation": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "runOrder": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "seeds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "integer" }
+    },
+    "budgetMinutes": { "type": "number", "exclusiveMinimum": 0 },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["risk", "mitigation"],
+        "properties": {
+          "risk": { "type": "string", "minLength": 1 },
+          "mitigation": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

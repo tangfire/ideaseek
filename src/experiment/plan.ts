@@ -2,6 +2,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { sha256Of } from '../core/hash.js';
 import { stableJson } from './spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * ARIS `experiment-plan` skill backend (Phase 4.5 capability 2,
@@ -489,6 +490,10 @@ export function parseExperimentPlan(output: string, context: PlanIdeaContext): E
   }
 
   if (errors.length > 0) fail(errors);
+  // Defense in depth (JSON Schema authority): the relational validator ran
+  // first; the shared contract re-checks structure so a future loosened
+  // validator cannot widen the gate.
+  assertAgainstSchema('experiment-plan-v1', parsed);
   return {
     problem: String(parsed.problem),
     thesis: String(parsed.thesis),
