@@ -31,6 +31,7 @@
     "test:watch": "vitest",
     "test:python": "node worker/python/run-tests.mjs",
     "release-check": "node scripts/release-check.mjs",
+    "docs:site": "node scripts/docs-site.mjs build && node scripts/docs-site.mjs check",
     "shell:spike": "tsc -p tsconfig.build.json && node dist/cli/shell/spike-main.js"
   },
   "dependencies": {
