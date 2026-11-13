@@ -14,6 +14,7 @@ import {
   type ReviewKind,
   type ReviewTarget,
 } from './inputs.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * Fresh-context independent reviewer + experiment audit (Phase 4.5,
@@ -412,6 +413,12 @@ export function parseReviewOutput(output: string, ctx: ParseReviewContext): Revi
       `${ctx.kind} failed validation: ${errors.slice(0, 4).join('; ')}`,
     );
   }
+  // Defense in depth (JSON Schema authority): the semantic checks ran
+  // first; the shared contract re-checks structure as a subset gate.
+  assertAgainstSchema(
+    ctx.kind === 'idea-review' ? 'idea-review-v1' : 'experiment-audit-v1',
+    record,
+  );
 
   const envelope: ReviewEnvelope = {
     reviewId: `rv-${ctx.kind}-${ctx.target.ideaId}-v${ctx.version}`,

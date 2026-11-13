@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/experiment-audit-v1.json",
+  "title": "IdeaSeek ExperimentAudit payload (experiment-audit-v1)",
+  "description": "Structural contract for the ARIS experiment-audit payload. Uniqueness of check ids, completeness (all five A-F ids present) and overall == worst check status stay in the TS validator — the schema is a sound subset; the runtime validator runs first.",
+  "type": "object",
+  "required": ["checks", "evalType", "overall", "summary"],
+  "properties": {
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "details", "evidence"],
+        "properties": {
+          "id": {
+            "enum": [
+              "gt_provenance",
+              "score_normalization",
+              "result_existence",
+              "dead_code",
+              "scope"
+            ]
+          },
+          "status": { "enum": ["PASS", "WARN", "FAIL"] },
+          "details": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "evalType": {
+      "enum": [
+        "real_gt",
+        "synthetic_proxy",
+        "self_supervised_proxy",
+        "simulation_only",
+        "human_eval"
+      ]
+    },
+    "overall": { "enum": ["PASS", "WARN", "FAIL"] },
+    "summary": { "type": "string", "minLength": 1 }
+  }
+}
