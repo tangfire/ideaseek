@@ -10,7 +10,7 @@ import {
   probeEmbeddingEnvironment,
 } from '../retrieval/embeddings.js';
 import { IdeaseekError } from '../core/errors.js';
-import { findProjectRoot } from '../config/paths.js';
+import { findProjectRoot, projectPaths } from '../config/paths.js';
 import { detectEnvironment, type EnvironmentReport } from '../runtime/detect.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { action, jsonLine } from './shared.js';
@@ -59,6 +59,19 @@ export function registerDoctorCommand(program: Command): void {
           });
         } else {
           checks.push({ level: 'ok', name: 'project', detail: root });
+          // Migration preview BEFORE the runtime open (which auto-applies):
+          // shows applied vs shipped schema versions so an upgrade can be
+          // inspected — and backed up — before anything touches the DB.
+          const { readSchemaInfo } = await import('../workflow/sqlite.js');
+          const schema = readSchemaInfo(projectPaths(root).dbFile);
+          checks.push({
+            level: schema.current === schema.latest ? 'ok' : 'info',
+            name: 'db schema',
+            detail:
+              schema.current === schema.latest
+                ? `v${schema.current}/v${schema.latest} · all migrations applied`
+                : `v${schema.current}/v${schema.latest} · ${schema.latest - schema.current} pending — applied on the next command (snapshot first: ideaseek backup)`,
+          });
           try {
             runtime = await ProjectRuntime.open({ cwd });
             const { configLoad, recovery } = runtime;

@@ -57,6 +57,9 @@ describe('setup / doctor / config explain', () => {
     expect(payload.environment.node.supported).toBe(true);
     const byName = new Map(payload.checks.map((check) => [check.name, check]));
     expect(byName.get('config')?.level).toBe('ok');
+    // Journey H migration preview: applied vs shipped schema versions.
+    expect(byName.get('db schema')?.detail).toMatch(/v\d+\/v\d+/);
+    expect(byName.get('db schema')?.detail).toContain('all migrations applied');
     expect(byName.get('node')?.level).toBe('ok');
     expect(byName.get('recovery')?.level).toBe('ok');
     expect(byName.get('dsh')?.detail).toMatch(/pinned [0-9a-f]{12}/);

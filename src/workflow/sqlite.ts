@@ -517,6 +517,29 @@ export function rebindProjectRoot(dbPath: string, root: string): void {
   }
 }
 
+/**
+ * Read-only schema migration preview (Journey H): current applied version
+ * vs the latest migration this build ships. Never migrates — a fresh or
+ * unreadable file reports 0 so doctor can show "pending, applies on the
+ * next command" before anything touches the database.
+ */
+export function readSchemaInfo(dbPath: string): { current: number; latest: number } {
+  const latest = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_version').get() as {
+        v: number;
+      };
+      return { current: Number(row.v), latest };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return { current: 0, latest }; // no file / no schema_version table yet
+  }
+}
+
 export function vacuumSqliteInto(sourcePath: string, destPath: string): void {
   const source = new DatabaseSync(sourcePath, { readOnly: true });
   try {
