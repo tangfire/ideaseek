@@ -195,7 +195,7 @@ Phase 4：Comparison 复现与统一评测
 - [ ] 图表 source manifest：输入/统计定义/代码版本/hash/caption/审阅状态；PDF/SVG 与 PNG 输出和渲染检查
 - [ ] 方法图、定性案例、图像/视频/空间可视化的专用 workflow 或明确的用户补充入口
 - [ ] result-to-claim、claim/citation/integrity audit 和独立 reviewer 接入 full-run 结果
-- [ ] ARIS paper-plan → paper-figure → paper-write → paper-compile workflow 接入
+- [x] ARIS paper-plan → paper-figure → paper-write → paper-compile workflow 接入
 - [ ] Overleaf 兼容 LaTeX/BibTeX 工程、图表、源数据、provenance 和复现包导出
 
 ## Phase 8：产品硬化与长任务能力
@@ -208,7 +208,7 @@ Phase 4：Comparison 复现与统一评测
 - [x] 长周期 soak test（加速时钟覆盖恢复/队列/通知/备份；发布前真实长周期运行仍待执行）
 - [x] protocol/experiment/权限审批交互
 - [x] 自然语言 REPL 与高影响操作确认
-- [ ] fast/balanced/deep/deterministic 模型路由
+- [x] fast/balanced/deep/deterministic 模型路由
 - [x] 用户级/项目级配置、多项目注册和项目锁
 - [x] cleanup/archive/export、通知和反馈入口
 - [x] IdeationRound 多轮 idea、旧候选去重和用户反馈回流
@@ -365,3 +365,4 @@ YYYY-MM-DD | 模块 | commit | 测试命令/结果 | 已知限制 | 下一依赖
 2026-11-13 | Build-vs-Reuse 遗留项2：detect/capacity 探针迁移到共享 runProcess（统一超时=树杀语义、ENOENT→not found on PATH 与非零退出详情保持原契约、nvidia-smi 查询超时仍返回 null 保持 best-effort）；BUILD_VS_REUSE_REVIEW 对应行标记已完成 | 本提交 | 门禁：format:check/lint/typecheck 绿；全量 vitest 958/958 全绿（detect+capacity 14 条先行验证）| render/wiki helper spawn 超时（审查遗留项3）与 JSON Schema 第5契约仍待做 | 下一模块：render/wiki helper 超时迁移 或 JSON Schema 第5契约
 2026-11-13 | Build-vs-Reuse 遗留项3：render/wiki helper 迁移到 runProcess（render 60s、wiki 120s 超时=树杀；spawn 失败语义保持 render→code -1 空输出、wiki→null 走降级路径；timeout 输出明示 tree killed）；两个文件的 node:child_process 直连 import 清零（除 run.ts 合理例外的 detached daemon 与 session 的 attach 子进程外，全部经 core/proc）| 本提交 | 门禁：format:check/lint/typecheck 绿；全量 vitest 958/958 全绿（render 3 + research-wiki 4 先行）| 审查遗留仅剩 JSON Schema 迁移清单（=既有 checkbox）与 walk 第5处出现时再抽共享 | 下一模块：JSON Schema 第5契约（如 config 或 handoff）或 incoming/ideas 改进闭环
 2026-11-13 | JSON Schema 第5契约 dataset-profile-v1（真实 Python↔TS 边界2）：schemas/dataset-profile-v1.json（python federated profiler 全形状镜像：parser/root/splits≥1 含 client{labelCounts 非负整数}/nonIid 五字段/files sha256 模式/rootHash 模式/readOnly 三字段，sampleStats 四字段），注册进 schema 注册表（5 契约）；双侧接线——TS：federated.ts 解析 python stdout 后立即 assertAgainstSchema（持久化 knowledge/dataset-manifest.json 之前），Python：cmd_dataset emit 前 validate_payload 同一文件、违规=SCHEMA_VIOLATION 稳定码 | 本提交 | 门禁：format:check/lint/typecheck 绿；python 套件 17/17（新增 dataset-profile 合法通过+坏 rootHash 带 /rootHash 路径）；全量 vitest 972 条中 971 绿（cli.e2e worker-crash 已知偶发单跑 5/5；schema.test 注册断言改 toContain 防脆序）；federated+data 62 条真实 python 输出过 TS 门禁=形状与现实一致 | 无 TS 侧手写 validator 可做决策一致性（此前是盲信 JSON.parse——本契约是纯新增 enforcement）；config/handoff 等其余手写 validator 迁移仍走既有 checkbox | 下一模块：incoming/ideas 改进闭环 或 图表 source manifest 全项
+2026-11-13 | Phase 7 paper 工作流链验收 + 路由 checkbox 去重：tests/paper-chain.test.ts 端到端证明四段工作流互相绑定——plan.figurePlan ids == figures-plan 产出 ids（钉扎）、manuscript.venue == plan.venue、compile-report.manuscriptInputHash == manuscript.inputHash 且 main.tex 含 documentclass（blocked 模板缺失时豁免装配断言）、figure-render.planInputHash == figures-plan inputHash、三段 artifact 均记 paper-* skill 裸 hex sha256（修 compile-report 持久化补 mainPath 字段，stdout 与文件现在同构）；据此勾 Phase 7「paper-plan→figure→write→compile workflow 接入」；同时勾 Phase 7「fast/balanced/deep/deterministic 模型路由」——该项与 Phase 1 已勾项（e09e2db：四层 tier+14 角色+models use 切换+审计）为同一能力的重复列出，非新交付 | 本提交 | 门禁：format:check/lint/typecheck 绿；全量 vitest 973 条中 972 绿（cli.e2e worker-crash 已知偶发单跑 5/5）；新增 paper-chain 1 条全链 e2e（五阶段哈希/ID 传递）| chain 测试依赖本机 latexmk 缺失路径走 blocked/failed 分支亦断言通过（环境无关）；真实 dsh 全链仍待凭据 | 下一模块：图表 source manifest 全项 或 incoming/ideas 改进闭环

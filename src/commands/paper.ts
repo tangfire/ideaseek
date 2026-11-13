@@ -581,7 +581,7 @@ export function registerPaperCommand(program: Command): void {
         await ensureDir(join(root, 'reports', 'paper'));
         await writeFileAtomic(
           join(root, 'reports', 'paper', 'compile-report.json'),
-          `${JSON.stringify({ contract: PAPER_COMPILE_SCHEMA, ...report }, null, 2)}\n`,
+          `${JSON.stringify({ contract: PAPER_COMPILE_SCHEMA, mainPath, ...report }, null, 2)}\n`,
         );
 
         let eventSeq: number | null = null;
