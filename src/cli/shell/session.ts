@@ -107,6 +107,8 @@ export class InteractiveSession {
   private streamChild: ChildProcess | null = null;
   private sessionRoot: string | null = null;
   private stopped = false;
+  /** Highest RunEvent seq rendered — re-attach resumes with `--since`. */
+  private lastSeq = 0;
 
   constructor(opts: InteractiveSessionOptions) {
     this.plain = opts.plain;
@@ -156,18 +158,23 @@ export class InteractiveSession {
     if (!input) return 'continue';
     if (input === '/') return 'menu';
     try {
+      let outcome: SubmitOutcome = 'continue';
       if (/^\d+$/.test(input) && this.pendingItems.length > 0) {
         await this.approvePending(Number(input));
-        return 'continue';
-      }
-      if (!input.startsWith('/')) {
+      } else if (!input.startsWith('/')) {
         // Plain text → `ideaseek ask`: queries answer from state, high-impact
         // requests become pending Decisions, everything else goes to the
         // supervisor. Never prints "unknown input".
         await this.relay(['ask', ...tokenizeArgs(input)]);
-        return 'continue';
+      } else {
+        outcome = await this.dispatch(input);
       }
-      return await this.dispatch(input);
+      // The stream child exits when there is no run yet or the run reached
+      // a terminal state; this command may have just created a run —
+      // re-attach (idempotent; `--since` resumes after the last event the
+      // pane already showed, so replays never duplicate).
+      if (outcome === 'continue' && !this.stopped && !this.streamChild) this.startStream();
+      return outcome;
     } catch (error) {
       this.println(paint(`error: ${(error as Error).message}`, 'error', { plain: this.plain }));
       return 'continue';
@@ -395,6 +402,7 @@ export class InteractiveSession {
           if (resolve(payload.root) !== resolve(process.cwd())) {
             process.chdir(payload.root);
             this.stopStream(); // events were bound to the previous project
+            this.lastSeq = 0; // …and so was the event sequence
             this.startStream();
             this.println(paint(`session → ${payload.root}`, 'dim', { plain: this.plain }));
             const header = await buildHeaderLines();
@@ -434,17 +442,25 @@ export class InteractiveSession {
   }
 
   /**
-   * Replays persisted RunEvents from seq 0 then follows live ones (DB
-   * polling). Quitting kills only this child — never the background run.
+   * Replays persisted RunEvents (from `--since` on re-attach, else seq 0)
+   * then follows live ones (DB polling). Expected exits stay silent: no
+   * run yet (RUN_NOT_FOUND) and terminal-run stops are normal lifecycle,
+   * not something to shout at the user on every startup. Quitting kills
+   * only this child — never the background run.
    */
   startStream(): void {
-    if (this.streamChild) return;
-    const child = spawn(process.execPath, [cliEntryPath(), 'attach', '--json'], {
+    if (this.streamChild || this.stopped) return;
+    const args = ['attach', '--json'];
+    if (this.lastSeq > 0) args.push('--since', String(this.lastSeq));
+    const child = spawn(process.execPath, [cliEntryPath(), ...args], {
       cwd: process.cwd(),
       env: { ...process.env, IDEASEEK_CLI: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.streamChild = child;
+    // Set once the child's exit is explained (no run / surfaced error) so
+    // the close handler does not append a redundant "ended" line.
+    let exitExplained = false;
     let buf = '';
     child.stdout?.on('data', (chunk: Buffer | string) => {
       buf += String(chunk);
@@ -455,16 +471,26 @@ export class InteractiveSession {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line) as {
-            seq: number;
+            seq?: number;
             runId: string;
-            ts: number;
-            type: string;
+            ts?: number;
+            type?: string;
             phase?: string;
             role?: string;
             object: string | null;
             summary: string;
             status: string | null;
           };
+          // attach's lifecycle summary (stopReason/status/…) is JSON but
+          // not an event — rendering it produced `[NaN:NaN:NaN]` garbage.
+          if (
+            typeof event.seq !== 'number' ||
+            typeof event.ts !== 'number' ||
+            typeof event.type !== 'string'
+          ) {
+            continue;
+          }
+          if (event.seq > this.lastSeq) this.lastSeq = event.seq;
           this.println(
             formatEventLine(
               {
@@ -490,7 +516,15 @@ export class InteractiveSession {
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const text = String(chunk).trim();
-      if (text) this.println(paint(`event stream: ${text}`, 'warn', { plain: this.plain }));
+      if (!text) return;
+      // A fresh project has no run yet — attach exits with RUN_NOT_FOUND.
+      // That is the expected steady state, not a warning to paint red.
+      if (text.includes('RUN_NOT_FOUND')) {
+        exitExplained = true;
+        return;
+      }
+      exitExplained = true;
+      this.println(paint(`event stream: ${text}`, 'warn', { plain: this.plain }));
     });
     // Spawn can fail under process pressure (EAGAIN); an unhandled 'error'
     // event would take the whole UI down — degrade to a warning instead.
@@ -502,15 +536,11 @@ export class InteractiveSession {
     });
     child.on('close', (code) => {
       this.streamChild = null;
-      if (!this.stopped) {
-        this.println(
-          paint(
-            `(event stream ended${code === 0 || code === null ? '' : ` exit ${code}`})`,
-            'dim',
-            { plain: this.plain },
-          ),
-        );
-      }
+      if (this.stopped || exitExplained) return;
+      // Natural stop (run terminal) or our own kill — silent. Anything
+      // else is an abnormal exit worth one dim line.
+      if (code === 0 || code === null) return;
+      this.println(paint(`(event stream ended exit ${code})`, 'dim', { plain: this.plain }));
     });
   }
 

@@ -155,9 +155,14 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     const repl = startTtyRepl(dir);
     await repl.waitFor(/ideaseek ›/);
     repl.write('/model');
-    await repl.waitFor(/ideaseek › \/model/);
-    const output = repl.output();
-    expect(output).toContain('/models');
+    // Typed characters are echoed as cursor-positioned writes on the prompt
+    // line (`m` lands at column 13, right after `ideaseek › /`), and the
+    // menu filters live to the typed prefix. The old contiguous-string
+    // assertion only ever matched when a stream error happened to redraw
+    // the input line — it must not depend on that noise returning.
+    await repl.waitFor(/\[13Gm/);
+    await repl.waitFor(/> \/models/);
+    await repl.waitFor(/usage: \/models/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
   }, 60_000);
