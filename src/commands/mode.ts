@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { action, jsonLine } from './shared.js';
+import { SESSION_MODES } from '../session/mode.js';
 
 /**
  * `ideaseek mode [research|agent]` (docs/MODES.md): shows the current
@@ -87,7 +88,7 @@ async function changeStrategy(
 async function switchSessionMode(
   root: string,
   target: string,
-  opts: { json?: boolean },
+  opts: { json?: boolean; force?: boolean },
 ): Promise<number> {
   const {
     parseSessionMode,
@@ -95,12 +96,13 @@ async function switchSessionMode(
     writeSessionMode,
     buildSessionSummary,
     MODE_PERMISSIONS,
+    SESSION_MODES,
   } = await import('../session/mode.js');
   const requested = parseSessionMode(target);
   if (!requested) {
     throw new IdeaseekError(
       'INVALID_ARGUMENT',
-      `mode must be one of: research | agent (use --strategy for ${RESEARCH_MODES.join('|')})`,
+      `mode must be one of: ${SESSION_MODES.join(' | ')} (use --strategy for ${RESEARCH_MODES.join('|')})`,
     );
   }
   const current = await readSessionMode(root);
@@ -116,7 +118,7 @@ async function switchSessionMode(
     return 0;
   }
 
-  await writeSessionMode(root, requested);
+  await writeSessionMode(root, requested, { force: opts.force === true });
 
   // Audit only: an explicit /mode is confirmation enough, but the switch is
   // recorded whenever a run exists (decisions are run-bound).
@@ -158,16 +160,19 @@ async function switchSessionMode(
 export function registerModeCommand(program: Command): void {
   program
     .command('mode')
-    .description('show mode, project and permissions; switch the Research/Agent session mode')
-    .argument('[target]', 'session mode: research | agent')
+    .description(
+      'show mode, project and permissions; switch the Research/Analysis/Agent session mode',
+    )
+    .argument('[target]', 'session mode: research | analysis | agent')
     .option('--strategy <mode>', `project research strategy: ${RESEARCH_MODES.join(' | ')}`)
+    .option('--force', 'override the Analysis to Research preparation gate (records a Decision)')
     .option('--confirm', 'guided confirmation for the protected strategy change')
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (
           target: string | undefined,
-          opts: { strategy?: string; confirm?: boolean; json?: boolean },
+          opts: { strategy?: string; confirm?: boolean; json?: boolean; force?: boolean },
         ) => {
           const root = await requireRoot();
 
@@ -183,7 +188,8 @@ export function registerModeCommand(program: Command): void {
             }
             for (const line of renderSessionSummary(summary)) process.stdout.write(`${line}\n`);
             process.stdout.write(
-              'switch: ideaseek mode research|agent · strategy: ideaseek mode --strategy <mode> --confirm\n',
+              `switch: ideaseek mode ${SESSION_MODES.join(' | ')} · strategy: ideaseek mode --strategy <mode> --confirm
+`,
             );
             return 0;
           }

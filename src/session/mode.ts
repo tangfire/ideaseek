@@ -11,9 +11,9 @@ import { join } from 'node:path';
  * mode state, permission summary and audit-friendly rendering.
  */
 
-export type SessionMode = 'research' | 'agent';
+export type SessionMode = 'research' | 'analysis' | 'agent';
 
-export const SESSION_MODES: readonly SessionMode[] = ['research', 'agent'];
+export const SESSION_MODES: readonly SessionMode[] = ['research', 'analysis', 'agent'];
 
 export function parseSessionMode(raw: unknown): SessionMode | null {
   return typeof raw === 'string' && (SESSION_MODES as readonly string[]).includes(raw)
@@ -36,7 +36,35 @@ export async function readSessionMode(root: string): Promise<SessionMode> {
 }
 
 /** Crash-safe write: temp file + rename inside the project's .research/. */
-export async function writeSessionMode(root: string, mode: SessionMode): Promise<void> {
+export async function writeSessionMode(
+  root: string,
+  mode: SessionMode,
+  opts: { force?: boolean } = {},
+): Promise<void> {
+  // Analysis → Research preparation gate (PROGRESS 84): the switch is
+  // refused while blocking material gaps remain; --force records an
+  // auditable override at the call site. Every switcher (mode CLI,
+  // interactive --mode, TUI /mode) funnels through here.
+  if (mode === 'research') {
+    const current = await readSessionMode(root).catch(() => 'research' as SessionMode);
+    if (current === 'analysis' && !opts.force) {
+      const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
+      const { assessment } = await loadOrBuildAssessment(root);
+      const blocking = assessment.gaps.filter(
+        (item) => item.priority === 'blocking' && item.blocks.includes('protocolDesign'),
+      );
+      if (blocking.length > 0) {
+        const { IdeaseekError } = await import('../core/errors.js');
+        throw new IdeaseekError(
+          'USER_INPUT_REQUIRED',
+          'Analysis → Research blocked by material gaps: ' +
+            blocking.map((item) => `${item.id} (${item.fillIn})`).join('; ') +
+            ' — clear them, or override with: ideaseek mode research --force',
+          { gaps: blocking.map((item) => item.id) },
+        );
+      }
+    }
+  }
   const file = sessionModeFile(root);
   await mkdir(join(root, '.research'), { recursive: true });
   const tmp = `${file}.tmp`;
@@ -51,6 +79,12 @@ export const MODE_PERMISSIONS: Record<SessionMode, readonly string[]> = {
     'protected science (metrics/data/comparisons/hypothesis) always needs explicit confirmation',
     'experiments pass protocol lock + comparison gate + capacity admission first',
     'tools: research capability profile — project read + knowledge search only',
+  ],
+  analysis: [
+    'read-only preparation: papers/datasets/comparisons are inputs, never modified',
+    'may build knowledge artifacts: PaperCards, research map, dataset card, assessment',
+    'cannot lock protocols, start experiments, change the comparison list or write research code',
+    'gaps report via ideaseek assessment; switching to research requires no blocking gaps (--force to override)',
   ],
   agent: [
     'may edit project code/config and run bounded tests inside the project root',

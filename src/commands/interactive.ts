@@ -21,11 +21,14 @@ export function registerInteractiveCommand(program: Command): void {
       action(async (opts: { plain?: boolean; mode?: string }) => {
         const global = program.opts<{ plain?: boolean }>();
         if (opts.mode) {
-          const { parseSessionMode, readSessionMode, writeSessionMode } =
+          const { parseSessionMode, readSessionMode, writeSessionMode, SESSION_MODES } =
             await import('../session/mode.js');
           const mode = parseSessionMode(opts.mode);
           if (!mode) {
-            throw new IdeaseekError('INVALID_ARGUMENT', 'mode must be one of: research | agent');
+            throw new IdeaseekError(
+              'INVALID_ARGUMENT',
+              `mode must be one of: ${SESSION_MODES.join(' | ')}`,
+            );
           }
           const { findProjectRoot } = await import('../config/paths.js');
           const root = await findProjectRoot(process.cwd());

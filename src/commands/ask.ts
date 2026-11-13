@@ -157,6 +157,56 @@ export function registerAskCommand(program: Command): void {
           }
           return result.code;
         }
+        // Analysis mode: natural language enters the material-assessment
+        // flow (MODES.md Analysis 模式) — deterministic, writes only the
+        // knowledge gap artifact, never a Decision, never a model call.
+        {
+          const { readSessionMode } = await import('../session/mode.js');
+          const sessionMode = await readSessionMode(process.cwd()).catch(() => 'research' as const);
+          if (sessionMode === 'analysis') {
+            const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
+            const { assessment, reused } = await loadOrBuildAssessment(process.cwd());
+            const blocking = assessment.gaps.filter((g) => g.priority === 'blocking');
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  source: 'analysis-assessment',
+                  mode: 'analysis',
+                  reused,
+                  verdict: assessment.verdict,
+                  sufficientFor: assessment.sufficientFor,
+                  gaps: assessment.gaps,
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `analysis mode — research material assessment (${reused ? 'reused' : 'rebuilt'}): ` +
+                  `${assessment.verdict.toUpperCase()} · protocol design ` +
+                  `${assessment.sufficientFor.protocolDesign ? 'OK' : 'BLOCKED'} · smoke/quick ` +
+                  `${assessment.sufficientFor.smokeQuick ? 'OK' : 'BLOCKED'}
+`,
+              );
+              for (const item of assessment.gaps.slice(0, 12)) {
+                process.stdout.write(
+                  `  [${item.priority}] ${item.id}: ${item.reason}
+` +
+                    `          next: ${item.fillIn}
+`,
+                );
+              }
+              if (assessment.gaps.length > 12) {
+                process.stdout.write(`  … ${assessment.gaps.length - 12} more in the report
+`);
+              }
+              process.stdout.write('  file: knowledge/research-material-assessment.json\n');
+              process.stdout.write(
+                '  (analysis mode: questions about materials are answered from state; switch to research when blocking gaps clear)\n',
+              );
+            }
+            return blocking.length > 0 ? 2 : 0;
+          }
+        }
+
         if (intent.kind === 'pending-action') {
           const decision = await runCli(
             ['decision', 'propose', `${intent.summary} (classified: ${intent.reason})`],
