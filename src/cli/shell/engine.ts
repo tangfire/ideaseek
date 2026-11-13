@@ -280,6 +280,10 @@ export interface InkKeyLike {
 
 /** Maps an Ink key event onto the pure ShellEngine key vocabulary. */
 export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
+  // Some terminal/IME combinations report Delete as a raw CSI sequence
+  // instead of Ink's named key. Check it before `key.escape`, because the
+  // sequence begins with ESC and must not merely dismiss the palette.
+  if (input === '\x1b[3~' || input === '\x1b[3;5~') return { name: 'delete' };
   if (key.return) return { name: 'return' };
   if (key.escape) return { name: 'escape' };
   if (key.tab || input === '\t') return { name: 'tab' };

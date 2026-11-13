@@ -73,7 +73,10 @@ interface ShellAppProps {
 /** Block wordmark only when it fits; otherwise the short `[IS]` mark. */
 function bannerLines(columns: number, rows: number, plain: boolean): string[] {
   if (plain) return [PLAIN_MARK];
-  const text = renderBanner({ columns, plain: rows < 30 });
+  // Terminal height controls layout only. It must not silently disable the
+  // brand mark; renderBanner already chooses the compact mark by width.
+  void rows;
+  const text = renderBanner({ columns });
   return text.split('\n');
 }
 

@@ -32,6 +32,16 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
     expect(snap.cursor).toBe(5);
   });
 
+  it('Delete removes the character at the cursor without dismissing the palette', () => {
+    const engine = new ShellEngine();
+    engine.handle({ sequence: '/status' });
+    engine.handle(key('left'));
+    const mapped = toEngineKey('\x1b[3~', { escape: true });
+    const snap = engine.handle(mapped);
+    expect(snap.line).toBe('/statu');
+    expect(snap.paletteOpen).toBe(true);
+  });
+
   it('opens and filters the palette while typing a slash word', () => {
     const engine = new ShellEngine();
     let snap = engine.handle({ sequence: '/' });
@@ -134,6 +144,8 @@ describe('interactive renderer routing (checkpoint: no TUI on plain/non-TTY)', (
     expect(toEngineKey('\x03', { ctrl: true })).toEqual({ name: 'c', ctrl: true });
     expect(toEngineKey('\x04', { ctrl: true })).toEqual({ name: 'd', ctrl: true });
     expect(toEngineKey('a', {})).toEqual({ sequence: 'a' });
+    expect(toEngineKey('\x1b[3~', { escape: true })).toEqual({ name: 'delete' });
+    expect(toEngineKey('', { delete: true })).toEqual({ name: 'delete' });
   });
 });
 
