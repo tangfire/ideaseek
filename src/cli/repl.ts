@@ -70,7 +70,7 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
   const tty = isTTY || process.env.IDEASEEK_FORCE_TTY === '1';
 
   const banner = renderBanner({ plain });
-  process.stdout.write(`${paint(banner, 'brand', paintOpts)}\n`);
+  process.stdout.write(`${paint(banner, 'brand', paintOpts)}\n\n`);
 
   // Late-bound sink: the shared session may print before readline exists
   // (startup) and must print through the prompt-aware println afterwards.

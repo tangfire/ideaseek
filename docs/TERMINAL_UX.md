@@ -22,7 +22,7 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 
 输入编辑区必须始终固定在同一行；命令菜单是覆盖层，不能把输入复制成多行。用户继续输入时只更新候选和高亮，不滚动整个终端。上下键、Tab、Enter、Esc、Ctrl-C 和终端 resize 由 TUI 输入层统一处理。
 
-TUI 的顶部状态区保持紧凑：项目、当前 Research/Agent 会话模式、run 状态、研究问题、阶段和资源分组显示；完整细节由 `/status` 提供。底部固定显示高对比度的当前模式徽标和 `Shift+Tab` 切换提示。输入 `/` 时，命令面板同时显示命令名与简短用途，选择态清晰突出；活动区把命令输出按逻辑行呈现并移除内嵌 ANSI 控制码，防止外部 CLI 输出破坏 Ink 重绘。
+TUI 的顶部状态区保持最多两行：项目 · Research/Agent 会话模式 · run 状态（阻塞时附原因），以及当前研究问题；阶段、任务、论文、资源等完整细节一律由 `/status` 提供，不在启动时铺开。block 字标是活动区首部的一次性问候，随事件滚动离开，不永久占据固定行。底部固定显示高对比度的当前模式徽标和 `Shift+Tab` 切换提示。输入 `/` 时，命令面板同时显示命令名与简短用途，选择态清晰突出；活动区把命令输出按逻辑行呈现并移除内嵌 ANSI 控制码，防止外部 CLI 输出破坏 Ink 重绘。
 
 交互模式可以使用成熟的 TypeScript TUI/terminal renderer，但必须保留 IdeaSeek 的事件、权限和 use-case 边界。不要继续在 readline 上堆叠更多光标逃逸来模拟全屏应用。
 
@@ -42,7 +42,7 @@ TUI 的顶部状态区保持紧凑：项目、当前 Research/Agent 会话模式
 
 ## Logo
 
-默认启动 banner 使用厚重、立体感的 block ASCII 字标。它直接突出 IdeaSeek 名称，适合交互式终端启动；不在每条事件中重复显示。窄终端或 `--plain` 模式使用短标识。
+默认启动 banner 使用厚重、立体感的 block ASCII 字标。它直接突出 IdeaSeek 名称，适合交互式终端启动；不在每条事件中重复显示。字标本身就是全部问候语——tagline 只保留在短标识里，宽屏启动不再重复品牌名。Ink TUI 中字标位于活动区首部，随首批事件滚动离开；窄终端或 `--plain` 模式使用短标识。
 
 ```text
 ██╗    ██████╗     ███████╗     █████╗     ███████╗    ███████╗    ███████╗    ██╗  ██╗
@@ -51,8 +51,6 @@ TUI 的顶部状态区保持紧凑：项目、当前 Research/Agent 会话模式
 ██║    ██║  ██║    ██╔══╝      ██╔══██║    ╚════██║    ██╔══╝      ██╔══╝      ██╔═██╗
 ██║    ██████╔╝    ███████╗    ██║  ██║    ███████║    ███████╗    ███████╗    ██║  ██╗
 ╚═╝    ╚═════╝     ╚══════╝    ╚═╝  ╚═╝    ╚══════╝    ╚══════╝    ╚══════╝    ╚═╝  ╚═╝
-
-IdeaSeek · Research from evidence
 ```
 
 窄终端、`--plain` 或不支持 Unicode 的环境使用：
@@ -65,24 +63,16 @@ IdeaSeek · Research from evidence
 
 ## 启动信息
 
-交互启动后显示项目和运行上下文：
+交互启动保持克制：固定区最多两行——项目 · 会话模式 · run 状态（阻塞时附原因并用警示色），以及当前研究问题。阶段、任务、论文、资源、supervisor 等完整细节一律由 `/status` 提供，不在启动时铺开。上一会话状态（`last session: …`）与待审批块仅在存在时追加。
 
 ```text
-[IS] IdeaSeek · Research from evidence
-Project : fl-model-heterogeneity
-Path    : ~/research/fl-model-heterogeneity
-Question: heterogeneous models in federated learning
-Mode    : starter
-Run     : run-20261110-001
-Stage   : PAPER_ANALYSIS
-Agents  : 8 active · 2 waiting
-Papers  : 42 indexed · 18 new
-GPU     : 4 detected · 2 available
+fl-model-heterogeneity · RESEARCH · run-20261110-001 · RUNNING
+heterogeneous models in federated learning
 
 ideaseek ›
 ```
 
-启动信息不能显示 secret、完整 prompt 或模型隐藏推理。
+无 run 时第一行以 `no run` 结尾。启动时只启动 `status` 一个子进程（不再探测论文计数与 GPU 环境），让首帧尽快出现。启动信息不能显示 secret、完整 prompt 或模型隐藏推理。
 
 ## 交互命令
 

@@ -1,8 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import os from 'node:os';
 import { resolve } from 'node:path';
 import { renderApprovalBlock, type PendingApproval } from '../../approval/pending.js';
-import { detectEnvironment } from '../../runtime/detect.js';
 import { renderHeader, type HeaderContext } from '../banner.js';
 import { formatEventLine, paint } from '../format.js';
 import { cliEntryPath, runCli, runCliJson } from '../runner.js';
@@ -47,27 +45,23 @@ export type SubmitOutcome = 'continue' | 'quit' | 'menu';
 
 const HINT_LINE = 'type / for the menu · Tab completes · /quit exits (runs keep going)';
 
-/** Unpainted project/run context header (renderer decides styling). */
+/**
+ * Unpainted project/run context header (renderer decides styling).
+ * Startup stays to two lines — project · mode · run state, plus the
+ * question; everything else (stage, tasks, papers, GPU, supervisor) is a
+ * `/status` query. Also drops the papers/env probes, so the TUI starts
+ * with one subprocess instead of four.
+ */
 export async function buildHeaderLines(): Promise<HeaderInfo> {
-  const [status, papers, env] = await Promise.all([
-    runCliJson<{
-      project: string;
-      run: {
-        runId: string;
-        status: string;
-        phase: string;
-        question: string;
-        blockReason: string | null;
-        strategy?: string;
-      } | null;
-      tasks: Record<string, number>;
-      total: number;
-      liveWorkers: number;
-      daemon?: { pid: number; state: string; logPath: string } | null;
-    }>(['status', '--json']).catch(() => null),
-    runCliJson<{ indexed: number }>(['papers', '--json']).catch(() => null),
-    detectEnvironment(process.cwd()).catch(() => null),
-  ]);
+  const status = await runCliJson<{
+    project: string;
+    run: {
+      runId: string;
+      status: string;
+      question: string;
+      blockReason: string | null;
+    } | null;
+  }>(['status', '--json']).catch(() => null);
   if (!status?.data) {
     return {
       lines: ['not an IdeaSeek project — run: ideaseek init (or cd into one)'],
@@ -75,41 +69,20 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
     };
   }
   const run = status.data.run ?? null;
-  const counts = status.data.tasks ?? {};
-  const ctx: HeaderContext = {
-    project: status.data.project ?? '(unknown project)',
-    question: run?.question || null,
-    mode: run?.strategy ?? null,
-    runId: run?.runId ?? null,
-    runStatus: run?.status ?? null,
-    stage: run?.phase ?? null,
-    blockReason: run?.blockReason ?? null,
-    agents: status.data.liveWorkers ?? 0,
-    tasks: {
-      done: counts.succeeded ?? 0,
-      total: status.data.total ?? 0,
-      queued: counts.queued ?? 0,
-      running: (counts.leased ?? 0) + (counts.running ?? 0) + (counts.committing ?? 0),
-      failed: counts.failed ?? 0,
-    },
-    papersIndexed: papers?.data?.indexed ?? null,
-    gpu: env?.gpu.nvidiaSmi.available
-      ? `${env.gpu.devices.length} device(s)${env.gpu.cudaVersion ? `, CUDA ${env.gpu.cudaVersion}` : ''}`
-      : null,
-    cpuCores: os.cpus().length,
-    memoryGiB: Math.round((os.totalmem() / 1024 ** 3) * 10) / 10,
-    supervisor: status.data.daemon
-      ? `pid ${status.data.daemon.pid} ${status.data.daemon.state}`
-      : null,
-  };
-  const lines = renderHeader(ctx).split('\n');
+  let sessionMode = 'research';
   const projectRoot = await findProjectRoot(process.cwd()).catch(() => null);
   if (projectRoot) {
-    const sessionMode = await readSessionMode(projectRoot).catch(() => null);
-    if (sessionMode)
-      lines.splice(1, 0, `Session : ${sessionMode === 'agent' ? 'Agent' : 'Research'}`);
+    sessionMode = (await readSessionMode(projectRoot).catch(() => 'research')) ?? 'research';
   }
-  return { lines, tone: 'dim' };
+  const ctx: HeaderContext = {
+    project: status.data.project ?? '(unknown project)',
+    sessionMode: sessionMode === 'agent' ? 'AGENT' : 'RESEARCH',
+    question: run?.question || null,
+    runId: run?.runId ?? null,
+    runStatus: run?.status ?? null,
+    blockReason: run?.blockReason ?? null,
+  };
+  return { lines: renderHeader(ctx).split('\n'), tone: run?.blockReason ? 'warn' : 'dim' };
 }
 
 /** Classic line-mode paint for a header block. */

@@ -165,7 +165,9 @@ describe('banner and event formatting (unit)', () => {
     const previousTerm = process.env.TERM;
     delete process.env.TERM;
     try {
-      expect(renderBanner({ columns: 200 })).toContain('IdeaSeek · Research from evidence');
+      // Wide greeting = the wordmark alone; the tagline lives in the short
+      // mark so a startup never repeats the brand name twice.
+      expect(renderBanner({ columns: 200 })).toBe(BLOCK_BANNER);
     } finally {
       if (previousTerm === undefined) delete process.env.TERM;
       else process.env.TERM = previousTerm;

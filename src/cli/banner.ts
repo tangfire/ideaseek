@@ -13,7 +13,6 @@ export const BLOCK_BANNER = [
   '╚═╝    ╚═════╝     ╚══════╝    ╚═╝  ╚═╝    ╚══════╝    ╚══════╝    ╚══════╝    ╚═╝  ╚═╝',
 ].join('\n');
 
-export const BLOCK_TAGLINE = 'IdeaSeek · Research from evidence';
 export const PLAIN_MARK = '[IS]  IdeaSeek  ·  research from evidence';
 
 /** Columns needed to fit the block wordmark without wrapping. */
@@ -37,56 +36,33 @@ export function renderBanner(opts: BannerOptions = {}): string {
   if (opts.plain || columns < BLOCK_MIN_COLUMNS || process.env.TERM === 'dumb') {
     return PLAIN_MARK;
   }
-  return `${BLOCK_BANNER}\n\n${BLOCK_TAGLINE}`;
+  // The block wordmark is the whole greeting; the tagline lives in the
+  // short mark so a wide startup never repeats the brand name twice.
+  return BLOCK_BANNER;
 }
 
 export interface HeaderContext {
   project: string;
+  /** Session mode as displayed: RESEARCH | AGENT. */
+  sessionMode: string;
   question: string | null;
-  mode: string | null;
   runId: string | null;
   runStatus: string | null;
-  stage: string | null;
   blockReason: string | null;
-  agents: number;
-  tasks: { done: number; total: number; queued: number; running: number; failed: number };
-  papersIndexed: number | null;
-  gpu: string | null;
-  cpuCores: number;
-  memoryGiB: number;
-  /** Background supervisor daemon state, when one owns this run. */
-  supervisor: string | null;
-}
-
-function pad(label: string): string {
-  return `${label}`.padEnd(9);
 }
 
 /**
- * Interactive startup context (docs/TERMINAL_UX 启动信息). Never includes
- * secrets, full prompts or model reasoning — only persisted run facts.
+ * Interactive startup context (docs/TERMINAL_UX 启动信息): at most two
+ * lines — project · mode · run state (plus the research question). Stage,
+ * tasks, papers, resources and supervisor details belong to `/status`, not
+ * the startup screen. Never includes secrets, full prompts or model
+ * reasoning — only persisted run facts.
  */
 export function renderHeader(ctx: HeaderContext): string {
-  const lines: string[] = [];
-  lines.push(`${pad('Project')}: ${ctx.project}`);
-  if (ctx.question) lines.push(`${pad('Question')}: ${ctx.question}`);
-  if (ctx.mode) lines.push(`${pad('Mode')}: ${ctx.mode}`);
-  lines.push(`${pad('Run')}: ${ctx.runId ?? 'none'}${ctx.runStatus ? `  ${ctx.runStatus}` : ''}`);
-  if (ctx.stage) lines.push(`${pad('Stage')}: ${ctx.stage}`);
-  if (ctx.blockReason) lines.push(`${pad('Blocked')}: ${ctx.blockReason}`);
-  lines.push(
-    `${pad('Agents')}: ${ctx.agents} active · tasks ${ctx.tasks.done}/${ctx.tasks.total} done` +
-      (ctx.tasks.queued > 0 ? ` · ${ctx.tasks.queued} queued` : '') +
-      (ctx.tasks.running > 0 ? ` · ${ctx.tasks.running} running` : '') +
-      (ctx.tasks.failed > 0 ? ` · ${ctx.tasks.failed} failed` : ''),
-  );
-  if (ctx.papersIndexed !== null) {
-    lines.push(`${pad('Papers')}: ${ctx.papersIndexed} indexed`);
-  }
-  lines.push(
-    `${pad('GPU')}: ${ctx.gpu ?? 'nvidia-smi not found'}` +
-      ` · CPU ${ctx.cpuCores} cores · mem ${ctx.memoryGiB} GiB`,
-  );
-  if (ctx.supervisor) lines.push(`${pad('Supervisor')}: ${ctx.supervisor}`);
+  const run = ctx.runId ? `${ctx.runId}${ctx.runStatus ? ` · ${ctx.runStatus}` : ''}` : 'no run';
+  const parts = [ctx.project, ctx.sessionMode, run];
+  if (ctx.blockReason) parts.push(`blocked: ${ctx.blockReason}`);
+  const lines = [parts.join(' · ')];
+  if (ctx.question) lines.push(ctx.question);
   return lines.join('\n');
 }

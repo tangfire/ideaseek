@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
 import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
 import { InteractiveSession, type HeaderInfo, type SessionStartup } from './session.js';
-import { renderBanner, PLAIN_MARK } from '../banner.js';
+import { renderBanner } from '../banner.js';
 import { SLASH_COMMANDS } from '../slash-menu.js';
 
 /**
@@ -75,46 +75,9 @@ export class ActivityBus {
 interface ShellAppProps {
   session: InteractiveSession;
   bus: ActivityBus;
-  plain: boolean;
 }
 
-/** Block wordmark only when it fits; otherwise the short `[IS]` mark. */
-function bannerLines(columns: number, rows: number, plain: boolean): string[] {
-  if (plain) return [PLAIN_MARK];
-  // Terminal height controls layout only. It must not silently disable the
-  // brand mark; renderBanner already chooses the compact mark by width.
-  void rows;
-  const text = renderBanner({ columns });
-  return text.split('\n');
-}
-
-/** Compress the verbose status header into a stable, scannable TUI block. */
-function compactHeader(lines: string[]): string[] {
-  const fields = new Map<string, string>();
-  for (const line of lines) {
-    const split = line.indexOf(':');
-    if (split < 0) continue;
-    fields.set(line.slice(0, split).trim(), line.slice(split + 1).trim());
-  }
-  const project = fields.get('Project');
-  if (!project) return lines.slice(0, 2);
-  const session = fields.get('Session') ?? 'Research';
-  const strategy = fields.get('Mode');
-  const run = fields.get('Run') ?? 'none';
-  const question = fields.get('Question');
-  const activity = [fields.get('Stage'), fields.get('Agents'), fields.get('Papers')]
-    .filter(Boolean)
-    .join(' · ');
-  const resources = [fields.get('GPU'), fields.get('Supervisor')].filter(Boolean).join(' · ');
-  return [
-    `${project} · ${session.toUpperCase()}${strategy ? ` · ${strategy}` : ''} · ${run}`,
-    ...(question ? [`Question: ${question}`] : []),
-    ...(activity ? [activity] : []),
-    ...(resources ? [resources] : []),
-  ];
-}
-
-function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
+function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   const engine = useMemo(() => new ShellEngine(), []);
   const { stdout } = useStdout();
   const { exit } = useApp();
@@ -236,11 +199,13 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     setSnap(result);
   });
 
-  const banner = bannerLines(size.columns, size.rows, plain);
-  const ctxLines = compactHeader(bus.header?.lines ?? [STARTING_LINE]);
+  // Pinned header = the compact context only (project · mode · run ·
+  // question). The block wordmark is a greeting in the activity pane and
+  // scrolls away with the first events (docs/TERMINAL_UX 启动信息).
+  const ctxLines = bus.header?.lines ?? [STARTING_LINE];
   const modeLabel = ctxLines[0]?.includes('AGENT') ? 'Agent' : 'Research';
   const tone = bus.header?.tone ?? 'dim';
-  const headerLines = [...banner, ...ctxLines];
+  const headerLines = ctxLines;
   stateRef.current.headerLines = headerLines.length;
 
   const inputAndFooterRows = 2;
@@ -257,11 +222,6 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   return (
     <Box flexDirection="column" width={size.columns} height={size.rows}>
       <Box flexDirection="column" height={headerLines.length} flexShrink={0}>
-        {banner.map((line, index) => (
-          <Text key={`b-${index}`} color="cyan" wrap="truncate">
-            {line}
-          </Text>
-        ))}
         {ctxLines.map((line, index) => (
           <Text
             key={`c-${index}`}
@@ -361,6 +321,15 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
   }
 
   const bus = new ActivityBus();
+  // Greeting first: the block wordmark (or short mark) lands at the top of
+  // the activity pane before begin() resolves, so the first frame already
+  // shows the brand — and it scrolls away as events arrive instead of
+  // pinning six rows of header forever.
+  const greetingColumns =
+    Number(process.env.IDEASEEK_TTY_COLS ?? '') || process.stdout.columns || 80;
+  for (const line of renderBanner({ columns: greetingColumns, plain }).split('\n')) {
+    bus.push(line);
+  }
   const session = new InteractiveSession({
     plain,
     sink: {
@@ -376,7 +345,7 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
 
   let app: ReturnType<typeof render>;
   try {
-    app = render(<ShellApp session={session} bus={bus} plain={plain} />, {
+    app = render(<ShellApp session={session} bus={bus} />, {
       patchConsole: false,
       exitOnCtrlC: false,
       ...(opts.streams ? { stdout: opts.streams.stdout, stdin: opts.streams.stdin } : {}),
