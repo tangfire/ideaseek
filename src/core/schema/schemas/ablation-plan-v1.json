@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/ablation-plan-v1.json",
+  "title": "IdeaSeek AblationPlan (ablation-plan-v1)",
+  "description": "Structural contract for the ARIS ablation-planner output. Context-bound rules stay in the TS validator (ideaId/cardVersion equality, component/card-ablation target membership against the IdeaCard) — the schema is a sound subset; the runtime validator runs first.",
+  "type": "object",
+  "required": [
+    "ideaId",
+    "cardVersion",
+    "entries",
+    "coverageAssessment",
+    "unnecessary",
+    "suggestedOrder",
+    "estimatedGpuMinutes"
+  ],
+  "properties": {
+    "ideaId": { "type": "string", "minLength": 1 },
+    "cardVersion": { "type": "integer", "minimum": 1 },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "target", "whatItTests", "expectedOutcome", "priority"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["component", "card-ablation", "hyperparameter", "design"] },
+          "target": { "type": ["string", "null"] },
+          "whatItTests": { "type": "string", "minLength": 1 },
+          "expectedOutcome": { "type": "string", "minLength": 1 },
+          "priority": { "type": "integer", "minimum": 1, "maximum": 5 }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "kind": { "enum": ["hyperparameter", "design"] } },
+              "required": ["kind"]
+            },
+            "then": { "properties": { "target": { "type": "null" } } }
+          },
+          {
+            "if": {
+              "properties": { "kind": { "enum": ["component", "card-ablation"] } },
+              "required": ["kind"]
+            },
+            "then": { "properties": { "target": { "type": "string", "minLength": 1 } } }
+          }
+        ]
+      }
+    },
+    "coverageAssessment": { "type": "string", "minLength": 1 },
+    "unnecessary": { "type": "array" },
+    "suggestedOrder": { "type": "array", "minItems": 1 },
+    "estimatedGpuMinutes": { "type": "number", "exclusiveMinimum": 0 }
+  }
+}

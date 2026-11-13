@@ -6,6 +6,7 @@ import experimentSpecV1 from './schemas/experiment-spec-v1.json' with { type: 'j
 import runResultV1 from './schemas/run-result-v1.json' with { type: 'json' };
 import datasetProfileV1 from './schemas/dataset-profile-v1.json' with { type: 'json' };
 import experimentPlanV1 from './schemas/experiment-plan-v1.json' with { type: 'json' };
+import ablationPlanV1 from './schemas/ablation-plan-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -40,7 +41,8 @@ export type SchemaName =
   | 'experiment-spec-v1'
   | 'run-result-v1'
   | 'dataset-profile-v1'
-  | 'experiment-plan-v1';
+  | 'experiment-plan-v1'
+  | 'ablation-plan-v1';
 
 const SCHEMAS: Record<SchemaName, object> = {
   'papercard-v1': papercardV1,
@@ -49,6 +51,7 @@ const SCHEMAS: Record<SchemaName, object> = {
   'run-result-v1': runResultV1,
   'dataset-profile-v1': datasetProfileV1,
   'experiment-plan-v1': experimentPlanV1,
+  'ablation-plan-v1': ablationPlanV1,
 };
 
 let ajv: Ajv | null = null;

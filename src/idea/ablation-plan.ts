@@ -7,6 +7,7 @@ import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { IdeaCard } from './card.js';
 import { slugify } from './analysis.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * ARIS ablation-planner backend (Phase 4.5 capability 3): the vendored
@@ -203,6 +204,9 @@ export function parseAblationPlanOutput(
       `ablation plan failed validation: ${validation.errors.slice(0, 4).join('; ')}`,
     );
   }
+  // Defense in depth (JSON Schema authority): context-bound checks ran
+  // first; the shared contract re-checks structure as a subset gate.
+  assertAgainstSchema('ablation-plan-v1', parsed);
   const record = parsed as Omit<
     AblationPlan,
     'contract' | 'inputHash' | 'skill' | 'generatedAt' | 'harnessRuntime'
