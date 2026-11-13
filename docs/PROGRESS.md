@@ -234,13 +234,12 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 
 ## 可选扩展 Backlog
 
-这些项目按真实需求启用，不是核心科研闭环的前置条件：
+这里只保留确实按用户/实验室具体需求启用的扩展。ARIS 已覆盖的科研 workflow 不在此重复列项；Full Research 所需的多 GPU/资源准入、跨方向验收和长任务能力属于核心路线，分别列在 Phase 6–8，不是可选 backlog。
 
 - [ ] 可选插件 SDK、安装/启用/doctor 和权限 manifest
-- [ ] 多 GPU/CPU/内存资源计划和本地模型推理服务增强
-- [ ] 多数据集/多场景实验组合扩展
-- [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter
-- [ ] 其他研究方向的回归验证和专用插件
+- [ ] 用户/实验室自定义 parser、split validator、metric provider 或 experiment adapter 的插件 SDK
+- [ ] 连接实验室自有模型推理服务的额外部署优化（核心模型路由与 DSH provider 已属于 Phase 1）
+- [ ] 超出当前统一协议的专有数据格式/工作流集成；按真实用户需求通过插件提供
 ## 模块交付记录
 
 每个完成模块追加一行：
