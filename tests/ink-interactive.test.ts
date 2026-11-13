@@ -112,6 +112,19 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.write('\r');
       await repl.waitFor(/Run/); // `ideaseek status` output
 
+      // Shift+Tab cycles session mode through the audited /mode use-case.
+      await repl.write('\x1b[Z');
+      await repl.waitFor(/session mode: research → agent/);
+      await repl.write('\x1b[Z');
+      await repl.waitFor(/session mode: agent → research/);
+
+      // Delete at end-of-line removes the previous character in the TUI.
+      await repl.write('abc');
+      await repl.write('\x1b[3~');
+      await repl.waitFor(/ideaseek › abc/);
+      await repl.waitFor(/ideaseek › ab▏/);
+      await repl.write('\x15'); // Ctrl-U clears the test input before /help
+
       // Local dispatch (/help) needs no subprocess — proves the Ink path
       // shares the classic dispatch. Chunked like a real terminal.
       await repl.write('/');

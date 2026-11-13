@@ -31,6 +31,8 @@ export interface EngineResult {
   interrupt: boolean;
   /** Ctrl-D on an empty line → host closes (EOF semantics). */
   eof: boolean;
+  /** Shift+Tab cycles the session mode through the shared mode command. */
+  cycleMode: boolean;
 }
 
 const EDIT_KEYS = new Set(['left', 'right', 'home', 'end', 'backspace', 'delete']);
@@ -57,6 +59,7 @@ export class ShellEngine {
       submit: null,
       interrupt: false,
       eof: false,
+      cycleMode: false,
       ...partial,
     };
   }
@@ -105,6 +108,7 @@ export class ShellEngine {
       }
       return this.snapshot();
     }
+    if (name === 'shiftTab') return this.snapshot({ cycleMode: true });
 
     switch (name) {
       case 'return':
@@ -178,6 +182,14 @@ export class ShellEngine {
       case 'delete': {
         if (this.cursor < this.line.length) {
           this.line = this.line.slice(0, this.cursor) + this.line.slice(this.cursor + 1);
+          this.refreshPalette();
+        } else if (this.cursor > 0) {
+          // Users commonly press the physical Delete key at the end of the
+          // input line expecting to erase the previous character. Preserve
+          // forward-delete semantics in the middle; at end-of-line behave
+          // like Backspace so the input remains easy to edit in Windows TTYs.
+          this.line = this.line.slice(0, this.cursor - 1);
+          this.cursor -= 1;
           this.refreshPalette();
         }
         return this.snapshot();
@@ -274,6 +286,7 @@ export interface InkKeyLike {
   end?: boolean;
   backspace?: boolean;
   delete?: boolean;
+  shift?: boolean;
   ctrl?: boolean;
   meta?: boolean;
 }
@@ -284,6 +297,7 @@ export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
   // instead of Ink's named key. Check it before `key.escape`, because the
   // sequence begins with ESC and must not merely dismiss the palette.
   if (input === '\x1b[3~' || input === '\x1b[3;5~') return { name: 'delete' };
+  if ((key.shift && key.tab) || input === '\x1b[Z') return { name: 'shiftTab' };
   if (key.return) return { name: 'return' };
   if (key.escape) return { name: 'escape' };
   if (key.tab || input === '\t') return { name: 'tab' };

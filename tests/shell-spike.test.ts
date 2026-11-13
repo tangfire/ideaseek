@@ -32,6 +32,14 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
     expect(snap.cursor).toBe(5);
   });
 
+  it('Delete edits at end-of-line while retaining forward-delete in the middle', () => {
+    const engine = new ShellEngine();
+    engine.handle({ sequence: 'abc' });
+    expect(engine.handle(key('delete')).line).toBe('ab');
+    engine.handle(key('home'));
+    expect(engine.handle(key('delete')).line).toBe('b');
+  });
+
   it('Delete removes the character at the cursor without dismissing the palette', () => {
     const engine = new ShellEngine();
     engine.handle({ sequence: '/status' });
@@ -146,6 +154,8 @@ describe('interactive renderer routing (checkpoint: no TUI on plain/non-TTY)', (
     expect(toEngineKey('a', {})).toEqual({ sequence: 'a' });
     expect(toEngineKey('\x1b[3~', { escape: true })).toEqual({ name: 'delete' });
     expect(toEngineKey('', { delete: true })).toEqual({ name: 'delete' });
+    expect(toEngineKey('', { shift: true, tab: true })).toEqual({ name: 'shiftTab' });
+    expect(toEngineKey('\x1b[Z', { escape: true })).toEqual({ name: 'shiftTab' });
   });
 });
 

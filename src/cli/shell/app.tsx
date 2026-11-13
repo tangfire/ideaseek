@@ -148,6 +148,17 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
 
   useInput((input, key) => {
     const result = engine.handle(toEngineKey(input, key));
+    if (result.cycleMode) {
+      setSnap(result);
+      setBusy(true);
+      queueRef.current = queueRef.current
+        .then(() => session.cycleMode())
+        .catch((error: unknown) => {
+          bus.push(`error: ${(error as Error).message}`);
+        })
+        .finally(() => setBusy(false));
+      return;
+    }
     if (result.scrollDelta !== 0) {
       const page = Math.max(1, size.rows - stateRef.current.headerLines - 3);
       setOffset((prev) => Math.max(0, prev + result.scrollDelta * page));

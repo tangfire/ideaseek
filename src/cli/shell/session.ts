@@ -194,6 +194,18 @@ export class InteractiveSession {
     }
   }
 
+  /** Shift+Tab cycles Research/Agent through the same audited CLI use-case. */
+  async cycleMode(): Promise<void> {
+    const root = await findProjectRoot(process.cwd());
+    if (!root) {
+      this.println('not an IdeaSeek project — run: ideaseek init (or cd into one)');
+      return;
+    }
+    const { readSessionMode } = await import('../../session/mode.js');
+    const current = await readSessionMode(root);
+    await this.relay(['mode', current === 'research' ? 'agent' : 'research']);
+  }
+
   /** Relays a CLI command; its stdout/stderr becomes session output. */
   private async relay(args: string[]): Promise<void> {
     const result = await runCli(args, { timeoutMs: 60_000 });
