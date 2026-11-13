@@ -7,6 +7,7 @@ import { stableJson } from '../experiment/spec.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import { readManifest } from './organize.js';
 import { createAcademicIndexClient, type AcademicIndexClient } from './academic-index.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * Dataset Discovery Agent (docs/AGENT_ROLES.md, docs/CLI_SPEC.md
@@ -1605,6 +1606,9 @@ export function parseDatasetCandidatesOutput(
       { errors: validation.errors.slice(0, 8) },
     );
   }
+  // Defense in depth (JSON Schema authority): the grounding checks ran
+  // first; the shared contract re-checks structure as a subset gate.
+  assertAgainstSchema('dataset-candidates-v1', parsed);
   return (parsed as { candidates: ModelDatasetCandidate[] }).candidates;
 }
 

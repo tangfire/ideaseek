@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/dataset-candidates-v1.json",
+  "title": "IdeaSeek dataset candidates output (dataset-candidates-v1)",
+  "description": "Structural contract for the ARIS dataset-discovery model output. Anti-hallucination grounding rules stay in the TS validator (evidenceIds membership, name grounded in referenced evidence, relatedPapers from the provided refs) — the schema is a sound subset; the runtime validator runs first. The url-required-for-public-download rule is self-contained and expressed via if/then.",
+  "type": "object",
+  "required": ["candidates"],
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "task",
+          "unit",
+          "scale",
+          "license",
+          "acquisition",
+          "restricted",
+          "size",
+          "url",
+          "indexId",
+          "instructions",
+          "relevanceReason",
+          "confidence",
+          "confidenceBasis",
+          "relatedPapers",
+          "evidenceIds"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "task": { "type": "string", "minLength": 1 },
+          "unit": { "type": "string", "minLength": 1 },
+          "scale": { "type": ["string", "null"] },
+          "license": {
+            "type": "object",
+            "required": ["value", "confidence", "note"],
+            "properties": {
+              "value": { "type": "string", "minLength": 1 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "note": { "type": "string" }
+            }
+          },
+          "acquisition": {
+            "enum": ["public-download", "registration", "request", "local-mount", "unknown"]
+          },
+          "restricted": { "type": "boolean" },
+          "size": { "enum": ["unknown", "small", "large"] },
+          "url": { "type": ["string", "null"] },
+          "indexId": { "type": ["string", "null"] },
+          "instructions": { "type": "string", "minLength": 1 },
+          "relevanceReason": { "type": "string", "minLength": 1 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "confidenceBasis": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "notes": { "type": "array" },
+          "relatedPapers": { "type": "array", "items": { "type": "string" } },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "acquisition": { "const": "public-download" } },
+              "required": ["acquisition"]
+            },
+            "then": { "properties": { "url": { "type": "string", "minLength": 1 } } }
+          }
+        ]
+      }
+    },
+    "notes": { "type": "array" }
+  }
+}
