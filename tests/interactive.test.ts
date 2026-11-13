@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { BLOCK_BANNER, PLAIN_MARK, renderBanner } from '../src/cli/banner.js';
 import { formatEventLine, paint } from '../src/cli/format.js';
+import { isSessionUiNoise } from '../src/cli/shell/session.js';
 import { resolveSlash, slashCompleter, SLASH_COMMANDS } from '../src/cli/repl.js';
 import type { RunEvent } from '../src/workflow/types.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
@@ -198,6 +199,33 @@ describe('banner and event formatting (unit)', () => {
     expect(leaky).not.toContain('sk-secret123456789');
     expect(leaky).not.toContain('abc123');
     expect(leaky).toContain('***');
+  });
+
+  it('keeps session-mode audit decisions out of the TUI event stream', () => {
+    // Every Shift+Tab records one of these (docs/MODES.md — never silent);
+    // streaming them floods the startup pane with identical DECISION lines.
+    expect(
+      isSessionUiNoise({
+        type: 'decision',
+        summary: 'change-session-mode: research → agent [guided] — ideaseek mode',
+      }),
+    ).toBe(true);
+    // Research-affecting decisions and plain notes still stream.
+    expect(
+      isSessionUiNoise({
+        type: 'decision',
+        summary: 'change-research-mode: auto → starter [guided] — ideaseek mode --strategy',
+      }),
+    ).toBe(false);
+    expect(
+      isSessionUiNoise({
+        type: 'decision',
+        summary: 'approve-protocol: proto-1 [guided] — /approve',
+      }),
+    ).toBe(false);
+    expect(
+      isSessionUiNoise({ type: 'note', summary: 'change-session-mode: not a decision event' }),
+    ).toBe(false);
   });
 });
 

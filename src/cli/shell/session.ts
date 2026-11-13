@@ -46,6 +46,19 @@ export type SubmitOutcome = 'continue' | 'quit' | 'menu';
 const HINT_LINE = 'type / for the menu · Tab completes · /quit exits (runs keep going)';
 
 /**
+ * Audit records that must NOT stream into the TUI activity pane: each
+ * Research/Agent toggle appends a `change-session-mode` decision event
+ * (docs/MODES.md — never silent), and a session that has been switching
+ * modes replays as a wall of identical DECISION lines on startup. The
+ * record itself stays queryable via `ideaseek events` and the Decision
+ * log; the switch confirmation line already shows the action live.
+ * Exported for unit tests.
+ */
+export function isSessionUiNoise(event: { type: string; summary: string }): boolean {
+  return event.type === 'decision' && event.summary.startsWith('change-session-mode:');
+}
+
+/**
  * Unpainted project/run context header (renderer decides styling).
  * Startup stays to two lines — project · mode · run state, plus the
  * question; everything else (stage, tasks, papers, GPU, supervisor) is a
@@ -491,6 +504,11 @@ export class InteractiveSession {
             continue;
           }
           if (event.seq > this.lastSeq) this.lastSeq = event.seq;
+          // Audit-only session UI decisions stay in the DB (/events) but
+          // never stream: every Shift+Tab writes one, and replaying them
+          // floods the startup pane with a wall of identical lines while
+          // the switch confirmation already showed the action live.
+          if (isSessionUiNoise({ type: event.type, summary: event.summary })) continue;
           this.println(
             formatEventLine(
               {

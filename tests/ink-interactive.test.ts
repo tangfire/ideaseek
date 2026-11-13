@@ -132,6 +132,12 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.waitFor(/session mode: agent → research/);
       await repl.waitFor(/ink-interactive · RESEARCH/);
       await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
+      // Session-mode audit decisions are recorded but must never stream —
+      // otherwise every startup replays a wall of identical DECISION lines
+      // (the DB record stays queryable via `ideaseek events`). Wait long
+      // enough for the poll to have picked the event up if it leaked.
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      expect(repl.output()).not.toContain('change-session-mode');
 
       // Delete at end-of-line removes the previous character in the TUI.
       await repl.write('abc');
