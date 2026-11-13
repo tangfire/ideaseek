@@ -42,6 +42,8 @@ export class ActivityBus {
     // ANSI styling from downstream commands. Ink owns the terminal screen,
     // so keep each logical line separate and strip embedded control codes
     // before rendering; raw ANSI inside <Text> can corrupt later frames.
+    // The control character is the point: this pattern matches ANSI CSI sequences.
+    // eslint-disable-next-line no-control-regex
     const safe = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r\n?/g, '\n');
     this.lines = [...this.lines, ...safe.split('\n')].slice(-MAX_ACTIVITY);
     this.emit();
