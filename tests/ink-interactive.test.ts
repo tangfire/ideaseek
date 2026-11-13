@@ -93,6 +93,7 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.waitFor(/ideaseek ›/, 60_000);
       // Header context arrives from `status --json` after the first frame.
       await repl.waitFor(/Project/, 60_000);
+      await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
       expect(repl.output()).toContain('\x1b[?1049h'); // alternate screen ON
       expect(repl.output()).toContain('[IS]'); // short mark at 100 cols
       // The first frame must land INSIDE the alternate screen, not before it.
@@ -125,9 +126,11 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: research → agent/);
       await repl.waitFor(/Session : Agent/);
+      await repl.waitFor(/AGENT.*Shift\+Tab mode/);
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: agent → research/);
       await repl.waitFor(/Session : Research/);
+      await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
 
       // Delete at end-of-line removes the previous character in the TUI.
       await repl.write('abc');

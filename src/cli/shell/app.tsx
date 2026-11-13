@@ -13,7 +13,7 @@ import { renderBanner, PLAIN_MARK } from '../banner.js';
  */
 
 const FOOTER =
-  'Tab complete · ↑/↓ palette · Esc close · PgUp/PgDn scroll · Ctrl-C hint · Ctrl-D or /quit exits';
+  'Shift+Tab mode · Tab complete · ↑/↓ palette · Esc close · PgUp/PgDn scroll · Ctrl-D or /quit exits';
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
 const QUIT_LINE = 'bye — background runs keep going (reconnect with ideaseek)';
 const STARTING_LINE = 'starting…';
@@ -209,6 +209,8 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
 
   const banner = bannerLines(size.columns, size.rows, plain);
   const ctxLines = bus.header?.lines ?? [STARTING_LINE];
+  const modeLine = ctxLines.find((line) => line.startsWith('Session : '));
+  const modeLabel = modeLine?.slice('Session : '.length) ?? 'Research';
   const tone = bus.header?.tone ?? 'dim';
   const hint = bus.startup?.hint ?? null;
   const headerLines = [...banner, ...ctxLines, ...(hint ? [hint] : [])];
@@ -284,8 +286,11 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         </Text>
       </Box>
       <Box flexShrink={0}>
-        <Text dimColor wrap="truncate">
-          {busy ? `${FOOTER} · running…` : FOOTER}
+        <Text wrap="truncate">
+          <Text color="black" backgroundColor={modeLabel === 'Agent' ? 'magenta' : 'cyan'} bold>
+            {` ${modeLabel.toUpperCase()} `}
+          </Text>
+          <Text dimColor>{` ${busy ? `${FOOTER} · running…` : FOOTER}`}</Text>
         </Text>
       </Box>
     </Box>
