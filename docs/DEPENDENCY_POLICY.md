@@ -47,6 +47,12 @@
 - **不引入的理由**：(1) 无消费者即引入=为不存在的需求付 token/限流/缓存成本；(2) 未认证 60 次/小时/IP 会拖垮多项目扫描，认证则新增一处 secret 面（本策略要求凭据最小化，且 user-config 只存 `credentialRef` 不存值）；(3) gate/审批/公平性判定均基于状态与实验结果，不基于仓库热度——热度数据反而可能污染科学判断。
 - **重新评估的触发条件**：出现需要 release/tag 元数据、或无 LICENSE 文件仓库需要许可证 API 兜底的真实功能时。届时做薄 adapter：可选 token 走 user-config credentialRef、响应缓存、限流/失败诚实降级（缺元数据≠缺代码），且永不替代 Git clone。
 
+### 文件扫描 / watch / 结构化诊断日志 / 归档解析（2026-11-13）→ 均不新增
+
+- **watch（增量监听）**：不引入。`scan` 是确定性重扫 + (path,bytes,mtime) 哈希复用（`reusedHashes`），幂等且可脚本化；用户流程是 scan→confirm 手动节奏，文件监听只会带来事件风暴、平台差异和 chokidar 类新依赖，换不来任何契约价值。触发条件：出现「输入变化必须秒级反映到运行中任务」的真实需求。
+- **结构化诊断日志**：不引入第二套。结构化诊断已经存在——RunEvent（DB，attach/watch/events 可回放）+ 脱敏文本工件（repair/smoke 日志、compile.log）；再加一个 JSONL logger = 与 events 并行的第二事实源（禁止）。触发条件：支持场景需要 events 之外的本地 verbose 轨迹（且必须写入 `.research/logs/` 并脱敏）。
+- **归档解析**：保留自研 safety parser（`src/knowledge/archive.ts` 1369 行，magic-first + ARCHIVE_BLOCKED 安全矩阵 + 35 条测试）。换 yauzl/node-tar 只替换「读取层」，路径穿越/炸弹/加密/成员类型整套门禁仍要自己写——成熟包解决不了本仓的核心语义（blocked 分类与 manifest）。触发条件：新增7z/rar 等格式时优先评估对应成熟解码库，再套同一门禁层。
+
 ## 已引入依赖记录
 
 ### tree-kill 1.2.2（进程树回收）
