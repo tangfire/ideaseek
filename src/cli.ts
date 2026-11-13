@@ -51,6 +51,7 @@ import { registerDecisionCommand } from './commands/decision.js';
 import { registerInteractiveCommand, runBareInvocation } from './commands/interactive.js';
 import { registerProtocolCommand } from './commands/protocol.js';
 import { registerPaperCommand } from './commands/paper.js';
+import { registerFullCommand } from './commands/full.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
@@ -131,6 +132,7 @@ export function buildProgram(): Command {
   registerStreamCommands(program);
   registerSuperviseCommand(program);
   registerPaperCommand(program);
+  registerFullCommand(program);
   registerReportCommand(program);
   registerControlCommands(program);
   registerComparisonCommand(program);
