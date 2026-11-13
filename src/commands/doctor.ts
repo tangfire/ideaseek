@@ -119,6 +119,31 @@ export function registerDoctorCommand(program: Command): void {
               });
             }
 
+            // Runtime alerts (disk/backup/quota/watchdog) in the one-shot
+            // health report (PROGRESS 213).
+            try {
+              const { collectRuntimeAlerts } = await import('../runtime/alerts.js');
+              const report = await collectRuntimeAlerts(root);
+              if (report.healthy) {
+                checks.push({ level: 'ok', name: 'alerts', detail: 'none' });
+              } else {
+                const critical = report.alerts.some((alert) => alert.severity === 'critical');
+                checks.push({
+                  level: critical ? 'error' : 'warn',
+                  name: 'alerts',
+                  detail: report.alerts
+                    .map((alert) => `${alert.kind}: ${alert.detail}`)
+                    .join(' | '),
+                });
+              }
+            } catch (error) {
+              checks.push({
+                level: 'info',
+                name: 'alerts',
+                detail: `unavailable: ${(error as Error).message}`,
+              });
+            }
+
             for (const dir of [
               'papers',
               'datasets',

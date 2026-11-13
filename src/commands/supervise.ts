@@ -52,10 +52,39 @@ export function registerSuperviseCommand(program: Command): void {
             );
           }
 
+          let heartbeatTicks = 0;
           const heartbeat = setInterval(() => {
             const info = readDaemonInfo(paths.researchDir);
             if (info && info.runId === run.runId) {
               writeDaemonInfo(paths.researchDir, { ...info, heartbeatAt: Date.now() });
+            }
+            // Every ~60s: surface non-terminal anomalies (disk/backup/
+            // quota/watchdog) as notifications with a 30min per-kind
+            // cooldown; delivery never breaks the loop (PROGRESS 213).
+            heartbeatTicks += 1;
+            if (heartbeatTicks % 12 === 0) {
+              void (async () => {
+                try {
+                  const { collectRuntimeAlerts } = await import('../runtime/alerts.js');
+                  const { listNotifications, notifyUser, shouldNotifyAlert } =
+                    await import('../runtime/notify.js');
+                  const report = await collectRuntimeAlerts(process.cwd());
+                  if (report.healthy) return;
+                  const now = Date.now();
+                  const records = await listNotifications(process.cwd(), 200);
+                  for (const alert of report.alerts) {
+                    const notifyKind = `alert.${alert.kind}`;
+                    if (!shouldNotifyAlert(records, notifyKind, now)) continue;
+                    await notifyUser(process.cwd(), {
+                      kind: notifyKind,
+                      title: `${alert.severity} · ${alert.kind}`,
+                      summary: alert.detail,
+                    });
+                  }
+                } catch {
+                  // best-effort telemetry only
+                }
+              })();
             }
           }, 5_000);
           heartbeat.unref();

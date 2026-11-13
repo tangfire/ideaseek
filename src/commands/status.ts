@@ -58,6 +58,21 @@ export function registerStatusCommand(program: Command): void {
       action(async (opts: { run?: string; detail?: boolean; json?: boolean }) => {
         const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
         try {
+          const collectAlerts = async () => {
+            const { collectRuntimeAlerts } = await import('../runtime/alerts.js');
+            return collectRuntimeAlerts(runtime.paths.root);
+          };
+          const printAlertLines = async () => {
+            const alerts = await collectAlerts();
+            if (!alerts.healthy) {
+              for (const alert of alerts.alerts) {
+                const mark = alert.severity === 'critical' ? 'X' : '!';
+                process.stdout.write(`  ${mark} [${alert.kind}] ${alert.detail}
+`);
+              }
+            }
+            return alerts;
+          };
           const run = opts.run
             ? await runtime.db.getRun(opts.run)
             : await runtime.db.getLatestRun(runtime.project.id);
@@ -75,6 +90,7 @@ export function registerStatusCommand(program: Command): void {
                   total: 0,
                   liveWorkers: 0,
                   failed: [],
+                  alerts: await collectAlerts(),
                   events: [],
                   exitCode: 0,
                 }),
@@ -82,6 +98,7 @@ export function registerStatusCommand(program: Command): void {
             } else {
               process.stdout.write(`项目：${runtime.project.name}\n`);
               process.stdout.write('Run：尚无\n');
+              await printAlertLines();
               process.stdout.write('下一条命令：ideaseek run --question "你的研究问题"\n');
             }
             return 0;
@@ -134,6 +151,7 @@ export function registerStatusCommand(program: Command): void {
                     : null,
                 })),
                 usage: await usageSummary(),
+                alerts: await collectAlerts(),
                 recovery: runtime.recovery,
                 events: events.map((event) => ({
                   seq: event.seq,
@@ -160,6 +178,7 @@ export function registerStatusCommand(program: Command): void {
             process.stdout.write(`${formatUsageLine(await usageSummary())}
 `);
           }
+          await printAlertLines();
           process.stdout.write(`活动 Worker：${liveWorkers.length}\n`);
           const daemon = describeDaemon(runtime.paths.researchDir, run.runId);
           if (daemon) {

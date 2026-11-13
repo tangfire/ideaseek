@@ -19,6 +19,23 @@ async function liveWorkersOf(runtime: ProjectRuntime, runId: string): Promise<nu
   return workers.filter((worker) => worker.heartbeatAt >= cutoff).length;
 }
 
+/** Appends current runtime alerts to the advice (visibility, PROGRESS 213). */
+async function withAlerts(runtime: ProjectRuntime, advice: NextAdvice): Promise<NextAdvice> {
+  try {
+    const { collectRuntimeAlerts } = await import('../runtime/alerts.js');
+    const report = await collectRuntimeAlerts(runtime.paths.root);
+    if (!report.healthy) {
+      advice.blockers = [
+        ...advice.blockers,
+        ...report.alerts.map((alert) => 'alert:' + alert.kind + ' - ' + alert.detail),
+      ];
+    }
+  } catch {
+    // alerts are advisory - absence never breaks `next`
+  }
+  return advice;
+}
+
 async function advise(runtime: ProjectRuntime, run: RunRecord | null): Promise<NextAdvice> {
   if (runtime.configLoad.errors.length > 0) {
     return {
@@ -147,7 +164,7 @@ export function registerNextCommand(program: Command): void {
         try {
           runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           const run = await resolveRun(runtime, opts.run);
-          const advice = await advise(runtime, run);
+          const advice = await withAlerts(runtime, await advise(runtime, run));
           printAdvice(advice, opts.json);
           return advice.exitCode;
         } catch (error) {
@@ -169,7 +186,7 @@ export function registerNextCommand(program: Command): void {
             !opts.run &&
             runtime
           ) {
-            const advice = await advise(runtime, null);
+            const advice = await withAlerts(runtime, await advise(runtime, null));
             printAdvice(advice, opts.json);
             return advice.exitCode;
           }

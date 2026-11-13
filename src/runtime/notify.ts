@@ -95,6 +95,20 @@ export async function notifyUser(
 }
 
 /** Last N local notification records (newest first). */
+/**
+ * Cooldown for recurring alert notifications (PROGRESS 213): the same
+ * alert kind re-notifies only after `cooldownMs` - a stuck disk must not
+ * spam the webhook every supervisor heartbeat.
+ */
+export function shouldNotifyAlert(
+  records: Pick<NotificationRecord, 'kind' | 'ts'>[],
+  notifyKind: string,
+  now: number,
+  cooldownMs = 30 * 60_000,
+): boolean {
+  return !records.some((record) => record.kind === notifyKind && now - record.ts < cooldownMs);
+}
+
 export async function listNotifications(root: string, limit = 10): Promise<NotificationRecord[]> {
   try {
     const raw = await readFile(notificationsPath(root), 'utf8');
