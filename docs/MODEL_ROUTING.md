@@ -76,7 +76,9 @@ models:
 
 ## 用户交互
 
-交互终端中使用：
+交互终端当前支持 `/models` 查看和 `/models use <route>` 切换项目 route；脚本命令为 `ideaseek models list` 和 `ideaseek models use <route> [--confirm]`。
+
+以下交互仍是目标设计、尚未完成前不得当作现有命令使用：
 
 ```text
 /models
@@ -94,7 +96,7 @@ models:
 - 最近连接测试、额度/限速状态和成本累计；
 - 当前项目哪些角色使用该 route。
 
-配置 provider 时使用隐藏输入或 DSH credential store：
+API key 当前通过 DSH credential store、系统 secret manager 或允许的环境变量配置；`/models` 目前不提供隐藏 key 输入向导，也不能据此声称 key 已安全写入。新手配置向导属于待办，设计目标是使用隐藏输入并写入 DSH credential store：
 
 ```text
 Provider: deepseek
@@ -103,7 +105,7 @@ Save to: DSH credential store
 Test connection? [Y/n]
 ```
 
-模型切换只影响新任务和未开始的步骤；正在运行的任务保留其 run snapshot。切换 provider、model 或 route 会记录 Decision/Event，并让需要新模型能力的下游任务产生明确版本变化。
+模型 route 切换只影响新任务和未开始的步骤；正在运行的任务保留其 run snapshot。切换 project route 会记录 Decision/Event。provider/model/key 的完整交互式管理尚未实现，具体可用命令以 `ideaseek models --help` 为准。
 
 ## 路由规则
 

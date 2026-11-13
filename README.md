@@ -64,6 +64,8 @@ Start development with [docs/BOOTSTRAP_DEVELOPMENT.md](docs/BOOTSTRAP_DEVELOPMEN
 
 For end-user usage, start with [docs/USER_GUIDE.md](docs/USER_GUIDE.md). It covers installation, project setup, model configuration, paper/data intake, interactive runs, recovery, results, and handoff.
 
+Prefer a browsable guide? Open the [IdeaSeek documentation site](docs/site/index.html) directly in a browser. It is a self-contained local HTML guide with navigation, search, responsive layout, and copyable commands; canonical technical references remain in `docs/*.md`.
+
 
 使用说明请从 [docs/USER_GUIDE.md](docs/USER_GUIDE.md) 开始；完整文档目录和发布方式见 [docs/DOCUMENTATION_PLAN.md](docs/DOCUMENTATION_PLAN.md)。
 

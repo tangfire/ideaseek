@@ -80,6 +80,7 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [x] 任务详情、脱敏日志和错误解释
 - [x] 断线重连、终端尺寸变化和后台 supervisor 状态显示
 - [x] Research/Agent 模式切换、权限摘要和 DSH 复用
+- [x] 当前模式 footer 徽标、Shift+Tab 提示和命令用途面板
 
 ## Phase 2：论文知识与证据
 
@@ -210,6 +211,8 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 - [x] 长周期 soak test（加速时钟覆盖恢复/队列/通知/备份；发布前真实长周期运行仍待执行）
 - [x] protocol/experiment/权限审批交互
 - [x] 自然语言 REPL 与高影响操作确认
+- [ ] Agent 模式接入真正的 DSH coding session：项目内读写/受限 shell/测试工具、工具审批与可恢复多步会话；目前只有模式标记和 ask supervisor，不等同通用 coding agent
+- [ ] `/models setup` 交互式 provider/API key 配置：隐藏输入、DSH credential store 写入、连接测试和脱敏恢复；当前仅 list/use，key 由外部 credential/env 配置
 - [x] fast/balanced/deep/deterministic 模型路由
 - [x] 用户级/项目级配置、多项目注册和项目锁
 - [x] cleanup/archive/export、通知和反馈入口
@@ -224,7 +227,8 @@ IdeaSeek 按联网科研平台设计。模型 API、学术索引、GitHub 和获
 目标：让新用户能安装、学习、升级、恢复和复现。
 
 - [x] README Quickstart 与 USER_GUIDE 从零机器验证
-- [ ] 文档站分层、搜索和版本发布流程
+- [x] 自包含 HTML 使用指南原型（分层导航、站内搜索、响应式布局、可复制命令；内容链接回 Markdown 规范）
+- [ ] 正式文档站版本化、搜索索引与发布流程；与 CLI/config schema 的自动同步
 - [ ] 可复现 CLI 发行包、版本校验和升级路径（分发渠道可选，不以公开 npm 发布为前置）
 - [ ] 一键安装/卸载和 `ideaseek doctor`
 - [ ] Linux 安装包和服务器部署验证

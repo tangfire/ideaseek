@@ -1,14 +1,16 @@
 # IdeaSeek 工作模式
 
-IdeaSeek 的核心仍是科研探索，但可以提供一个复用 DSH Runtime 的通用 Agent 模式。通用模式不是第二套 Agent Loop，也不是把所有科研门禁关闭，而是让用户在同一个项目上下文里处理临时代码、数据和环境任务。
+IdeaSeek 的核心是科研探索。它可以提供一个复用 DSH Runtime 的项目 Agent 模式，不创建第二套 Agent Loop，也不关闭科研安全门禁。
 
 ## Research 模式（默认）
 
 Research 模式负责论文知识、Protocol Synthesis、comparison gate、IdeaCard、quick/standard 实验、消融、Result Analyst、handoff、ResearchRun、checkpoint 和 Decision/Event。它遵守原始输入只读、idea 隔离、实验 scheduler 和协议/指标门禁。
 
-## Agent 模式
+## Agent 模式：当前实现与目标体验
 
-Agent 模式直接使用 DSH Agent、Session、Tool 和 provider，适合查看/解释项目代码、编写小工具、修复明确的工程问题、运行受限测试、查看日志和准备 handoff 文件。它仍受 capability profile、项目根路径、网络、凭据和容器策略限制。默认不能修改 `papers/`、`datasets/`、comparison `upstream/`、锁定协议、已提交实验结果或已发布 handoff。需要修改科研对象时必须进入明确的 Research Decision/Approval。
+当前实现中，Research/Agent 是持久化的会话模式标记；自然语言仍通过 `ideaseek ask` 的 supervisor 分类与现有 CLI use-case 执行。它**还不是**可持续对话的通用编码 Agent，不能承诺拥有 Claude Code 式的仓库浏览、编辑、终端工具调用和多步 Agent loop。
+
+目标体验是直接复用 DSH Agent、Session、Tool、provider 和工具权限，让用户在当前项目里查看/解释代码、编辑项目代码、修复工程问题、运行受限测试和查看日志。Agent 模式仍受项目根路径、网络、凭据和容器策略限制；默认禁止修改 `papers/`、`datasets/`、comparison `upstream/`、锁定协议、已提交实验结果和 handoff。修改科研对象必须走 Research Decision/Approval。此目标需在 `PROGRESS.md` 完成 Agent mode checkbox 和 conformance tests 后才能视为交付。
 
 ## Full Research / Publication 模式
 
@@ -33,8 +35,8 @@ ideaseek interactive --mode agent
 ideaseek mode show
 ```
 
-切换时显示当前模式、权限摘要和影响，不会创建第二个后台 run。Research 与 Agent 模式可以共享只读项目上下文和检索工具，但会话、工具权限和审计事件分开记录。
+切换时 footer 显示醒目的当前模式和 Shift+Tab 提示，切换后显示权限摘要与审计事件，不创建第二个后台 run。当前 TUI 已有模式状态显示和切换；Agent 能力尚在实现。
 
 ## 产品边界
 
-先完成 Research 模式的科研闭环，再实现 Agent 模式的最小只读/测试能力。不要为了通用编码功能复制 DSH 的 CLI、Agent Loop、上下文管理或工具系统。
+实现通用 Agent 能力时，直接复用 DSH 的 session/runtime/tool loop；IdeaSeek 只负责项目边界、角色 capability profile、授权、审计和 UI，不复制 DSH 的 CLI、Agent Loop、上下文管理或工具系统。

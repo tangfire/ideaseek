@@ -25,7 +25,7 @@ docs/
   development/
 ```
 
-当前仓库可以先用 Markdown；内容稳定后再用 VitePress、Docusaurus 或 MkDocs 生成静态文档站。文档站必须从同一份 CLI/config schema 生成命令和选项，避免手册漂移。
+当前仓库保留 Markdown 作为规范来源，并提供 `docs/site/index.html` 自包含的可浏览使用指南原型，可直接本地打开，无需安装文档框架或运行外部服务。后续若部署正式文档站，可评估 VitePress、Docusaurus 或 MkDocs；命令/config 内容必须从 schema 或规范文档同步，避免手册漂移。
 
 ## 文档质量要求
 
@@ -36,3 +36,4 @@ docs/
 - 任何示例使用合成路径、假 key 和小 fixture；
 - 发布前从零机器按 Quickstart 跑一遍；
 - 每个版本检查 CLI、配置和文档的版本一致性。
+- HTML 指南必须标记“当前可用/开发中/规划中”，不能把 Progress 未完成项写成已交付能力。

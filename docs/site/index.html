@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="IdeaSeek 官方使用指南：安装、配置模型、整理研究材料、探索 idea、查看结果和恢复长任务。"
+    />
+    <meta name="theme-color" content="#10131a" />
+    <title>IdeaSeek 文档 · 从证据到研究</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10131a;
+        --panel: #171c25;
+        --panel-2: #1d2430;
+        --line: #2b3442;
+        --text: #e8edf5;
+        --muted: #9aa8ba;
+        --brand: #82dfcf;
+        --brand-2: #b3f0e5;
+        --purple: #c5adff;
+        --amber: #f3c878;
+        --green: #9be1ac;
+        --red: #ff9eaa;
+        --code: #0c1016;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+        scroll-padding-top: 88px;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.65;
+      }
+      a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+      a:hover {
+        color: var(--brand-2);
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        height: 66px;
+        padding: 0 max(24px, calc((100vw - 1440px) / 2));
+        border-bottom: 1px solid var(--line);
+        background: rgb(16 19 26 / 94%);
+        backdrop-filter: blur(16px);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        min-width: 238px;
+        color: var(--text);
+        font-weight: 760;
+        letter-spacing: 0.02em;
+      }
+      .brand-mark {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border: 1px solid #4e9f92;
+        border-radius: 8px;
+        color: var(--brand);
+        background: #18302e;
+        font-size: 12px;
+        font-weight: 850;
+      }
+      .brand small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+      }
+      .search {
+        position: relative;
+        width: min(470px, 42vw);
+      }
+      .search input {
+        width: 100%;
+        padding: 9px 13px 9px 36px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        outline: none;
+        background: var(--panel);
+        color: var(--text);
+      }
+      .search input:focus {
+        border-color: #4e9f92;
+        box-shadow: 0 0 0 3px rgb(130 223 207 / 10%);
+      }
+      .search span {
+        position: absolute;
+        top: 6px;
+        left: 12px;
+        color: var(--muted);
+      }
+      .toplinks {
+        display: flex;
+        gap: 18px;
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 258px minmax(0, 760px) 190px;
+        gap: 42px;
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 34px 30px 90px;
+      }
+      .sidebar {
+        position: sticky;
+        top: 92px;
+        align-self: start;
+        max-height: calc(100vh - 110px);
+        overflow: auto;
+        padding-right: 10px;
+      }
+      .navgroup {
+        margin: 0 0 22px;
+      }
+      .navtitle {
+        margin: 0 0 8px;
+        color: #718096;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .navgroup a {
+        display: block;
+        margin: 2px 0;
+        padding: 6px 10px;
+        border-radius: 7px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .navgroup a:hover,
+      .navgroup a.active {
+        background: var(--panel-2);
+        color: var(--brand-2);
+      }
+      main {
+        min-width: 0;
+      }
+      .hero {
+        padding: 34px 0 28px;
+      }
+      .eyebrow {
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      h1 {
+        max-width: 740px;
+        margin: 14px 0;
+        font-size: clamp(34px, 5vw, 54px);
+        line-height: 1.12;
+        letter-spacing: -0.045em;
+      }
+      .hero p {
+        max-width: 670px;
+        color: #b4c0cf;
+        font-size: 18px;
+      }
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 23px;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 15px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        background: var(--panel);
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .button.primary {
+        border-color: transparent;
+        color: #10201d;
+        background: var(--brand);
+      }
+      .notice {
+        margin: 12px 0 28px;
+        padding: 14px 16px;
+        border: 1px solid #4d4430;
+        border-radius: 10px;
+        background: #252116;
+        color: #e9d8aa;
+        font-size: 13px;
+      }
+      .notice strong {
+        color: var(--amber);
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin: 22px 0 44px;
+      }
+      .card {
+        display: block;
+        min-height: 135px;
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: linear-gradient(145deg, #1a202a, #141922);
+        color: var(--text);
+      }
+      .card:hover {
+        border-color: #4e9f92;
+        transform: translateY(-1px);
+      }
+      .card .num {
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 750;
+      }
+      .card h3 {
+        margin: 7px 0 4px;
+        font-size: 16px;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      section {
+        padding-top: 20px;
+        margin-bottom: 54px;
+      }
+      h2 {
+        margin: 0 0 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+        font-size: 27px;
+        letter-spacing: -0.025em;
+      }
+      h3 {
+        margin: 25px 0 9px;
+        font-size: 18px;
+      }
+      p,
+      li {
+        color: #c2cbd7;
+        font-size: 14px;
+      }
+      ul,
+      ol {
+        padding-left: 22px;
+      }
+      li {
+        margin: 6px 0;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 32px 1fr;
+        gap: 13px;
+        margin: 15px 0;
+      }
+      .stepno {
+        display: grid;
+        width: 29px;
+        height: 29px;
+        place-items: center;
+        border: 1px solid #397c72;
+        border-radius: 50%;
+        color: var(--brand);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .step p {
+        margin: 2px 0;
+      }
+      pre {
+        position: relative;
+        overflow: auto;
+        margin: 13px 0 19px;
+        padding: 16px 18px;
+        border: 1px solid #27303b;
+        border-radius: 9px;
+        background: var(--code);
+        color: #c8e9df;
+        font:
+          12.5px/1.65 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+      }
+      code {
+        color: #b8eddd;
+        font:
+          0.92em ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+      }
+      .copy {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        padding: 4px 8px;
+        border: 1px solid #394452;
+        border-radius: 5px;
+        color: var(--muted);
+        background: #171c25;
+        cursor: pointer;
+        font-size: 11px;
+      }
+      .tablewrap {
+        overflow-x: auto;
+        margin: 14px 0 22px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th,
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        color: #a9b8c9;
+        background: var(--panel);
+        font-weight: 700;
+      }
+      td {
+        color: #c8d1dd;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 7px;
+        border: 1px solid #34594f;
+        border-radius: 999px;
+        color: var(--green);
+        background: #172822;
+        font-size: 10px;
+      }
+      .pill.warn {
+        border-color: #665633;
+        color: var(--amber);
+        background: #2a2418;
+      }
+      .callout {
+        margin: 18px 0;
+        padding: 14px 16px;
+        border-left: 3px solid var(--purple);
+        border-radius: 0 8px 8px 0;
+        background: #211d2c;
+        color: #d4cae9;
+        font-size: 13px;
+      }
+      .toc {
+        position: sticky;
+        top: 96px;
+        align-self: start;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .toc strong {
+        display: block;
+        margin: 0 0 8px;
+        color: #9eabb9;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .toc a {
+        display: block;
+        padding: 4px 0;
+        color: var(--muted);
+      }
+      .toc a:hover {
+        color: var(--brand);
+      }
+      footer {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 22px 30px 42px;
+        border-top: 1px solid var(--line);
+        color: #748194;
+        font-size: 12px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      @media (max-width: 1120px) {
+        .layout {
+          grid-template-columns: 220px minmax(0, 1fr);
+          gap: 28px;
+        }
+        .toc {
+          display: none;
+        }
+      }
+      @media (max-width: 760px) {
+        .topbar {
+          gap: 12px;
+          padding: 0 14px;
+        }
+        .brand {
+          min-width: 0;
+        }
+        .brand small,
+        .toplinks {
+          display: none;
+        }
+        .search {
+          width: 100%;
+        }
+        .layout {
+          display: block;
+          padding: 22px 18px 60px;
+        }
+        .sidebar {
+          position: static;
+          display: flex;
+          gap: 18px;
+          max-height: none;
+          overflow-x: auto;
+          margin-bottom: 18px;
+        }
+        .navgroup {
+          display: flex;
+          flex: 0 0 auto;
+          gap: 5px;
+          margin: 0;
+        }
+        .navtitle {
+          display: none;
+        }
+        .navgroup a {
+          white-space: nowrap;
+        }
+        .hero {
+          padding-top: 16px;
+        }
+        .cards {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#top"
+        ><span class="brand-mark">IS</span
+        ><span>IdeaSeek<small>RESEARCH FROM EVIDENCE</small></span></a
+      >
+      <label class="search"
+        ><span>⌕</span
+        ><input id="search" type="search" placeholder="搜索使用指南…" aria-label="搜索文档"
+      /></label>
+      <nav class="toplinks">
+        <a href="../USER_GUIDE.md">Markdown 指南</a><a href="../PROGRESS.md">开发状态</a>
+      </nav>
+    </header>
+    <div class="layout" id="top">
+      <aside class="sidebar" aria-label="文档导航">
+        <div class="navgroup">
+          <div class="navtitle">开始使用</div>
+          <a href="#start">快速开始</a><a href="#project">研究项目</a>
+        </div>
+        <div class="navgroup">
+          <div class="navtitle">核心概念</div>
+          <a href="#modes">工作模式</a><a href="#models">模型与凭据</a
+          ><a href="#inputs">论文、数据与代码</a>
+        </div>
+        <div class="navgroup">
+          <div class="navtitle">工作流程</div>
+          <a href="#explore">快速探索</a><a href="#observe">交互与监控</a
+          ><a href="#results">结果与 handoff</a><a href="#full">全量研究路线</a>
+        </div>
+        <div class="navgroup">
+          <div class="navtitle">帮助</div>
+          <a href="#recovery">暂停与恢复</a><a href="#limits">状态与边界</a>
+        </div>
+      </aside>
+      <main>
+        <div class="hero">
+          <div class="eyebrow">IdeaSeek · User Guide</div>
+          <h1>让研究从证据<br />一步步走向实验。</h1>
+          <p>
+            IdeaSeek 帮你整理论文、数据和对比方法，提出有依据的研究
+            idea，在小规模实验中快速验证；你认可后，它再规划并执行全量 comparison 与 idea
+            实验，补齐论文证据，生成图表和 Overleaf 论文工程。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#start">开始使用 <span>→</span></a
+            ><a class="button" href="../USER_GUIDE.md">查看完整 Markdown 指南</a>
+          </div>
+        </div>
+        <div class="notice">
+          <strong>阅读说明</strong>　本指南描述 IdeaSeek
+          完成后的目标产品体验，供用户学习完整用法，也供开发 Agent
+          按最终用户旅程实现。当前每项的交付进度单独查看 <a href="../PROGRESS.md">开发进度</a>。
+        </div>
+        <div class="cards">
+          <a class="card" href="#start"
+            ><span class="num">01 / SETUP</span>
+            <h3>安装与初始化</h3>
+            <p>准备 Linux/WSL2 环境，创建一个研究项目。</p></a
+          >
+          <a class="card" href="#inputs"
+            ><span class="num">02 / MATERIALS</span>
+            <h3>放入研究材料</h3>
+            <p>论文、数据、comparison 和已有 idea 都能纳入项目。</p></a
+          >
+          <a class="card" href="#explore"
+            ><span class="num">03 / EXPLORE</span>
+            <h3>开始探索</h3>
+            <p>先检查计划与阻塞，再运行小规模验证。</p></a
+          >
+          <a class="card" href="#recovery"
+            ><span class="num">04 / RECOVER</span>
+            <h3>监控与恢复</h3>
+            <p>查看事件、暂停任务，并在断线或额度耗尽后继续。</p></a
+          >
+        </div>
+        <section id="start" data-search="安装 pnpm build doctor 初始化 init Linux WSL2">
+          <div class="eyebrow">01 · First run</div>
+          <h2>安装与初始化</h2>
+          <p>
+            IdeaSeek 面向联网的 Linux 科研服务器设计；Windows 用户优先通过 WSL2 或 SSH
+            使用。项目仍处于开发阶段，当前从源码检出安装。
+          </p>
+          <pre><button class="copy">复制</button><code>git clone &lt;IdeaSeek 私有仓库地址&gt; ideaseek
+cd ideaseek
+pnpm install --frozen-lockfile
+pnpm build
+pnpm release-check</code></pre>
+          <p>在一个新的研究方向文件夹里初始化项目。这个文件夹就是项目工作区：</p>
+          <pre><button class="copy">复制</button><code>mkdir my-research
+cd my-research
+node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js init
+node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js setup
+node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
+          <p>
+            初始化会创建
+            <code>papers/</code
+            >、<code>datasets/</code>、<code>comparisons/</code>、<code>idea-seeds/</code>、<code
+              >incoming/</code
+            >
+            和平台管理的结果目录。它不会移动或覆盖你的原始文件。
+          </p>
+        </section>
+        <section
+          id="project"
+          data-search="项目 文件夹 init research.yaml papers datasets comparisons idea-seeds"
+        >
+          <div class="eyebrow">02 · Project</div>
+          <h2>一个研究方向，一个项目目录</h2>
+          <p>
+            通常在研究方向文件夹里启动 IdeaSeek。状态、论文索引、idea、实验、事件和 checkpoint
+            都属于这个项目。启动前可以用 <code>ideaseek status</code> 和
+            <code>ideaseek next</code> 查看当前状态与下一步。
+          </p>
+          <div class="callout">
+            不要把所有方向混进一个目录。你可以把多篇论文、多个数据集、对比代码和已有 idea
+            放在同一研究项目的对应输入区，IdeaSeek 会扫描并给出归类预览。
+          </div>
+        </section>
+        <section id="modes" data-search="Research Agent mode Shift Tab 研究 编程权限">
+          <div class="eyebrow">03 · Modes</div>
+          <h2>Research 和 Agent 模式</h2>
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>模式</th>
+                  <th>适合做什么</th>
+                  <th>边界</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="pill">RESEARCH</span></td>
+                  <td>论文分析、协议、comparison、idea 和实验流程。</td>
+                  <td>遵守证据、数据、实验和审批门禁。</td>
+                </tr>
+                <tr>
+                  <td><span class="pill warn">AGENT</span></td>
+                  <td>
+                    复用 DSH 的通用 coding
+                    agent：理解项目、编辑授权范围内文件、运行受限命令和测试、修复工程问题。
+                  </td>
+                  <td>
+                    受项目根路径、工具权限、网络/凭据策略与科研数据保护约束；不会绕过 Research
+                    的科学门禁。
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            交互界面底部显示当前模式；按 <kbd>Shift</kbd>+<kbd>Tab</kbd> 切换，或输入
+            <code>/mode research</code>、<code>/mode agent</code>。切换后顶部状态与审计输出会更新。
+          </p>
+        </section>
+        <section
+          id="models"
+          data-search="模型 API key provider DeepSeek DSH models credential route 配置密钥"
+        >
+          <div class="eyebrow">04 · Models</div>
+          <h2>模型与凭据</h2>
+          <p>
+            首次启动自动检测 provider。你可以在终端里用隐藏输入配置 API
+            key，立即测试连接，再选择默认模型；之后
+            <code>/models</code> 查看各角色使用的模型，必要时切换 route
+            或为高推理任务覆盖模型。Research 和 Agent 可使用不同路由。
+          </p>
+          <div class="notice">
+            <strong>密钥安全</strong>　API key 保存在 DSH credential store 或系统 secret
+            manager，不写入项目配置、论文、日志或 Git。模型切换只影响新任务；运行中的 ResearchRun
+            保留启动时的模型快照。
+          </div>
+          <pre><button class="copy">复制</button><code>ideaseek models
+ideaseek models use deep --confirm
+ideaseek doctor</code></pre>
+        </section>
+        <section
+          id="inputs"
+          data-search="论文 PDF 数据集 dataset baseline comparison Github 代码 zip idea-seeds incoming scan intake"
+        >
+          <div class="eyebrow">05 · Inputs</div>
+          <h2>放入论文、数据和对比方法</h2>
+          <ul>
+            <li><code>papers/</code>：方向论文；解析后形成 PaperCard 和证据定位。</li>
+            <li><code>datasets/</code>：已有数据或授权挂载；平台先画像，不会自动更改原始数据。</li>
+            <li><code>comparisons/</code>：对比方法论文和代码；官方仓库与论文重实现会分别标记。</li>
+            <li>
+              <code>idea-seeds/</code>：已有 idea、代码或实验结果；允许目录结构多样，由 intake
+              分析，不要求手工改成固定模板。
+            </li>
+            <li><code>incoming/</code>：暂时不确定归类的文件或压缩包。</li>
+          </ul>
+          <pre><button class="copy">复制</button><code>ideaseek scan
+ideaseek intake
+ideaseek plan --question "你的研究问题"</code></pre>
+          <p>
+            <code>scan</code> 发现输入；<code>intake</code>
+            展示归类和歧义；确认前不移动、覆盖或执行用户文件。
+          </p>
+        </section>
+        <section
+          id="explore"
+          data-search="idea explore experiment quick smoke standard start run research"
+        >
+          <div class="eyebrow">06 · Explore</div>
+          <h2>先计划，再做小规模探索</h2>
+          <div class="step">
+            <span class="stepno">1</span>
+            <p>
+              <strong>检查计划。</strong>运行
+              <code>ideaseek plan --question "..."</code>，先看材料、comparison、资源和阻塞。
+            </p>
+          </div>
+          <div class="step">
+            <span class="stepno">2</span>
+            <p>
+              <strong>确认协议和关键语义。</strong>例如数据字段、split、指标和 required
+              comparison；无法安全推断的内容由你确认。
+            </p>
+          </div>
+          <div class="step">
+            <span class="stepno">3</span>
+            <p>
+              <strong>启动探索。</strong>运行
+              <code>ideaseek start --question "..."</code> 或交互输入研究需求；先用
+              smoke/quick/standard 小切片验证 idea。
+            </p>
+          </div>
+          <div class="step">
+            <span class="stepno">4</span>
+            <p>
+              <strong>看证据和反馈。</strong>检查
+              comparison、消融与失败分类；结果可能支持、否证或无法判断
+              idea，程序错误不能冒充科学结论。
+            </p>
+          </div>
+        </section>
+        <section
+          id="observe"
+          data-search="TUI slash command palette status next events pause resume attach"
+        >
+          <div class="eyebrow">07 · Interactive</div>
+          <h2>交互、命令与监控</h2>
+          <p>
+            真实 TTY 启动 Ink 交互界面。按 `/` 打开带说明的命令菜单，继续输入过滤；方向键选择，Tab
+            补全，Enter 执行，Esc 关闭。Shift+Tab 切换 Research/Agent 会话模式。
+          </p>
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>输入</th>
+                  <th>用途</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>/status</code></td>
+                  <td>看项目、run、任务和阶段</td>
+                </tr>
+                <tr>
+                  <td><code>/next</code></td>
+                  <td>解释阻塞并给下一步</td>
+                </tr>
+                <tr>
+                  <td><code>/models</code></td>
+                  <td>看模型 route/凭据状态</td>
+                </tr>
+                <tr>
+                  <td><code>/pause</code> / <code>/resume</code></td>
+                  <td>安全暂停和恢复</td>
+                </tr>
+                <tr>
+                  <td><code>/quit</code></td>
+                  <td>退出界面，不取消后台任务</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            自然语言可用于询问状态或提出建议。高影响动作必须先预览并确认；Agent
+            不得静默改指标、测试集或 comparison 清单。
+          </p>
+        </section>
+        <section id="results" data-search="report result handoff promising HANDOFF_READY code">
+          <div class="eyebrow">08 · Results</div>
+          <h2>结果、报告与 handoff</h2>
+          <p>
+            使用 <code>ideaseek report</code> 查看事实报告，检查 idea
+            状态、实验、失败项和证据来源。结果会区分原论文报告、本地 comparison、IdeaSeek
+            实验和未验证场景。
+          </p>
+          <p>
+            <code>HANDOFF_READY</code>
+            需要真实证据门槛通过；小规模正向结果不等于创新已证明，也不保证全量结果或论文录用。
+          </p>
+        </section>
+        <section
+          id="full"
+          data-search="Full Research full-run 全量论文 CCF comparison figure paper Overleaf roadmap"
+        >
+          <div class="eyebrow">09 · Full Research</div>
+          <h2>全量实验与论文交付</h2>
+          <p>
+            达到 <code>HANDOFF_READY</code> 后，你审阅 comparison
+            清单并确认数据、split、指标、预算和 GPU 时限。IdeaSeek
+            核验可信的官方/作者代码；缺少可用代码时按论文重实现并披露假设。随后所有 required
+            comparisons 与 IdeaSeek 方法按锁定的公平协议运行。
+          </p>
+          <div class="callout">
+            结果分析会识别缺少的多种子、关键消融、comparison、数据或场景证据，并生成补充实验计划；在已授权预算和数据范围内继续运行、分析并更新主张与图表。需要新数据、权限、资源或改变科学协议时先向你说明并等待决定，不编造结果，也不无限试验直到出现正向结果。
+          </div>
+          <p>
+            证据补齐后，IdeaSeek 复用 ARIS 的论文规划、绘图、写作与编译流程，交付带
+            BibTeX、图表源数据和 provenance 的 Overleaf 兼容工程。论文草稿由研究者审核，不承诺 venue
+            接收。
+          </p>
+        </section>
+        <section
+          id="recovery"
+          data-search="quota network failure restore checkpoint continue recovery recover"
+        >
+          <div class="eyebrow">10 · Recovery</div>
+          <h2>暂停、阻塞与恢复</h2>
+          <p>
+            外部模型/API、GitHub、数据源或 GPU
+            暂时不可用时，依赖任务应显示具体阻塞和恢复动作；其他不依赖该项的任务可以继续。补好凭据或环境后运行
+            <code>ideaseek doctor</code>、<code>ideaseek next</code>，再按提示
+            <code>ideaseek continue</code>。已提交 artifact 和成功任务不应重做。
+          </p>
+        </section>
+        <section id="limits" data-search="limits status roadmap implemented planned future">
+          <div class="eyebrow">11 · Product status</div>
+          <h2>如何判断一个功能是否已完成</h2>
+          <p>
+            看
+            <a href="../PROGRESS.md">开发进度</a
+            >：只有有实现、测试和提交证据的条目才勾选。最终能力规划见
+            <a href="../IMPLEMENTATION_ROADMAP.md">实施路线</a>；命令和退出码见
+            <a href="../CLI_SPEC.md">CLI 参考</a>；模型路由见
+            <a href="../MODEL_ROUTING.md">模型指南</a>。
+          </p>
+        </section>
+      </main>
+      <aside class="toc">
+        <strong>本页目录</strong><a href="#start">安装与初始化</a><a href="#modes">工作模式</a
+        ><a href="#models">模型与凭据</a><a href="#inputs">输入材料</a
+        ><a href="#explore">快速探索</a><a href="#full">Full Research</a>
+      </aside>
+    </div>
+    <footer>
+      IdeaSeek · Research from evidence
+      <span style="float: right">本地静态文档 · 无需外部前端依赖</span>
+    </footer>
+    <script>
+      const search = document.querySelector('#search');
+      const sections = [
+        ...document.querySelectorAll('main section, main .hero, main .cards, .notice'),
+      ];
+      search.addEventListener('input', () => {
+        const query = search.value.trim().toLocaleLowerCase();
+        for (const item of sections) {
+          const text = `${item.textContent} ${item.dataset.search || ''}`.toLocaleLowerCase();
+          item.classList.toggle('hidden', Boolean(query) && !text.includes(query));
+        }
+      });
+      for (const button of document.querySelectorAll('.copy')) {
+        button.addEventListener('click', async () => {
+          const code = button.parentElement.querySelector('code').innerText;
+          await navigator.clipboard.writeText(code);
+          button.textContent = '已复制';
+          setTimeout(() => (button.textContent = '复制'), 1200);
+        });
+      }
+      const links = [...document.querySelectorAll('.sidebar a')];
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries)
+            if (entry.isIntersecting) {
+              links.forEach((link) =>
+                link.classList.toggle('active', link.hash === `#${entry.target.id}`),
+              );
+            }
+        },
+        { rootMargin: '-20% 0px -70% 0px' },
+      );
+      document.querySelectorAll('main section[id]').forEach((section) => observer.observe(section));
+    </script>
+  </body>
+</html>
