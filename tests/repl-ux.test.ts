@@ -29,10 +29,14 @@ interface Repl {
   quit(): Promise<{ code: number; stdout: string; stderr: string }>;
 }
 
-function startTtyRepl(cwd: string, extraArgs: string[] = []): Repl {
+function startTtyRepl(
+  cwd: string,
+  extraArgs: string[] = [],
+  extraEnv: Record<string, string> = {},
+): Repl {
   const child = spawn(process.execPath, [CLI_BIN, 'interactive', ...extraArgs], {
     cwd,
-    env: { ...process.env, IDEASEEK_CLI: '1', IDEASEEK_FORCE_TTY: '1' },
+    env: { ...process.env, IDEASEEK_CLI: '1', IDEASEEK_FORCE_TTY: '1', ...extraEnv },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
   let stdout = '';
@@ -352,6 +356,21 @@ describe('new slash commands and NL routing (CLI)', () => {
     const done = await repl.quit();
     expect(done.code).toBe(0);
   }, 60_000);
+
+  it('agent mode routes plain text to the real DSH agent turn, never ask', async () => {
+    const project = await makeProjectDir();
+    // Empty (but defined) key beats the repo .env on load — the real turn
+    // must fail honestly without spending credentials, and its failure
+    // text comes from the agent CLI, not from the ask supervisor.
+    const repl = startTtyRepl(project, ['--mode', 'agent'], { DEEPSEEK_API_KEY: '' });
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('hello there\r');
+    await repl.waitFor(/DSH session failed|agent turn failed|models setup|doctor/, 60_000);
+    expect(repl.output()).not.toContain('recorded pending-approval decision');
+    expect(repl.output()).not.toContain('IdeaSeek supervisor ready');
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+  }, 90_000);
 
   it('/mode --strategy changes the research strategy with confirmation', async () => {
     const project = await makeProjectDir();

@@ -102,6 +102,9 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     });
   }
   if (request.outputSchema === 'supervisor-intent-v1') {
+    // Test hook: raw override exercises greeting/sanitize/refusal paths.
+    const override = process.env.IDEASEEK_FAKE_SUPERVISOR_OUTPUT;
+    if (override != null) return override;
     // Deterministic supervisor stand-in: unclassified text becomes a pending
     // action (never an execution), so tests can assert the audit path.
     return JSON.stringify({

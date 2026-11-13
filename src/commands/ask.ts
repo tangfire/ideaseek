@@ -19,6 +19,63 @@ const SUPERVISOR_INSTRUCTION = `You are the IdeaSeek research supervisor. Classi
 {"kind":"query"|"pending-action"|"unclear","answer":"short direct answer or empty string","cliArgs":["command","args"] or null,"reason":"budget|priority|protocol|idea|experiment|other","summary":"the request restated for an audit log"}
 Rules: kind=query means a read-only question about status/next/papers/comparisons/ideas/experiments/models — put the equivalent CLI argv in cliArgs and a one-line answer in answer. kind=pending-action means the user wants to CHANGE budget, priority, protocol, ideas or experiments — restate it in summary with a reason. kind=unclear is only for genuinely uninterpretable text. Never claim you executed anything; never include secrets.`;
 
+/**
+ * Greetings and capability questions are answered deterministically —
+ * instant feedback, zero model cost, and never a cold "rephrase" wall for
+ * a user who just said hi (field report: "输入个 hi 啥情况都没发生").
+ */
+const GREETING =
+  /^(hi+|hello+|hey+|yo|hi there|howdy|你好+|您好|在吗|在不在|哈喽|嗨+)[!！.。~～\s]*$/i;
+const CAPABILITY = /(你能做什么|你会什么|你能帮我做什么|what can you do)/i;
+const ORIENTATION_LINES = [
+  'IdeaSeek supervisor ready — /status state · /next next step · /papers progress · /help commands',
+  'ask a question like "为什么 method-x 还没通过"; changes become pending-approval Decisions',
+];
+const UNCLEAR_FALLBACK =
+  'not sure how to help — /status · /next · /papers · /help; changes become pending-approval Decisions';
+
+/**
+ * Supervisor-supplied argv is NOT trusted verbatim: models often prepend
+ * the binary name ("ideaseek status" — relayed as-is this crashed into a
+ * raw commander dump), and a misclassified action must never execute:
+ * only the read-only query surface may be relayed. Returns the sanitized
+ * argv, or null when nothing safe remains to run. Exported for tests.
+ */
+const READONLY_QUERY_CLI = new Set([
+  'status',
+  'next',
+  'papers',
+  'comparison',
+  'idea',
+  'experiment',
+  'models',
+  'events',
+  'queue',
+  'monitor',
+  'context',
+  'pending',
+  'logs',
+  'search',
+  'explain',
+  'projects',
+  'rounds',
+  'config',
+  'doctor',
+  'capacity',
+  'plan',
+  'data',
+  'datasets',
+]);
+
+export function sanitizeSupervisorCliArgs(argv: readonly string[]): string[] | null {
+  let args = [...argv];
+  while (args.length > 0 && /^(ideaseek(\.exe)?|node)$/i.test(args[0]!)) args = args.slice(1);
+  if (args.length === 0) return null;
+  if (args[0] === 'help' || args[0] === '--help' || args[0] === '-h') return ['--help'];
+  if (!READONLY_QUERY_CLI.has(args[0]!)) return null;
+  return args;
+}
+
 function parseSupervisorOutput(output: string): {
   kind: string;
   answer?: string;
@@ -64,6 +121,23 @@ export function registerAskCommand(program: Command): void {
         const message = text.join(' ').trim();
         if (!message) {
           throw new IdeaseekError('INVALID_ARGUMENT', 'ask requires a message');
+        }
+
+        // 0: greetings / capability questions — instant orientation, no
+        // model round-trip and never the cold "rephrase" dead end.
+        if (GREETING.test(message) || CAPABILITY.test(message)) {
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                source: 'deterministic-greeting',
+                kind: 'orientation',
+                answer: ORIENTATION_LINES.join(' '),
+              }),
+            );
+          } else {
+            for (const line of ORIENTATION_LINES) process.stdout.write(`${line}\n`);
+          }
+          return 0;
         }
 
         // 1/2: deterministic classification first — no model needed.
@@ -130,20 +204,42 @@ export function registerAskCommand(program: Command): void {
               `supervisor returned unparseable output: ${result.output.slice(0, 200)}`,
             );
           }
-          if (
-            parsed.kind === 'query' &&
-            Array.isArray(parsed.cliArgs) &&
-            parsed.cliArgs.length > 0
-          ) {
-            const relayed = await runCli(parsed.cliArgs, { timeoutMs: 60_000 });
-            if (relayed.stdout) process.stdout.write(relayed.stdout);
-            if (relayed.stderr) process.stderr.write(relayed.stderr);
+          if (parsed.kind === 'query' && Array.isArray(parsed.cliArgs)) {
+            const safeArgs = sanitizeSupervisorCliArgs(parsed.cliArgs);
+            if (safeArgs) {
+              const relayed = await runCli(safeArgs, { timeoutMs: 60_000 });
+              if (relayed.stdout) process.stdout.write(relayed.stdout);
+              if (relayed.stderr) process.stderr.write(relayed.stderr);
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({ source: 'supervisor', kind: 'query', answer: parsed.answer ?? null }),
+                );
+              }
+              return relayed.code;
+            }
+            // Not a read-only query (or empty after stripping the binary
+            // name): never relay it — record it for explicit review. Free
+            // text must not execute actions through a misclassification.
+            const decision = await runCli(
+              [
+                'decision',
+                'propose',
+                `supervisor suggested (not read-only, not executed): ${parsed.cliArgs.join(' ')}`,
+              ],
+              { timeoutMs: 60_000 },
+            );
+            if (decision.stdout) process.stdout.write(decision.stdout);
+            if (decision.stderr) process.stderr.write(decision.stderr);
             if (opts.json) {
               process.stdout.write(
-                jsonLine({ source: 'supervisor', kind: 'query', answer: parsed.answer ?? null }),
+                jsonLine({
+                  source: 'supervisor',
+                  kind: 'refused-non-readonly',
+                  cliArgs: parsed.cliArgs,
+                }),
               );
             }
-            return relayed.code;
+            return decision.code;
           }
           if (parsed.kind === 'pending-action') {
             const summary = parsed.summary || message;
@@ -170,9 +266,7 @@ export function registerAskCommand(program: Command): void {
             return 0;
           }
           if (parsed.answer) process.stdout.write(`${parsed.answer}\n`);
-          process.stdout.write(
-            'rephrase, or use /help for commands · high-impact requests become pending-approval Decisions\n',
-          );
+          process.stdout.write(`${UNCLEAR_FALLBACK}\n`);
           return 0;
         } catch (error) {
           const message2 = error instanceof Error ? error.message : String(error);

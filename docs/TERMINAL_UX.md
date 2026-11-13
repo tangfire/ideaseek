@@ -102,7 +102,7 @@ ideaseek ›
 
 每个斜杠命令都有等价的非交互 CLI 命令，方便脚本和 SSH 使用。
 
-提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言先由当前模式的 Agent/Supervisor 转成查询、建议或待审批 Decision；高影响操作必须显示摘要并确认。
+提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言按会话模式分流：Research 模式走 `ideaseek ask`（supervisor 分类为查询、建议或待审批 Decision；问候/能力问题确定性即时应答）；Agent 模式直接作为一次真实 DSH coding-session turn 执行（同一 `ideaseek agent` use-case，TUI 内自动续会话）。高影响操作必须显示摘要并确认。
 
 交互提示符始终显示当前项目名和路径。切换项目后要求二次确认，避免用户把控制命令发到错误的研究目录。
 

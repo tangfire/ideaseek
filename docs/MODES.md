@@ -8,9 +8,12 @@ Research 模式负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 
 ## Agent 模式：当前实现与目标体验
 
-当前实现中，Research/Agent 是持久化的会话模式标记；自然语言仍通过 `ideaseek ask` 的 supervisor 分类与现有 CLI use-case 执行。它**还不是**可持续对话的通用编码 Agent，不能承诺拥有 Claude Code 式的仓库浏览、编辑、终端工具调用和多步 Agent loop。
+Research/Agent 是持久化的会话模式标记，自然语言按模式分流：
 
-目标体验是直接复用 DSH Agent、Session、Tool、provider 和工具权限，让用户在当前项目里查看/解释代码、编辑项目代码、修复工程问题、运行受限测试和查看日志。Agent 模式仍受项目根路径、网络、凭据和容器策略限制；默认禁止修改 `papers/`、`datasets/`、comparison `upstream/`、锁定协议、已提交实验结果和 handoff。修改科研对象必须走 Research Decision/Approval。此目标需在 `PROGRESS.md` 完成 Agent mode checkbox 和 conformance tests 后才能视为交付。
+- **Research 模式**：`ideaseek ask` 的 supervisor 分类与现有 CLI use-case 执行——只读查询即时回答，高影响请求生成待审批 Decision，绝不静默执行；问候与能力问题由确定性拦截即时回答（不烧模型）。
+- **Agent 模式**：每条自然语言是一次**真实 DSH coding-session turn**（与 `ideaseek agent` 同一 use-case：项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。子进程 stdin 非 TTY，工具审批一律拒绝（安全默认）——需要逐工具批准的回合请在真实终端直接运行 `ideaseek agent`；TUI 内审批透传与跨 TUI 重启的会话延续仍待交付。
+
+两种模式都仍受项目根路径、网络、凭据和容器策略限制；默认禁止修改 `papers/`、`datasets/`、comparison `upstream/`、锁定协议、已提交实验结果和 handoff。修改科研对象必须走 Research Decision/Approval。`PROGRESS.md` 的 Agent mode checkbox 与 conformance tests 完成前，不承诺完整的 Claude Code 式跨回合工具审批体验。
 
 ## Full Research / Publication 模式
 

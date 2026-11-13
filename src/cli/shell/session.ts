@@ -59,6 +59,16 @@ export function isSessionUiNoise(event: { type: string; summary: string }): bool
 }
 
 /**
+ * Parses the session id out of `ideaseek agent`'s human summary line
+ * (`agent turn → session <id> (…`) so the TUI can resume the same DSH
+ * conversation on the next message. Exported for unit tests.
+ */
+export function extractAgentSessionId(output: string): string | null {
+  const match = output.match(/^agent turn → session (\S+)/m);
+  return match ? match[1]! : null;
+}
+
+/**
  * Unpainted project/run context header (renderer decides styling).
  * Startup stays to two lines — project · mode · run state, plus the
  * question; everything else (stage, tasks, papers, GPU, supervisor) is a
@@ -122,6 +132,8 @@ export class InteractiveSession {
   private stopped = false;
   /** Highest RunEvent seq rendered — re-attach resumes with `--since`. */
   private lastSeq = 0;
+  /** DSH session id for agent-mode continuation (null → next turn is new). */
+  private agentSessionId: string | null = null;
 
   constructor(opts: InteractiveSessionOptions) {
     this.plain = opts.plain;
@@ -175,10 +187,16 @@ export class InteractiveSession {
       if (/^\d+$/.test(input) && this.pendingItems.length > 0) {
         await this.approvePending(Number(input));
       } else if (!input.startsWith('/')) {
-        // Plain text → `ideaseek ask`: queries answer from state, high-impact
-        // requests become pending Decisions, everything else goes to the
-        // supervisor. Never prints "unknown input".
-        await this.relay(['ask', ...tokenizeArgs(input)]);
+        // Plain text routes by session mode (docs/MODES.md): agent mode is
+        // a REAL DSH coding session — the same `ideaseek agent` turn the
+        // CLI runs, resumed across messages; research mode classifies
+        // through `ideaseek ask`. Never prints "unknown input".
+        const root = await findProjectRoot(process.cwd()).catch(() => null);
+        const mode = root
+          ? await readSessionMode(root).catch(() => 'research' as const)
+          : 'research';
+        if (mode === 'agent') await this.runAgentTurn(input);
+        else await this.relay(['ask', ...tokenizeArgs(input)]);
       } else {
         outcome = await this.dispatch(input);
       }
@@ -211,6 +229,38 @@ export class InteractiveSession {
     const header = await buildHeaderLines();
     if (this.sink.onHeader) this.sink.onHeader(header);
     else this.println(paintHeader(header, this.plain));
+  }
+
+  /**
+   * Agent-mode plain text → one real DSH coding-session turn (the same
+   * `ideaseek agent` use-case the CLI runs), resumed across messages so
+   * the TUI behaves like a normal agent conversation. Progress logs on
+   * stderr render dim; `error:` lines keep the error tone. A coding turn
+   * can legitimately run for minutes — bounded by a generous timeout.
+   */
+  private async runAgentTurn(message: string): Promise<void> {
+    const args = ['agent', message];
+    if (this.agentSessionId) args.push('--resume', this.agentSessionId);
+    const result = await runCli(args, { timeoutMs: 300_000 });
+    if (result.stderr) {
+      const text = result.stderr.endsWith('\n') ? result.stderr.slice(0, -1) : result.stderr;
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const tone = /^error:/.test(line.trim()) ? ('error' as const) : ('dim' as const);
+        this.println(paint(line, tone, { plain: this.plain }));
+      }
+    }
+    if (result.stdout) {
+      const text = result.stdout.endsWith('\n') ? result.stdout.slice(0, -1) : result.stdout;
+      const sessionId = extractAgentSessionId(text);
+      if (sessionId) this.agentSessionId = sessionId;
+      for (const line of text.split(/\r?\n/)) this.println(line);
+    }
+    if (result.code !== 0 && !result.stdout && !result.stderr) {
+      this.println(
+        paint(`agent turn failed (exit ${result.code})`, 'error', { plain: this.plain }),
+      );
+    }
   }
 
   /** Relays a CLI command; its stdout/stderr becomes session output. */
