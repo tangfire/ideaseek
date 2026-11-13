@@ -2,11 +2,9 @@
 
 ## 首选部署
 
-Linux 服务器上安装固定版本的 Node、pnpm、Python、容器运行时和 GPU 驱动。项目目录与备份放在不同存储位置。首版单机运行：Supervisor、DB、Worker 和实验容器在同一主机，所有任务仍走队列和 checkpoint。
+Linux 服务器上安装固定版本的 Node、pnpm、Python、容器运行时和 GPU 驱动，并确保可访问配置的模型 API、学术索引、GitHub 和获准的数据源。项目目录与备份放在不同存储位置。首版单机运行：Supervisor、DB、Worker 和实验容器在同一主机，所有任务仍走队列和 checkpoint。IdeaSeek 的正常使用是联网运行；模型 API、外部文献/仓库或数据源暂时不可达时，依赖它们的任务进入明确阻塞状态并等待恢复，不得谎报成功或跳过 required comparison。
 
 Windows 用户优先通过 SSH 或 WSL2 使用 Linux 执行环境；Windows 原生不承诺等价 GPU 容器能力。
-
-联网、实验室内网和完全离线模式的能力矩阵、外部阻塞状态和恢复行为见 [OFFLINE_MODE.md](OFFLINE_MODE.md)。外部服务不可达时只阻塞依赖节点，必须显示缺失来源/权限和可复制的恢复步骤；不得静默跳过 required comparison 或证据门禁。
 
 ## 凭据
 

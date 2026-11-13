@@ -53,7 +53,7 @@ policy:
 - `runtime.default_data_scale` 默认是 `quick`，探索阶段可选 `smoke`/`quick`/`standard`；只有达到 `HANDOFF_READY` 并完成明确审批后，Full Research 才可执行独立 full-run。详细授权、资源和恢复契约见 `FULL_RESEARCH_MODE.md`。每个探索规模的样本、步数、客户端/场景和 GPU 预算都要可配置。
 - `max_parallel_ideas` 不得超过实际资源和 scheduler 安全上限；资源不足时排队。
 - `external_search`、`allow_network`、第三方模型外发和 GitHub 私有仓库访问分别控制，不互相隐含授权。
-- 联网/内网/离线能力及阻塞语义见 [OFFLINE_MODE.md](OFFLINE_MODE.md)：云 provider 无法访问时暂停依赖模型的任务；离线发现只报告本地语料覆盖范围，不声称外部文献已穷尽。
+- IdeaSeek 按联网产品设计。模型 API、学术索引、GitHub 和数据源应在 `doctor` 中报告可达性；外部服务不可达时暂停依赖任务，记录来源、影响和恢复操作，不静默降级成“已完成”。
 - 额度/凭据策略有独立的暂停与恢复语义：token、余额或限额耗尽时暂停新模型任务；补充凭据后允许继续，不把失败任务标记为科学失败。
 - `require_all_comparisons: true` 时，所有 `required: true` 的方法必须通过 comparison 门槛。
 - 修改输入目录、模型、解析器、prompt/schema、环境或实验策略时创建新 run 或配置版本；旧 run 保持可审计。
