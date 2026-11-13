@@ -35,7 +35,7 @@ ideaseek interactive --mode agent
 ideaseek mode show
 ```
 
-切换时 footer 显示醒目的当前模式和 Shift+Tab 提示，切换后显示权限摘要与审计事件，不创建第二个后台 run。当前 TUI 已有模式状态显示和切换；Agent 能力尚在实现。
+切换时 footer 显示醒目的当前模式和 Shift+Tab 提示；切换输出保持两行——模式迁移与审计事件（含事件号），再附新模式的首条权限提示，完整权限摘要用 `/mode` 查看，不创建第二个后台 run。当前 TUI 已有模式状态显示和切换；Agent 能力尚在实现。
 
 ## 产品边界
 

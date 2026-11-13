@@ -94,7 +94,7 @@ async function switchSessionMode(
     readSessionMode,
     writeSessionMode,
     buildSessionSummary,
-    renderSessionSummary,
+    MODE_PERMISSIONS,
   } = await import('../session/mode.js');
   const requested = parseSessionMode(target);
   if (!requested) {
@@ -104,14 +104,14 @@ async function switchSessionMode(
     );
   }
   const current = await readSessionMode(root);
-  const summary = await buildSessionSummary(root);
 
   if (requested === current) {
     if (opts.json) {
+      const summary = await buildSessionSummary(root);
       process.stdout.write(jsonLine({ ...summary, sessionMode: current, changed: false }));
     } else {
+      // One confirmation line; the full summary is one `ideaseek mode` away.
       process.stdout.write(`session mode already ${current}\n`);
-      for (const line of renderSessionSummary(summary)) process.stdout.write(`${line}\n`);
     }
     return 0;
   }
@@ -137,20 +137,20 @@ async function switchSessionMode(
     await runtime.close();
   }
 
-  const next = await buildSessionSummary(root);
   if (opts.json) {
+    const next = await buildSessionSummary(root);
     process.stdout.write(jsonLine({ ...next, sessionMode: next.mode, changed: true, decisionSeq }));
   } else {
+    // Concise by design: migration + audit event + one-line permission
+    // recap. The full project/autonomy/permission summary stays one
+    // `ideaseek mode` away — a switch must not wall the activity pane.
     process.stdout.write(`session mode: ${current} → ${requested}\n`);
     process.stdout.write(
       decisionSeq
         ? `  decision recorded (event #${decisionSeq}); no second run was started\n`
         : '  decision not recorded (no run exists yet); no second run was started\n',
     );
-    for (const line of renderSessionSummary(next)) process.stdout.write(`${line}\n`);
-    process.stdout.write(
-      'switch back: ideaseek mode research|agent · strategy: ideaseek mode --strategy <mode> --confirm\n',
-    );
+    process.stdout.write(`  ${MODE_PERMISSIONS[requested][0]}\n`);
   }
   return 0;
 }

@@ -318,11 +318,15 @@ describe('new slash commands and NL routing (CLI)', () => {
     await repl.waitFor(/read-only inputs/);
 
     repl.write('/mode agent\r');
+    // The switch itself stays two short lines: migration + audit event,
+    // then a one-line permission recap — never the full summary wall.
     await repl.waitFor(/session mode: research → agent/);
-    await repl.waitFor(/tools: DSH Agent session/);
+    await repl.waitFor(/may edit project code\/config/);
 
+    // The full summary is one explicit /mode away.
     repl.write('/mode\r');
     await repl.waitFor(/session mode : agent/);
+    await repl.waitFor(/tools: DSH Agent session/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
     expect(done.stdout).not.toContain('unknown command: /mode');
