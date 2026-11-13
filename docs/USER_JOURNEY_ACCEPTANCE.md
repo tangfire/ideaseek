@@ -172,6 +172,7 @@ ideaseek archive/export → 另一台 Linux → restore → doctor → continue
 - **Journey F ◐**：事件/租约/checkpoint/崩溃恢复/额度阻断有 soak、supervisor、cli.e2e、quota 测试；“备份恢复后 hash 一致”依赖 restore 工具（见 Journey H/备份恢复待办）。
 - **Journey G ◐**：工程 vs 科学分支、失败保留、handoff 门禁与 PROMISING 拒绝均有测试（revision-loop/handoff）；真实 HANDOFF_READY 需要真实证据门槛（研究项，非本套件可伪造）。
 - **Journey H ⏳**：`ideaseek update`/迁移 preview/跨机 restore 工具未建（Phase 9 备份恢复 checkbox）；export 脱敏与迁移 schema 已有基础（maintenance/config）。
+- **2026-11-13 追加状态**：Journey F 的“备份恢复后 hash 一致”已闭合（backup-restore 演练：manifest 逐文件哈希复核、篡改零写入）；Journey H 的工具缺口已闭合——`ideaseek update`（源链接重建+manifest 幂等刷新）、迁移 preview（doctor schema vN/vM）、restore 含跨路径 rebind，余跨机实机验证。D（真实模型链凭据批量回归）与 G（真实 HANDOFF_READY 证据门槛，研究项不可伪造）保持 ◐。整体 A–H 验收仍未全绿（D/G/H 实机与凭据缺口）。
 
 未通过项的阻塞性质：H/F 的 restore 工具（可开发）、G 的真实证据门槛（需真实研究）、npm 安装通道（需发布账号）。产品规则复验：以上自动项均断言“有下一步命令、无 secret、无静默副作用”。
 
