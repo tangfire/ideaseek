@@ -9,6 +9,12 @@
       "excerpt": "01 · First run 安装与初始化 IdeaSeek 面向联网的 Linux 科研服务器设计；Windows 用户优先通过 WSL2 或 SSH 使用。项目仍处于开发阶段，当前从源码检出安装。 bash 复制 git clone &lt;IdeaSeek 私有仓库地址&gt; ideaseek cd ideaseek pnpm install --frozen-lockfile pnpm build pnpm release-check 在一个新的研究方向文件夹里初始化项目。这个文件夹就是项目工作区： bash 复制 mkdir my-research cd my-research node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js init node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js setup node &lt;Ide"
     },
     {
+      "id": "gaps",
+      "title": "不知道还缺什么？让 IdeaSeek 先做材料缺口评估",
+      "search": "材料缺口 research material assessment 缺论文 缺数据集 comparison 指标 split 推荐",
+      "excerpt": "05.5 · Material assessment 不知道还缺什么？让 IdeaSeek 先做材料缺口评估 你不需要一开始就知道该准备哪些论文、数据集或 comparison。IdeaSeek 会根据研究问题、已有论文、研究地图、数据画像、comparison 和目标场景，列出当前缺口以及它们对研究的影响。 缺口类型 例子 IdeaSeek 的处理 ANALYSIS 读取论文、数据和 comparison，评估研究材料缺口。 只写知识与缺口报告；不启动正式实验或锁定科学协议。 必须补 没有测试标签语义、主指标或 required baseline 阻止依赖它的正式实验，给出原因和下一步 建议补 缺少近期强基线、反例论文或第二个数据场景 说明它会影响哪些 claim，用户补充后提高覆盖 可选补 额外数据集、定性样例或扩展图表 记录为后续增强，不阻塞当前探索 每个建议都附来源、版本、许可证/"
+    },
+    {
       "id": "project",
       "title": "一个研究方向，一个项目目录",
       "search": "项目 文件夹 init research.yaml papers datasets comparisons idea-seeds",
@@ -18,7 +24,7 @@
       "id": "modes",
       "title": "Research 和 Agent 模式",
       "search": "Research Agent mode Shift Tab 研究 编程权限",
-      "excerpt": "03 · Modes Research 和 Agent 模式 模式 适合做什么 边界 RESEARCH 论文分析、协议、comparison、idea 和实验流程。 遵守证据、数据、实验和审批门禁。 AGENT 复用 DSH 的通用 coding agent：理解项目、编辑授权范围内文件、运行受限命令和测试、修复工程问题。 受项目根路径、工具权限、网络/凭据策略与科研数据保护约束；不会绕过 Research 的科学门禁。 交互界面底部显示当前模式；按 Shift + Tab 切换，或输入 /mode research 、 /mode agent 。切换后顶部状态与审计输出会更新。 Agent 模式的命令行入口是 ideaseek agent \"&lt;任务&gt;\" ：在项目目录里启动 真实的 DSH coding session （项目内读写、受限 shell、测试工具由 DSH 运行时"
+      "excerpt": "03 · Modes Research 和 Agent 模式 模式 适合做什么 边界 RESEARCH 论文分析、协议、comparison、idea 和实验流程。 遵守证据、数据、实验和审批门禁。 AGENT 复用 DSH 的通用 coding agent：理解项目、编辑授权范围内文件、运行受限命令和测试、修复工程问题。 受项目根路径、工具权限、网络/凭据策略与科研数据保护约束；不会绕过 Research 的科学门禁。 交互界面底部显示当前模式；按 Shift + Tab 在 Analysis、Research、Agent 之间循环，或输入 /mode analysis 、 /mode research 、 /mode agent 。切换后顶部状态与审计输出会更新。 Agent 模式的命令行入口是 ideaseek agent \"&lt;任务&gt;\" ：在项目目录里启动 真实的 DSH"
     },
     {
       "id": "models",
@@ -37,6 +43,12 @@
       "title": "先计划，再做小规模探索",
       "search": "idea explore experiment quick smoke standard start run research",
       "excerpt": "06 · Explore 先计划，再做小规模探索 1 检查计划。 运行 ideaseek plan --question \"...\" ，先看材料、comparison、资源和阻塞。 2 确认协议和关键语义。 例如数据字段、split、指标和 required comparison；无法安全推断的内容由你确认。 3 启动探索。 运行 ideaseek start --question \"...\" 或交互输入研究需求；先用 smoke/quick/standard 小切片验证 idea。 4 看证据和反馈。 检查 comparison、消融与失败分类；结果可能支持、否证或无法判断 idea，程序错误不能冒充科学结论。"
+    },
+    {
+      "id": "assessment",
+      "title": "先问 IdeaSeek：还缺什么材料？",
+      "search": "Analysis mode material assessment research material gaps 缺论文 数据集 comparison",
+      "excerpt": "05.5 · Analysis 先问 IdeaSeek：还缺什么材料？ 进入 Analysis 模式后，IdeaSeek 会先把材料加工成 PaperCard、证据定位、主题综合、研究地图、机制库、DatasetCard 和 comparison 摘要，再列出必须补、建议补和可选补的论文、数据集、comparison、指标和场景，并说明来源、理由、成本和下一步。补齐材料后再切到 Research，让正式科研流程开始。"
     },
     {
       "id": "observe",
