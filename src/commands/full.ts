@@ -348,12 +348,269 @@ export function registerFullCommand(program: Command): void {
             process.stdout.write(`  decision recorded (event #${decisionSeq})\n`);
           }
           process.stdout.write(
-            'next: full-run execution is EXTERNAL — HANDOFF_READY is held, GPU/queue and the explicit full-run command land separately (never auto-launched)\n',
+            'next: ideaseek full run --idea ' +
+              `${opts.idea} --confirm   (platform-executed full-scale run; never auto-launched)\n`,
           );
           return 0;
         } finally {
           await runtime.close();
         }
       }),
+    );
+
+  full
+    .command('run')
+    .description(
+      'execute the approved full-scale work list (protected; reuses the workflow queue, never auto-launched)',
+    )
+    .requiredOption('--idea <ideaId>', 'idea id')
+    .option('--confirm', 'launch authorization (required in guided mode)')
+    .option('--enqueue-only', 'queue the full.run task and exit')
+    .option('--detach', 'spawn a background supervisor and return immediately')
+    .option(
+      '--fault <json>',
+      'fault injection map keyed by task type, e.g. \'{"full.run":{"failTimes":1}}\'',
+    )
+    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (opts: {
+          idea: string;
+          confirm?: boolean;
+          enqueueOnly?: boolean;
+          detach?: boolean;
+          fault?: string;
+          harness?: string;
+          json?: boolean;
+        }) => {
+          const root = await openRoot();
+          const { parseAutonomyMode, checkAutonomy, recordDecision } =
+            await import('../workflow/autonomy.js');
+          const shared = await import('./shared.js');
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({
+            cwd: root,
+            harness: shared.buildHarness(opts.harness),
+          });
+          let lockHeld = false;
+          let lockRoot: string | null = null;
+          try {
+            shared.assertConfigUsable(runtime.configLoad);
+
+            // Cheapest refusal first: launch is a protected full-research
+            // action (guided needs --confirm, review-only refuses).
+            const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+            const check = checkAutonomy(mode, 'full-research', {
+              confirmed: opts.confirm === true,
+            });
+            if (!check.allowed) {
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({ started: false, reason: check.reason ?? 'refused', mode }),
+                );
+              } else {
+                process.stderr.write(`full run refused: ${check.reason ?? 'refused'}\n`);
+                if (check.needsConfirm) {
+                  process.stderr.write(`next: ideaseek full run --idea ${opts.idea} --confirm\n`);
+                }
+              }
+              return 2;
+            }
+
+            // Authorization: approved + fresh plan, every required method
+            // has a runnable entry (no silent skips).
+            const { authorizeFullRun } = await import('../full/run.js');
+            const auth = await authorizeFullRun(root, opts.idea);
+
+            // One mutating controller at a time (same lock as `run`).
+            const { findProjectRoot } = await import('../config/paths.js');
+            lockRoot = await findProjectRoot(process.cwd());
+            if (lockRoot) {
+              const { acquireProjectLock } = await import('../runtime/project-lock.js');
+              const acquired = await acquireProjectLock(lockRoot, 'run');
+              lockHeld = acquired.acquired;
+              if (acquired.tookOverStale && !opts.json) {
+                process.stdout.write(
+                  'note: took over a stale project lock (previous pid is gone)\n',
+                );
+              }
+            }
+
+            const { ensureActiveRun } = await import('./ingest.js');
+            const { runId } = await ensureActiveRun(runtime);
+            const faults = shared.parseFaultSpec(opts.fault);
+            const { created } = await runtime.db.enqueueTask({
+              runId,
+              type: 'full.run',
+              phase: 'DEMO',
+              payload: {
+                ideaId: opts.idea,
+                planInputHash: auth.planInputHash,
+                ...(faults['full.run'] ? { fault: faults['full.run'] } : {}),
+              },
+              dependsOn: [],
+              idempotencyKey: `fullrun:${opts.idea}:${auth.planInputHash.slice(7, 19)}:v1`,
+              maxAttempts: runtime.config.runtime.maxAttempts,
+            });
+
+            // Launch Decision (protected action — never silent).
+            let decisionSeq: number | null = null;
+            if (check.needsDecision) {
+              const decision = await recordDecision(runtime.db, runtime.project.id, {
+                action: 'full-research',
+                target: `full run ${opts.idea} (plan ${auth.planInputHash.slice(0, 12)})`,
+                mode,
+              });
+              decisionSeq = decision?.seq ?? null;
+            }
+
+            if (opts.enqueueOnly) {
+              const tasks = await runtime.db.listTasks(runId);
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    runId,
+                    enqueued: created,
+                    planInputHash: auth.planInputHash,
+                    work: auth.work,
+                    decisionSeq,
+                    tasks: shared.countByStatus(tasks),
+                  }),
+                );
+              } else {
+                process.stdout.write(
+                  `full run: ${created ? '1 task enqueued' : 'task already queued'} in run ${runId}\n`,
+                );
+                process.stdout.write(
+                  `  work: ${auth.work.map((item) => `${item.kind}:${item.id}`).join(', ')}\n`,
+                );
+                process.stdout.write(
+                  'next: ideaseek worker   (or ideaseek full run to execute inline)\n',
+                );
+              }
+              return 0;
+            }
+
+            if (opts.detach) {
+              const script = process.argv[1];
+              if (!script) {
+                throw new IdeaseekError(
+                  'INTERNAL',
+                  'cannot resolve ideaseek script path for --detach',
+                );
+              }
+              const { projectPaths } = await import('../config/paths.js');
+              const { ensureDir } = await import('../core/atomic.js');
+              const { openSync, closeSync } = await import('node:fs');
+              const { spawn } = await import('node:child_process');
+              const { join: joinPath } = await import('node:path');
+              const { readCliVersion, writeDaemonInfo } = await import('../runtime/daemon.js');
+              const paths = projectPaths(process.cwd());
+              await ensureDir(paths.logsDir);
+              const logPath = joinPath(paths.logsDir, `${runId}.log`);
+              const fd = openSync(logPath, 'a');
+              const child = spawn(
+                process.execPath,
+                [script, 'supervise', '--run', runId, '--harness', opts.harness ?? 'fake'],
+                { cwd: process.cwd(), detached: true, stdio: ['ignore', fd, fd] },
+              );
+              closeSync(fd);
+              if (!child.pid) {
+                throw new IdeaseekError('INTERNAL', 'failed to spawn background supervisor');
+              }
+              child.unref();
+              writeDaemonInfo(paths.researchDir, {
+                runId,
+                pid: child.pid,
+                startedAt: Date.now(),
+                heartbeatAt: Date.now(),
+                logPath,
+                version: readCliVersion(),
+              });
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({ runId, detached: true, pid: child.pid, logPath, decisionSeq }),
+                );
+              } else {
+                process.stdout.write(
+                  `detached supervisor for full run ${runId} (pid ${child.pid})\n`,
+                );
+                process.stdout.write(`  log: ${logPath}\n`);
+                process.stdout.write(`next: ideaseek attach --run ${runId}\n`);
+              }
+              return 0;
+            }
+
+            const { exit } = await shared.runWorkerInteractive(runtime, runId, {
+              kind: 'inline',
+              handlers: shared.buildHandlers(),
+              // Worker logs always go to stderr so --json stdout stays parseable.
+              onLog: (message: string) => process.stderr.write(`  · ${message}\n`),
+            });
+            const finalRun = await runtime.db.getRun(runId);
+            const counts = shared.countByStatus(await runtime.db.listTasks(runId));
+
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  runId,
+                  status: finalRun?.status,
+                  exitReason: exit.reason,
+                  processed: exit.processed,
+                  planInputHash: auth.planInputHash,
+                  decisionSeq,
+                  tasks: counts,
+                  blockReason: finalRun?.blockReason ?? null,
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `full run ${opts.idea} → ${finalRun?.status} (processed ${exit.processed} task(s))\n`,
+              );
+              process.stdout.write(
+                `  tasks: ${Object.entries(counts)
+                  .filter(([, n]) => n > 0)
+                  .map(([k, n]) => `${k}=${n}`)
+                  .join(' ')}\n`,
+              );
+              if (decisionSeq !== null) {
+                process.stdout.write(`  decision recorded (event #${decisionSeq})\n`);
+              }
+              if (finalRun?.status === 'QUOTA_EXHAUSTED') {
+                process.stdout.write(
+                  `  blocked: ${finalRun.blockReason ?? 'quota exhausted'}\n  next: ideaseek continue\n`,
+                );
+              }
+              if (finalRun?.status === 'PAUSED') {
+                process.stdout.write('  next: ideaseek resume\n');
+              }
+            }
+
+            switch (exit.reason) {
+              case 'completed':
+                return 0;
+              case 'failed':
+                return 1;
+              case 'canceled':
+                return 4;
+              case 'blocked':
+                return 2;
+              case 'paused':
+              case 'idle':
+              case 'stopped':
+                return exit.runStatus === 'RUNNING' ? 3 : 0;
+              default:
+                return 0;
+            }
+          } finally {
+            await runtime.close();
+            if (lockHeld && lockRoot) {
+              const { releaseProjectLock } = await import('../runtime/project-lock.js');
+              await releaseProjectLock(lockRoot);
+            }
+          }
+        },
+      ),
     );
 }

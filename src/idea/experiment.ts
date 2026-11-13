@@ -20,7 +20,12 @@ import { assertIdeaReviewClear, readLatestIdeaReview } from './gates.js';
  * smoke/quick micro-runs — full training stays in the handoff package.
  */
 
-export type IdeaScale = 'smoke' | 'quick';
+/**
+ * Exploration scales are smoke/quick (the idea-experiment CLI refuses
+ * anything else); `full` exists ONLY for the approved Full Research
+ * path (`ideaseek full run`) — docs/DATA_SCALE_POLICY 边界.
+ */
+export type IdeaScale = 'smoke' | 'quick' | 'full';
 
 export interface BuildIdeaSpecResult {
   spec: ExperimentSpec;
@@ -243,12 +248,12 @@ function commandFor(config: Record<string, unknown>, scale: IdeaScale): string[]
   if (Array.isArray(config.command) && config.command.every((c) => typeof c === 'string')) {
     return config.command as string[];
   }
-  // smoke uses the micro-run entry; quick runs the training entry. The scale
-  // is ALWAYS passed explicitly so entries cannot silently evaluate the
-  // default scale under a different label.
+  // smoke uses the micro-run entry; quick/full run the training entry. The
+  // scale is ALWAYS passed explicitly so entries cannot silently evaluate
+  // the default scale under a different label.
   return scale === 'smoke'
     ? ['python', 'src/smoke.py', '--scale', 'smoke']
-    : ['python', 'src/train.py', '--scale', 'quick'];
+    : ['python', 'src/train.py', '--scale', scale];
 }
 
 const KIND_TO_FAILURE: Record<string, RunFailureCategory> = {
@@ -422,6 +427,9 @@ export interface SpecExecResult {
 export interface ExecuteSpecRunOptions {
   /** Appends `--resume-from <id>` after a compatibility-checked resume. */
   resumeFrom?: string;
+  /** Working directory override (comparison full-runs execute in the
+   *  method worktree; idea runs default to the idea workspace). */
+  cwd?: string;
 }
 
 export async function executeSpecRun(
@@ -459,7 +467,7 @@ export async function executeSpecRun(
   }
 
   const startedAt = Date.now();
-  const run = await runRepairCommand(command, workspace, timeoutMs);
+  const run = await runRepairCommand(command, opts.cwd ?? workspace, timeoutMs);
   const logName = `idea-${logTag}.log`;
   await writeRepairLog(projectRoot, logName, command, run.exitCode, run.out);
   const logRef = `.research/logs/${logName}`;
@@ -486,7 +494,9 @@ export async function executeSpecRun(
   // checkpoint; heartbeats alone never promise resume. Otherwise the run is
   // explicitly task-level recovery: rerun this single experiment only.
   const { heartbeat, saved } = scanEntryOutput(run.out);
-  const codeHash = await hashIdeaSource(projectRoot, ideaId);
+  // Comparison full-runs have spec.idea = null — there is no idea source
+  // tree to hash (checkpoint manifests accept null codeHash).
+  const codeHash = ideaId ? await hashIdeaSource(projectRoot, ideaId) : null;
   const checkpoints = saved.map((marker) => buildCheckpointManifest(marker, spec, codeHash));
   let resumeHint: { checkpointId: string; compatible: boolean; mismatches: string[] } | null = null;
   if (!succeeded && checkpoints.length > 0) {
