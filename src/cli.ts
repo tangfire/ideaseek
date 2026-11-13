@@ -52,6 +52,7 @@ import { registerInteractiveCommand, runBareInvocation } from './commands/intera
 import { registerProtocolCommand } from './commands/protocol.js';
 import { registerPaperCommand } from './commands/paper.js';
 import { registerFullCommand } from './commands/full.js';
+import { registerUpdateCommands } from './commands/update.js';
 import { registerReportCommand } from './commands/report.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
@@ -133,6 +134,7 @@ export function buildProgram(): Command {
   registerSuperviseCommand(program);
   registerPaperCommand(program);
   registerFullCommand(program);
+  registerUpdateCommands(program);
   registerReportCommand(program);
   registerControlCommands(program);
   registerComparisonCommand(program);

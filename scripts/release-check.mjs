@@ -9,12 +9,14 @@
  *                       on the permissive allowlist (no surprises at ship).
  * 4. Secrets          — tracked files (or a directory walk with --skip-git)
  *                       must contain no key-shaped material.
+ * 5. Version          — semver package.json, bin points at dist/cli.js, and
+ *    the built CLI's --version prints exactly the package version.
  *
  * Usage: node scripts/release-check.mjs [--root <dir>] [--skip-git] [--json]
  * Exit: 0 clean · 1 violations.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -196,10 +198,34 @@ function checkRegressionSuite(pkg) {
   return { vitestFiles: vitestFiles.length, pythonFiles: pythonFiles.length, lockfile, problems };
 }
 
+function checkVersionConsistency(pkg) {
+  const problems = [];
+  if (typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(pkg.version)) {
+    problems.push(`package.json version "${pkg.version}" is not semver`);
+  }
+  const binPath = pkg.bin?.ideaseek;
+  if (binPath !== './dist/cli.js') {
+    problems.push(`package.json bin.ideaseek must be ./dist/cli.js (got ${binPath ?? 'missing'})`);
+  }
+  const cli = join(root, 'dist', 'cli.js');
+  const cliChecked = existsSync(cli);
+  if (cliChecked) {
+    const result = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' });
+    const printed = (result.stdout ?? '').trim();
+    if (result.status !== 0 || printed !== pkg.version) {
+      problems.push(
+        `dist/cli.js --version prints "${printed}" but package.json says "${pkg.version}"`,
+      );
+    }
+  }
+  return { cliChecked, problems };
+}
+
 function main() {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   const suite = checkRegressionSuite(pkg);
   const deps = checkDependencies();
+  const version = checkVersionConsistency(pkg);
 
   let files;
   try {
@@ -213,6 +239,7 @@ function main() {
   const problems = [
     ...suite.problems.map((text) => ({ kind: 'regression', text })),
     ...deps.problems.map((text) => ({ kind: 'dependency', text })),
+    ...version.problems.map((text) => ({ kind: 'version', text })),
     ...secrets.map((finding) => ({
       kind: 'secret',
       text: `${finding.file}:${finding.line} matches ${finding.pattern}`,
@@ -225,6 +252,7 @@ function main() {
       lockfile: suite.lockfile,
     },
     dependencies: { direct: deps.directCount, licenses: deps.licenses },
+    version: { package: pkg.version, cliChecked: version.cliChecked },
     scannedFiles: files.length,
     secrets: secrets.length,
     problems,

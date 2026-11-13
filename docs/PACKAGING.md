@@ -59,6 +59,8 @@ ideaseek version
 ideaseek doctor
 ```
 
+源链接安装的升级路径：先取新代码（`git pull` 或安装新发行包——update 本身不碰网络和 git 状态），再 `ideaseek update`（用锁定的 TypeScript 重建 + 幂等刷新 install manifest），`ideaseek version` 打印 CLI 版本、node 版本与 manifest 指纹（版本漂移时提示 update）。发行包用 `node scripts/pack.mjs [--verify-reproducible]`：只打 `package.json#files`（dist）、输出 tarball 的 sha256 指纹并可证明重复打包字节一致；`node scripts/release-check.mjs` 含第5 项版本一致性检查（semver、bin 指向、`dist/cli.js --version` 与 package.json 完全一致）。回滚 = 旧版本 tag 重建后重新 install，项目数据回滚用 `ideaseek backup/restore`。
+
 更新前保存当前版本、DSH commit、配置 schema 和数据库备份；升级失败可以回滚。破坏兼容的配置/数据库迁移必须先展示迁移摘要并保留备份。
 
 ## Windows

@@ -27,6 +27,9 @@ node_modules/
 dist/
 coverage/
 
+# Release tarballs (scripts/pack.mjs output)
+/release/
+
 # Large/private files
 *.pdf
 *.zip
