@@ -50,9 +50,10 @@ policy:
 - `research.mode: auto` 根据论文/数据/comparison 规模选择 `starter`、`standard` 或 `research`；用户可显式指定，但平台仍显示证据和资源限制。
 - `research.autonomy` 可选 `guided`（默认）、`autonomous` 或 `review-only`；无人值守必须显式配置，不能由 Agent 自行切换。
 - 模型路由可按 role 覆盖，但所有 route 必须在 DSH provider/profile 中可用；高成本 `deep` route 受项目 token/费用预算约束，路由变更会记录到 run snapshot。
-- `runtime.default_data_scale` 默认是 `quick`，可选 `smoke`/`quick`/`standard`；IdeaSeek 不执行 full-scale 训练，只通过 handoff 生成用户后续全量实验配置。每个探索规模的样本、步数、客户端/场景和 GPU 预算都要可配置。
+- `runtime.default_data_scale` 默认是 `quick`，探索阶段可选 `smoke`/`quick`/`standard`；只有达到 `HANDOFF_READY` 并完成明确审批后，Full Research 才可执行独立 full-run。详细授权、资源和恢复契约见 `FULL_RESEARCH_MODE.md`。每个探索规模的样本、步数、客户端/场景和 GPU 预算都要可配置。
 - `max_parallel_ideas` 不得超过实际资源和 scheduler 安全上限；资源不足时排队。
 - `external_search`、`allow_network`、第三方模型外发和 GitHub 私有仓库访问分别控制，不互相隐含授权。
+- 联网/内网/离线能力及阻塞语义见 [OFFLINE_MODE.md](OFFLINE_MODE.md)：云 provider 无法访问时暂停依赖模型的任务；离线发现只报告本地语料覆盖范围，不声称外部文献已穷尽。
 - 额度/凭据策略有独立的暂停与恢复语义：token、余额或限额耗尽时暂停新模型任务；补充凭据后允许继续，不把失败任务标记为科学失败。
 - `require_all_comparisons: true` 时，所有 `required: true` 的方法必须通过 comparison 门槛。
 - 修改输入目录、模型、解析器、prompt/schema、环境或实验策略时创建新 run 或配置版本；旧 run 保持可审计。

@@ -6,6 +6,8 @@ Linux 服务器上安装固定版本的 Node、pnpm、Python、容器运行时�
 
 Windows 用户优先通过 SSH 或 WSL2 使用 Linux 执行环境；Windows 原生不承诺等价 GPU 容器能力。
 
+联网、实验室内网和完全离线模式的能力矩阵、外部阻塞状态和恢复行为见 [OFFLINE_MODE.md](OFFLINE_MODE.md)。外部服务不可达时只阻塞依赖节点，必须显示缺失来源/权限和可复制的恢复步骤；不得静默跳过 required comparison 或证据门禁。
+
 ## 凭据
 
 使用 DSH credential store、系统 secret manager 或短期环境注入。模型 API key、GitHub token、SSH agent 和私有镜像凭据不得写入配置、git、prompt、事件或日志。GitHub 读操作使用最小细粒度权限；写权限默认关闭。
