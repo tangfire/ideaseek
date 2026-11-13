@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256OfJson } from '../core/hash.js';
@@ -256,5 +257,176 @@ export function registerSynthesizeCommand(program: Command): void {
           }
         },
       ),
+    );
+
+  program
+    .command('mech')
+    .description(
+      'mechanism / design-principle / contradiction graph from persisted syntheses and failure boundaries (Mechanism Analyst role)',
+    )
+    .option(
+      '--harness <kind>',
+      'model harness: fake | dsh (default: dsh when a key is configured, else fake)',
+    )
+    .option('--force', 'ignore a stored mechanism graph and regenerate')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { harness?: string; force?: boolean; json?: boolean }) => {
+        const { findProjectRoot } = await import('../config/paths.js');
+        const root = await findProjectRoot(process.cwd());
+        if (!root) {
+          throw new IdeaseekError(
+            'NOT_INITIALIZED',
+            'no IdeaSeek project here; run: ideaseek init',
+          );
+        }
+        const {
+          MECHANISM_ANALYSIS_SCHEMA,
+          collectMechanismContext,
+          buildMechanismRequest,
+          parseMechanismOutput,
+        } = await import('../idea/mechanism.js');
+        const context = await collectMechanismContext(root);
+        const request = buildMechanismRequest(context);
+        const graphPath = join(root, 'knowledge', 'mechanism-graph.json');
+
+        interface StoredGraph {
+          contract: string;
+          inputHash: string;
+          harnessRuntime: string;
+          generatedAt: number;
+          analysis: Record<string, unknown>;
+        }
+
+        if (!opts.force) {
+          let stored: StoredGraph | null = null;
+          try {
+            stored = JSON.parse(await readFile(graphPath, 'utf8')) as StoredGraph;
+          } catch {
+            stored = null;
+          }
+          if (stored && stored.inputHash === request.inputHash) {
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  contract: stored.contract,
+                  inputHash: stored.inputHash,
+                  reused: true,
+                  analysis: stored.analysis,
+                  path: graphPath,
+                }),
+              );
+            } else {
+              process.stdout.write(
+                `reused mechanism graph (same inputHash ${stored.inputHash.slice(0, 12)}…)\n`,
+              );
+              process.stdout.write(`  file: ${graphPath}\n`);
+              process.stdout.write('next: review contradictions; regenerate with --force\n');
+            }
+            return 0;
+          }
+        }
+
+        const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+        const kind =
+          opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+        const harness = buildHarness(kind);
+        await harness.initialize();
+        let output: string;
+        let runtimeKind = kind;
+        try {
+          const result = await harness.runTask({
+            runId: 'mechanism-analysis',
+            taskId: 'mechanism-analysis',
+            profile: 'synthesis-analyst',
+            instruction: request.instruction,
+            inputs: [{ kind: 'text', name: 'mechanism_context', content: request.instruction }],
+            outputSchema: MECHANISM_ANALYSIS_SCHEMA,
+            budget: { timeoutMs: 180_000, maxOutputTokens: 16_384 },
+            idempotencyKey: request.idempotencyKey,
+          });
+          output = result.output;
+          runtimeKind = result.runtime.kind;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'HarnessBlockError') {
+            const block = (error as { block?: string }).block ?? 'BLOCKED';
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({ blocked: block, written: false, contract: MECHANISM_ANALYSIS_SCHEMA }),
+              );
+            } else {
+              process.stderr.write(
+                `mech blocked [${block}]: ${(error as Error).message}\n` +
+                  'nothing was written — restore quota/auth/network and rerun the same command\n',
+              );
+            }
+            return 2;
+          }
+          throw error;
+        } finally {
+          await harness.shutdown().catch(() => undefined);
+        }
+
+        const analysis = parseMechanismOutput(output, context);
+        const stored: StoredGraph = {
+          contract: MECHANISM_ANALYSIS_SCHEMA,
+          inputHash: request.inputHash,
+          harnessRuntime: runtimeKind,
+          generatedAt: Date.now(),
+          analysis: analysis as unknown as Record<string, unknown>,
+        };
+        const { ensureDir, writeFileAtomic: writeAtomic } = await import('../core/atomic.js');
+        await ensureDir(join(root, 'knowledge'));
+        await writeAtomic(graphPath, `${JSON.stringify(stored, null, 2)}\n`);
+
+        let eventSeq: number | null = null;
+        const { ProjectRuntime: Runtime } = await import('../workflow/runtime.js');
+        const runtime = await Runtime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'IDEATION',
+              objectId: 'mechanism-graph',
+              role: 'system',
+              eventType: 'mechanism_analysis',
+              summary: `mechanism graph: ${analysis.mechanisms.length} mechanism(s), ${analysis.designPrinciples.length} principle(s), ${analysis.contradictions.length} contradiction(s)`,
+              status: 'generated',
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        if (opts.json) {
+          process.stdout.write(
+            jsonLine({
+              contract: stored.contract,
+              inputHash: stored.inputHash,
+              harnessRuntime: stored.harnessRuntime,
+              reused: false,
+              eventSeq,
+              analysis,
+              path: graphPath,
+            }),
+          );
+          return 0;
+        }
+        process.stdout.write(
+          `mechanism graph written: knowledge/mechanism-graph.json (${analysis.mechanisms.length} mechanism(s), ${analysis.designPrinciples.length} principle(s), ${analysis.contradictions.length} contradiction(s))\n`,
+        );
+        process.stdout.write(
+          `  correlationCaution: ${analysis.correlationCaution} — ${analysis.causalityStatement.slice(0, 120)}\n`,
+        );
+        process.stdout.write(
+          `  inputHash ${stored.inputHash.slice(0, 19)}… · harness ${runtimeKind}\n`,
+        );
+        process.stdout.write(
+          'next: feed mechanisms into idea generation; contradictions are candidate research gaps\n',
+        );
+        return 0;
+      }),
     );
 }

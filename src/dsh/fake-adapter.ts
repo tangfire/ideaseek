@@ -375,6 +375,41 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       },
     });
   }
+  if (request.outputSchema === 'mechanism-analysis-v1') {
+    const override = process.env.IDEASEEK_FAKE_MECH_OUTPUT;
+    if (override != null) return override;
+    const context = request.inputs[0]?.content ?? '';
+    const sourcesLine =
+      context.split('\n').find((line) => line.startsWith('Allowed evidence sources: ')) ??
+      'Allowed evidence sources: speculation';
+    const sources = sourcesLine
+      .slice('Allowed evidence sources: '.length)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const cite = sources.find((s) => s.startsWith('synthesis:')) ?? 'speculation';
+    return JSON.stringify({
+      contract: 'mechanism-analysis-v1',
+      mechanisms: [
+        {
+          name: 'drift-aware reweighting',
+          designPrinciple: 'compensate client drift before aggregation',
+          conditions: ['label-skew partitions'],
+          groundedIn: [{ source: cite, location: 'topic synthesis' }],
+        },
+      ],
+      designPrinciples: [
+        {
+          principle: 'correct the objective where the mismatch originates',
+          supportsMechanisms: ['drift-aware reweighting'],
+        },
+      ],
+      contradictions: [],
+      causalityStatement:
+        'The evidence shows association under the locked protocol; causality is not established without the ablation.',
+      correlationCaution: true,
+    });
+  }
   if (request.outputSchema === 'idea-discuss-v1') {
     const override = process.env.IDEASEEK_FAKE_DISCUSS_OUTPUT;
     if (override != null) return override;
