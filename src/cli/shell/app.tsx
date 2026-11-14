@@ -446,7 +446,13 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
       )}
       <Box flexShrink={0}>
         <Text wrap="truncate">
-          <Text color="black" backgroundColor={modeLabel === 'Agent' ? 'magenta' : 'cyan'} bold>
+          <Text
+            color="black"
+            backgroundColor={
+              modeLabel === 'Agent' ? 'magenta' : modeLabel === 'Analysis' ? 'yellow' : 'cyan'
+            }
+            bold
+          >
             {` ${modeLabel.toUpperCase()} `}
           </Text>
           <Text dimColor>

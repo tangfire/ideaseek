@@ -381,7 +381,8 @@ export function registerModelsCommand(program: Command): void {
           }
           process.stdout.write(`  wrote: ${wrote.join('; ')}\n`);
           process.stdout.write(
-            `next: export ${opts.apiKeyEnv}=<your key> in your shell or secret manager, then: ideaseek models test\n`,
+            `next: make ${opts.apiKeyEnv} available to this project — put it in <project>/.env ` +
+              `(git-ignored, loaded at startup) or export it in your shell, then: ideaseek models test\n`,
           );
           process.stdout.write(
             'boundary: IdeaSeek never writes the key value to config, git, prompts, events or logs\n',
@@ -403,7 +404,7 @@ export function registerModelsCommand(program: Command): void {
       action(async (opts: { baseUrl?: string; timeout: number; json?: boolean }) => {
         const { loadUserConfig, resolveCredentialPresence } =
           await import('../config/user-config.js');
-        const { readDshProvider, connectionTest, resolveTestKey } =
+        const { readDshProvider, connectionTest, knownBaseUrl, resolveTestKey } =
           await import('../models/setup.js');
         const user = await loadUserConfig();
         if (user.errors.length > 0) {
@@ -457,7 +458,11 @@ export function registerModelsCommand(program: Command): void {
           return 2;
         }
         const providerView = envName ? await readDshProvider(user.config.models.provider) : null;
-        const baseUrl = opts.baseUrl ?? providerView?.baseURL ?? null;
+        // DSH consumes ~/.dsh/settings.yaml as an import source and renames it
+        // afterwards, so the provider view is often gone by the next run. The
+        // catalog default is the durable answer.
+        const baseUrl =
+          opts.baseUrl ?? providerView?.baseURL ?? knownBaseUrl(user.config.models.provider);
         if (!baseUrl) {
           const payload = {
             ok: false,
