@@ -25,7 +25,7 @@ import { sha256Of, type ContentHash } from '../core/hash.js';
 
 export type FetchLike = (
   url: string,
-  init?: { signal?: AbortSignal },
+  init?: { signal?: AbortSignal; headers?: Record<string, string> },
 ) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
 
 export interface IndexHit {
@@ -85,9 +85,24 @@ function num(value: unknown): number | null {
 function defaultFetch(timeoutMs: number): FetchLike {
   return async (url, init) => {
     const signal = init?.signal ?? AbortSignal.timeout(timeoutMs);
-    const response = await globalThis.fetch(url, { signal });
+    const response = await globalThis.fetch(url, { signal, headers: init?.headers });
     return { ok: response.ok, status: response.status, text: () => response.text() };
   };
+}
+
+/**
+ * Both indexes throttle anonymous callers. OpenAlex's polite pool and
+ * Semantic Scholar's higher limit are identification, not secrets, so they
+ * come from the environment and are simply omitted when unset.
+ */
+function contactEmail(): string | null {
+  const value = process.env.IDEASEEK_CONTACT_EMAIL;
+  return value && value.trim() && value.includes('@') ? value.trim() : null;
+}
+
+function s2ApiKey(): string | null {
+  const value = process.env.IDEASEEK_S2_API_KEY;
+  return value && value.trim() ? value.trim() : null;
 }
 
 async function parseOpenAlex(body: string): Promise<IndexHit[]> {
@@ -151,7 +166,10 @@ export function createAcademicIndexClient(opts: IndexClientOptions = {}): Academ
       const endpoints: IndexEndpointResult[] = [];
       const hits: IndexHit[] = [];
 
-      const openalexUrl = `${OPENALEX}?search=${encodeURIComponent(query)}&per-page=${limit}`;
+      const email = contactEmail();
+      const openalexUrl = `${OPENALEX}?search=${encodeURIComponent(query)}&per-page=${limit}${
+        email ? `&mailto=${encodeURIComponent(email)}` : ''
+      }`;
       try {
         const response = await fetchImpl(openalexUrl, { signal: searchOpts.signal });
         if (!response.ok) {
@@ -160,7 +178,13 @@ export function createAcademicIndexClient(opts: IndexClientOptions = {}): Academ
             ok: false,
             contentHash: null,
             hits: 0,
-            error: `http ${response.status}`,
+            error: `http ${response.status}${
+              response.status === 429 && !email
+                ? ' (rate limited — set IDEASEEK_CONTACT_EMAIL to use OpenAlex polite pool)'
+                : response.status === 429
+                  ? ' (rate limited even with IDEASEEK_CONTACT_EMAIL)'
+                  : ''
+            }`,
           });
         } else {
           const body = await response.text();
@@ -183,18 +207,28 @@ export function createAcademicIndexClient(opts: IndexClientOptions = {}): Academ
         });
       }
 
+      const s2Key = s2ApiKey();
       const s2Url =
         `${SEMANTIC_SCHOLAR}?query=${encodeURIComponent(query)}` +
         `&limit=${limit}&fields=${S2_FIELDS}`;
       try {
-        const response = await fetchImpl(s2Url, { signal: searchOpts.signal });
+        const response = await fetchImpl(s2Url, {
+          signal: searchOpts.signal,
+          headers: s2Key ? { 'x-api-key': s2Key } : undefined,
+        });
         if (!response.ok) {
           endpoints.push({
             endpoint: 'semantic-scholar',
             ok: false,
             contentHash: null,
             hits: 0,
-            error: `http ${response.status}${response.status === 429 ? ' (rate limited)' : ''}`,
+            error: `http ${response.status}${
+              response.status === 429 && !s2Key
+                ? ' (rate limited — set IDEASEEK_S2_API_KEY for the authenticated limit)'
+                : response.status === 429
+                  ? ' (rate limited even with IDEASEEK_S2_API_KEY)'
+                  : ''
+            }`,
           });
         } else {
           const body = await response.text();

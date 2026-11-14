@@ -799,6 +799,46 @@ describe('academic index port (no real network in tests)', () => {
     expect(result.hits.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('uses polite-pool identification when configured, and names it when throttled', async () => {
+    const savedEmail = process.env.IDEASEEK_CONTACT_EMAIL;
+    const savedKey = process.env.IDEASEEK_S2_API_KEY;
+    const seen: { url: string; headers?: Record<string, string> }[] = [];
+    process.env.IDEASEEK_CONTACT_EMAIL = 'rd@example.org';
+    process.env.IDEASEEK_S2_API_KEY = 's2-secret-value';
+    try {
+      const client = createAcademicIndexClient({
+        fetchImpl: async (url, init) => {
+          seen.push({ url, headers: init?.headers });
+          return { ok: true, status: 200, text: async () => '{"results":[],"data":[]}' };
+        },
+      });
+      await client.search('federated domain generalization');
+
+      expect(seen.find((entry) => entry.url.includes('openalex'))?.url).toContain(
+        'mailto=rd%40example.org',
+      );
+      expect(
+        seen.find((entry) => entry.url.includes('semanticscholar'))?.headers?.['x-api-key'],
+      ).toBe('s2-secret-value');
+
+      // A 429 has to say which knob fixes it — otherwise `datasets discover`
+      // reports a dead index with no way out.
+      delete process.env.IDEASEEK_CONTACT_EMAIL;
+      delete process.env.IDEASEEK_S2_API_KEY;
+      const throttled = createAcademicIndexClient({
+        fetchImpl: async () => ({ ok: false, status: 429, text: async () => '{}' }),
+      });
+      const result = await throttled.search('q');
+      expect(result.endpoints[0]!.error).toContain('IDEASEEK_CONTACT_EMAIL');
+      expect(result.endpoints[1]!.error).toContain('IDEASEEK_S2_API_KEY');
+    } finally {
+      if (savedEmail === undefined) delete process.env.IDEASEEK_CONTACT_EMAIL;
+      else process.env.IDEASEEK_CONTACT_EMAIL = savedEmail;
+      if (savedKey === undefined) delete process.env.IDEASEEK_S2_API_KEY;
+      else process.env.IDEASEEK_S2_API_KEY = savedKey;
+    }
+  });
+
   it('surfaces network refusal and rate limits as per-endpoint errors, never throws', async () => {
     const failing = createAcademicIndexClient({
       fetchImpl: async () => {
