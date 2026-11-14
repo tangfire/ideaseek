@@ -40,6 +40,11 @@ Rules:
 - algorithm.source must be a single self-contained Python file that reads data, runs the
   method, and prints one JSON line {"metrics": {...}}. It must support the subcommands
   smoke | check-data | check-metrics and must not require GPU to pass smoke.
+- algorithm.entry is the ARGV PREFIX used to invoke the file, e.g. ["python","reproduce.py"].
+  Never put the subcommands there; smoke/check-data/check-metrics are appended by the runner.
+- algorithm.metrics must reuse the locked protocol's primary and secondary metric names
+  verbatim when a protocol is supplied. Do not collapse several distinct metrics into one
+  generic name; if the protocol lists three, emit three.
 - Never claim the reimplementation equals official code.`;
 
 export const BLUEPRINT_OUTPUT_SCHEMA = 'reproduction-blueprint-v1';
