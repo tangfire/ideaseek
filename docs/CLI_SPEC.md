@@ -52,6 +52,7 @@ ideaseek datasets discover --question "..."
 ideaseek datasets list
 ideaseek datasets explain <candidate-id>
 ideaseek datasets authorize <candidate-id> --grant|--deny --reason "..." [--confirm]
+ideaseek datasets acquire <candidate-id> [--max-gib 50] [--timeout-ms 120000] [--confirm]
 ideaseek datasets link <candidate-id> --path <file>
 ideaseek experiment promote --idea <id> --to standard
 ideaseek experiment handoff --idea <id>

@@ -44,6 +44,8 @@ Research/Analysis/Agent 是持久化的会话模式标记，自然语言按模�
 
 这是 Research 在 idea 达到 `HANDOFF_READY` 后的显式升级模式。用户批准后，IdeaSeek 可以发现/下载公开数据、运行 full-scale 实验、生成图表、调用 ARIS-style 写作/claim audit/reviewer workflow，并交付论文草稿和完整复现包。下载、全量训练和论文主张都有独立预算、checkpoint 和审批；它不是普通探索的默认行为。
 
+数据获取链路是 `datasets discover` → `datasets authorize --grant` → `datasets acquire` → `datasets link`：acquire 只把**单个公开下载文件**暂存进 `datasets/`（仅 https、拒绝 URL 内嵌凭据、URL query 中的签名 token 不落盘也不打印、文件名净化且不得逃逸出 datasets、拒绝覆盖已有文件和残留 `.part`、按 `--max-gib` 流式截断、Content-Length 预检、sha256 记录进 `knowledge/dataset-acquisitions.json` 与 Decision 事件），并且要求 `runtime.allow_network: true`；大型或未知规模在 guided 模式下必须 `--confirm`。acquire **不解压、不晋升**：归档仍走 `scan`/intake 的安全解压门禁，晋升到 `user-provided`/`validated` 仍只有 `datasets link` 一条路径。`registration`/`request`/`local-mount` 类数据没有可下载的 URL，acquire 会拒绝并回显记录的获取说明。
+
 ## 切换方式
 
 交互终端：

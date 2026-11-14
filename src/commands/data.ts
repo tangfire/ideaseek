@@ -9,6 +9,7 @@ import { isContentHash, sha256OfFile, type ContentHash } from '../core/hash.js';
 import { writeFileAtomic } from '../core/atomic.js';
 import type { SliceScale } from '../experiment/slices.js';
 import { profileFederatedDataset } from '../knowledge/federated.js';
+import { acquireDataset } from '../knowledge/dataset-acquire.js';
 import { buildAllFederatedSlices } from '../experiment/federated-slices.js';
 import { ensureDir } from '../core/atomic.js';
 import { action, buildHarness, jsonLine } from './shared.js';
@@ -31,6 +32,7 @@ import {
   normalizeSourceList,
   parseDatasetCandidatesOutput,
   readDiscoveryArtifact,
+  recordAcquisition,
   requiresUserConfirmation,
   stampModelCandidates,
   writeDiscoveryExports,
@@ -73,6 +75,34 @@ function requireCandidate(
     );
   }
   return candidate;
+}
+
+/**
+ * Append-only acquisition ledger (knowledge/dataset-acquisitions.json): what
+ * was fetched, from where, with which hash. The URL is stored without its
+ * query string, which is where signed-download tokens live.
+ */
+interface AcquisitionRecord {
+  candidateId: string;
+  name: string;
+  relPath: string;
+  sha256: string;
+  bytes: number;
+  sourceUrl: string;
+  at: number;
+}
+
+async function appendAcquisition(
+  root: string,
+  record: AcquisitionRecord,
+): Promise<{ path: string; records: number }> {
+  const path = join(root, 'knowledge', 'dataset-acquisitions.json');
+  const existing = await readFile(path, 'utf8')
+    .then((text) => JSON.parse(text) as { records?: AcquisitionRecord[] })
+    .catch(() => ({ records: [] }));
+  const records = [...(Array.isArray(existing.records) ? existing.records : []), record];
+  await writeFileAtomic(path, `${JSON.stringify({ schemaVersion: 1, records }, null, 2)}\n`);
+  return { path, records: records.length };
 }
 
 export function registerDataCommand(program: Command): void {
@@ -1008,8 +1038,10 @@ export function registerDataCommand(program: Command): void {
             );
             if (grant) {
               process.stdout.write(
-                '  this records authorization only — IdeaSeek does not download data; obtain it yourself ' +
-                  'or mount it, then ideaseek scan + ideaseek datasets link\n',
+                candidate.access.acquisition === 'public-download' && candidate.access.url
+                  ? `  authorized — fetch it with: ideaseek datasets acquire ${candidateId}\n`
+                  : `  authorized — acquisition is "${candidate.access.acquisition}", so there is nothing to ` +
+                      'fetch; obtain it yourself or mount it, then ideaseek scan + ideaseek datasets link\n',
               );
             }
             if (decision) process.stdout.write(`  decision event #${decision.seq} recorded\n`);
@@ -1019,6 +1051,151 @@ export function registerDataCommand(program: Command): void {
               );
             }
             process.stdout.write(`next: ideaseek datasets explain ${candidateId}\n`);
+            return 0;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
+    );
+
+  datasets
+    .command('acquire')
+    .description(
+      'download an authorized public dataset file into the project datasets directory (staging only — datasets link stays the only promotion path)',
+    )
+    .argument('<candidateId>', 'candidate id')
+    .option('--max-gib <n>', 'hard byte ceiling for this download', '50')
+    .option('--timeout-ms <ms>', 'per-request timeout', '120000')
+    .option('--confirm', 'confirm a large or unknown-size download')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (
+          candidateId: string,
+          opts: { maxGib?: string; timeoutMs?: string; confirm?: boolean; json?: boolean },
+        ) => {
+          const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+          try {
+            const root = runtime.paths.root;
+            const artifact = await requireDiscoveryArtifact(root);
+            const candidate = requireCandidate(artifact, candidateId);
+
+            if (candidate.authorization.state !== 'granted') {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `dataset ${candidateId} is not granted (authorization=${candidate.authorization.state}) — ` +
+                  `run: ideaseek datasets authorize ${candidateId} --grant`,
+              );
+            }
+            if (candidate.access.acquisition !== 'public-download') {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `acquisition for ${candidateId} is "${candidate.access.acquisition}", not a public download — ` +
+                  candidate.access.instructions,
+              );
+            }
+            if (!candidate.access.url) {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `no source url recorded for ${candidateId} — run: ideaseek datasets discover`,
+              );
+            }
+            if (candidate.local || candidate.downloadStatus === 'local-present') {
+              throw new IdeaseekError(
+                'ALREADY_COMMITTED',
+                `${candidateId} already has data at ${candidate.local?.path ?? '(local mount)'} — ` +
+                  'acquire never re-downloads or overwrites',
+              );
+            }
+            if (!runtime.config.runtime.allowNetwork) {
+              throw new IdeaseekError(
+                'NETWORK_BLOCKED',
+                'runtime.allow_network is false — set allow_network: true in research.yaml to let IdeaSeek fetch data',
+              );
+            }
+
+            const maxGib = Number(opts.maxGib);
+            if (!Number.isFinite(maxGib) || maxGib <= 0 || maxGib > 2000) {
+              throw new IdeaseekError('INVALID_ARGUMENT', '--max-gib must be a positive GiB count');
+            }
+            const timeoutMs = Number(opts.timeoutMs);
+            if (!Number.isFinite(timeoutMs) || timeoutMs < 1000 || timeoutMs > 3_600_000) {
+              throw new IdeaseekError(
+                'INVALID_ARGUMENT',
+                '--timeout-ms must be between 1000 and 3600000',
+              );
+            }
+
+            // Size is the disk-budget decision: a small public file stays
+            // low-friction, large or unknown-size downloads always need an
+            // explicit confirmation (docs/ARIS_INTEGRATION_PLAN §P1).
+            const needsConfirm =
+              requiresUserConfirmation(candidate) || candidate.access.size === 'unknown';
+            const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
+            if (needsConfirm) {
+              assertAutonomy(mode, 'change-data-usage', { confirmed: opts.confirm === true });
+            }
+
+            const acquired = await acquireDataset({
+              url: candidate.access.url,
+              destDir: resolve(root, runtime.config.inputs.datasetsDir),
+              maxBytes: Math.floor(maxGib * 1024 * 1024 * 1024),
+              timeoutMs,
+            });
+            const relPath = relative(root, acquired.path).replace(/\\/g, '/');
+            const at = Date.now();
+            const ledger = await appendAcquisition(root, {
+              candidateId,
+              name: candidate.name,
+              relPath,
+              sha256: acquired.sha256,
+              bytes: acquired.bytes,
+              sourceUrl: acquired.sourceUrl,
+              at,
+            });
+            const updated = recordAcquisition(artifact, candidateId, {
+              relPath,
+              sha256: acquired.sha256,
+              bytes: acquired.bytes,
+              sourceUrl: acquired.sourceUrl,
+              at,
+            });
+            await writeDiscoveryExports(root, updated.artifact);
+            const decision = await recordDecision(runtime.db, runtime.project.id, {
+              action: 'change-data-usage',
+              target: `dataset-acquire:${candidateId} ${relPath}`,
+              mode,
+              reason: `staged ${acquired.bytes} bytes from ${acquired.sourceUrl}`,
+              status: mode === 'autonomous' ? 'auto' : 'confirmed',
+            });
+
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  candidateId,
+                  relPath,
+                  sha256: acquired.sha256,
+                  bytes: acquired.bytes,
+                  sourceUrl: acquired.sourceUrl,
+                  requiresConfirmation: needsConfirm,
+                  ledgerRecords: ledger.records,
+                  decisionSeq: decision?.seq ?? null,
+                }),
+              );
+              return 0;
+            }
+            process.stdout.write(
+              `acquired ${candidateId} → ${relPath} (${(acquired.bytes / 1024 / 1024).toFixed(1)} MiB)\n` +
+                `  sha256: ${acquired.sha256}\n` +
+                `  source: ${acquired.sourceUrl}\n` +
+                `  ledger: knowledge/dataset-acquisitions.json (${ledger.records} record(s))\n`,
+            );
+            if (decision) process.stdout.write(`  decision event #${decision.seq} recorded\n`);
+            process.stdout.write(
+              `next: ideaseek datasets link ${candidateId} --path ${relPath}\n` +
+                '  (link profiles the file and is the only promotion path to user-provided/validated)\n',
+            );
             return 0;
           } finally {
             await runtime.close();

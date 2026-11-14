@@ -2280,6 +2280,29 @@ export function authorizeCandidate(
   });
 }
 
+/**
+ * Records a staged download on a candidate. Promotion still happens only in
+ * `datasets link`, so the status and downloadStatus stay as they were; this is
+ * the human-visible trail that `datasets explain` reads. The structured record
+ * lives in knowledge/dataset-acquisitions.json.
+ */
+export function recordAcquisition(
+  artifact: DatasetDiscoveryArtifact,
+  candidateId: string,
+  input: { relPath: string; sha256: ContentHash; bytes: number; sourceUrl: string; at: number },
+): { artifact: DatasetDiscoveryArtifact; candidate: DatasetCandidate } {
+  const gib = (input.bytes / 1024 / 1024).toFixed(1);
+  return withCandidate(artifact, candidateId, (candidate) => ({
+    ...candidate,
+    notes: [
+      ...new Set([
+        `staged ${input.relPath} (${gib} MiB, ${input.sha256.slice(0, 19)}…) from ${input.sourceUrl} at ${new Date(input.at).toISOString()}`,
+        ...candidate.notes,
+      ]),
+    ].slice(0, 8),
+  }));
+}
+
 export interface LinkInput {
   path: string;
   sha256: ContentHash | null;
