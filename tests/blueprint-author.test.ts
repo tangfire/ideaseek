@@ -70,6 +70,13 @@ function evidence(over: Partial<BlueprintEvidence> = {}): BlueprintEvidence {
   };
 }
 
+it('states that the measured corpus is full-scale while the checks are not', () => {
+  // check-data failed a correct 1000-sample subset against "expected 9991"
+  // because the plan was given the full-corpus profile with no scale note.
+  expect(buildBlueprintContext(evidence())).toContain('this count is the FULL corpus');
+  expect(BLUEPRINT_INSTRUCTION).toContain('Do not put an absolute sample count into any check');
+});
+
 it('the blueprint is a plan, not an embedded program', () => {
   // Authoring used to demand a whole Python file inside one JSON string. That
   // is where truncation and bracket failures came from, and it left two

@@ -25,7 +25,11 @@ where "program" is the complete source as a single JSON string (real newlines es
 Hard requirements for the program:
 - Accepts argv[1] as one of: smoke | check-data | check-metrics (default: smoke).
 - check-data --data <path>: verify the declared data interface is readable; print one JSON line
-  {"status":"ok", ...counts} and exit 0, or exit non-zero with a reason if it is not.
+  {"status":"ok", ...counts} and exit 0, or exit non-zero with a reason if it is not. Judge the
+  handed path by its own contents: structure, the domains the plan declares, labels readable, and
+  counts against whatever the path's manifest states. Never require a total sample count from the
+  blueprint's measured-corpus figure — that is the full corpus, and these checks run on a selected
+  subset, so an absolute expectation fails a correct subset and reads as a data problem.
 - check-metrics: print one JSON line {"metrics": {...}} using exactly the blueprint's metric names.
 - smoke: run the method end to end on a small slice and print one JSON line
   {"metrics": {...}} with the blueprint's metric names and values actually computed.

@@ -52,6 +52,11 @@ Rules:
   IDEASEEK_PROJECT_ROOT. Describe resolution in that order, and say what is checked inside each
   candidate (manifest, expected layout) so a missing corpus is reported as a missing corpus rather
   than as zero samples.
+- Do not put an absolute sample count into any check. The measured corpus figure describes the
+  full corpus; the checks run on a smaller selected subset, so "expected 9991 +- 499" rejects a
+  correct subset as a layout mismatch. Assert structure instead (the layout exists, every declared
+  domain is present, labels are readable) and compare counts only against what the handed path
+  itself declares — its manifest row count, not a number remembered from profiling.
 - algorithm.metrics must reuse the locked protocol's primary and secondary metric names
   verbatim when a protocol is supplied. Do not collapse several distinct metrics into one
   generic name; if the protocol lists three, emit three.
@@ -148,7 +153,10 @@ export function buildBlueprintContext(evidence: BlueprintEvidence): string {
       `## measured corpus\nsamples: ${evidence.corpus.samples}\n` +
         `domain axis: ${evidence.corpus.domainAxis ?? '(none measured)'}\n` +
         `domains: ${evidence.corpus.domains.join(', ') || '(none)'}\n` +
-        `classes: ${evidence.corpus.classes}`,
+        `classes: ${evidence.corpus.classes}\n` +
+        `scale: this count is the FULL corpus as profiled. check-data, check-metrics and smoke all ` +
+        `run on a subset selected by the platform (runtime.default_data_scale), so the number of ` +
+        `samples a check sees is expected to be smaller than this.`,
     );
   } else {
     parts.push('## measured corpus\n(not profiled — describe the data interface as an assumption)');

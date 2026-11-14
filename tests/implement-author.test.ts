@@ -78,6 +78,11 @@ describe('parseImplementationOutput', () => {
 });
 
 describe('buildImplementationContext', () => {
+  it('judges the handed path by its own contents, not by a remembered total', () => {
+    expect(IMPLEMENT_INSTRUCTION).toContain('Never require a total sample count');
+    expect(IMPLEMENT_INSTRUCTION).toContain('checks run on a selected');
+  });
+
   it('tells the program where data actually comes from during smoke', () => {
     // smoke is invoked with no path argument. A program that only understands
     // --data resolves the corpus from its working directory, which is the
