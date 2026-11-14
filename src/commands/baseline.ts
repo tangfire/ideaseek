@@ -526,7 +526,14 @@ async function prepareReproduction(
   }
   const blueprint = blueprintValue as ReproductionBlueprint;
 
-  const { source, origin } = await resolveSource(blueprint, opts.code);
+  // Same deterministic path generateWorktree uses, so an implementation
+  // written by `comparison implement` is found here without a second copy of
+  // the path logic drifting.
+  const { source, origin } = await resolveSource(
+    blueprint,
+    opts.code,
+    join(root, 'comparisons', opts.method, 'worktree'),
+  );
   const entry = defaultEntry(blueprint.algorithm);
   const fingerprint = computeAlgorithmFingerprint({
     source,

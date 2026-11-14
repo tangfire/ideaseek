@@ -12,34 +12,68 @@ import type { ReproductionBlueprint } from './types.js';
  * another. A plan is reviewed as a plan; code is generated, compiled and then
  * handed to `baseline reproduce --code`.
  */
+/**
+ * The harness frames every request as "return ONLY a JSON object matching
+ * schema <outputSchema>", so asking for a bare program contradicts that and
+ * the model splits the difference — live it returned one line. The program
+ * travels inside a JSON field instead, which is the one shape both sides agree on.
+ */
 export const IMPLEMENT_INSTRUCTION = `You are the Baseline Reproduction implementer. Turn the supplied
-reproduction blueprint into ONE self-contained Python program. Output ONLY the program, no prose, no markdown fences.
-Hard requirements:
+reproduction blueprint into ONE self-contained Python program. Output exactly one JSON object:
+{"program": string, "notes": string}
+where "program" is the complete source as a single JSON string (real newlines escaped as \\n).
+Hard requirements for the program:
 - Accepts argv[1] as one of: smoke | check-data | check-metrics (default: smoke).
 - check-data --data <path>: verify the declared data interface is readable; print one JSON line
   {"status":"ok", ...counts} and exit 0, or exit non-zero with a reason if it is not.
 - check-metrics: print one JSON line {"metrics": {...}} using exactly the blueprint's metric names.
 - smoke: run the method end to end on a small slice and print one JSON line
   {"metrics": {...}} with the blueprint's metric names and values actually computed.
-- Emit ONLY that JSON line on stdout for the metrics-bearing commands; diagnostics go to stderr.
+- Emit only that JSON line on stdout for the metrics-bearing commands; diagnostics go to stderr.
 - Do not fabricate results. If a dependency or the data is unavailable, exit non-zero and explain.
   Never report a status such as "skipped" or "ephemeral_passed" with exit code 0.
 - Import only the standard library and the packages the blueprint declares as requirements.
-- Keep it under 300 lines; prefer a faithful minimal implementation over a broad incomplete one.
-- Add a short module docstring naming the method and citing the blueprint's paper-explicit basis.`;
+- Keep it under 500 lines; prefer a faithful minimal implementation over a broad incomplete one.
+- Start with a short module docstring naming the method and the blueprint's paper-explicit basis.
+"notes" states, in one or two sentences, what the implementation could not ground in the blueprint.`;
 
-const MAX_PROGRAM_LINES = 400;
+// Safety bound, not a style preference. It must sit above the instruction's
+// own target (500) or the guard rejects ordinary output and the step never
+// completes — which reads as a model failure but is a configuration one.
+const MAX_PROGRAM_LINES = 800;
+
+/** Registered in src/core/schema so the named contract actually exists. */
+export const IMPLEMENTATION_SCHEMA = 'implementation-program-v1';
 
 export interface AuthoredImplementation {
   source: string;
   lines: number;
   origin: 'agent';
   contextHash: string;
+  notes: string;
 }
 
-function stripFences(text: string): string {
-  const fenced = /```(?:python)?\s*([\s\S]*?)```/.exec(text);
-  return (fenced?.[1] ?? text).trim() + '\n';
+/** Extracts the program field. A JSON envelope without a program is not source code. */
+export function parseImplementationOutput(output: string): { program: string; notes: string } {
+  const trimmed = output.trim();
+  if (trimmed.startsWith('{')) {
+    // Parsed as the required envelope: no program means no program. Falling
+    // through here would write `{"notes": ...}` into reproduce.py and leave it
+    // to the compile step to notice — a check is not a substitute for a gate.
+    try {
+      const parsed = JSON.parse(trimmed) as { program?: unknown; notes?: unknown };
+      const notes = typeof parsed.notes === 'string' ? parsed.notes.slice(0, 400) : '';
+      return {
+        program: typeof parsed.program === 'string' ? parsed.program : '',
+        notes,
+      };
+    } catch {
+      // Starts like JSON but is not: treat as source and let the bounds decide.
+    }
+  }
+  const fenced = /```(?:python)?\s*([\s\S]*?)```/.exec(trimmed);
+  const body = (fenced?.[1] ?? trimmed).trim();
+  return { program: body, notes: 'response was not a JSON object; used as-is' };
 }
 
 export function buildImplementationContext(
@@ -84,17 +118,31 @@ export async function authorImplementation(opts: {
     profile: 'demo',
     instruction: IMPLEMENT_INSTRUCTION,
     inputs: [{ kind: 'text', name: 'reproduction-blueprint', content: context }],
-    outputSchema: 'python-program-v1',
+    outputSchema: IMPLEMENTATION_SCHEMA,
     budget: { timeoutMs: 300_000, maxOutputTokens: 16_384 },
     idempotencyKey: `implement:${opts.blueprint.methodId}:${sha256Of(context).slice(7, 23)}`,
   });
 
-  const source = stripFences(result.output);
+  const { program, notes } = parseImplementationOutput(result.output);
+  // Diagnostics escape hatch: when generation keeps failing a bound, the only
+  // way to tell "the model wrote bad code" from "the transport mangled it" is
+  // to look at what actually came back. Off unless asked for.
+  if (process.env.IDEASEEK_IMPLEMENT_DEBUG) {
+    try {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(process.env.IDEASEEK_IMPLEMENT_DEBUG, result.output, 'utf8');
+    } catch {
+      // Diagnostics must never become the reason a run fails.
+    }
+  }
+  const source = program.trimEnd() + '\n';
   const lines = source.split(/\r?\n/).filter(Boolean).length;
   if (lines < 10) {
     throw new IdeaseekError(
       'PARSE_FAILED',
-      `authored implementation is only ${lines} line(s) — not a usable program; rerun with --force`,
+      `authored implementation is only ${lines} line(s) — not a usable program. ` +
+        `${notes ? `Model notes: ${notes.slice(0, 200)}` : 'The response carried no program.'} ` +
+        'Rerun with --force; if it repeats, the blueprint is too vague to implement and needs new confirmed details.',
     );
   }
   if (lines > MAX_PROGRAM_LINES) {
@@ -103,5 +151,5 @@ export async function authorImplementation(opts: {
       `authored implementation is ${lines} lines (limit ${MAX_PROGRAM_LINES}) — refusing to write an unreviewable blob`,
     );
   }
-  return { source, lines, origin: 'agent', contextHash: sha256Of(context) };
+  return { source, lines, origin: 'agent', contextHash: sha256Of(context), notes };
 }

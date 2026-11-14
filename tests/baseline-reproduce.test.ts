@@ -7,6 +7,7 @@ import {
   checkMetricFeasibility,
   computeAlgorithmFingerprint,
   defaultEntry,
+  resolveSource,
   validateReproductionBlueprint,
 } from '../src/comparison/reproduce.js';
 import type { ReproductionBlueprint, ReproductionRecord } from '../src/comparison/types.js';
@@ -98,6 +99,45 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+describe('resolveSource precedence', () => {
+  it('finds an implementation that comparison implement already wrote into the worktree', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-rs-'));
+    const worktree = join(dir, 'worktree');
+    await mkdir(worktree, { recursive: true });
+    await writeFile(join(worktree, 'reproduce.py'), GOOD_SOURCE, 'utf8');
+    const bp = blueprint('fedavg', '');
+    const found = await resolveSource(bp, undefined, worktree);
+    expect(found.origin).toBe('worktree:reproduce.py');
+    expect(found.source).toContain('def main');
+  });
+
+  it('prefers --code over the worktree, and inline source over neither', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-rs2-'));
+    const worktree = join(dir, 'worktree');
+    await mkdir(worktree, { recursive: true });
+    await writeFile(join(worktree, 'reproduce.py'), GOOD_SOURCE, 'utf8');
+    const explicit = join(dir, 'elsewhere.py');
+    await writeFile(explicit, 'print("explicit")\n', 'utf8');
+    const viaCode = await resolveSource(blueprint('fedavg', ''), explicit, worktree);
+    expect(viaCode.origin).toBe(explicit);
+    const viaInline = await resolveSource(
+      blueprint('fedavg', 'print("inline")'),
+      undefined,
+      worktree,
+    );
+    expect(viaInline.origin).toBe('blueprint.algorithm.source');
+  });
+
+  it('names the command that produces the missing piece', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-rs3-'));
+    const worktree = join(dir, 'worktree');
+    await mkdir(worktree, { recursive: true });
+    await expect(resolveSource(blueprint('fedavg', ''), undefined, worktree)).rejects.toThrow(
+      /comparison implement fedavg/,
+    );
+  });
+});
 
 describe('checkMetricFeasibility (protocol vs implementation)', () => {
   it('blocks when none of the protocol metrics can come from the implementation', () => {

@@ -185,10 +185,17 @@ export function defaultEntry(algorithm: ReproductionBlueprint['algorithm']): str
   return ['python', 'reproduce.py'];
 }
 
-/** Resolves the implementation source: --code file wins over inline source. */
+/**
+ * Resolves the implementation source. `--code` wins, then a program already in
+ * the worktree (written by `comparison implement`), then the blueprint's inline
+ * source. The worktree path exists so a plan can stay a plan: asking one JSON
+ * response to carry both the blueprint and a 700-line program is what produced
+ * truncated and non-compiling output.
+ */
 export async function resolveSource(
   blueprint: ReproductionBlueprint,
   codePath?: string,
+  worktreeDir?: string,
 ): Promise<{ source: string; origin: string }> {
   if (codePath) {
     const { readFile } = await import('node:fs/promises');
@@ -209,6 +216,19 @@ export async function resolveSource(
   const inline = blueprint.algorithm.source;
   if (typeof inline === 'string' && inline.trim()) {
     return { source: inline, origin: 'blueprint.algorithm.source' };
+  }
+  if (worktreeDir) {
+    const entryFile = defaultEntry(blueprint.algorithm).slice(-1)[0] ?? 'reproduce.py';
+    const { readFile } = await import('node:fs/promises');
+    const generated = await readFile(join(worktreeDir, entryFile), 'utf8').catch(() => null);
+    if (generated?.trim()) {
+      return { source: generated, origin: `worktree:${entryFile}` };
+    }
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      `code generation failed: no implementation source. Generate one with: ideaseek comparison implement ${blueprint.methodId} --data <path> ` +
+        '(or pass --code <file>, or set blueprint.algorithm.source)',
+    );
   }
   throw new IdeaseekError(
     'INVALID_ARGUMENT',
