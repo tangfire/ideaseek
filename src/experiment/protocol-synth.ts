@@ -1,11 +1,36 @@
 import type { CompactCard } from '../knowledge/synthesis.js';
 
 /** Prompt+schema version for provenance; bump when the instruction changes. */
-export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.1';
+export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.2';
+
+/**
+ * Measured structure of an image corpus (docs/DATA_CONTRACTS.md §RunEnv
+ * lineage). Without this the agent can only see a row count, so it correctly
+ * marks the domain axis as unconfirmed even when `data describe` measured it.
+ */
+export interface CorpusStructureSummary {
+  path: string;
+  format: string;
+  samples: number;
+  domainAxis: string | null;
+  domains: { name: string; count: number }[];
+  classColumn: string | null;
+  distinctClasses: number;
+  splitCandidates: string[];
+  warnings: string[];
+}
 
 export interface DatasetProfileSummary {
   present: boolean;
-  files: { path: string; rows: number; columns: number; labelCandidates: string[] }[];
+  files: {
+    path: string;
+    rows: number;
+    columns: number;
+    columnNames?: string[];
+    labelCandidates: string[];
+  }[];
+  /** Present once an image/parquet corpus has been profiled. */
+  corpora?: CorpusStructureSummary[];
   note: string;
 }
 
@@ -89,6 +114,10 @@ export const PROTOCOL_INSTRUCTION = [
   '}',
   'Rules: confidence in [0,1]; use "user" source when the dataset profile says semantics',
   'are unconfirmed and keep confidence <= 0.6 so the confirmation gate lists them;',
+  'when dataset.corpora is present its structure was MEASURED from the local corpus, not',
+  'inferred: cite a domain axis, its values and per-domain counts as source "data-probe"',
+  'with confidence >= 0.7, and prefer its splitCandidates over inventing a split; only mark',
+  'a data property unconfirmed if it is absent from both files[] and corpora[].',
   'metrics direction must reflect how the paper reports them; baseline entries name the',
   'methods found in the corpus; stopConditions must include a budget bound. All arrays',
   'must be non-empty unless secondaryMetrics (may be empty).',

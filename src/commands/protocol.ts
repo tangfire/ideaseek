@@ -5,6 +5,8 @@ import { ProjectRuntime } from '../workflow/runtime.js';
 import { loadCompactCards } from '../knowledge/cards.js';
 import { PROTOCOL_PROMPT_VERSION, buildProtocolInput } from '../experiment/protocol-synth.js';
 import { ensureActiveRun } from './ingest.js';
+// One reader for the measured data structure, shared with the worker task.
+import { loadDatasetProfile } from '../worker/protocol-handlers.js';
 import {
   action,
   assertConfigUsable,
@@ -52,7 +54,7 @@ export function registerProtocolCommand(program: Command): void {
           }
 
           // Incremental: skip when a proposal for identical inputs is committed.
-          const datasetProfile = await loadDatasetProfileFile(runtime);
+          const datasetProfile = await loadDatasetProfile(runtime);
           const input = buildProtocolInput({
             question: runtime.config.research.question,
             cards,
@@ -143,41 +145,4 @@ export function registerProtocolCommand(program: Command): void {
 
 async function db(runId: string, runtime: ProjectRuntime): Promise<string | undefined> {
   return (await runtime.db.getRun(runId))?.status;
-}
-
-export async function loadDatasetProfileFile(
-  runtime: ProjectRuntime,
-): Promise<Awaited<ReturnType<typeof loadProfileInner>>> {
-  return loadProfileInner(runtime);
-}
-
-async function loadProfileInner(runtime: ProjectRuntime) {
-  const { readFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
-  try {
-    const parsed = JSON.parse(
-      await readFile(join(runtime.paths.knowledgeDir, 'dataset-card.json'), 'utf8'),
-    ) as {
-      profiles?: {
-        source: { path: string };
-        rows: number;
-        columns: { name: string }[];
-        labelCandidates: { column: string }[];
-      }[];
-    };
-    const profiles = parsed.profiles ?? [];
-    if (profiles.length === 0) return null;
-    return {
-      present: true,
-      files: profiles.map((profile) => ({
-        path: profile.source.path,
-        rows: profile.rows,
-        columns: profile.columns.length,
-        labelCandidates: profile.labelCandidates.map((candidate) => candidate.column),
-      })),
-      note: 'dataset profile from ideaseek data describe (deterministic profiling)',
-    };
-  } catch {
-    return null;
-  }
 }

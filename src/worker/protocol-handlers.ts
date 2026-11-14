@@ -9,15 +9,25 @@ import {
   type DatasetProfileSummary,
 } from '../experiment/protocol-synth.js';
 import { validateProtocolProposal } from '../experiment/protocol.js';
+import type { ImageProfile } from '../knowledge/image-profile.js';
 import type { TaskContext, TaskHandler } from './types.js';
+import type { ProjectRuntime } from '../workflow/runtime.js';
 import { applyFaults } from './handlers.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
 
-async function loadDatasetProfile(ctx: TaskContext): Promise<DatasetProfileSummary | null> {
+/**
+ * Reads the measured data structure for protocol synthesis. Exported because
+ * the CLI path and the worker task must not keep two copies of this — a second
+ * reader that flattens columns back to a count silently undoes the grounding.
+ */
+export async function loadDatasetProfile(
+  runtime: ProjectRuntime,
+): Promise<DatasetProfileSummary | null> {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  let summary: DatasetProfileSummary | null = null;
   try {
-    const { readFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    const raw = await readFile(join(ctx.runtime.paths.knowledgeDir, 'dataset-card.json'), 'utf8');
+    const raw = await readFile(join(runtime.paths.knowledgeDir, 'dataset-card.json'), 'utf8');
     const parsed = JSON.parse(raw) as {
       profiles?: {
         source: { path: string };
@@ -27,20 +37,49 @@ async function loadDatasetProfile(ctx: TaskContext): Promise<DatasetProfileSumma
       }[];
     };
     const profiles = parsed.profiles ?? [];
-    if (profiles.length === 0) return null;
-    return {
-      present: true,
-      files: profiles.map((profile) => ({
-        path: profile.source.path,
-        rows: profile.rows,
-        columns: profile.columns.length,
-        labelCandidates: profile.labelCandidates.map((candidate) => candidate.column),
-      })),
-      note: 'dataset profile from ideaseek data describe (deterministic profiling)',
-    };
+    if (profiles.length > 0) {
+      summary = {
+        present: true,
+        files: profiles.map((profile) => ({
+          path: profile.source.path,
+          rows: profile.rows,
+          columns: profile.columns.length,
+          // Names, not just a count: "2 columns" tells the agent nothing about
+          // whether a domain axis exists, so it had to mark it unconfirmed.
+          columnNames: profile.columns.map((column) => column.name),
+          labelCandidates: profile.labelCandidates.map((candidate) => candidate.column),
+        })),
+        note: 'dataset profile from ideaseek data describe (deterministic profiling)',
+      };
+    }
   } catch {
-    return null;
+    summary = null;
   }
+
+  try {
+    const raw = await readFile(join(runtime.paths.knowledgeDir, 'image-profiles.json'), 'utf8');
+    const parsed = JSON.parse(raw) as { profiles?: ImageProfile[] };
+    const corpora = (parsed.profiles ?? []).map((profile) => ({
+      path: profile.source.path,
+      format: profile.source.format,
+      samples: profile.samples,
+      domainAxis: profile.grouping.column,
+      domains: profile.grouping.values,
+      classColumn: profile.classes.column,
+      distinctClasses: profile.classes.distinct,
+      splitCandidates: profile.splitRules,
+      warnings: profile.warnings,
+    }));
+    if (corpora.length > 0) {
+      summary ??= { present: true, files: [], note: 'image corpus profile from data describe' };
+      summary.present = true;
+      summary.corpora = corpora;
+    }
+  } catch {
+    // No image corpus profiled yet: the card summary stands alone.
+  }
+
+  return summary;
 }
 
 /**
@@ -69,7 +108,7 @@ export const protocolPropose: TaskHandler = async (ctx: TaskContext) => {
     (error as IdeaseekError & { permanent?: boolean }).permanent = true;
     throw error;
   }
-  const datasetProfile = await loadDatasetProfile(ctx);
+  const datasetProfile = await loadDatasetProfile(ctx.runtime);
   // No registered dataset → surface discovered candidates as recommendations
   // only, so the proposal never treats them as experiment inputs (Phase 4.5B).
   const discoveryNote =
