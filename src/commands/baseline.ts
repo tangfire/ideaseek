@@ -375,8 +375,16 @@ export function registerBaselineCommand(program: Command): void {
     .option('--data <path>', 'data path forwarded to `check-data --data <path>`')
     .option('--algorithm-modified', 'declare that semantics differ from the prior reproduction')
     .option('--reason <text>', 'required with --algorithm-modified')
-    .option('--timeout <ms>', 'per-check command timeout', (value) => Number(value), 60_000)
-    .option('--smoke-timeout <ms>', 'smoke command timeout', (value) => Number(value), 120_000)
+    // Budgets sized for what the phases actually do. The earlier defaults came
+    // from a numpy-only program: importing torch on a cold venv does not fit in
+    // 60 s, and a first real timeout was indistinguishable from a hang.
+    .option('--timeout <ms>', 'per-check command timeout', (value) => Number(value), 180_000)
+    .option(
+      '--smoke-timeout <ms>',
+      'smoke command timeout (bounded real training, not a full run)',
+      (value) => Number(value),
+      600_000,
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(

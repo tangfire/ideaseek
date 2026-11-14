@@ -30,7 +30,11 @@ Hard requirements for the program:
   counts against whatever the path's manifest states. Never require a total sample count from the
   blueprint's measured-corpus figure — that is the full corpus, and these checks run on a selected
   subset, so an absolute expectation fails a correct subset and reads as a data problem.
-- check-metrics: print one JSON line {"metrics": {...}} using exactly the blueprint's metric names.
+- check-metrics: prove the metrics are computable and exit 0. Compute each metric function on a
+  small synthetic batch you build in memory — do NOT load the corpus and do NOT run the method,
+  because this check has a per-command timeout and training does not fit in it. Print one JSON line
+  {"metrics": {...}} whose KEYS are exactly the blueprint's metric names. The values here are
+  proofs of computability, not results: only the smoke line is ever read as a measurement.
 - smoke: run the method end to end on a small slice and print one JSON line
   {"metrics": {...}} with the blueprint's metric names and values actually computed.
 - Where the data lives: only check-data is handed a --data path. smoke and check-metrics get no

@@ -78,6 +78,14 @@ describe('parseImplementationOutput', () => {
 });
 
 describe('buildImplementationContext', () => {
+  it('keeps check-metrics cheap and says its numbers are not results', () => {
+    // The phase timed out because the contract asked it to print metric values,
+    // and printing metric values on a real corpus means running the method.
+    expect(IMPLEMENT_INSTRUCTION).toContain('small synthetic batch');
+    expect(IMPLEMENT_INSTRUCTION).toContain('do NOT load the corpus');
+    expect(IMPLEMENT_INSTRUCTION).toContain('not results');
+  });
+
   it('judges the handed path by its own contents, not by a remembered total', () => {
     expect(IMPLEMENT_INSTRUCTION).toContain('Never require a total sample count');
     expect(IMPLEMENT_INSTRUCTION).toContain('checks run on a selected');

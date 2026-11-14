@@ -594,6 +594,18 @@ elif cmd == 'smoke':
     expect(doc.status).toBe('succeeded');
   }, 180_000);
 
+  it('budgets each phase for the work it actually asks for', async () => {
+    // The defaults came from a numpy-only program. A torch entry does not fit
+    // a 60 s check, and a first timeout looks exactly like a hang.
+    const help = await runCli(project, ['baseline', 'reproduce', '--help']);
+    // Help wraps, so compare on collapsed whitespace rather than one line.
+    const collapsed = help.stdout.replace(/\s+/g, ' ');
+    expect(collapsed).toContain('per-check command timeout (default: 180000)');
+    expect(collapsed).toContain(
+      'smoke command timeout (bounded real training, not a full run) (default: 600000)',
+    );
+  }, 30_000);
+
   it('refuses official-code methods (repair owns those) and missing blueprints', async () => {
     const official = await runCli(project, [
       'comparison',
