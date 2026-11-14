@@ -9,7 +9,7 @@ import { isContentHash, sha256OfFile, type ContentHash } from '../core/hash.js';
 import { writeFileAtomic } from '../core/atomic.js';
 import type { SliceScale } from '../experiment/slices.js';
 import { profileFederatedDataset } from '../knowledge/federated.js';
-import { acquireDataset } from '../knowledge/dataset-acquire.js';
+import { acquireDataset, formatBytes } from '../knowledge/dataset-acquire.js';
 import { buildAllFederatedSlices } from '../experiment/federated-slices.js';
 import { ensureDir } from '../core/atomic.js';
 import { action, buildHarness, jsonLine } from './shared.js';
@@ -1186,7 +1186,7 @@ export function registerDataCommand(program: Command): void {
               return 0;
             }
             process.stdout.write(
-              `acquired ${candidateId} → ${relPath} (${(acquired.bytes / 1024 / 1024).toFixed(1)} MiB)\n` +
+              `acquired ${candidateId} → ${relPath} (${formatBytes(acquired.bytes)})\n` +
                 `  sha256: ${acquired.sha256}\n` +
                 `  source: ${acquired.sourceUrl}\n` +
                 `  ledger: knowledge/dataset-acquisitions.json (${ledger.records} record(s))\n`,

@@ -7,6 +7,7 @@ import { stableJson } from '../experiment/spec.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import { readManifest } from './organize.js';
 import { createAcademicIndexClient, type AcademicIndexClient } from './academic-index.js';
+import { formatBytes } from './dataset-acquire.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
@@ -2291,12 +2292,12 @@ export function recordAcquisition(
   candidateId: string,
   input: { relPath: string; sha256: ContentHash; bytes: number; sourceUrl: string; at: number },
 ): { artifact: DatasetDiscoveryArtifact; candidate: DatasetCandidate } {
-  const gib = (input.bytes / 1024 / 1024).toFixed(1);
+  const size = formatBytes(input.bytes);
   return withCandidate(artifact, candidateId, (candidate) => ({
     ...candidate,
     notes: [
       ...new Set([
-        `staged ${input.relPath} (${gib} MiB, ${input.sha256.slice(0, 19)}…) from ${input.sourceUrl} at ${new Date(input.at).toISOString()}`,
+        `staged ${input.relPath} (${size}, ${input.sha256.slice(0, 19)}…) from ${input.sourceUrl} at ${new Date(input.at).toISOString()}`,
         ...candidate.notes,
       ]),
     ].slice(0, 8),

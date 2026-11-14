@@ -49,6 +49,14 @@ export interface AcquiredFile {
 
 const DEFAULT_MAX_REDIRECTS = 3;
 
+/** Human byte count — a 2 KiB probe must not read as "0.0 MiB". */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`;
+}
+
 /** Origin + pathname, with any query/fragment (and thus tokens) dropped. */
 export function safeUrl(url: string): string {
   let parsed: URL;
