@@ -8,6 +8,14 @@ IdeaSeek 的探索实验使用 `smoke`、`quick` 和 `standard` 数据规模。�
 
 ### 安装
 
+源码版（当前）—— clone 后**一条命令**：自举缺失的依赖 → 带锁构建 → 装入 `~/.ideaseek`；POSIX 终端会先征求确认再把 PATH 块写进 `~/.profile`（`--no-path` 跳过，非交互只打印指引）：
+
+```bash
+git clone <repo> ideaseek && cd ideaseek
+node scripts/install.mjs
+ideaseek doctor
+```
+
 正式发布后的目标安装方式：
 
 ```bash
@@ -15,7 +23,7 @@ npm install -g ideaseek
 ideaseek doctor
 ```
 
-当前源码开发版本请先阅读 [PACKAGING.md](PACKAGING.md) 和 [BOOTSTRAP_DEVELOPMENT.md](BOOTSTRAP_DEVELOPMENT.md)。
+细节见 [PACKAGING.md](PACKAGING.md) 和 [BOOTSTRAP_DEVELOPMENT.md](BOOTSTRAP_DEVELOPMENT.md)。
 
 ### 创建研究项目
 

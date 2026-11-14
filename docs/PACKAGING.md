@@ -20,18 +20,21 @@ curl -fsSL https://ideaseek.example/install.sh | sh
 
 安装脚本必须展示下载源、版本、校验和和安装路径；生产环境支持离线包或内部镜像。不要在没有用户确认的情况下执行系统级提权。
 
-## 开发安装
+## 开发安装（一条命令）
 
 ```bash
 git clone https://github.com/tangfire/ideaseek.git
 cd ideaseek
-pnpm install
-pnpm build
-pnpm link --global
+node scripts/install.mjs
+```
+
+`install.mjs` 自举整个流程：`node_modules` 缺失时先 `pnpm install --frozen-lockfile`，`dist` 缺失时走**带锁构建**（`scripts/build.mjs`，并行会话不互踩），然后装进 `~/.ideaseek`（launcher + manifest + sha256 指纹展示，幂等重装）。POSIX 且在 TTY 下会**先征求确认**再把带标记的 PATH 块追加进 `~/.profile`（`--no-path` 跳过；非 TTY/`--json` 只打印指引，从不擅自改环境）。装完开新 shell：
+
+```bash
 ideaseek doctor
 ```
 
-开发安装要求读取仓库根目录 `AGENTS.md` 和 `docs/` 文档。DSH 上游作为独立仓库或锁定依赖使用，不复制进 IdeaSeek 业务目录。
+需要 pnpm 引导依赖（缺失时脚本给出 `npm i -g pnpm` / `corepack enable` 提示）。卸载：`node scripts/uninstall.mjs`。开发安装要求读取仓库根目录 `AGENTS.md` 和 `docs/` 文档。DSH 上游作为独立仓库或锁定依赖使用，不复制进 IdeaSeek 业务目录。
 
 ## 安装后检查
 

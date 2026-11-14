@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -94,4 +94,35 @@ describe('ideaseek install / uninstall (one command)', () => {
     expect(existsSync(join(prefix, 'someone-elses', 'keep.txt'))).toBe(true);
     expect(readdirSync(prefix)).toEqual(['someone-elses']);
   }, 60_000);
+});
+
+describe('shell profile PATH wiring (confirmation-gated, idempotent)', () => {
+  it('creates a missing profile, preserves existing lines, and never duplicates the block', async () => {
+    const { appendProfilePath, hasProfileMarker, renderProfileBlock } =
+      await import('../scripts/profile-path.mjs');
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-profile-'));
+    const profile = join(dir, '.profile');
+
+    const block = renderProfileBlock('/home/u/.ideaseek/bin');
+    expect(block).toContain('# ideaseek install');
+    expect(block).toContain('export PATH="/home/u/.ideaseek/bin:$PATH"');
+
+    // Missing profile → created with just our block.
+    expect(appendProfilePath(profile, '/home/u/.ideaseek/bin')).toBe('added');
+    const created = readFileSync(profile, 'utf8');
+    expect(created).toContain('# ideaseek install');
+    expect(hasProfileMarker(created)).toBe(true);
+
+    // Existing foreign content is preserved (newline-normalized) …
+    const profile2 = join(dir, '.bashrc');
+    writeFileSync(profile2, 'export EDITOR=vim', 'utf8');
+    expect(appendProfilePath(profile2, '/opt/is/bin')).toBe('added');
+    const merged = readFileSync(profile2, 'utf8');
+    expect(merged.startsWith('export EDITOR=vim')).toBe(true);
+    expect(merged).toContain('/opt/is/bin');
+
+    // … and the second append is a no-op (idempotent reinstall).
+    expect(appendProfilePath(profile2, '/opt/is/bin')).toBe('already');
+    expect(readFileSync(profile2, 'utf8')).toBe(merged);
+  });
 });

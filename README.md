@@ -19,19 +19,26 @@ Linux is the primary execution platform. Windows users should use WSL2 or SSH to
 Verified end to end from a fresh clone (install → build → project flow → REPL):
 
 ```bash
-# 1. toolchain: Node >= 24.9, pnpm, Python 3 with pypdf/pdfplumber
+# toolchain: Node >= 24.9, pnpm, Python 3 with pypdf/pdfplumber
 git clone <repo> ideaseek && cd ideaseek
+
+# fastest path — ONE command: deps (if missing) → locked build →
+# launcher in ~/.ideaseek; on POSIX TTYs it offers to add the bin dir
+# to PATH in ~/.profile (confirmation-gated, --no-path to skip)
+node scripts/install.mjs && ideaseek doctor
+
+# full dev setup (tests / release checks)
 pnpm install --frozen-lockfile
 pnpm build            # tsc → dist/
 pnpm test             # regression suite: vitest + python worker tests
 pnpm release-check    # dependency licenses + tracked-file secret scan
 
-# 2. create a project (run the CLI from the checkout via node dist/cli.js,
-#    or link the bin: npm link / pnpm link --global)
+# create a project (after install.mjs the `ideaseek` launcher is on PATH;
+# otherwise run from the checkout: node <checkout>/dist/cli.js …)
 mkdir my-research && cd my-research
-node <checkout>/dist/cli.js init
-node <checkout>/dist/cli.js setup     # environment probes
-node <checkout>/dist/cli.js doctor    # health report
+ideaseek init
+ideaseek setup       # environment probes
+ideaseek doctor      # health report
 
 # 3. drop inputs into papers/ datasets/ comparisons/ incoming/, then
 node <checkout>/dist/cli.js scan

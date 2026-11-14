@@ -8,10 +8,15 @@
  * install path. Idempotent (reinstall refreshes); refuses to write into
  * a non-empty directory it does not own (no manifest → not ours).
  *
- * Usage: node scripts/install.mjs [--prefix <dir>] [--json]
+ * Usage: node scripts/install.mjs [--prefix <dir>] [--json] [--no-path]
  * Default prefix: $HOME/.ideaseek (override with --prefix or IDEASEEK_PREFIX).
  * Uninstall: node scripts/uninstall.mjs --prefix <same dir>
+ *
+ * Fresh checkouts are bootstrapped in-place (pnpm install when
+ * node_modules is missing, then the locked build), so after `git clone`
+ * the whole install is this ONE command.
  */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -25,6 +30,7 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { appendProfilePath } from './profile-path.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -51,9 +57,30 @@ const pkgPath = join(root, 'package.json');
 if (!existsSync(pkgPath)) fail('no package.json next to scripts/install.mjs');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
 const cliPath = join(root, 'dist', 'cli.js');
-if (!existsSync(cliPath)) {
-  fail('dist/cli.js missing — build first', 'pnpm install && pnpm build');
+
+// Fresh-checkout bootstrap — this is what makes the flow ONE command:
+// deps when missing, then the locked build, then the install below.
+if (!existsSync(join(root, 'node_modules'))) {
+  if (!asJson)
+    process.stdout.write('node_modules missing — running pnpm install --frozen-lockfile\n');
+  const install = spawnSync('pnpm', ['install', '--frozen-lockfile'], {
+    cwd: root,
+    stdio: asJson ? 'ignore' : 'inherit',
+    shell: process.platform === 'win32',
+  });
+  if (install.status !== 0) {
+    fail('pnpm install failed', 'install pnpm (npm i -g pnpm, or corepack enable) and retry');
+  }
 }
+if (!existsSync(cliPath)) {
+  if (!asJson) process.stdout.write('dist missing — running the locked build\n');
+  const build = spawnSync(process.execPath, [join(root, 'scripts', 'build.mjs')], {
+    cwd: root,
+    stdio: asJson ? 'ignore' : 'inherit',
+  });
+  if (build.status !== 0) fail('build failed', 'node scripts/build.mjs');
+}
+if (!existsSync(cliPath)) fail('dist/cli.js still missing after build');
 
 // Fingerprint: sha256 over sorted "relpath sha256(file)" lines of dist/.
 function walk(dir, out = []) {
@@ -106,6 +133,35 @@ const manifest = {
 };
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 
+// PATH wiring (POSIX): only with explicit confirmation, only our marked
+// block, never under --json / non-TTY / --no-path (those print instead).
+// PACKAGING: no environment changes without user confirmation.
+let pathAction = 'printed';
+if (process.platform !== 'win32' && !args.includes('--no-path')) {
+  const profilePath = join(homedir(), '.profile');
+  try {
+    const profileText = existsSync(profilePath) ? readFileSync(profilePath, 'utf8') : '';
+    if (profileText.includes('# ideaseek install')) {
+      pathAction = 'already';
+    } else if (!asJson && process.stdin.isTTY) {
+      const readline = await import('node:readline/promises');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const answer = (await rl.question(`add ${binDir} to PATH in ${profilePath}? [Y/n] `))
+        .trim()
+        .toLowerCase();
+      rl.close();
+      if (answer === '' || answer === 'y' || answer === 'yes') {
+        appendProfilePath(profilePath, binDir);
+        pathAction = 'added';
+      } else {
+        pathAction = 'declined';
+      }
+    }
+  } catch {
+    pathAction = 'printed'; // never fail the install over PATH wiring
+  }
+}
+
 const report = {
   ok: true,
   source: root,
@@ -114,6 +170,7 @@ const report = {
   prefix,
   launcherPath,
   manifestPath,
+  path: pathAction,
 };
 if (asJson) {
   process.stdout.write(`${JSON.stringify(report)}\n`);
@@ -123,9 +180,20 @@ if (asJson) {
   process.stdout.write(`  fingerprint: ${fingerprint}\n`);
   process.stdout.write(`  path:      ${prefix}\n`);
   process.stdout.write(`  launcher:  ${launcherPath}\n`);
-  process.stdout.write(
-    process.platform === 'win32'
-      ? `next: add ${binDir} to PATH, then: ideaseek doctor\n`
-      : `next: export PATH="${binDir}:$PATH", then: ideaseek doctor\n`,
-  );
+  if (pathAction === 'added') {
+    process.stdout.write(`  PATH:      block added to ${join(homedir(), '.profile')}\n`);
+    process.stdout.write('next: open a new shell (or source ~/.profile), then: ideaseek doctor\n');
+  } else if (pathAction === 'already') {
+    process.stdout.write('  PATH:      already configured\n');
+    process.stdout.write('next: ideaseek doctor\n');
+  } else if (pathAction === 'declined') {
+    process.stdout.write(`  PATH:      not changed — export PATH="${binDir}:$PATH" when needed\n`);
+    process.stdout.write('next: ideaseek doctor\n');
+  } else {
+    process.stdout.write(
+      process.platform === 'win32'
+        ? `next: add ${binDir} to PATH, then: ideaseek doctor\n`
+        : `next: export PATH="${binDir}:$PATH", then: ideaseek doctor\n`,
+    );
+  }
 }
