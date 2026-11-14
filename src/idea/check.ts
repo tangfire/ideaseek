@@ -365,6 +365,8 @@ function scaffoldFiles(card: IdeaCard): { path: string; content: string }[] {
 
 Quick/standard experiments only — full training runs via experiment handoff.
 Replace this stub with the real implementation (Code Implementer).
+Read data through dataset_ref.resolve(cfg["dataset_ref"]) so the same code runs
+on any host; see src/dataset_ref.py and docs/DATA_CONTRACTS.md §RunEnv.
 """
 import json
 import os
@@ -396,7 +398,47 @@ if __name__ == "__main__":
     sys.exit(main())
 `;
 
-  const checkDataPy = `"""Data interface check: exit 0 when the configured data file holds."""
+  const datasetRefPy = `"""Read-only dataset resolution (docs/DATA_CONTRACTS.md §RunEnv).
+
+The project's inputs.readonly_datasets arrive as IDEASEEK_DATASET_ROOTS, so one
+idea works on the author's machine, WSL2 and a Linux server unchanged. Never
+hardcode a machine-specific path in idea code: put it in config/train.json
+"dataset_ref" and resolve it here.
+"""
+import os
+import sys
+
+
+def roots():
+    raw = os.environ.get("IDEASEEK_DATASET_ROOTS", "")
+    return [p for p in raw.split(os.pathsep) if p.strip()]
+
+
+def resolve(ref):
+    """Absolute path for a dataset ref, looked up under every read-only root."""
+    if os.path.isabs(ref):
+        if os.path.exists(ref):
+            return ref
+        sys.stderr.write("absolute dataset_ref does not exist: %s\\n" % ref)
+        raise SystemExit(1)
+    available = roots()
+    if not available:
+        sys.stderr.write(
+            "IDEASEEK_DATASET_ROOTS is empty: set inputs.readonly_datasets in "
+            "research.yaml so the runner can locate datasets\\n"
+        )
+        raise SystemExit(2)
+    for root in available:
+        candidate = os.path.join(root, ref)
+        if os.path.exists(candidate):
+            return candidate
+    sys.stderr.write(
+        "dataset_ref %r not found under: %s\\n" % (ref, ", ".join(available))
+    )
+    raise SystemExit(1)
+`;
+
+  const checkDataPy = `"""Data interface check: exit 0 when the configured data holds."""
 import json
 import os
 import sys
@@ -406,21 +448,35 @@ def workspace_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def check_csv(path):
+    if not os.path.exists(path):
+        sys.stderr.write("missing data file: %s\\n" % path)
+        return 1
+    with open(path, "r", encoding="utf-8") as fh:
+        header = fh.readline().strip().split(",")
+    if "label" not in header:
+        sys.stderr.write("data interface violation: no label column in %s\\n" % path)
+        return 1
+    return 0
+
+
 def main():
     root = workspace_root()
     cfg_path = os.path.join(root, "config", "train.json")
     with open(cfg_path, "r", encoding="utf-8") as fh:
         cfg = json.load(fh)
-    data_path = os.path.join(root, cfg.get("data_path", "data/synthetic.csv"))
-    if not os.path.exists(data_path):
-        sys.stderr.write("missing data file: %s\\n" % data_path)
-        return 1
-    with open(data_path, "r", encoding="utf-8") as fh:
-        header = fh.readline().strip().split(",")
-    if "label" not in header:
-        sys.stderr.write("data interface violation: no label column in %s\\n" % data_path)
-        return 1
-    return 0
+    ref = cfg.get("dataset_ref")
+    if ref:
+        from dataset_ref import resolve
+
+        target = resolve(ref)
+        if os.path.isdir(target):
+            if not os.listdir(target):
+                sys.stderr.write("dataset directory is empty: %s\\n" % target)
+                return 1
+            return 0
+        return check_csv(target)
+    return check_csv(os.path.join(root, cfg.get("data_path", "data/synthetic.csv")))
 
 
 if __name__ == "__main__":
@@ -514,6 +570,7 @@ if __name__ == "__main__":
       idea_id: card.ideaId,
       data_scale: 'smoke',
       data_path: 'data/synthetic.csv',
+      dataset_ref: null,
       seeds: [42],
       metrics: card.minimalExperiment.metrics,
       baselines: card.minimalExperiment.baselines,
@@ -533,6 +590,7 @@ if __name__ == "__main__":
 
   return [
     { path: 'src/train.py', content: trainPy },
+    { path: 'src/dataset_ref.py', content: datasetRefPy },
     { path: 'src/check_data.py', content: checkDataPy },
     { path: 'src/check_metrics.py', content: checkMetricsPy },
     { path: 'src/smoke.py', content: smokePy },

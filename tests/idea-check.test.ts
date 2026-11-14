@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -143,6 +143,41 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     );
     expect(train).toBe('# mine\n');
   }, 60_000);
+
+  it('resolves scaffolded dataset_ref through IDEASEEK_DATASET_ROOTS (skips without python)', async () => {
+    await scaffold();
+    const dataRoot = await mkdtemp(join(tmpdir(), 'ideaseek-dsroot-'));
+    await mkdir(join(dataRoot, 'pacs', 'photo'), { recursive: true });
+    await writeFile(join(dataRoot, 'pacs', 'photo', '1.jpg'), 'x', 'utf8');
+
+    const cfgPath = join(project, 'ideas', 'calib-reweight', 'config', 'train.json');
+    const cfg = JSON.parse(await readFile(cfgPath, 'utf8')) as Record<string, unknown>;
+    cfg.dataset_ref = 'pacs';
+    await writeFile(cfgPath, JSON.stringify(cfg, null, 2), 'utf8');
+
+    const ideaDir = join(project, 'ideas', 'calib-reweight');
+    const runCheck = (roots: string) =>
+      new Promise<{ code: number | null; err: string }>((resolvePromise) => {
+        const child = spawn('python', ['src/check_data.py'], {
+          cwd: ideaDir,
+          env: { ...process.env, IDEASEEK_DATASET_ROOTS: roots },
+        });
+        let err = '';
+        child.stderr.on('data', (chunk) => (err += String(chunk)));
+        child.on('error', () => resolvePromise({ code: null, err }));
+        child.on('close', (code) => resolvePromise({ code, err }));
+      });
+
+    const resolved = await runCheck(dataRoot);
+    if (resolved.code === null) return; // no python on PATH: environment guard, not a failure
+    expect(resolved.code, resolved.err).toBe(0);
+
+    // A host with no configured read-only roots must fail loudly, not silently
+    // fall back to a path baked into the scaffold.
+    const unconfigured = await runCheck('');
+    expect(unconfigured.code).toBe(2);
+    expect(unconfigured.err).toContain('inputs.readonly_datasets');
+  }, 120_000);
 
   it('passes the full ladder and advances IMPLEMENTING → SMOKE_TESTED', async () => {
     await setImplementing();

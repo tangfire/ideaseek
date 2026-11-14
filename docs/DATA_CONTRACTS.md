@@ -58,6 +58,8 @@ comparison 的 `reproduce.py` 和 idea 的 `train.py` 等入口命令不接收�
 
 入口脚本必须据此解析数据位置，不得把某台机器的绝对路径写进源码：同一份 comparison 或 idea 代码要在 Windows 开发机、WSL2 和 Linux 服务器上跑通，写死路径会让 Phase 6 的领域无关验收和服务器 full-run 直接失效。缺少变量时脚本应明确报错并提示配置 `inputs.readonly_datasets`，而不是回退到某个默认路径。
 
+`ideaseek idea scaffold` 生成的骨架自带 `src/dataset_ref.py`：`config/train.json` 的 `dataset_ref` 指向只读根下的相对路径（也允许配置成本机绝对路径），未配置时仍走骨架自带的 `data/synthetic.csv`。Code Implementer 写真实实现时必须通过该 helper 取数据，不得自行拼接路径。
+
 ## IdeaCard
 
 必须包含研究假设、目标、论文证据、问题矛盾、机制链、最近邻 comparison、差异主张、组件必要性、竞争解释、风险、最小区分性实验、消融、主指标、否证条件、预算和停止条件。idea 版本变化要有 `parent_version`；科学假设变化要新建 `idea_id`。缺少机制解释、只是已有模块的表面组合时，状态必须为 `DRAFT_COMPOSITION`，不能进入自动实验队列。
