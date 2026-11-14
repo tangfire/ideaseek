@@ -51,6 +51,9 @@ export type SubmitOutcome = 'continue' | 'quit' | 'menu';
 
 const HINT_LINE = 'type / for the menu · Tab completes · /quit exits (runs keep going)';
 
+/** Flags that consume the next token, so it is never read as a provider name. */
+const FLAG_VALUES = new Set(['--provider', '--api-key-env', '--base-url', '--api']);
+
 /**
  * Audit records that must NOT stream into the TUI activity pane: each
  * Research/Agent toggle appends a `change-session-mode` decision event
@@ -134,7 +137,7 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
   }
   const ctx: HeaderContext = {
     project: status.data.project ?? '(unknown project)',
-    sessionMode: sessionMode === 'agent' ? 'AGENT' : 'RESEARCH',
+    sessionMode: sessionMode.toUpperCase(),
     question: run?.question || null,
     runId: run?.runId ?? null,
     runStatus: run?.status ?? null,
@@ -358,7 +361,7 @@ export class InteractiveSession {
     }
   }
 
-  /** Shift+Tab cycles Research/Agent through the same audited CLI use-case. */
+  /** Shift+Tab cycles Research/Analysis/Agent through the same audited CLI use-case. */
   async cycleMode(): Promise<void> {
     const root = await findProjectRoot(process.cwd());
     if (!root) {
@@ -367,9 +370,13 @@ export class InteractiveSession {
       );
       return;
     }
-    const { readSessionMode } = await import('../../session/mode.js');
+    const { readSessionMode, SESSION_MODES } = await import('../../session/mode.js');
     const current = await readSessionMode(root);
-    await this.relay(['mode', current === 'research' ? 'agent' : 'research']);
+    // The documented cycle covers all three modes (docs/MODES.md); Analysis
+    // was reachable only by typing /mode, which made it feel missing.
+    const next =
+      SESSION_MODES[(SESSION_MODES.indexOf(current) + 1) % SESSION_MODES.length] ?? 'research';
+    await this.relay(['mode', next]);
     await this.refreshHeader();
   }
 
@@ -524,10 +531,10 @@ export class InteractiveSession {
   }
 
   /**
-   * `/models setup` inside the TUI: the renderer captures the key
-   * masked (never echoed, never argv, never in the transcript) and the
-   * child reads it from stdin via --api-key-stdin. The connection test
-   * runs by default so a bad key fails closed before anything is wired.
+   * `/models setup` inside the TUI: pick a provider, then the renderer captures
+   * the key masked (never echoed, never argv, never in the transcript) and the
+   * child reads it from stdin via --api-key-stdin. The connection test runs by
+   * default so a bad key fails closed before anything is wired.
    */
   private async runModelsSetup(flags: string[]): Promise<void> {
     if (!this.secretCapture) {
@@ -538,6 +545,45 @@ export class InteractiveSession {
       );
       return;
     }
+
+    // Step 1: provider. Offering the catalog beats making the researcher
+    // remember `--provider deepseek`; an id outside it still has to state its
+    // base URL, because a guessed endpoint is a wrong connection test.
+    const positional: string[] = [];
+    for (let index = 0; index < flags.length; index += 1) {
+      const token = flags[index]!;
+      if (token.startsWith('-')) {
+        // A value-taking flag consumes the next token, so `--base-url <url>`
+        // never reads <url> as a provider name.
+        if (FLAG_VALUES.has(token)) index += 1;
+        continue;
+      }
+      positional.push(token);
+    }
+    const chosen = positional[0] ?? null;
+    if (!flags.includes('--provider') && !chosen) {
+      await this.showProviderChoices();
+      return;
+    }
+    const relayFlags = flags.filter((token) => token !== chosen);
+    if (chosen && /^\d+$/.test(chosen)) {
+      const rows = await this.providerRows();
+      const picked = rows[Number(chosen) - 1];
+      if (!picked) {
+        this.println(
+          paint(
+            `no provider numbered ${chosen} — there ${rows.length === 1 ? 'is 1' : `are ${rows.length}`}`,
+            'error',
+            { plain: this.plain },
+          ),
+        );
+        return;
+      }
+      relayFlags.push('--provider', picked.id);
+    } else if (chosen) {
+      relayFlags.push('--provider', chosen);
+    }
+
     const key = await this.beginSecretPrompt('API key (input hidden)');
     if (key === null) {
       this.println(paint('setup cancelled — nothing written', 'warn', { plain: this.plain }));
@@ -547,9 +593,42 @@ export class InteractiveSession {
       this.println(paint('empty API key — nothing written', 'warn', { plain: this.plain }));
       return;
     }
-    await this.relay(['models', 'setup', '--api-key-stdin', '--test', ...flags], {
+    await this.relay(['models', 'setup', '--api-key-stdin', '--test', ...relayFlags], {
       stdinPayload: `${key}\n`,
     });
+  }
+
+  private async providerRows(): Promise<
+    { id: string; baseUrl: string | null; configured: boolean }[]
+  > {
+    const res = await runCliJson<{
+      providers?: { id: string; baseUrl: string | null; configured: boolean }[];
+    }>(['models', 'providers', '--json']).catch(() => null);
+    return res?.data?.providers ?? [];
+  }
+
+  /** Step 1 of `/models setup`: show the catalog and how to answer it. */
+  private async showProviderChoices(): Promise<void> {
+    const rows = await this.providerRows();
+    if (rows.length === 0) {
+      this.println(
+        'no providers to offer — run: ideaseek models setup --provider <id> --base-url <url>',
+      );
+      return;
+    }
+    this.println('which provider?');
+    for (const [index, row] of rows.entries()) {
+      this.println(
+        `  ${index + 1}. ${row.id.padEnd(12)}${row.baseUrl ?? '(--base-url required)'} · ${row.configured ? 'configured' : 'not configured'}`,
+      );
+    }
+    this.println(
+      paint(
+        'answer with the number or the id — e.g. `/models setup 1` (an id outside this list must also pass --base-url)',
+        'dim',
+        { plain: this.plain },
+      ),
+    );
   }
 
   private async fetchPending(): Promise<PendingApproval[]> {

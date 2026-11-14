@@ -177,6 +177,34 @@ export function registerModelsCommand(program: Command): void {
     );
 
   models
+    .command('providers')
+    .description(
+      'list configurable providers: known defaults plus entries already in DSH settings (names and endpoints only)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const { listProviders } = await import('../models/setup.js');
+        const rows = await listProviders();
+        if (opts.json) {
+          process.stdout.write(jsonLine({ providers: rows }));
+          return 0;
+        }
+        process.stdout.write('configurable providers:\n');
+        for (const row of rows) {
+          process.stdout.write(
+            `  ${row.id.padEnd(14)}${row.baseUrl ?? '(--base-url required)'}  ` +
+              `${row.configured ? 'configured' : 'not configured'}${row.apiKeyEnv ? ` · ${row.apiKeyEnv}` : ''}\n`,
+          );
+        }
+        process.stdout.write(
+          'next: ideaseek models setup --provider <id> --test  (an id outside this list must pass --base-url)\n',
+        );
+        return 0;
+      }),
+    );
+
+  models
     .command('setup')
     .description(
       'interactive provider/API key wiring: hidden input, DSH credential store (apiKeyEnv NAME), connection test — never stores the key value',
@@ -282,6 +310,14 @@ export function registerModelsCommand(program: Command): void {
             }
             tested = await connectionTest(baseUrl, resolved.value);
             // Drop the in-memory copy before any writes.
+            // Report where the key came from and how long it is before
+            // dropping the value: a 401 from a hidden paste is usually a
+            // truncated or padded clipboard, and length is the only honest
+            // clue that costs no secret.
+            const keyHint =
+              supplied !== null
+                ? `key came from the hidden capture (${supplied.length} chars)`
+                : `key came from ${opts.apiKeyEnv} (${(process.env[opts.apiKeyEnv] ?? '').trim().length} chars)`;
             supplied = null;
             if (!tested.ok) {
               if (opts.json) {
@@ -291,8 +327,10 @@ export function registerModelsCommand(program: Command): void {
                 return 1;
               }
               process.stderr.write(`connection test FAILED: ${tested.detail}\n`);
+              process.stderr.write(`  ${keyHint}\n`);
               process.stderr.write(
-                `next: check ${opts.apiKeyEnv} value and --base-url, then rerun ideaseek models setup --test\n`,
+                'next: a length that looks wrong means the paste was cut short — re-enter it, or pipe it ' +
+                  `with: ideaseek models setup --provider ${opts.provider} --test --api-key-stdin\n`,
               );
               return 1;
             }

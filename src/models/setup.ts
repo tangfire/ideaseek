@@ -98,12 +98,62 @@ export interface DshSettingsWrite {
 }
 
 /**
- * The only endpoints IdeaSeek will assume. Kept here so the write path and the
- * connection test agree — a user configuring DeepSeek should not have to pass
- * `--base-url` twice to reach a host everyone knows.
+ * The only endpoints IdeaSeek will assume. Deliberately one entry: an endpoint
+ * guessed wrong costs a failed connection test, not a corrupted research run,
+ * so unknown providers stay explicit about their base URL.
  */
+export const KNOWN_PROVIDERS: readonly { id: string; baseUrl: string; api: string }[] = [
+  { id: 'deepseek', baseUrl: 'https://api.deepseek.com', api: 'openai-completions' },
+];
+
 export function knownBaseUrl(provider: string): string | undefined {
-  return provider === 'deepseek' ? 'https://api.deepseek.com' : undefined;
+  return KNOWN_PROVIDERS.find((entry) => entry.id === provider)?.baseUrl;
+}
+
+export interface ProviderListing {
+  id: string;
+  /** From DSH settings when present, else the known default, else null. */
+  baseUrl: string | null;
+  apiKeyEnv: string | null;
+  known: boolean;
+  configured: boolean;
+}
+
+/**
+ * Known defaults merged with whatever DSH settings.yaml already declares.
+ * Reads names and endpoints only — credential values are never loaded here.
+ */
+export async function listProviders(): Promise<ProviderListing[]> {
+  const { readFile } = await import('node:fs/promises');
+  const { parseDocument } = await import('yaml');
+  const known = new Map(KNOWN_PROVIDERS.map((entry) => [entry.id, entry]));
+  const found = new Map<string, { apiKeyEnv: string | null; baseURL: string | null }>();
+  try {
+    const doc = parseDocument(await readFile(dshSettingsPath(), 'utf8'));
+    if (doc.errors.length === 0) {
+      const providers = doc.getIn(['llm-pi-ai', 'providers']) as
+        Record<string, { apiKeyEnv?: unknown; baseURL?: unknown }> | undefined;
+      for (const [id, entry] of Object.entries(providers ?? {})) {
+        found.set(id, {
+          apiKeyEnv: typeof entry?.apiKeyEnv === 'string' ? entry.apiKeyEnv : null,
+          baseURL: typeof entry?.baseURL === 'string' ? entry.baseURL : null,
+        });
+      }
+    }
+  } catch {
+    // No settings file yet: the catalog is still the known defaults.
+  }
+  const ids = [...new Set([...known.keys(), ...found.keys()])];
+  return ids.map((id) => {
+    const entry = found.get(id);
+    return {
+      id,
+      baseUrl: entry?.baseURL ?? known.get(id)?.baseUrl ?? null,
+      apiKeyEnv: entry?.apiKeyEnv ?? null,
+      known: known.has(id),
+      configured: entry !== undefined,
+    };
+  });
 }
 
 /**

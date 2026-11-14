@@ -245,14 +245,14 @@ describe('banner and event formatting (unit)', () => {
 
     // Classic line mode cannot mask a secret (readline echoes it) —
     // honest hint, no prompt, no child spawned.
-    expect(await session.submit('/models setup')).toBe('continue');
+    expect(await session.submit('/models setup deepseek')).toBe('continue');
     expect(lines.join('\n')).toContain('ideaseek models setup');
     expect(session.secretPrompt).toBeNull();
 
-    // Ink enables capture: the prompt appears synchronously with submit,
-    // cancel resolves the single-shot promise, Ctrl-C path reuses it.
+    // Ink enables capture: an explicit provider goes straight to the key
+    // prompt (the catalog step only runs when no provider was given).
     session.enableSecretCapture();
-    const pending = session.submit('/models setup');
+    const pending = session.submit('/models setup deepseek');
     expect(session.secretPrompt?.label).toContain('API key');
     expect(await session.interrupt()).toBe(true); // cancels via answerSecret(null)
     await pending;
@@ -260,7 +260,7 @@ describe('banner and event formatting (unit)', () => {
     expect(session.secretPrompt).toBeNull();
     expect(session.answerSecret('sk-late')).toBe(false); // single-shot
     expect(lines.join('\n')).not.toContain('sk-late'); // never echoed
-  });
+  }, 60_000);
 
   it('keeps session-mode audit decisions out of the TUI event stream', () => {
     // Every Shift+Tab records one of these (docs/MODES.md — never silent);

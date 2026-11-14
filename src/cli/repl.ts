@@ -69,6 +69,15 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
   const paintOpts: PaintOptions = { plain };
   const tty = isTTY || process.env.IDEASEEK_FORCE_TTY === '1';
 
+  // Falling back to line mode silently costs the / palette and the hidden
+  // API-key input — say what happened and how to get the full TUI back.
+  if (!isTTY && !plain && process.env.IDEASEEK_FORCE_TTY !== '1') {
+    process.stdout.write(
+      'renderer: line mode (stdin/stdout is not a TTY) — the / palette and hidden API-key input ' +
+        'need a real terminal (Windows Terminal / PowerShell); IDEASEEK_FORCE_INK=1 forces the TUI over a pipe\n\n',
+    );
+  }
+
   const banner = renderBanner({ plain });
   process.stdout.write(`${paint(banner, 'brand', paintOpts)}\n\n`);
 

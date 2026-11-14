@@ -159,9 +159,14 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // While the relay ran, the input line itself carried the spinner.
       expect(repl.output()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 
-      // Shift+Tab cycles session mode through the audited /mode use-case.
+      // Shift+Tab cycles session mode through the audited /mode use-case, and
+      // covers all three modes (docs/MODES.md): Analysis used to be reachable
+      // only by typing /mode, and the header printed RESEARCH for it.
       await repl.write('\x1b[Z');
-      await repl.waitFor(/session mode: research → agent/);
+      await repl.waitFor(/session mode: research → analysis/);
+      await repl.waitFor(/ink-interactive · ANALYSIS/);
+      await repl.write('\x1b[Z');
+      await repl.waitFor(/session mode: analysis → agent/);
       await repl.waitFor(/ink-interactive · AGENT/);
       await repl.waitFor(/AGENT.*Shift\+Tab mode/);
       await repl.write('\x1b[Z');
@@ -340,10 +345,10 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.waitFor(/ideaseek ›/, 60_000);
       await repl.waitFor(/ink-models · RESEARCH/, 60_000);
 
-      // Open the wizard with a dead base URL — the connection test then
-      // fails offline (same trick as tests/models-setup.test.ts), so the
-      // full prompt → stdin → child chain runs without any network.
-      await repl.write('/models setup --base-url http://127.0.0.1:1');
+      // Open the wizard with a provider and a dead base URL — the connection
+      // test then fails offline (same trick as tests/models-setup.test.ts), so
+      // the full prompt → stdin → child chain runs without any network.
+      await repl.write('/models setup deepseek --base-url http://127.0.0.1:1');
       await repl.write('\r');
       await repl.waitFor(/API key \(input hidden\)/);
 
@@ -364,6 +369,43 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await cleanup(dir, repl.child);
     }
   }, 120_000);
+
+  it('models setup offers the provider catalog and accepts a number', async () => {
+    const dir = await makeProjectDir('ink-models-catalog');
+    const repl = startInk(dir);
+    try {
+      await repl.waitFor(/ideaseek ›/, 60_000);
+
+      // No provider chosen: show the catalog and stop — never wire a provider
+      // the researcher did not pick, and never open the key prompt yet.
+      await repl.write('/models setup');
+      await repl.write('\r');
+      await repl.waitFor(/which provider\?/);
+      await repl.waitFor(/1\. deepseek/);
+      expect(repl.output()).not.toContain('API key (input hidden)');
+
+      // Choosing by number resolves the id and opens the masked prompt. The
+      // dead base URL keeps the connection test offline and fail-closed.
+      await repl.write('/models setup 1 --base-url http://127.0.0.1:1');
+      await repl.write('\r');
+      await repl.waitFor(/API key \(input hidden\)/, 60_000);
+
+      const secret = 'sk-catalog-probe-secret-1';
+      await repl.write(secret);
+      await repl.waitFor(/•{10,}/);
+      expect(repl.output()).not.toContain(secret);
+      await repl.write('\r');
+      await repl.waitFor(/connection test FAILED/);
+      expect(repl.output()).not.toContain(secret);
+
+      await repl.write('/');
+      await repl.write('quit');
+      await repl.write('\r');
+      expect(await repl.done).toBe(0);
+    } finally {
+      await cleanup(dir, repl.child);
+    }
+  }, 180_000);
 
   it('Ctrl-D exits without cancelling anything and restores the screen', async () => {
     const dir = await makeProjectDir('ink-interactive-eof');

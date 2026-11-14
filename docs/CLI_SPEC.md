@@ -11,6 +11,7 @@ ideaseek setup
 ideaseek doctor
 ideaseek models
 ideaseek models list
+ideaseek models providers
 ideaseek models test --route deep
 ideaseek interactive --mode research
 ideaseek interactive --mode agent
@@ -66,7 +67,7 @@ ideaseek report [--run <id>]
 
 交互提示符同时接受 slash 命令和自然语言。自然语言只被转换成查询、建议或待审批 Decision；不能直接绕过状态机、预算、权限或数据快照。高影响请求显示变更摘要和确认选项。
 
-模型配置同时支持交互和脚本：`/models` 或 `ideaseek models` 查看 route/provider/model 状态；`models test` 只做最小连接和能力检查。API key 使用隐藏输入，写入 DSH credential store 或外部 secret manager，不写入 `research.yaml`、prompt、事件、日志或 git。`--json` 输出只包含脱敏 provider、model、route、能力和额度状态。
+模型配置同时支持交互和脚本：`/models` 或 `ideaseek models` 查看 route/provider/model 状态；`models providers` 列出可配置的 provider（内置已知端点 + DSH settings 中已有条目，只输出名称和端点）；`models test` 只做最小连接和能力检查。TUI 里 `/models setup` 是分步的：不带 provider 时先列目录并回 `选择：/models setup <编号或 id>`，选定后才进入隐藏 key 输入；不在目录内的 id 必须显式给 `--base-url`。连接测试失败会说明 key 来自隐藏输入还是环境变量、以及它的字符长度（不输出任何 key 内容），用于区分"key 错"和"粘贴被截断"。API key 使用隐藏输入，写入 DSH credential store 或外部 secret manager，不写入 `research.yaml`、prompt、事件、日志或 git。`--json` 输出只包含脱敏 provider、model、route、能力和额度状态。
 
 `scan` 默认扫描 `papers/`、`datasets/`、`comparisons/`、`idea-seeds/` 和 `incoming/`，产生 `knowledge/input-manifest.json` 和 `knowledge/input-review.md`；不会扫描 `.research/`、平台管理的 `ideas/`、日志或实验产物。`intake` 展示待分类对象和候选关联。代码仓库允许任意目录结构；Codebase Analyst 通过 README、依赖、测试和源码检查生成候选入口/数据接口说明，不要求用户改成固定模板。自动识别必须给出依据和置信度；有歧义时先确认，再在隔离副本中 smoke test。默认只建立索引和关联，不复制、不移动、不删除用户文件。`organize --apply` 仅创建平台管理的软链接或副本，所有来源路径和哈希都记录。检测到歧义时要求用户确认，不把目录名猜成科学事实。
 

@@ -289,7 +289,11 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   // question). The block wordmark is a greeting in the activity pane and
   // scrolls away with the first events (docs/TERMINAL_UX 启动信息).
   const ctxLines = bus.header?.lines ?? [STARTING_LINE];
-  const modeLabel = ctxLines[0]?.includes('AGENT') ? 'Agent' : 'Research';
+  const modeLabel = ctxLines[0]?.includes('ANALYSIS')
+    ? 'Analysis'
+    : ctxLines[0]?.includes('AGENT')
+      ? 'Agent'
+      : 'Research';
   const tone = bus.header?.tone ?? 'dim';
   const headerLines = ctxLines;
   stateRef.current.headerLines = headerLines.length;
