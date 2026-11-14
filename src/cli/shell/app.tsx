@@ -353,10 +353,12 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
       {session.pendingApproval ? (
         <Box flexShrink={0}>
           {/* Approval owns the line (Claude-Code style): the agent turn
-              is blocked on this answer, so nothing else is typeable. */}
+              is blocked on this answer, so nothing else is typeable.
+              The footer mirrors the state as `waiting for approval…` so
+              it never reads as generic "running". */}
           <Text wrap="truncate" backgroundColor="#3d3413">
             <Text color="yellow" bold>{` ⏸ allow ${session.pendingApproval.toolName}? `}</Text>
-            <Text>y allow once · n reject</Text>
+            <Text>y allow once · n/Enter reject</Text>
             {session.pendingApproval.reason ? (
               <Text dimColor>{`  — ${session.pendingApproval.reason}`}</Text>
             ) : null}
@@ -365,7 +367,7 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
                 0,
                 size.columns -
                   (
-                    `⏸ allow ${session.pendingApproval.toolName}? y allow once · n reject` +
+                    `⏸ allow ${session.pendingApproval.toolName}? y allow once · n/Enter reject` +
                     (session.pendingApproval.reason ? `  — ${session.pendingApproval.reason}` : '')
                   ).length,
               ),
@@ -397,7 +399,12 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
           <Text color="black" backgroundColor={modeLabel === 'Agent' ? 'magenta' : 'cyan'} bold>
             {` ${modeLabel.toUpperCase()} `}
           </Text>
-          <Text dimColor>{` ${busy ? `${FOOTER} · running…` : FOOTER}`}</Text>
+          <Text dimColor>
+            {/* Status sits LEFT-anchored after the badge: FOOTER alone is
+                ~107 cols, so any appended suffix was truncated away at
+                100-col terminals (running…/waiting… never rendered). */}
+            {` ${busy ? `${session.pendingApproval ? 'waiting for approval…' : 'running…'} · ` : ''}${FOOTER}`}
+          </Text>
         </Text>
       </Box>
     </Box>

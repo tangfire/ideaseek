@@ -299,6 +299,10 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.waitFor(/⚙ pwsh \{"command":"ls"\}/);
       await repl.waitFor(/approval required: pwsh/);
       await repl.waitFor(/allow pwsh\? y allow once/);
+      // The footer says what the turn is actually doing — waiting for a
+      // human, not generic "running". (waitFor, not expect: Ink writes a
+      // frame top-down, so the footer bytes land just after the bar's.)
+      await repl.waitFor(/waiting for approval…/);
 
       // y → allowed once; the tool result streams, the canned turn completes.
       await repl.write('y');
