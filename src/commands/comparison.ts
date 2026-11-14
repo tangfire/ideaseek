@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { findProjectRoot } from '../config/paths.js';
@@ -344,7 +344,9 @@ export function registerComparisonCommand(program: Command): void {
               pages?: { page?: number; links?: string[] }[];
             };
             try {
-              payload = JSON.parse(await rt.store.readFinalText(artifact.contentHash)) as typeof payload;
+              payload = JSON.parse(
+                await rt.store.readFinalText(artifact.contentHash),
+              ) as typeof payload;
             } catch {
               continue;
             }
@@ -573,6 +575,173 @@ export function registerComparisonCommand(program: Command): void {
           await runtime.close();
         }
       }),
+    );
+
+  comparison
+    .command('blueprint')
+    .description(
+      'author a reproduction blueprint from the papers (the input `baseline reproduce` needs)',
+    )
+    .argument('<methodId>', 'comparison method id')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
+    .option('--force', 're-author even when a current blueprint exists')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (methodId: string, opts: { harness?: string; force?: boolean; json?: boolean }) => {
+          const root = await openRoot();
+          const shared = await import('./shared.js');
+          const runtime = await (
+            await import('../workflow/runtime.js')
+          ).ProjectRuntime.open({
+            cwd: root,
+            harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
+          });
+          try {
+            shared.assertConfigUsable(runtime.configLoad);
+            const doc = await runtime.db.getComparison(methodId);
+            if (!doc) {
+              throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${methodId} not found`);
+            }
+            const method = toMethod(doc.record);
+            if (method.sourceKind !== 'paper-reimplementation') {
+              throw new IdeaseekError(
+                'INVALID_STATE',
+                `blueprint authoring is for paper-reimplementation methods; ${methodId} is "${method.sourceKind}" — import its official code instead`,
+              );
+            }
+
+            const { loadCompactCards } = await import('../knowledge/cards.js');
+            const cards = await loadCompactCards(runtime);
+            const grounded = method.paperRefs.length > 0 ? cards : [];
+            if (method.paperRefs.length === 0) {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `${methodId} has no paperRefs — a reimplementation must cite papers: ideaseek comparison register ${methodId} --source paper-reimplementation --paper <ref>`,
+              );
+            }
+
+            const { readFile } = await import('node:fs/promises');
+            let protocol: {
+              primaryMetrics: { name: string; direction: string }[];
+              splitRules: string[];
+            } | null = null;
+            try {
+              const stored = JSON.parse(
+                await readFile(join(root, 'knowledge', 'protocol-lock.json'), 'utf8'),
+              ) as {
+                protocol?: {
+                  primaryMetrics?: { name: string; direction: string }[];
+                  splitRules?: string[];
+                };
+              };
+              protocol = {
+                primaryMetrics: stored.protocol?.primaryMetrics ?? [],
+                splitRules: stored.protocol?.splitRules ?? [],
+              };
+            } catch {
+              // No locked protocol yet: the agent must propose metrics as assumptions.
+            }
+            let corpus: {
+              samples: number;
+              domainAxis: string | null;
+              domains: string[];
+              classes: number;
+            } | null = null;
+            try {
+              const measured = JSON.parse(
+                await readFile(join(root, 'knowledge', 'image-profiles.json'), 'utf8'),
+              ) as {
+                profiles?: {
+                  samples: number;
+                  grouping: { column: string | null; values: { name: string }[] };
+                  classes: { distinct: number };
+                }[];
+              };
+              const first = measured.profiles?.[0];
+              if (first) {
+                corpus = {
+                  samples: first.samples,
+                  domainAxis: first.grouping.column,
+                  domains: first.grouping.values.map((value) => value.name),
+                  classes: first.classes.distinct,
+                };
+              }
+            } catch {
+              // Not profiled yet: the data interface becomes an assumption.
+            }
+
+            const { authorBlueprint, describeBlueprint } =
+              await import('../comparison/blueprint-author.js');
+            const { validateReproductionBlueprint } = await import('../comparison/reproduce.js');
+            const { blueprint, contextHash } = await authorBlueprint({
+              harness: runtime.harness!,
+              evidence: {
+                methodId,
+                question: runtime.config.research.question,
+                papers: grounded.map((card) => ({
+                  source: card.source,
+                  title: card.title,
+                  topClaims: card.topClaims,
+                })),
+                protocol,
+                corpus,
+              },
+              runId:
+                (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
+                `blueprint-${methodId}`,
+              now: Date.now(),
+            });
+
+            const validation = validateReproductionBlueprint(blueprint, {
+              methodId,
+              paperRefs: method.paperRefs,
+            });
+            if (!validation.ok) {
+              throw new IdeaseekError(
+                'INVALID_ARTIFACT',
+                `authored blueprint is not usable: ${validation.errors.join('; ')} — nothing was written`,
+                { errors: validation.errors },
+              );
+            }
+
+            const dir = join(root, 'comparisons', methodId);
+            await ensureDir(dir);
+            const path = join(dir, 'blueprint.json');
+            await writeFileAtomic(path, `${JSON.stringify(blueprint, null, 2)}\n`);
+
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  methodId,
+                  path: relative(root, path).replace(/\\/g, '/'),
+                  contextHash,
+                  confidence: blueprint.confidence,
+                  paperExplicit: blueprint.paperExplicit.length,
+                  assumptions: blueprint.assumptions.length,
+                  missingDetails: blueprint.missingDetails.length,
+                }),
+              );
+              return 0;
+            }
+            process.stdout.write(`blueprint authored for ${methodId}\n`);
+            process.stdout.write(`  ${describeBlueprint(blueprint).split('\n').join('\n  ')}\n`);
+            process.stdout.write(
+              `  file: ${relative(root, path).replace(/\\/g, '/')} (review it before reproducing)\n`,
+            );
+            process.stdout.write(
+              'next: ideaseek baseline reproduce --method <id> --data <path>\n' +
+                'boundary: a reimplementation is not official code; assumptions and missing details stay recorded\n',
+            );
+            return 0;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
     );
 
   comparison
