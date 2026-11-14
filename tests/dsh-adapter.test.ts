@@ -4,8 +4,10 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_DSH_MAX_TOKENS,
   DSH_SDK_VERSION,
   DshHarnessAdapter,
+  describeJsonFailure,
   extractJson,
   findLlmFailure,
   mapLlmFailureCode,
@@ -89,6 +91,31 @@ describe('RunResult interpretation', () => {
     expect(extractJson('Here is the card:\n{"a":1}\nHope it helps')).toBe('{"a":1}');
     expect(extractJson('no json at all')).toBeNull();
     expect(extractJson('{broken json')).toBeNull();
+  });
+});
+
+describe('describeJsonFailure (truncation must not be reported as absent JSON)', () => {
+  it('names truncation and the ceiling the harness actually used', () => {
+    const truncated = '{"methodId":"fedavg","paperExplicit":[{"statement":"x"';
+    const message = describeJsonFailure(truncated, DEFAULT_DSH_MAX_TOKENS);
+    expect(message).toContain('does not parse');
+    expect(message).toContain('truncated');
+    expect(message).toContain(`maxTokens=${DEFAULT_DSH_MAX_TOKENS}`);
+    expect(message).toContain('advisory');
+    expect(message).toContain(`${truncated.length} characters`);
+  });
+
+  it('says plainly when there is no JSON at all', () => {
+    expect(describeJsonFailure('I could not complete this task.', 8192)).toContain(
+      'contains no JSON object',
+    );
+  });
+
+  it('pins the ceiling used by the harness and the one named in failures', async () => {
+    // The message is only honest if it quotes the number actually configured.
+    const source = await readFile(join('src', 'dsh', 'dsh-adapter.ts'), 'utf8');
+    expect(source).toContain('this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS');
+    expect(source).toContain('this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,');
   });
 });
 

@@ -18,6 +18,13 @@ import {
 /** Must match package.json (guarded by tests/runtime-lock.test.ts). */
 export const DSH_SDK_VERSION = '0.2.2-rc.1';
 
+/**
+ * Default output ceiling, set at harness spawn. One constant because the
+ * error text has to name the same number the harness actually used; two
+ * literals here would drift and the message would lie.
+ */
+export const DEFAULT_DSH_MAX_TOKENS = 16_384;
+
 export interface DshAdapterOptions {
   /** DSH home for this project (sessions, profiles): <project>/.research/dsh-home. */
   dshHome: string;
@@ -131,6 +138,23 @@ export function extractJson(text: string): string | null {
   }
 }
 
+/**
+ * Why JSON extraction failed, in terms an operator can act on. Reporting
+ * "did not contain a JSON object" for a response that clearly does is worse
+ * than useless: the common cause is truncation at the harness output limit,
+ * which the request's budget.maxOutputTokens does not control (it is set at
+ * spawn time), so the message has to name the real ceiling.
+ */
+export function describeJsonFailure(text: string, maxTokens: number): string {
+  const trimmed = text.trim();
+  if (!trimmed.includes('{')) return 'the response contains no JSON object';
+  return (
+    `the response begins like JSON but does not parse — most likely truncated at the ` +
+    `harness output limit (maxTokens=${maxTokens}, set at spawn; the request's ` +
+    `budget.maxOutputTokens is advisory and does not raise it). Received ${trimmed.length} characters`
+  );
+}
+
 function collectToolCalls(events: SessionEvent[]): HarnessToolCallSummary[] {
   const calls: HarnessToolCallSummary[] = [];
   for (const event of events ?? []) {
@@ -240,7 +264,12 @@ export class DshHarnessAdapter implements HarnessAdapter {
       patches,
       provider: this.opts.provider ?? 'deepseek-official',
       model: this.opts.model ?? 'deepseek-v4-flash',
-      maxTokens: this.opts.maxOutputTokens ?? 8192, // spawn-time; budget.maxOutputTokens is advisory
+      // Output cap is a ceiling, not an allocation: raising it costs nothing
+      // unless a response is actually long. 8192 was too small for the
+      // artifacts that legitimately need a whole program inside one JSON
+      // object (reproduction blueprints), which surfaced as an opaque
+      // "no JSON object" failure rather than a visible truncation.
+      maxTokens: this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS, // spawn-time; budget.maxOutputTokens is advisory
       reasoningEffort: ReasoningEffortId(this.opts.reasoningEffort ?? 'off'),
       initializeTimeoutMs: this.opts.initializeTimeoutMs ?? 15_000,
     });
@@ -316,7 +345,10 @@ export class DshHarnessAdapter implements HarnessAdapter {
         );
       }
       throw new Error(
-        `dsh response did not contain a JSON object (finishReason=${reason}${head ? `; starts: ${head}` : ''})`,
+        `dsh response did not yield usable JSON (finishReason=${reason}): ${describeJsonFailure(
+          result.finalResponse ?? '',
+          this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
+        )}${head ? ` — starts: ${head}` : ''}`,
       );
     }
 
