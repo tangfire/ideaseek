@@ -323,7 +323,13 @@ export async function planFix(
     };
   }
   if (!opts.infer) {
-    return { kind: 'none', detail: 'no requirements file to install from' };
+    // Saying only "no requirements file" hides the real cause when the caller
+    // has no harness wired: the repair silently loses its inference path.
+    return {
+      kind: 'none',
+      detail:
+        'no requirements file to install from, and no dependency inference available (no harness configured)',
+    };
   }
   if (opts.allowNetworkInstall === false) {
     return {
@@ -406,10 +412,15 @@ export async function applyFix(
  */
 export function venvEnv(worktreeDir: string): Record<string, string> {
   const dir = venvPathDir(join(worktreeDir, '.venv'));
-  const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+  // The key must match the spelling actually present in the environment.
+  // Spreading `{ ...process.env, Path }` over an existing `PATH` produces two
+  // entries, the child keeps the original, and the venv the repair just
+  // installed is silently never used (reproduced on Windows + Git Bash).
+  const pathKey =
+    Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ??
+    (process.platform === 'win32' ? 'Path' : 'PATH');
   const sep = process.platform === 'win32' ? ';' : ':';
-  const base = process.env[pathKey] ?? '';
-  return { [pathKey]: `${dir}${sep}${base}` };
+  return { [pathKey]: `${dir}${sep}${process.env[pathKey] ?? ''}` };
 }
 
 export interface ExecuteRepairInput {

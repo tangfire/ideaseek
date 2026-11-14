@@ -28,11 +28,13 @@ import type {
 } from '../comparison/types.js';
 import { exportMethodYaml } from './comparison.js';
 import { assertAutonomy, parseAutonomyMode } from '../workflow/autonomy.js';
+import { buildHarness, resolveHarnessKind } from './shared.js';
+import type { HarnessAdapter } from '../dsh/adapter.js';
 import { action, jsonLine } from './shared.js';
 
-async function openRuntime(root: string) {
+async function openRuntime(root: string, harness?: HarnessAdapter) {
   const { ProjectRuntime } = await import('../workflow/runtime.js');
-  return ProjectRuntime.open({ cwd: root });
+  return ProjectRuntime.open({ cwd: root, ...(harness ? { harness } : {}) });
 }
 
 async function openRoot(): Promise<string> {
@@ -91,12 +93,17 @@ export function registerBaselineCommand(program: Command): void {
     .option('--entry <cmd>', 'entry command (quoted argv string; persisted to the method)')
     .option('--rounds <n>', 'max repair rounds (1-10)', (value) => Number(value), 3)
     .option('--timeout <ms>', 'per-round command timeout', (value) => Number(value), 120_000)
+    .option(
+      '--harness <kind>',
+      'agent harness for dependency inference: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (opts: {
           method: string;
           entry?: string;
+          harness?: string;
           rounds: number;
           timeout: number;
           json?: boolean;
@@ -108,7 +115,9 @@ export function registerBaselineCommand(program: Command): void {
           if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
             throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
           }
-          const runtime = await openRuntime(root);
+          // Dependency inference is a model call; without a harness the repair
+          // loop silently falls back to "no fix", which reads as a dead end.
+          const runtime = await openRuntime(root, buildHarness(resolveHarnessKind(opts.harness)));
           try {
             assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'write-code');
             const doc = await runtime.db.getComparison(opts.method);

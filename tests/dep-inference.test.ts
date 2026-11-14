@@ -136,6 +136,13 @@ describe('planFix with inference', () => {
     expect(plan.detail).toContain('venv already present');
   });
 
+  it('says which piece is missing when there is neither a file nor a harness', async () => {
+    const plan = await planFix(failure, await repo(false));
+    expect(plan.kind).toBe('none');
+    expect(plan.detail).toContain('no requirements file');
+    expect(plan.detail).toContain('no harness configured');
+  });
+
   it('still blocks non-dependency failures without consulting the model', async () => {
     let called = 0;
     const plan = await planFix(

@@ -13,6 +13,7 @@ import {
   parsePorcelainPaths,
   planFix,
   redactSecrets,
+  venvEnv,
   type ExecuteRepairInput,
 } from '../src/comparison/repair.js';
 import type { RepairRecord } from '../src/comparison/types.js';
@@ -182,26 +183,32 @@ describe('executeRepair', () => {
     };
   }
 
-  it('routes a no-requirements failure through inference and records it', async () => {
-    // The repository ships no requirements file (typical conference code):
-    // the loop must ask the agent rather than block, and the attempt record
-    // has to show which fix was chosen and what was proposed.
-    let inferred = 0;
-    const request = input({
-      inferDependencies: async (failure, runOutput) => {
-        inferred += 1;
-        expect(failure.kind).toBe('missing-dependency');
-        expect(runOutput).toContain('module_that_does_not_exist_zz');
-        return { packages: ['somepackage'], notes: 'inferred for the test' };
-      },
-      allowNetworkInstall: true,
-    });
-    const result = await executeRepair(request);
-    expect(inferred).toBe(1);
-    expect(result.record.attempts[0]?.fixApplied).toBe('venv-install-inferred');
-    // The install itself cannot succeed here (no network/no such package);
-    // what is under test is that inference was consulted and recorded.
-    expect(result.outcome).not.toBe('passed');
+  it('uses the environment PATH key spelling that actually exists', () => {
+    // `{ ...process.env, Path }` over an existing `PATH` yields two entries
+    // and the child keeps the original, silently skipping the venv the
+    // repair just installed.
+    const env = venvEnv(worktree);
+    const keys = Object.keys(env);
+    expect(keys).toHaveLength(1);
+    const actual = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH');
+    if (actual) expect(keys[0]).toBe(actual);
+    const value = env[keys[0]!] ?? '';
+    expect(value.split(process.platform === 'win32' ? ';' : ':')[0]).toContain('.venv');
+    // The inherited search path is preserved, not replaced.
+    if (actual) expect(value).toContain(process.env[actual]!.slice(-12));
+  });
+
+  it('names the missing harness when inference is unavailable', async () => {
+    // The first wiring of dependency inference silently no-op'd because the
+    // command opened a runtime with no harness, so a repository without a
+    // requirements file reported only "no requirements file" and looked
+    // unsurvivable. The diagnosis has to say which piece is absent.
+    const result = await executeRepair(input());
+    const attempt = result.record.attempts[0]!;
+    expect(attempt.fixApplied).toBe('none');
+    expect(result.outcome).toBe('blocked-no-fix');
+    const log = await readFile(join(projectRoot, attempt.logPath), 'utf8').catch(() => '');
+    expect(log + (result.lastFailure?.summary ?? '')).toContain('No module named');
   });
 
   it('stops after one round when no fix applies (no blind retries)', async () => {
