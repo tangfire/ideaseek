@@ -32,8 +32,8 @@ function readStdinAnswer(): Promise<string | null> {
 
 /** Stated once per general-scope turn: what is NOT guaranteed outside a project. */
 const GENERAL_SCOPE_NOTICE =
-  '通用 coding 回合（当前目录不是 IdeaSeek 项目）：审批与 --resume 照常，' +
-  '但不记 RunEvent、不做原始输入漂移侦测、不注入项目摘要。';
+  '通用 coding 回合（当前目录不是 IdeaSeek 项目）：不记 RunEvent、不做原始输入漂移侦测、' +
+  '不注入项目摘要；回合本身进用户级会话列表（`ideaseek agent --list` / TUI `/agent` 可回看）。';
 
 /** Canned agent turn for tests (IDEASEEK_FAKE_AGENT_TURN=1). */
 async function runFakeAgentTurn(
@@ -41,6 +41,7 @@ async function runFakeAgentTurn(
   json: boolean,
   resume: boolean,
   root: string | null,
+  cwd: string,
 ): Promise<number> {
   const sessionId = 'session-fake-e2e';
   process.stderr.write('  · dsh runtime started\n');
@@ -66,7 +67,7 @@ async function runFakeAgentTurn(
   // Mirror the real path: record the session so the NEXT TUI can seed
   // --resume from the registry (cross-restart continuity e2e).
   const { recordAgentSession } = await import('../dsh/session.js');
-  await recordAgentSession(root, { sessionId, prompt });
+  await recordAgentSession(root, { sessionId, prompt, cwd, finishReason: 'completed' });
   // Outside a project there is no baseline to compare and no run to audit.
   const drift = root ? await checkInputDriftAfterTurn(root) : null;
   const { renderDriftReport } = await import('../knowledge/input-drift.js');
@@ -251,21 +252,19 @@ export function registerAgentCommand(program: Command): void {
           const root = await findProjectRoot(process.cwd());
           const turnCwd = root ?? process.cwd();
 
-          const { agentSessionsPath, recordAgentSession } = await import('../dsh/session.js');
+          const { agentSessionsPath, readAgentSessions, recordAgentSession } =
+            await import('../dsh/session.js');
 
           if (opts.list) {
-            const { readFile } = await import('node:fs/promises');
-            let sessions: { sessionId: string; updatedAt: number; promptHead: string }[] = [];
-            try {
-              const registry = JSON.parse(await readFile(agentSessionsPath(root), 'utf8')) as {
-                sessions: typeof sessions;
-              };
-              sessions = registry.sessions ?? [];
-            } catch {
-              sessions = [];
-            }
+            const { sessions } = await readAgentSessions(root);
             if (opts.json) {
-              process.stdout.write(jsonLine({ sessions, registry: agentSessionsPath(root) }));
+              process.stdout.write(
+                jsonLine({
+                  sessions,
+                  registry: agentSessionsPath(root),
+                  scope: root ? 'project' : 'general',
+                }),
+              );
               return 0;
             }
             if (sessions.length === 0) {
@@ -279,9 +278,15 @@ export function registerAgentCommand(program: Command): void {
             );
             for (const session of sessions) {
               process.stdout.write(
-                `  ${session.sessionId}  ${new Date(session.updatedAt).toISOString()}  ${session.promptHead}\n`,
+                `  ${session.sessionId}  ${new Date(session.updatedAt).toISOString()}  ` +
+                  `${session.scope.padEnd(7)}${String(session.turns).padStart(3)} turn(s)  ${session.title}\n`,
+              );
+              process.stdout.write(
+                `      cwd: ${session.cwd || '(recorded before cwd was tracked)'}` +
+                  `${session.lastFinish ? `  last: ${session.lastFinish}` : ''}\n`,
               );
             }
+            process.stdout.write('  resume: ideaseek agent "<指令>" --resume <id>\n');
             return 0;
           }
 
@@ -302,6 +307,7 @@ export function registerAgentCommand(program: Command): void {
               opts.json === true,
               opts.resume !== undefined,
               root,
+              turnCwd,
             );
           }
 
@@ -351,6 +357,8 @@ export function registerAgentCommand(program: Command): void {
           await recordAgentSession(root, {
             sessionId: result.sessionId,
             prompt,
+            cwd: turnCwd,
+            finishReason: result.finishReason ?? null,
           });
 
           // Audited turn: truncated + redacted, never the key material. Only a

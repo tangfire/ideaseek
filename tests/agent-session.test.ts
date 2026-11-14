@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
@@ -9,6 +9,7 @@ import {
   resolveApproval,
   redactAgentText,
   recordAgentSession,
+  readAgentSessions,
   agentSessionsPath,
 } from '../src/dsh/session.js';
 import { composeTurnPrompt } from '../src/commands/agent.js';
@@ -91,22 +92,95 @@ describe('redaction', () => {
 });
 
 describe('session registry', () => {
-  it('persists ids only, dedups and sorts newest first', async () => {
+  it('persists turn history, dedups and sorts newest first', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-agent-'));
-    await recordAgentSession(dir, { sessionId: 's-old', prompt: 'first prompt' });
+    await recordAgentSession(dir, { sessionId: 's-old', prompt: 'first prompt', cwd: dir });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    await recordAgentSession(dir, { sessionId: 's-new', prompt: 'second prompt' });
-    await recordAgentSession(dir, { sessionId: 's-old', prompt: 'first prompt updated' });
+    await recordAgentSession(dir, { sessionId: 's-new', prompt: 'second prompt', cwd: dir });
+    await recordAgentSession(dir, {
+      sessionId: 's-old',
+      prompt: 'first prompt updated',
+      cwd: dir,
+      finishReason: 'stop',
+    });
 
     const registry = JSON.parse(await readFile(agentSessionsPath(dir), 'utf8')) as {
       contract: string;
-      sessions: { sessionId: string; promptHead: string }[];
+      sessions: {
+        sessionId: string;
+        promptHead: string;
+        title: string;
+        turns: number;
+        cwd: string;
+        scope: string;
+        lastFinish: string | null;
+      }[];
     };
-    expect(registry.contract).toBe('agent-sessions-v1');
+    expect(registry.contract).toBe('agent-sessions-v2');
     expect(registry.sessions.map((s) => s.sessionId)).toEqual(['s-old', 's-new']);
     expect(registry.sessions[0]!.promptHead).toBe('first prompt updated');
+    // The list name stays the FIRST prompt (recognizable tomorrow), the head
+    // tracks the latest one — and the turn count is the "what did it do here"
+    // signal a plain id list never gave.
+    expect(registry.sessions[0]!.title).toBe('first prompt');
+    expect(registry.sessions[0]!.turns).toBe(2);
+    expect(registry.sessions[1]!.turns).toBe(1);
+    expect(registry.sessions[0]!.cwd).toBe(dir);
+    expect(registry.sessions[0]!.scope).toBe('project');
+    expect(registry.sessions[0]!.lastFinish).toBe('stop');
     // No key-shaped material ever lands in the registry.
     expect(JSON.stringify(registry)).not.toMatch(/sk-[A-Za-z0-9]{6,}/);
+  });
+
+  it('reads a v1 registry, keeps its order and caps the list', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-agent-v1-'));
+    await mkdir(join(dir, 'knowledge'), { recursive: true });
+    const legacy = {
+      contract: 'agent-sessions-v1',
+      sessions: Array.from({ length: 51 }, (_, index) => ({
+        sessionId: `legacy-${index}`,
+        updatedAt: 1_700_000_000_000 - index,
+        promptHead: `old prompt ${index}`,
+      })),
+    };
+    await writeFile(agentSessionsPath(dir), JSON.stringify(legacy, null, 2), 'utf8');
+
+    const before = await readAgentSessions(dir);
+    expect(before.contract).toBe('agent-sessions-v2');
+    // v1 records had no cwd/scope: they inherit the file location (project) and
+    // get their single prompt as title, with turns=1 rather than a guess.
+    expect(before.sessions[0]).toMatchObject({
+      sessionId: 'legacy-0',
+      title: 'old prompt 0',
+      cwd: '',
+      scope: 'project',
+      turns: 1,
+      lastFinish: null,
+    });
+
+    await recordAgentSession(dir, { sessionId: 'fresh', prompt: 'newest', cwd: dir });
+    const after = await readAgentSessions(dir);
+    expect(after.sessions.length).toBe(50);
+    expect(after.sessions[0]!.sessionId).toBe('fresh');
+    expect(after.sessions.some((s) => s.sessionId === 'legacy-50')).toBe(false);
+
+    // Outside a project the same file shape reads as general scope.
+    const stateDir = await mkdtemp(join(tmpdir(), 'ideaseek-agent-user-'));
+    await writeFile(
+      join(stateDir, 'agent-sessions.json'),
+      JSON.stringify({
+        contract: 'agent-sessions-v1',
+        sessions: [{ sessionId: 'g-1', updatedAt: 1, promptHead: 'fix the bug' }],
+      }),
+      'utf8',
+    );
+    process.env.IDEASEEK_USER_CONFIG = join(stateDir, 'config.yaml');
+    try {
+      const general = await readAgentSessions(null);
+      expect(general.sessions[0]).toMatchObject({ sessionId: 'g-1', scope: 'general' });
+    } finally {
+      delete process.env.IDEASEEK_USER_CONFIG;
+    }
   });
 });
 

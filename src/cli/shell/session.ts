@@ -399,13 +399,9 @@ export class InteractiveSession {
   private async newestAgentSessionId(): Promise<string | null> {
     try {
       const root = await findProjectRoot(process.cwd());
-      const { agentSessionsPath } = await import('../../dsh/session.js');
-      const { readFile } = await import('node:fs/promises');
-      const raw = JSON.parse(await readFile(agentSessionsPath(root), 'utf8')) as {
-        sessions?: { sessionId?: unknown }[];
-      };
-      const newest = raw.sessions?.[0]?.sessionId;
-      return typeof newest === 'string' && newest ? newest : null;
+      const { readAgentSessions } = await import('../../dsh/session.js');
+      const { sessions } = await readAgentSessions(root ?? null);
+      return sessions[0]?.sessionId ?? null;
     } catch {
       return null; // no registry yet — first turn starts fresh
     }

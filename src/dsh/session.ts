@@ -262,11 +262,70 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   }
 }
 
-/** Persisted session registry (ids only — no prompts beyond an 80-char head,
- * no secrets). */
+/**
+ * One recorded coding-turn group. `title` is the FIRST prompt head and stays
+ * stable so a session is recognizable in a list; `lastPrompt` is the newest.
+ * The transcript is never stored here — that is DSH's own session history —
+ * this is the IdeaSeek-side pointer list that answers "which directory, what
+ * was I doing, how many turns", which is only meaningful with cwd + scope.
+ */
+export interface AgentSessionEntry {
+  sessionId: string;
+  updatedAt: number;
+  startedAt: number;
+  title: string;
+  lastPrompt: string;
+  /** Kept from v1: the head of the most recent turn. */
+  promptHead: string;
+  /** Directory the turns ran in; '' when a v1 record never said. */
+  cwd: string;
+  scope: 'general' | 'project';
+  turns: number;
+  lastFinish: string | null;
+}
+
 export interface AgentSessionRegistry {
-  contract: 'agent-sessions-v1';
-  sessions: { sessionId: string; updatedAt: number; promptHead: string }[];
+  contract: 'agent-sessions-v2';
+  sessions: AgentSessionEntry[];
+}
+
+/** Bounds the list so a busy machine cannot grow it without limit. */
+const MAX_RECORDED_SESSIONS = 50;
+
+/**
+ * Normalizes v2 and v1 records. v1 had no cwd/scope/turns: an entry inherits
+ * the location it was read from as its scope (the honest guess — a project's
+ * `knowledge/` file means project, the user-level file means general) and gets
+ * its single recorded prompt as title, last and turns=1.
+ */
+function normalizeRegistry(
+  raw: unknown,
+  fallbackScope: 'general' | 'project',
+): AgentSessionRegistry {
+  const list = (raw as { sessions?: unknown })?.sessions;
+  const sessions: AgentSessionEntry[] = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.sessionId !== 'string' || !entry.sessionId) continue;
+    const head = typeof entry.promptHead === 'string' ? entry.promptHead : '';
+    const updatedAt = Number.isFinite(entry.updatedAt) ? Number(entry.updatedAt) : Date.now();
+    const scope =
+      entry.scope === 'general' || entry.scope === 'project' ? entry.scope : fallbackScope;
+    sessions.push({
+      sessionId: entry.sessionId,
+      updatedAt,
+      startedAt: Number.isFinite(entry.startedAt) ? Number(entry.startedAt) : updatedAt,
+      title: typeof entry.title === 'string' && entry.title ? entry.title : head,
+      lastPrompt:
+        typeof entry.lastPrompt === 'string' && entry.lastPrompt ? entry.lastPrompt : head,
+      promptHead: head,
+      cwd: typeof entry.cwd === 'string' ? entry.cwd : '',
+      scope,
+      turns: Number.isFinite(entry.turns) ? Number(entry.turns) : 1,
+      lastFinish: typeof entry.lastFinish === 'string' ? entry.lastFinish : null,
+    });
+  }
+  return { contract: 'agent-sessions-v2', sessions };
 }
 
 /**
@@ -281,32 +340,54 @@ export function agentSessionsPath(root: string | null): string {
   return join(dir, 'agent-sessions.json');
 }
 
+/** Reads the registry (v1 or v2); a missing or unreadable file is an empty list. */
+export async function readAgentSessions(root: string | null): Promise<AgentSessionRegistry> {
+  const { readFile } = await import('node:fs/promises');
+  try {
+    return normalizeRegistry(
+      JSON.parse(await readFile(agentSessionsPath(root), 'utf8')),
+      root ? 'project' : 'general',
+    );
+  } catch {
+    return { contract: 'agent-sessions-v2', sessions: [] };
+  }
+}
+
 export async function recordAgentSession(
   root: string | null,
-  entry: { sessionId: string; prompt: string },
+  entry: { sessionId: string; prompt: string; cwd: string; finishReason?: string | null },
 ): Promise<string> {
-  const { readFile } = await import('node:fs/promises');
   const { writeFileAtomic, ensureDir } = await import('../core/atomic.js');
   const file = agentSessionsPath(root);
-  let registry: AgentSessionRegistry = { contract: 'agent-sessions-v1', sessions: [] };
-  try {
-    registry = JSON.parse(await readFile(file, 'utf8')) as AgentSessionRegistry;
-  } catch {
-    registry = { contract: 'agent-sessions-v1', sessions: [] };
-  }
-  const promptHead = entry.prompt.replace(/\s+/g, ' ').slice(0, 80);
+  const registry = await readAgentSessions(root);
+  const head = entry.prompt.replace(/\s+/g, ' ').slice(0, 80);
+  const scope: 'general' | 'project' = root ? 'project' : 'general';
+  const now = Date.now();
   const existing = registry.sessions.find((s) => s.sessionId === entry.sessionId);
   if (existing) {
-    existing.updatedAt = Date.now();
-    existing.promptHead = promptHead;
+    existing.updatedAt = now;
+    existing.promptHead = head;
+    existing.lastPrompt = head;
+    existing.cwd = entry.cwd;
+    existing.scope = scope;
+    existing.turns += 1;
+    existing.lastFinish = entry.finishReason ?? null;
   } else {
     registry.sessions.push({
       sessionId: entry.sessionId,
-      updatedAt: Date.now(),
-      promptHead,
+      updatedAt: now,
+      startedAt: now,
+      title: head,
+      lastPrompt: head,
+      promptHead: head,
+      cwd: entry.cwd,
+      scope,
+      turns: 1,
+      lastFinish: entry.finishReason ?? null,
     });
   }
   registry.sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+  registry.sessions = registry.sessions.slice(0, MAX_RECORDED_SESSIONS);
   await ensureDir(dirname(file));
   await writeFileAtomic(file, `${JSON.stringify(registry, null, 2)}\n`);
   return file;
