@@ -272,6 +272,33 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     expect(done.code).toBe(0);
   }, 60_000);
 
+  it('agent sessions continue across TUI restarts through the registry', async () => {
+    const dir = await makeProjectDir();
+    const env = { IDEASEEK_FAKE_AGENT_TURN: '1' };
+
+    // Session A: one turn, answered, recorded to knowledge/agent-sessions.json.
+    const first = startTtyRepl(dir, ['--mode', 'agent'], env);
+    await first.waitFor(/ideaseek ›/);
+    first.write('hello there\r');
+    await first.waitFor(/approval required: pwsh/);
+    first.write('y\r');
+    await first.waitFor(/Fake turn complete/);
+    const quit1 = await first.quit();
+    expect(quit1.code).toBe(0);
+
+    // Fresh TUI: seeds --resume from the registry — same conversation.
+    const second = startTtyRepl(dir, ['--mode', 'agent'], env);
+    await second.waitFor(/ideaseek ›/);
+    second.write('again please\r');
+    await second.waitFor(/resumed session session-fake-e2e/);
+    await second.waitFor(/approval required: pwsh/);
+    second.write('y\r');
+    await second.waitFor(/agent turn → session session-fake-e2e \(resumed,/);
+    await second.waitFor(/Fake turn complete/);
+    const quit2 = await second.quit();
+    expect(quit2.code).toBe(0);
+  }, 120_000);
+
   it('Ctrl-C interrupts the command that is currently running', async () => {
     const dir = await makeProjectDir();
     // Stretch the relay's abortable window (env test seam) so the

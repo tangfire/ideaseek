@@ -30,9 +30,17 @@ function readStdinAnswer(): Promise<string | null> {
 }
 
 /** Canned agent turn for tests (IDEASEEK_FAKE_AGENT_TURN=1). */
-async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> {
+async function runFakeAgentTurn(
+  prompt: string,
+  json: boolean,
+  resume: boolean,
+  root: string,
+): Promise<number> {
+  const sessionId = 'session-fake-e2e';
   process.stderr.write('  · dsh runtime started\n');
-  process.stderr.write('  · new session session-fake-e2e\n');
+  process.stderr.write(
+    resume ? `  · resumed session ${sessionId}\n` : `  · new session ${sessionId}\n`,
+  );
   let allowed = false;
   let approval: { toolName: string; reason: string } | null = null;
   // Mirror the real step stream: tool/call → approval → tool/result.
@@ -49,11 +57,15 @@ async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> 
   const response = allowed
     ? 'Fake turn complete — the tool ran and the answer is grounded.'
     : 'Understood — the approval was rejected; standing by without the tool.';
+  // Mirror the real path: record the session so the NEXT TUI can seed
+  // --resume from the registry (cross-restart continuity e2e).
+  const { recordAgentSession } = await import('../dsh/session.js');
+  await recordAgentSession(root, { sessionId, prompt });
   if (json) {
     process.stdout.write(
       jsonLine({
-        sessionId: 'session-fake-e2e',
-        resumed: false,
+        sessionId,
+        resumed: resume,
         finishReason: 'completed',
         eventCount: 3,
         approvals: approval
@@ -66,7 +78,7 @@ async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> 
     return 0;
   }
   process.stdout.write(
-    'agent turn → session session-fake-e2e (new, finish=completed, 3 event(s))\n',
+    `agent turn → session ${sessionId} (${resume ? 'resumed' : 'new'}, finish=completed, 3 event(s))\n`,
   );
   if (approval) {
     process.stdout.write(
@@ -74,7 +86,7 @@ async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> 
     );
   }
   process.stdout.write(`  ${response}\n`);
-  process.stdout.write('next: ideaseek agent "<prompt>" --resume session-fake-e2e\n');
+  process.stdout.write(`next: ideaseek agent "<prompt>" --resume ${sessionId}\n`);
   return 0;
 }
 
@@ -170,7 +182,12 @@ export function registerAgentCommand(program: Command): void {
           // --json shapes mirror the real summary). TUI e2e drives y/n
           // through it via IDEASEEK_AGENT_APPROVAL=stdio.
           if (process.env.IDEASEEK_FAKE_AGENT_TURN === '1') {
-            return await runFakeAgentTurn(prompt, opts.json === true);
+            return await runFakeAgentTurn(
+              prompt,
+              opts.json === true,
+              opts.resume !== undefined,
+              root,
+            );
           }
 
           const { runAgentTurn, redactAgentText } = await import('../dsh/session.js');

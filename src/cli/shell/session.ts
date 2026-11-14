@@ -345,9 +345,40 @@ export class InteractiveSession {
    * stderr render dim; `error:` lines keep the error tone. A coding turn
    * can legitimately run for minutes — bounded by a generous timeout.
    */
+  /**
+   * Newest agent session recorded for this project (registry writes
+   * newest-first) — lets a fresh TUI continue the last conversation.
+   */
+  private async newestAgentSessionId(): Promise<string | null> {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      if (!root) return null;
+      const { agentSessionsPath } = await import('../../dsh/session.js');
+      const { readFile } = await import('node:fs/promises');
+      const raw = JSON.parse(await readFile(agentSessionsPath(root), 'utf8')) as {
+        sessions?: { sessionId?: unknown }[];
+      };
+      const newest = raw.sessions?.[0]?.sessionId;
+      return typeof newest === 'string' && newest ? newest : null;
+    } catch {
+      return null; // no registry yet — first turn starts fresh
+    }
+  }
+
   private async runAgentTurn(message: string): Promise<void> {
     const args = ['agent', message];
-    if (this.agentSessionId) args.push('--resume', this.agentSessionId);
+    if (this.agentSessionId) {
+      args.push('--resume', this.agentSessionId);
+    } else {
+      // Continue the project's last agent conversation across TUI
+      // restarts (Claude-Code style continuity); the child falls back to
+      // a fresh session when the id no longer exists DSH-side.
+      const prior = await this.newestAgentSessionId();
+      if (prior) {
+        this.agentSessionId = prior;
+        args.push('--resume', prior);
+      }
+    }
     // Default provider/model routes for TUI turns. IDEASEEK_AGENT_MODEL
     // doubles as the test hook for a cheap model-free failure (a bogus
     // model name refuses in ~4s BEFORE any model call — never spend

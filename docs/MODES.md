@@ -36,7 +36,7 @@ Research/Analysis/Agent 是持久化的会话模式标记，自然语言按模�
 
 - **Research 模式**：`ideaseek ask` 的 supervisor 分类与现有 CLI use-case 执行——只读查询即时回答，高影响请求生成待审批 Decision，绝不静默执行；问候与能力问题由确定性拦截即时回答（不烧模型）。
 - **Analysis 模式**：自然语言进入材料评估与研究准备流程；只写知识和缺口 artifact，缺 required 材料时给出阻塞和下一步，不启动正式实验。
-- **Agent 模式**：每条自然语言是一次**真实 DSH coding-session turn**（与 `ideaseek agent` 同一 use-case：项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。**TUI 内工具审批已透传**（输入行切换为 `y allow once · n reject` 提示，应答回传子进程；行式路径用裸 y/n 行，见 TERMINAL_UX 审批界面）；未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve），TTY 下仍走原生问询。跨 TUI 重启的会话延续仍待交付。
+- **Agent 模式**：每条自然语言是一次**真实 DSH coding-session turn**（与 `ideaseek agent` 同一 use-case：项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，**跨 TUI 重启**也从 `knowledge/agent-sessions.json`（最新在前）自动续接上一段对话——id 在 DSH 侧失效时记日志回退新建，绝不卡死后续消息（想新开对话：删除该注册表条目）。无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。**TUI 内工具审批已透传**（输入行切换为 `y allow once · n reject` 提示，应答回传子进程；行式路径用裸 y/n 行，见 TERMINAL_UX 审批界面）；未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve），TTY 下仍走原生问询。
 
 两种模式都仍受项目根路径、网络、凭据和容器策略限制；默认禁止修改 `papers/`、`datasets/`、comparison `upstream/`、锁定协议、已提交实验结果和 handoff。修改科研对象必须走 Research Decision/Approval。`PROGRESS.md` 的 Agent mode checkbox 与 conformance tests 完成前，不承诺完整的 Claude Code 式跨回合工具审批体验。
 

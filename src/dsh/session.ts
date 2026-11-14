@@ -189,9 +189,19 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     let resumed = false;
     let session;
     if (opts.sessionId) {
-      session = await harness.resumeSession(opts.sessionId);
-      resumed = true;
-      log(`resumed session ${opts.sessionId}`);
+      try {
+        session = await harness.resumeSession(opts.sessionId);
+        resumed = true;
+        log(`resumed session ${opts.sessionId}`);
+      } catch (error) {
+        // Stale registry id (pruned/expired session): fall back to a fresh
+        // session loudly instead of wedging every subsequent message on a
+        // dead id — the summary then honestly reports (new, …).
+        log(
+          `resume ${opts.sessionId} failed: ${redactAgentText((error as Error).message ?? String(error))}; starting a new session`,
+        );
+        session = harness.session();
+      }
     } else {
       session = harness.session();
       log(`new session ${session.id}`);
