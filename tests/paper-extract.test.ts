@@ -2,14 +2,14 @@ import { spawn } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CLI_BIN } from './helpers.js';
 import { HarnessBlockError, isHarnessBlockError } from '../src/dsh/adapter.js';
 import { FakeHarnessAdapter } from '../src/dsh/fake-adapter.js';
 import type { ProjectRuntime } from '../src/workflow/runtime.js';
 import type { RunRecord } from '../src/workflow/types.js';
 import { FakeWorker } from '../src/worker/worker.js';
-import { buildHandlers } from '../src/commands/shared.js';
+import { buildHandlers, resolveHarnessKind } from '../src/commands/shared.js';
 import { makeProjectDir, openRuntime } from './helpers.js';
 
 const PAPER = `# Attention Is All You Need
@@ -483,4 +483,42 @@ describe('CLI: PDF parse chain (--paper file.pdf)', () => {
     expect(status.stdout).toContain('paper.parse');
     expect(status.stdout).toContain('paper.extract');
   }, 90_000);
+});
+
+describe('harness kind resolution (never silently fake)', () => {
+  const saved = {
+    key: process.env.DEEPSEEK_API_KEY,
+    hook: process.env.IDEASEEK_ASK_HARNESS,
+  };
+  afterEach(() => {
+    if (saved.key === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = saved.key;
+    if (saved.hook === undefined) delete process.env.IDEASEEK_ASK_HARNESS;
+    else process.env.IDEASEEK_ASK_HARNESS = saved.hook;
+  });
+
+  it('prefers an explicit flag, then the test hook, then a configured key', () => {
+    process.env.IDEASEEK_ASK_HARNESS = 'fake';
+    process.env.DEEPSEEK_API_KEY = 'sk-present';
+    expect(resolveHarnessKind('dsh')).toBe('dsh');
+    expect(resolveHarnessKind(undefined)).toBe('fake'); // hook beats the key
+    delete process.env.IDEASEEK_ASK_HARNESS;
+    expect(resolveHarnessKind(undefined)).toBe('dsh');
+  });
+
+  it('says out loud when it falls back to synthetic output', () => {
+    delete process.env.IDEASEEK_ASK_HARNESS;
+    delete process.env.DEEPSEEK_API_KEY;
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      expect(resolveHarnessKind(undefined)).toBe('fake');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(written.join('')).toContain('SYNTHETIC');
+  });
 });

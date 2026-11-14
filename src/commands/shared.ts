@@ -247,6 +247,28 @@ function wrapWithUsageRecording(inner: HarnessAdapter): HarnessAdapter {
   return new UsageRecordingHarness(inner, getDeps);
 }
 
+/**
+ * Harness selection shared by every model-backed command: explicit flag >
+ * test hook > real provider when a key resolves > fake.
+ *
+ * Defaulting to `fake` is the dangerous direction — it produces well-formed
+ * synthetic PaperCards, comparisons and full-run results that a researcher
+ * cannot distinguish from real ones by looking. So an implicit fallback says
+ * so out loud, and commands must not hardcode 'fake' as their option default.
+ */
+export function resolveHarnessKind(explicit?: string): string {
+  if (explicit && explicit.trim()) return explicit.trim();
+  const hook = process.env.IDEASEEK_ASK_HARNESS;
+  if (hook && hook.trim()) return hook.trim();
+  const key = process.env.DEEPSEEK_API_KEY;
+  if (key && key.trim()) return 'dsh';
+  process.stderr.write(
+    'harness: fake — model-backed output is SYNTHETIC, not read from your papers. ' +
+      'Configure a provider (ideaseek models setup) or pass --harness dsh.\n',
+  );
+  return 'fake';
+}
+
 export function buildHarness(kind: string | undefined): HarnessAdapter {
   const selected = kind ?? 'fake';
   if (selected === 'fake') {

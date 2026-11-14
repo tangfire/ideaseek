@@ -371,7 +371,10 @@ export function registerFullCommand(program: Command): void {
       '--fault <json>',
       'fault injection map keyed by task type, e.g. \'{"full.run":{"failTimes":1}}\'',
     )
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
@@ -391,7 +394,7 @@ export function registerFullCommand(program: Command): void {
           const { ProjectRuntime } = await import('../workflow/runtime.js');
           const runtime = await ProjectRuntime.open({
             cwd: root,
-            harness: shared.buildHarness(opts.harness),
+            harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
           });
           let lockHeld = false;
           let lockRoot: string | null = null;

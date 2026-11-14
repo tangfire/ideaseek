@@ -7,7 +7,14 @@ import { ensureDir } from '../core/atomic.js';
 import { killTree } from '../core/proc.js';
 import { projectPaths } from '../config/paths.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
-import { action, assertConfigUsable, buildHarness, countByStatus, jsonLine } from './shared.js';
+import {
+  action,
+  assertConfigUsable,
+  buildHarness,
+  countByStatus,
+  jsonLine,
+  resolveHarnessKind,
+} from './shared.js';
 import { ensureActiveRun } from './ingest.js';
 
 /**
@@ -76,7 +83,10 @@ export function registerExtractCommand(program: Command): void {
     .option('--parallel <k>', 'parallel workers (1-4)', (value) => Number(value))
     .option('--limit <n>', 'only enqueue up to N pending papers', (value) => Number(value))
     .option('--run <runId>', 'target run (default: create or adopt an active run)')
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--enqueue-only', 'enqueue extract tasks without executing')
     .option('--timeout <ms>', 'bound on waiting for workers', (value) => Number(value))
     .option('--json', 'machine-readable output')
@@ -93,7 +103,7 @@ export function registerExtractCommand(program: Command): void {
         }) => {
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
-            harness: buildHarness(opts.harness),
+            harness: buildHarness(resolveHarnessKind(opts.harness)),
           });
           try {
             assertConfigUsable(runtime.configLoad);

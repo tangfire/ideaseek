@@ -552,7 +552,10 @@ export function registerComparisonCommand(program: Command): void {
     .description(
       'run the Comparison Planner agent (recent literature, venue, benchmark evidence) → reviewable matrix proposal',
     )
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--enqueue-only', 'enqueue the comparison.plan task without executing')
     .option('--json', 'machine-readable output')
     .action(
@@ -562,7 +565,7 @@ export function registerComparisonCommand(program: Command): void {
         const shared = await import('./shared.js');
         const runtime = await ProjectRuntime.open({
           cwd: root,
-          harness: shared.buildHarness(opts.harness),
+          harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
         });
         try {
           shared.assertConfigUsable(runtime.configLoad);
