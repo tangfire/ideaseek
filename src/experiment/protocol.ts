@@ -5,6 +5,8 @@
  * safely inferred. Locking makes a confirmed protocol an immutable, hashed
  * version — later changes create a new version instead of mutating history.
  */
+import type { SelectionSpec } from './selection.js';
+
 export type ProtocolSource =
   'paper-evidence' | 'code' | 'data-probe' | 'adapter-rule' | 'agent-inference' | 'user';
 
@@ -47,6 +49,12 @@ export interface ExperimentalProtocolProposal {
   sampleUnit: Sourced<string>;
   labelSemantics: Sourced<string>;
   splitRules: Sourced<string[]>;
+  /**
+   * Machine-readable split intent (docs/DATA_CONTRACTS.md). Optional so
+   * proposals from before it existed stay readable; when present the slicer
+   * expands it against the measured corpus instead of sampling rows at random.
+   */
+  slicing?: Sourced<SelectionSpec[]>;
   leakageChecks: string[];
   preprocessing: string[];
   baselineEntries: BaselineEntry[];
@@ -152,6 +160,35 @@ export function validateProtocolProposal(value: unknown): ValidationResult {
     'resourceEstimate',
   ] as const) {
     checkSourced(p[key] as Sourced<unknown>, key, errors, confirmations);
+  }
+
+  if (p.slicing !== undefined) {
+    checkSourced(p.slicing as Sourced<unknown>, 'slicing', errors, confirmations);
+    const specs = (p.slicing as Sourced<unknown>).value as unknown;
+    if (!Array.isArray(specs) || specs.length === 0) {
+      errors.push('slicing.value must be a non-empty array of selection specs');
+    } else {
+      for (const [index, raw] of specs.entries()) {
+        const spec = raw as Partial<SelectionSpec>;
+        const where = `slicing.value[${index}]`;
+        if (!spec || typeof spec !== 'object') {
+          errors.push(`${where} must be an object`);
+          continue;
+        }
+        if (typeof spec.fold !== 'string' || !spec.fold.trim()) {
+          errors.push(`${where}.fold must be a non-empty label`);
+        }
+        if (spec.holdoutColumn !== null && typeof spec.holdoutColumn !== 'string') {
+          errors.push(`${where}.holdoutColumn must be a column name or null`);
+        }
+        if (!Array.isArray(spec.holdoutValues)) {
+          errors.push(`${where}.holdoutValues must be an array`);
+        }
+        if (!Number.isInteger(spec.seed)) {
+          errors.push(`${where}.seed must be an integer`);
+        }
+      }
+    }
   }
 
   for (const key of [

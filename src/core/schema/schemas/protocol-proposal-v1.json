@@ -154,6 +154,42 @@
         }
       }
     },
+    "slicing": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "value": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["fold", "holdoutColumn", "holdoutValues", "seed"],
+            "properties": {
+              "fold": { "type": "string", "minLength": 1 },
+              "holdoutColumn": { "type": ["string", "null"] },
+              "holdoutValues": { "type": "array", "items": { "type": "string" } },
+              "clientColumn": { "type": ["string", "null"] },
+              "stratifyBy": { "type": ["string", "null"] },
+              "seed": { "type": "integer" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "source": {
+          "enum": [
+            "paper-evidence",
+            "code",
+            "data-probe",
+            "adapter-rule",
+            "agent-inference",
+            "user"
+          ]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "splitRules": {
       "type": "object",
       "required": ["value", "source", "confidence"],

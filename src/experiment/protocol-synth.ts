@@ -1,7 +1,7 @@
 import type { CompactCard } from '../knowledge/synthesis.js';
 
 /** Prompt+schema version for provenance; bump when the instruction changes. */
-export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.3';
+export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.4';
 
 /**
  * Measured structure of an image corpus (docs/DATA_CONTRACTS.md §RunEnv
@@ -128,6 +128,9 @@ export const PROTOCOL_INSTRUCTION = [
   ' "sampleUnit": {"value": string, "source": string, "confidence": number},',
   ' "labelSemantics": {"value": string, "source": string, "confidence": number},',
   ' "splitRules": {"value": [string], "source": string, "confidence": number},',
+  ' "slicing": {"value": [{"fold": string, "holdoutColumn": string|null,',
+  '   "holdoutValues": [string], "clientColumn": string|null, "stratifyBy": string|null,',
+  '   "seed": integer}], "source": string, "confidence": number},',
   ' "leakageChecks": [string],',
   ' "preprocessing": [string],',
   ' "baselineEntries": [{"methodId": string, "entry": string, "source": string, "confidence": number}],',
@@ -148,6 +151,12 @@ export const PROTOCOL_INSTRUCTION = [
   'inferred: cite a domain axis, its values and per-domain counts as source "data-probe"',
   'with confidence >= 0.7, and prefer its splitCandidates over inventing a split; only mark',
   'a data property unconfirmed if it is absent from both files[] and corpora[].',
+  'slicing[] is the machine-readable form of splitRules and must be emitted whenever the',
+  'corpus has a measurable grouping column: one entry per evaluation fold, naming columns',
+  'EXACTLY as they appear in dataset files[].columnNames or corpora[] (a column you invent',
+  'will be rejected against the measured structure), holdoutValues taken verbatim from the',
+  'measured values, clientColumn set when clients are simulated per group, and a fixed seed',
+  'so every run reproduces. Use null for any axis the corpus does not actually have.',
   'when tables[] is present it holds numeric results transcribed from the papers: ground',
   'baseline entries, metric targets and resource estimates in them with source',
   '"paper-evidence" rather than inventing magnitudes; numbers you cannot trace to a table',

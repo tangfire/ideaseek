@@ -7,7 +7,7 @@ import { buildCsvSlices } from '../experiment/slice-csv.js';
 import { profileCsv, renderDatasetCard } from '../experiment/dataset-card.js';
 import { isContentHash, sha256OfFile, type ContentHash } from '../core/hash.js';
 import { writeFileAtomic } from '../core/atomic.js';
-import type { SliceScale } from '../experiment/slices.js';
+import type { SliceScale, DatasetSlice } from '../experiment/slices.js';
 import { profileFederatedDataset } from '../knowledge/federated.js';
 import { acquireDataset, formatBytes } from '../knowledge/dataset-acquire.js';
 import {
@@ -16,6 +16,8 @@ import {
   type ImageProfile,
 } from '../knowledge/image-profile.js';
 import type { DatasetProfile } from '../experiment/dataset-card.js';
+import { buildSelectionSlices, type MeasuredCorpus } from '../experiment/selection.js';
+import type { ExperimentalProtocolProposal } from '../experiment/protocol.js';
 import { buildAllFederatedSlices } from '../experiment/federated-slices.js';
 import { ensureDir } from '../core/atomic.js';
 import { action, buildHarness, jsonLine } from './shared.js';
@@ -111,6 +113,110 @@ async function appendAcquisition(
   return { path, records: records.length };
 }
 
+/**
+ * Builds the measured structure a selection spec is validated against: column
+ * names and group→value counts from the profiles `data describe` wrote. Purely
+ * descriptive — the platform never decides what a column means.
+ */
+async function loadMeasuredCorpus(runtime: ProjectRuntime): Promise<MeasuredCorpus | null> {
+  const { readFile } = await import('node:fs/promises');
+  const columns = new Set<string>();
+  let samples = 0;
+  let snapshotId: string | null = null;
+  const groups: Record<string, Record<string, number>> = {};
+  try {
+    const card = JSON.parse(
+      await readFile(join(runtime.paths.knowledgeDir, 'dataset-card.json'), 'utf8'),
+    ) as {
+      profiles?: {
+        source: { path: string };
+        rows: number;
+        columns: { name: string }[];
+        datasetSnapshotId?: string;
+      }[];
+    };
+    for (const profile of card.profiles ?? []) {
+      for (const column of profile.columns ?? []) columns.add(column.name);
+      samples += profile.rows;
+      snapshotId ??= profile.datasetSnapshotId ?? null;
+    }
+  } catch {
+    // No card: corpora alone can still describe the structure.
+  }
+  try {
+    const raw = JSON.parse(
+      await readFile(join(runtime.paths.knowledgeDir, 'image-profiles.json'), 'utf8'),
+    ) as { profiles?: ImageProfile[] };
+    for (const profile of raw.profiles ?? []) {
+      for (const name of profile.source.columns) columns.add(name);
+      if (profile.grouping.column && profile.grouping.values.length > 0) {
+        groups[profile.grouping.column] = Object.fromEntries(
+          profile.grouping.values.map((item) => [item.name, item.count]),
+        );
+      }
+      if (profile.classes.column && profile.classes.values.length > 0) {
+        groups[profile.classes.column] = Object.fromEntries(
+          profile.classes.values.map((item) => [item.name, item.count]),
+        );
+      }
+      if (profile.samples > samples) {
+        samples = profile.samples;
+        snapshotId = `data-${profile.source.sha256.slice(7, 19)}`;
+      }
+    }
+  } catch {
+    // No image corpus profiled.
+  }
+  if (samples === 0 || !snapshotId) return null;
+  return { columns: [...columns], groups, samples, snapshotId };
+}
+
+async function buildSlicesFromProtocol(
+  runtime: ProjectRuntime,
+  scales: SliceScale[],
+  seedOverride: number | undefined,
+): Promise<DatasetSlice[]> {
+  const corpus = await loadMeasuredCorpus(runtime);
+  if (!corpus) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'no measured corpus structure to slice — run: ideaseek data describe first',
+    );
+  }
+  const latest = await runtime.db.listArtifactsByKind('protocol-proposal');
+  if (latest.length === 0) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'no protocol proposal — run: ideaseek protocol propose (its slicing slot drives the split)',
+    );
+  }
+  const proposal = JSON.parse(
+    await runtime.store.readFinalText(latest[latest.length - 1]!.contentHash),
+  ) as ExperimentalProtocolProposal;
+  const specs = proposal.slicing?.value ?? [];
+  if (specs.length === 0) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      'the protocol carries no slicing spec — regenerate with the current prompt: ideaseek protocol propose',
+    );
+  }
+  const slices: DatasetSlice[] = [];
+  for (const spec of specs) {
+    const built = buildSelectionSlices(
+      seedOverride === undefined ? spec : { ...spec, seed: seedOverride },
+      corpus,
+      {
+        tiers: scales,
+        generatedBy: 'ideaseek data slices --from-protocol',
+        now: Date.now(),
+        protocolId: proposal.protocolId,
+      },
+    );
+    slices.push(...built);
+  }
+  return slices;
+}
+
 export function registerDataCommand(program: Command): void {
   const data = program.command('data').description('dataset inventory and slices');
 
@@ -120,6 +226,10 @@ export function registerDataCommand(program: Command): void {
     .option('--dataset <id>', 'filter by dataset snapshot id')
     .option('--scale <scale>', 'filter by scale (smoke|quick|standard)')
     .option('--build-from <csv>', 'project-relative CSV to slice (experimental Phase 3 entry)')
+    .option(
+      '--from-protocol',
+      'expand the protocol slicing spec against the measured corpus (any direction)',
+    )
     .option('--scales <list>', 'comma-separated scales when building', 'smoke,quick,standard')
     .option('--seed <n>', 'selection seed when building', (value) => Number(value))
     .option('--json', 'machine-readable output')
@@ -129,12 +239,56 @@ export function registerDataCommand(program: Command): void {
           dataset?: string;
           scale?: string;
           buildFrom?: string;
+          fromProtocol?: boolean;
           scales?: string;
           seed?: number;
           json?: boolean;
         }) => {
           const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           try {
+            if (opts.fromProtocol) {
+              const scales = (opts.scales ?? 'smoke,quick,standard')
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter(Boolean) as SliceScale[];
+              for (const scale of scales) {
+                if (!SCALES.includes(scale)) {
+                  throw new IdeaseekError(
+                    'INVALID_ARGUMENT',
+                    `unknown scale "${scale}" (expected smoke|quick|standard)`,
+                  );
+                }
+              }
+              const built = await buildSlicesFromProtocol(
+                runtime,
+                scales,
+                Number.isFinite(opts.seed) ? opts.seed : undefined,
+              );
+              for (const slice of built) {
+                await runtime.db.upsertSlice({
+                  sliceId: slice.sliceId,
+                  datasetSnapshotId: slice.datasetSnapshotId,
+                  scale: slice.scale,
+                  record: slice as unknown as Record<string, unknown>,
+                  createdAt: slice.generatedAt,
+                });
+              }
+              if (opts.json) {
+                process.stdout.write(jsonLine({ built: built.length, slices: built }));
+                return 0;
+              }
+              process.stdout.write(
+                `built ${built.length} slice(s) from the protocol slicing spec\n`,
+              );
+              for (const slice of built) {
+                process.stdout.write(
+                  `  ${slice.scale.padEnd(9)} ${slice.sliceId}  ${slice.stats.selectedRows}/${slice.stats.totalRows} rows\n` +
+                    `    ${slice.rule}\n`,
+                );
+              }
+              process.stdout.write('next: ideaseek data slices --scale smoke\n');
+              return 0;
+            }
             if (opts.buildFrom) {
               if (opts.scale) {
                 throw new IdeaseekError(
