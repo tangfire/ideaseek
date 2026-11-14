@@ -312,9 +312,15 @@ export class ShellEngine {
     if (EDIT_KEYS.has(name ?? '')) return this.snapshot(); // handled above
 
     if (sequence && sequence.length > 0) {
-      this.line = this.line.slice(0, this.cursor) + sequence + this.line.slice(this.cursor);
-      this.cursor += sequence.length;
-      this.refreshPalette();
+      // Strip raw ASCII control characters (except nothing here — single-line
+      // composer never accepts NUL/ESC/BEL/NAK into the edit buffer).
+      // eslint-disable-next-line no-control-regex
+      const printable = sequence.replace(/[\x00-\x1F\x7F]/g, '');
+      if (printable.length > 0) {
+        this.line = this.line.slice(0, this.cursor) + printable + this.line.slice(this.cursor);
+        this.cursor += printable.length;
+        this.refreshPalette();
+      }
     }
     return this.snapshot();
   }
@@ -397,8 +403,20 @@ export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
   if (key.end) return { name: 'end' };
   if (key.backspace || input === '\x7f' || input === '\b') return { name: 'backspace' };
   if (key.delete) return { name: 'delete' };
-  if (key.ctrl && input === '\x03') return { name: 'c', ctrl: true };
-  if (key.ctrl && input === '\x04') return { name: 'd', ctrl: true };
+  if ((key.ctrl && (input === '\x03' || input === 'c')) || input === '\x03') {
+    return { name: 'c', ctrl: true };
+  }
+  if ((key.ctrl && (input === '\x04' || input === 'd')) || input === '\x04') {
+    return { name: 'd', ctrl: true };
+  }
+  // Map single-byte ASCII control codes (Ctrl+A..Ctrl+Z = 0x01..0x1A) even
+  // when Ink delivers the raw control byte rather than the letter + key.ctrl.
+  if (input.length === 1) {
+    const code = input.charCodeAt(0);
+    if (code >= 1 && code <= 26 && code !== 9 && code !== 10 && code !== 13) {
+      return { name: String.fromCharCode(code + 96), ctrl: true };
+    }
+  }
   if (key.ctrl && input.length === 1) return { name: input, ctrl: true };
   if (input.length > 0 && !key.meta) return { sequence: input };
   return { name: 'unknown' };

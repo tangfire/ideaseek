@@ -2,8 +2,16 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
 import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
 import { InteractiveSession, type HeaderInfo, type SessionStartup } from './session.js';
+import { TranscriptWrapCache, computeViewportSlice, formatElapsed } from './transcript.js';
 import { renderBanner } from '../banner.js';
 import { SLASH_COMMANDS } from '../slash-menu.js';
+import {
+  padVisualEnd,
+  sanitizeAnsiForInk,
+  sliceVisualTail,
+  truncateVisual,
+  visualWidth,
+} from '../text-width.js';
 
 /**
  * Ink interactive shell (ADR-010, docs/TERMINAL_UX.md): the sole renderer
@@ -13,23 +21,21 @@ import { SLASH_COMMANDS } from '../slash-menu.js';
  * the non-interactive CLI). Business state never lives here.
  */
 
-const FOOTER =
-  'Shift+Tab mode · Tab complete · ↑/↓ palette or history · Esc close · wheel/PgUp scrolls history · Ctrl-D or /quit exits';
+const FOOTER_HINTS = 'Shift+Tab mode · Tab menu · Ctrl-C stop · Ctrl-D quit';
 /** Lines the wheel scrolls per notch (terminals already repeat events). */
 const WHEEL_SCROLL_LINES = 6;
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
 const QUIT_LINE = 'bye — background runs keep going (reconnect with ideaseek)';
 const STARTING_LINE = 'starting…';
 /**
- * History buffer for the activity pane (lines kept in memory). The wheel
- * must reach "any history" a session can reasonably produce — 5000 lines
- * ≈ hours of events — while rendering stays O(visible) because the pane
- * only ever slices one screenful.
+ * History buffer for the activity pane (logical lines kept in memory).
+ * Soft-wrapped visual rows are cached per line and sliced to the visible
+ * viewport so rendering stays O(visible rows).
  */
 const MAX_ACTIVITY = 5000;
 const PROMPT_TEXT = 'ideaseek › ';
-/** Input-bar background: one shade above the terminal black. */
-const INPUT_BG = '#171b22';
+/** Coalescing window for rapid activity bursts (~60fps) to avoid frame storms. */
+const BUS_BATCH_MS = 16;
 /** Braille spinner cycled on the input line while a command runs. */
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -44,27 +50,37 @@ export class ActivityBus {
   header: HeaderInfo | null = null;
   startup: SessionStartup | null = null;
   private readonly listeners = new Set<() => void>();
+  private batchTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private emit(): void {
-    this.version += 1;
+  private notifyNow(): void {
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
     for (const listener of this.listeners) listener();
   }
 
+  private scheduleNotify(): void {
+    if (this.listeners.size === 0 || this.batchTimer) return;
+    this.batchTimer = setTimeout(() => {
+      this.batchTimer = null;
+      for (const listener of this.listeners) listener();
+    }, BUS_BATCH_MS);
+  }
+
   push(line: string): void {
-    // CLI relays may return several lines in one stdout chunk and may carry
-    // ANSI styling from downstream commands. Ink owns the terminal screen,
-    // so keep each logical line separate and strip embedded control codes
-    // before rendering; raw ANSI inside <Text> can corrupt later frames.
-    // The control character is the point: this pattern matches ANSI CSI sequences.
-    // eslint-disable-next-line no-control-regex
-    const safe = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r\n?/g, '\n');
+    // Preserve safe ANSI SGR color sequences while stripping cursor/screen
+    // control codes so downstream CLI colors survive without corrupting Ink.
+    const safe = sanitizeAnsiForInk(line);
     this.lines = [...this.lines, ...safe.split('\n')].slice(-MAX_ACTIVITY);
-    this.emit();
+    this.version += 1;
+    this.scheduleNotify();
   }
 
   setHeader(header: HeaderInfo): void {
     this.header = header;
-    this.emit();
+    this.version += 1;
+    this.notifyNow();
   }
 
   setStartup(startup: SessionStartup): void {
@@ -74,37 +90,74 @@ export class ActivityBus {
     // event-shaped), the hint stays pinned under the header.
     if (startup.lastSession) this.push(startup.lastSession);
     for (const line of startup.pending) this.push(line);
-    this.emit();
+    this.version += 1;
+    this.notifyNow();
   }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+      if (this.listeners.size === 0 && this.batchTimer) {
+        clearTimeout(this.batchTimer);
+        this.batchTimer = null;
+      }
     };
   };
+}
+
+/**
+ * Fits single-line composer text around the cursor into `availCols` visual
+ * columns so long English or CJK inputs keep the cursor visible and never wrap.
+ */
+function fitComposerWindow(
+  line: string,
+  cursor: number,
+  availCols: number,
+): { before: string; after: string } {
+  const safeAvail = Math.max(6, availCols);
+  const rawBefore = line.slice(0, cursor);
+  const rawAfter = line.slice(cursor);
+  const beforeW = visualWidth(rawBefore);
+  const afterW = visualWidth(rawAfter);
+  if (beforeW + afterW <= safeAvail) {
+    return { before: rawBefore, after: rawAfter };
+  }
+  const reserveAfter = Math.min(afterW, Math.max(0, Math.floor(safeAvail / 3)));
+  const beforeBudget = Math.max(3, safeAvail - reserveAfter);
+  let before = rawBefore;
+  if (beforeW > beforeBudget) {
+    const tail = sliceVisualTail(rawBefore, Math.max(1, beforeBudget - 1));
+    before = `…${tail}`;
+  }
+  const remainingForAfter = Math.max(0, safeAvail - visualWidth(before));
+  const after = afterW > remainingForAfter ? truncateVisual(rawAfter, remainingForAfter) : rawAfter;
+  return { before, after };
 }
 
 interface ShellAppProps {
   session: InteractiveSession;
   bus: ActivityBus;
+  plain: boolean;
 }
 
-function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
+function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const engine = useMemo(() => new ShellEngine(), []);
+  const wrapCache = useMemo(() => new TranscriptWrapCache(), []);
   const { stdout } = useStdout();
   const { exit } = useApp();
   const [snap, setSnap] = useState<EngineResult>(() => engine.handle({ name: 'noop' }));
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [busyStartedAt, setBusyStartedAt] = useState<number | null>(null);
   // Masked secret entry (models setup): the buffer never leaves this
   // component except as the resolved answer — no echo, no transcript.
   const [secretBuf, setSecretBuf] = useState('');
   // Re-renders whenever the bus changes (early session lines flush here).
   useSyncExternalStore(bus.subscribe, () => bus.version);
-  const stateRef = useRef({ offset: 0, headerLines: 0 });
+  const stateRef = useRef({ offset: 0, chromeRows: 6 });
   const queueRef = useRef<Promise<void>>(Promise.resolve());
-  const prevLineCountRef = useRef(0);
+  const prevRowCountRef = useRef(0);
   const [size, setSize] = useState(() => ({
     rows: Number(process.env.IDEASEEK_TTY_ROWS ?? '') || stdout.rows || 24,
     columns: Number(process.env.IDEASEEK_TTY_COLS ?? '') || stdout.columns || 80,
@@ -115,9 +168,11 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   const [spin, setSpin] = useState(0);
   useEffect(() => {
     if (busy) {
+      setBusyStartedAt((prev) => prev ?? Date.now());
       const id = setInterval(() => setSpin((value) => value + 1), 90);
       return () => clearInterval(id);
     }
+    setBusyStartedAt(null);
     const id = setInterval(() => setCursorOn((value) => !value), 530);
     return () => clearInterval(id);
   }, [busy]);
@@ -148,14 +203,21 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
     };
   }, [stdout]);
 
-  // While scrolled up, anchor the viewed window: without this, every live
-  // event would shift the history under the reader's eyes (offset counts
-  // from the end). At the bottom (offset 0) the pane keeps following.
+  const cols = Math.max(24, size.columns);
+  const rows = Math.max(8, size.rows);
+  const paneCols = Math.max(16, cols - 2);
+  const wrappedRows = useMemo(
+    () => wrapCache.wrapAll(bus.lines, paneCols, plain),
+    [wrapCache, bus.lines, bus.version, paneCols, plain],
+  );
+
+  // While scrolled up, anchor the viewed window in wrapped-row units so new
+  // wrapped blocks never push history out from under the reader.
   useEffect(() => {
-    const delta = bus.lines.length - prevLineCountRef.current;
-    prevLineCountRef.current = bus.lines.length;
+    const delta = wrappedRows.length - prevRowCountRef.current;
+    prevRowCountRef.current = wrappedRows.length;
     if (delta > 0 && offset > 0) setOffset((prev) => prev + delta);
-  }, [bus.lines.length, offset]);
+  }, [wrappedRows.length, offset]);
 
   // Startup (header, session marker, pending approvals) + live event stream.
   // stopStream on unmount only kills THIS child — background runs keep going.
@@ -164,10 +226,6 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
     void session
       .begin()
       .then((startup) => {
-        // Serialize startup BEFORE the event stream opens: both paths
-        // open the project DB, and overlapping connections can hit
-        // "database is locked" under load (attach recovery writes while
-        // status is still reading).
         if (cancelled) return;
         bus.setStartup(startup);
         session.startStream();
@@ -193,12 +251,12 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
         session.answerSecret(answer);
         return;
       }
-      if (key.escape) {
+      if (key.escape || (key.ctrl && input === 'c') || input === '\x03') {
         setSecretBuf('');
         session.answerSecret(null);
         return;
       }
-      if (key.backspace) {
+      if (key.backspace || input === '\x7f' || input === '\b') {
         setSecretBuf((value) => value.slice(0, -1));
         return;
       }
@@ -232,7 +290,7 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
       return;
     }
     if (result.scrollDelta !== 0) {
-      const page = Math.max(1, size.rows - stateRef.current.headerLines - 3);
+      const page = Math.max(1, rows - stateRef.current.chromeRows);
       setOffset((prev) => Math.max(0, prev + result.scrollDelta * page));
       return;
     }
@@ -257,20 +315,17 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
       const line = result.submit;
       // Bare "/" — the engine already keeps the palette open; nothing to run.
       if (line === '/') return;
-      // Echo the utterance into the transcript (Claude-Code style): the
-      // input line clears on submit, so without this the pane shows only
-      // responses/events and the user cannot tell what was asked.
+      // Echo the utterance into the transcript (Claude-Code style).
       bus.push(`❯ ${line}`);
-      // Strictly ordered dispatch: a piped burst must not overtake an
-      // in-flight command's output (same queue discipline as classic).
+      // Snap back to tail when submitting so the user sees their command output.
+      setOffset(0);
       setBusy(true);
       queueRef.current = queueRef.current
         .then(async () => {
           const outcome = await session.submit(line);
           if (outcome === 'quit') {
             bus.push(QUIT_LINE);
-            // Give ink one frame to paint the farewell before unmounting —
-            // exit() in the same batch would drop the final render.
+            // Give ink one frame to paint the farewell before unmounting.
             setTimeout(() => exit(0), 60);
           }
         })
@@ -285,167 +340,146 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
     setSnap(result);
   });
 
-  // Pinned header = the compact context only (project · mode · run ·
-  // question). The block wordmark is a greeting in the activity pane and
-  // scrolls away with the first events (docs/TERMINAL_UX 启动信息).
-  const ctxLines = bus.header?.lines ?? [STARTING_LINE];
+  // Pinned header = compact context (project · mode · run · question).
+  const ctxLines = (bus.header?.lines ?? [STARTING_LINE]).map((line) => truncateVisual(line, cols));
   const modeLabel = ctxLines[0]?.includes('ANALYSIS')
     ? 'Analysis'
     : ctxLines[0]?.includes('GENERAL')
       ? 'General'
       : 'Research';
   const tone = bus.header?.tone ?? 'dim';
-  const headerLines = ctxLines;
-  stateRef.current.headerLines = headerLines.length;
+  const headerRows = ctxLines.length;
 
-  const inputAndFooterRows = 2;
-  const maxPaletteRows = Math.max(3, size.rows - headerLines.length - inputAndFooterRows - 1);
+  // Hairline-framed composer takes 3 rows (top rule + active bar + bottom rule).
+  const composerRows = 3;
+  const footerRows = 1;
+  const maxPaletteRows = Math.max(3, rows - headerRows - composerRows - footerRows - 2);
   const shownPalette = snap.paletteOpen ? snap.paletteItems.slice(0, maxPaletteRows) : [];
   const paletteTruncated = snap.paletteOpen && snap.paletteItems.length > shownPalette.length;
-  const paletteRows = shownPalette.length + (paletteTruncated ? 1 : 0);
-  const visible = Math.max(1, size.rows - headerLines.length - paletteRows - inputAndFooterRows);
-  const all = bus.lines;
-  // Over-scroll clamp: never scroll past the top of the buffer (when the
-  // whole history fits on screen there is nothing to scroll at all).
-  const maxOffset = Math.max(0, all.length - Math.min(visible, all.length));
-  const effOffset = Math.min(offset, maxOffset);
-  const end = all.length - effOffset;
-  const start = Math.max(0, end - visible);
-  const pane = all.slice(start, Math.max(start, end));
+  const paletteRows =
+    shownPalette.length > 0 ? 1 + shownPalette.length + (paletteTruncated ? 1 : 0) : 0;
+
+  stateRef.current.chromeRows = headerRows + paletteRows + composerRows + footerRows;
+  const visible = Math.max(1, rows - stateRef.current.chromeRows);
+  const probeViewport = computeViewportSlice(wrappedRows.length, visible, offset);
+  const contentRows = probeViewport.effOffset > 0 ? Math.max(1, visible - 1) : visible;
+  const viewport = computeViewportSlice(wrappedRows.length, contentRows, offset);
+  const pane = wrappedRows.slice(viewport.start, Math.max(viewport.start, viewport.end));
+
+  const hairline = '─'.repeat(cols);
+  const composerWindow = fitComposerWindow(
+    snap.line,
+    snap.cursor,
+    cols - visualWidth(PROMPT_TEXT) - 2,
+  );
+  const secretLabel = ` 🔐 ${session.secretPrompt?.label ?? ''}: `;
+  const secretBullets = '•'.repeat(
+    Math.min(secretBuf.length, Math.max(0, cols - visualWidth(secretLabel) - 2)),
+  );
+  const approvalPromptText = session.pendingApproval
+    ? truncateVisual(
+        ` ⏸ allow ${session.pendingApproval.toolName}? y allow once · n/Enter reject${
+          session.pendingApproval.reason ? ` — ${session.pendingApproval.reason}` : ''
+        }`,
+        cols,
+      )
+    : '';
+
+  const elapsed = busy && busyStartedAt ? ` ${formatElapsed(Date.now() - busyStartedAt)}` : '';
+  const statusSegment = busy
+    ? ` ${SPINNER[spin % SPINNER.length]} ${session.pendingApproval ? 'waiting for approval…' : `running…${elapsed}`} · `
+    : ' ';
+  const badgeText = ` ${modeLabel.toUpperCase()} `;
+  const footerTail = truncateVisual(
+    `${statusSegment}${FOOTER_HINTS}`,
+    Math.max(0, cols - visualWidth(badgeText)),
+  );
 
   return (
-    <Box flexDirection="column" width={size.columns} height={size.rows}>
-      <Box flexDirection="column" height={headerLines.length} flexShrink={0}>
+    <Box flexDirection="column" width={cols} height={rows}>
+      <Box flexDirection="column" height={headerRows} flexShrink={0}>
         {ctxLines.map((line, index) => (
           <Text
             key={`c-${index}`}
-            color={tone === 'warn' ? 'yellow' : undefined}
-            dimColor={tone !== 'warn'}
-            wrap="truncate"
+            color={tone === 'warn' ? 'yellow' : index === 0 ? 'white' : undefined}
+            bold={index === 0}
+            dimColor={tone !== 'warn' && index > 0}
           >
             {line}
           </Text>
         ))}
       </Box>
-      <Box flexDirection="column" flexGrow={1}>
-        {pane.map((line, index) => {
-          // Transcript grammar: `❯ …` = what the user submitted (bold
-          // cyan), timestamped `[HH:MM:SS] …` = persisted events, plain
-          // lines = command/agent responses — three visually distinct
-          // kinds so ask/agent replies never blur into the event stream.
-          const isUser = line.startsWith('❯ ');
-          return (
-            <Text
-              key={`p-${start + index}`}
-              wrap="truncate"
-              color={isUser ? 'cyan' : undefined}
-              bold={isUser}
-            >
-              {line}
-            </Text>
-          );
-        })}
-        {effOffset > 0 ? (
-          <Text
-            dimColor
-          >{`— scrolled up ${effOffset} lines · ↓ / wheel down to follow live events —`}</Text>
+      <Box flexDirection="column" flexGrow={1} paddingX={1}>
+        {pane.map((row, index) => (
+          <Text key={`p-${viewport.start + index}`}>{row.text}</Text>
+        ))}
+        {viewport.effOffset > 0 ? (
+          <Text dimColor>
+            {truncateVisual(
+              `— scrolled up ${viewport.effOffset}/${viewport.totalRows} lines · ↓ / wheel down to follow —`,
+              paneCols,
+            )}
+          </Text>
         ) : null}
       </Box>
       {shownPalette.length > 0 ? (
         <Box flexDirection="column" flexShrink={0}>
+          <Text dimColor>{hairline}</Text>
           {shownPalette.map((name, index) => {
-            const description =
-              SLASH_COMMANDS.find((command) => command.name === name)?.description ?? '';
+            const cmd = SLASH_COMMANDS.find((command) => command.name === name);
+            const selected = index === snap.paletteIndex;
+            const left = padVisualEnd(selected ? ` › ${name}` : `   ${name}`, 18);
+            const rightBudget = Math.max(8, cols - visualWidth(left) - 1);
+            const desc = truncateVisual(cmd?.description ?? '', rightBudget);
             return (
               <Box key={`c-${name}`} flexDirection="row">
-                <Box width={22} flexShrink={0}>
-                  <Text
-                    color={index === snap.paletteIndex ? 'cyan' : undefined}
-                    bold={index === snap.paletteIndex}
-                    wrap="truncate"
-                  >
-                    {index === snap.paletteIndex ? `› ${name}` : `  ${name}`}
-                  </Text>
-                </Box>
-                <Box flexGrow={1}>
-                  <Text dimColor wrap="truncate">
-                    {description}
-                  </Text>
-                </Box>
+                <Text color={selected ? 'cyan' : undefined} bold={selected}>
+                  {left}
+                </Text>
+                <Text color={selected ? 'white' : undefined} dimColor={!selected}>
+                  {desc}
+                </Text>
               </Box>
             );
           })}
           {paletteTruncated ? (
-            <Text
-              dimColor
-            >{`… ${snap.paletteItems.length - shownPalette.length} more (↑/↓ to scroll)`}</Text>
+            <Text dimColor>
+              {truncateVisual(
+                `   … ${snap.paletteItems.length - shownPalette.length} more (↑/↓ to scroll)`,
+                cols,
+              )}
+            </Text>
           ) : null}
         </Box>
       ) : null}
-      {session.secretPrompt ? (
-        <Box flexShrink={0}>
-          {/* Masked secret entry (models setup): bullets only — the real
-              characters exist solely in this component's state until the
-              answer is handed to the session and written to child stdin. */}
-          <Text wrap="truncate" backgroundColor={INPUT_BG}>
-            <Text color="cyan" bold>{` 🔐 ${session.secretPrompt.label}: `}</Text>
-            <Text>{'•'.repeat(secretBuf.length)}</Text>
+      <Box flexDirection="column" flexShrink={0}>
+        <Text dimColor>{hairline}</Text>
+        {session.secretPrompt ? (
+          <Text>
+            <Text color="cyan" bold>
+              {secretLabel}
+            </Text>
+            <Text>{secretBullets}</Text>
             <Text color="cyan">{cursorOn ? '▏' : ' '}</Text>
-            {'⠀'.repeat(
-              Math.max(
-                0,
-                size.columns -
-                  (` 🔐 ${session.secretPrompt.label}: `.length + secretBuf.length + 1),
-              ),
-            )}
           </Text>
-        </Box>
-      ) : session.pendingApproval ? (
-        <Box flexShrink={0}>
-          {/* Approval owns the line (Claude-Code style): the agent turn
-              is blocked on this answer, so nothing else is typeable.
-              The footer mirrors the state as `waiting for approval…` so
-              it never reads as generic "running". */}
-          <Text wrap="truncate" backgroundColor="#3d3413">
-            <Text color="yellow" bold>{` ⏸ allow ${session.pendingApproval.toolName}? `}</Text>
-            <Text>y allow once · n/Enter reject</Text>
-            {session.pendingApproval.reason ? (
-              <Text dimColor>{`  — ${session.pendingApproval.reason}`}</Text>
-            ) : null}
-            {'⠀'.repeat(
-              Math.max(
-                0,
-                size.columns -
-                  (
-                    `⏸ allow ${session.pendingApproval.toolName}? y allow once · n/Enter reject` +
-                    (session.pendingApproval.reason ? `  — ${session.pendingApproval.reason}` : '')
-                  ).length,
-              ),
-            )}
+        ) : session.pendingApproval ? (
+          <Text backgroundColor="#3d3413" color="yellow" bold>
+            {padVisualEnd(approvalPromptText, cols)}
           </Text>
-        </Box>
-      ) : (
-        <Box flexShrink={0}>
-          {/* Styled composer: full-width tinted bar, bold brand prompt, and a
-              live cursor cell (blink when idle, spinner while busy) — the
-              input line reads as an input, not as another content row. */}
-          <Text wrap="truncate" backgroundColor={INPUT_BG}>
+        ) : (
+          <Text>
             <Text color="cyan" bold>
               {PROMPT_TEXT}
             </Text>
-            {snap.line.slice(0, snap.cursor)}
+            {composerWindow.before}
             <Text color="cyan">{busy ? SPINNER[spin % SPINNER.length] : cursorOn ? '▏' : ' '}</Text>
-            {snap.line.slice(snap.cursor)}
-            {/* Pad with Braille blanks (U+2800): Ink trimEnds trailing
-                ASCII spaces on every line, but U+2800 is not whitespace —
-                it keeps its cell (and the bar's background) to the right
-                edge while rendering as an empty glyph. */}
-            {'⠀'.repeat(Math.max(0, size.columns - (PROMPT_TEXT.length + snap.line.length + 1)))}
+            {composerWindow.after}
           </Text>
-        </Box>
-      )}
+        )}
+        <Text dimColor>{hairline}</Text>
+      </Box>
       <Box flexShrink={0}>
-        <Text wrap="truncate">
+        <Text>
           <Text
             color="black"
             backgroundColor={
@@ -453,13 +487,13 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
             }
             bold
           >
-            {` ${modeLabel.toUpperCase()} `}
+            {badgeText}
           </Text>
-          <Text dimColor>
-            {/* Status sits LEFT-anchored after the badge: FOOTER alone is
-                ~107 cols, so any appended suffix was truncated away at
-                100-col terminals (running…/waiting… never rendered). */}
-            {` ${busy ? `${session.pendingApproval ? 'waiting for approval…' : 'running…'} · ` : ''}${FOOTER}`}
+          <Text
+            color={session.pendingApproval ? 'yellow' : undefined}
+            dimColor={!session.pendingApproval}
+          >
+            {footerTail}
           </Text>
         </Text>
       </Box>
@@ -471,6 +505,37 @@ export interface InkInteractiveOptions {
   plain?: boolean;
   /** Test hook: fake TTY streams (same surface as the spike driver). */
   streams?: { stdout: NodeJS.WriteStream; stdin: NodeJS.ReadStream };
+}
+
+/**
+ * Wraps real-TTY stdout writes in DEC Synchronized Update brackets
+ * (`\x1b[?2026h ... \x1b[?2026l`) so Ink multi-line diff rewrites render
+ * atomically without frame tearing in modern terminals. Returns an unwrap
+ * callback to restore the original `write` method cleanly on teardown.
+ */
+function installSynchronizedOutput(stream: NodeJS.WriteStream): () => void {
+  const originalWrite = stream.write.bind(stream) as typeof stream.write;
+  let active = true;
+  stream.write = ((
+    chunk: string | Uint8Array,
+    encodingOrCb?: BufferEncoding | ((err?: Error | null) => void),
+    cb?: (err?: Error | null) => void,
+  ): boolean => {
+    if (!active) {
+      return originalWrite(chunk, encodingOrCb as BufferEncoding, cb);
+    }
+    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    // Skip tiny control-only packets (e.g. initial ?1049h / teardown ?1049l).
+    if (!text.includes('\n')) {
+      return originalWrite(chunk, encodingOrCb as BufferEncoding, cb);
+    }
+    const wrapped = `\x1b[?2026h${text}\x1b[?2026l`;
+    return originalWrite(wrapped, encodingOrCb as BufferEncoding, cb);
+  }) as typeof stream.write;
+  return () => {
+    active = false;
+    stream.write = originalWrite;
+  };
 }
 
 /**
@@ -496,10 +561,6 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
   }
 
   const bus = new ActivityBus();
-  // Greeting first: the block wordmark (or short mark) lands at the top of
-  // the activity pane before begin() resolves, so the first frame already
-  // shows the brand — and it scrolls away as events arrive instead of
-  // pinning six rows of header forever.
   const greetingColumns =
     Number(process.env.IDEASEEK_TTY_COLS ?? '') || process.stdout.columns || 80;
   for (const line of renderBanner({ columns: greetingColumns, plain }).split('\n')) {
@@ -512,27 +573,27 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
       onHeader: (header) => bus.setHeader(header),
     },
   });
-  // Only this renderer can mask input — classic line mode stays on the
-  // terminal-prompt path for secrets (readline would echo them).
   session.enableSecretCapture();
 
   // Enter the alternate screen BEFORE the first frame so no startup output
   // ever lands on the primary screen (restore lives in ShellApp unmount).
-  // Mouse reporting (button events + SGR): the alternate screen has NO
-  // scrollback, so the wheel only works if the app owns it — that is how
-  // users scroll back through history Claude-Code style.
   const out = opts.streams?.stdout ?? process.stdout;
   out.write('\x1b[?1049h\x1b[H');
   out.write('\x1b[?1000;1006h');
+  const uninstallSync =
+    !opts.streams && out.isTTY === true && process.env.TERM !== 'dumb'
+      ? installSynchronizedOutput(out)
+      : null;
 
   let app: ReturnType<typeof render>;
   try {
-    app = render(<ShellApp session={session} bus={bus} />, {
+    app = render(<ShellApp session={session} bus={bus} plain={plain} />, {
       patchConsole: false,
       exitOnCtrlC: false,
       ...(opts.streams ? { stdout: opts.streams.stdout, stdin: opts.streams.stdin } : {}),
     });
   } catch (error) {
+    uninstallSync?.();
     try {
       out.write('\x1b[?1006l\x1b[?1000l\x1b[?1049l');
     } catch {
@@ -541,9 +602,11 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
     await session.end();
     throw error;
   }
-  await app.waitUntilExit();
-  // Awaited: the process may exit right after — a fire-and-forget write
-  // would race the exit and lose the clean-end marker.
+  try {
+    await app.waitUntilExit();
+  } finally {
+    uninstallSync?.();
+  }
   await session.end();
   return 0;
 }

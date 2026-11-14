@@ -1,3 +1,5 @@
+import { padVisualEnd, truncateVisual } from './text-width.js';
+
 /**
  * Slash command registry + interactive menu state machine
  * (docs/TERMINAL_UX.md: 输入 / 立即显示菜单、↑/↓ 选择、Enter 确认、Esc 关闭).
@@ -181,11 +183,9 @@ export function selectedCommand(state: MenuState): SlashCommand | null {
   return state.visible[state.selected] ?? null;
 }
 
-/** Truncates to terminal width with an ellipsis (resize-safe rendering). */
+/** Truncates to terminal display columns with an ellipsis (CJK/resize-safe). */
 export function truncateForWidth(text: string, columns: number): string {
-  if (!Number.isFinite(columns) || columns <= 0 || text.length <= columns) return text;
-  if (columns <= 1) return '…';
-  return `${text.slice(0, columns - 1)}…`;
+  return truncateVisual(text, columns);
 }
 
 export interface MenuRenderOptions {
@@ -205,7 +205,7 @@ export function renderMenu(state: MenuState, opts: MenuRenderOptions = {}): stri
   const nameWidth = Math.max(...SLASH_COMMANDS.map((c) => c.name.length)) + 2;
   const rows = state.visible.map((cmd, index) => {
     const marker = index === state.selected ? '> ' : '  ';
-    const body = `${marker}${cmd.name.padEnd(nameWidth)}${cmd.description}`;
+    const body = `${marker}${padVisualEnd(cmd.name, nameWidth)}${cmd.description}`;
     return truncateForWidth(body, columns);
   });
   const selected = selectedCommand(state);

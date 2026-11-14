@@ -38,10 +38,10 @@ function runCli(cwd: string, args: string[]): Promise<{ code: number; stderr: st
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('Ink activity rendering input normalization', () => {
-  it('splits multiline output and strips embedded ANSI before Ink renders it', () => {
+  it('splits multiline output, preserves safe SGR colors and strips cursor escapes', () => {
     const bus = new ActivityBus();
-    bus.push('first\n\u001b[31msecond\u001b[0m\r\nthird');
-    expect(bus.lines).toEqual(['first', 'second', 'third']);
+    bus.push('first\n\u001b[2J\u001b[31msecond\u001b[0m\r\nthird');
+    expect(bus.lines).toEqual(['first', '\u001b[31msecond\u001b[0m', 'third']);
   });
 });
 
@@ -127,10 +127,9 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       expect(repl.output().indexOf('\x1b[?1049h')).toBeLessThan(
         repl.output().indexOf('ideaseek ›'),
       );
-      // The composer is a full-width tinted bar: prompt + cursor cell +
-      // Braille-blank padding to the terminal edge (colors are stripped
-      // on pipes; the U+2800 padding cells survive Ink's trimEnd).
-      expect(repl.output()).toMatch(/ideaseek › ▏⠀{5,}/);
+      // The composer is framed by top/bottom hairline rules with the brand
+      // prompt and live cursor cell (safe on dark and light terminal themes).
+      expect(repl.output()).toMatch(/─{10,}[\s\S]*ideaseek › ▏[\s\S]*─{10,}/);
 
       // Ctrl-C FIRST, while the activity pane is still fresh: ink's piped
       // byte stream keeps only partial rows once later frames rewrite them,

@@ -1,4 +1,4 @@
-import { truncateForWidth } from '../cli/slash-menu.js';
+import { padVisualEnd, truncateVisual } from '../cli/text-width.js';
 
 /**
  * Pending approvals (docs/TERMINAL_UX 审批界面): a read-only scan of what
@@ -101,12 +101,12 @@ export async function collectPendingApprovals(root: string): Promise<PendingAppr
 export function renderApprovalBlock(items: PendingApproval[], columns = 80): string[] {
   const width = Math.max(30, Math.min(columns, 74));
   const inner = width - 4; // between "│ " and " │"
-  const pad = (text: string): string => truncateForWidth(text, inner).padEnd(inner);
+  const pad = (text: string): string => padVisualEnd(truncateVisual(text, inner), inner);
 
   const title = '┌─ Confirmation required ';
   const top = `${title}${'─'.repeat(Math.max(0, width - title.length - 1))}┐`;
   const rows = items.map(
-    (item, index) => `│ [${index + 1}] ${pad(`${item.kind}  ${item.summary}`)} │`,
+    (item, index) => `│ ${pad(`[${index + 1}] ${item.kind}  ${item.summary}`)} │`,
   );
   const hint = `│ ${pad('Type a number, /approve [n], or /reject <reason>')} │`;
   const bottom = `└${'─'.repeat(Math.max(0, width - 2))}┘`;
