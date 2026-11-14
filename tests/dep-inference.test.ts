@@ -159,8 +159,8 @@ describe('planFix with inference', () => {
     expect(plan.detail).toContain('exists inside the worktree');
     const keys = Object.keys(plan.env ?? {});
     expect(keys).toHaveLength(1);
-    expect(keys[0].toUpperCase()).toBe('PYTHONPATH');
-    expect(plan.env?.[keys[0]!]).toContain(dir);
+    expect((keys[0] ?? '').toUpperCase()).toBe('PYTHONPATH');
+    expect((plan.env ?? {})[keys[0] ?? ''] ?? '').toContain(dir);
   });
 
   it('still fixes an internal module when a venv already exists', async () => {

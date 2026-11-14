@@ -5,7 +5,7 @@ import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { findProjectRoot } from '../config/paths.js';
 import { stringify } from 'yaml';
 import { importComparisonRepo } from '../comparison/importer.js';
-import { buildCandidates } from '../comparison/discover.js';
+import { buildCandidates, extractRepoUrls } from '../comparison/discover.js';
 import { evaluateComparisonGate } from '../comparison/gate.js';
 import { buildEntrySuggestions } from '../comparison/entry-suggest.js';
 import { assertWorktree } from '../comparison/repair.js';
@@ -333,6 +333,34 @@ export function registerComparisonCommand(program: Command): void {
         let mentions: Awaited<ReturnType<typeof rt.db.findRepoUrlMentions>>;
         try {
           mentions = await rt.db.findRepoUrlMentions();
+          // Most conference papers publish code as a hyperlink, not as literal
+          // text: the URL lives in a PDF link annotation, so a text scan finds
+          // nothing. The parser already extracts those into the artifact.
+          const known = new Set(mentions.map((mention) => `${mention.url}`));
+          for (const artifact of await rt.db.listArtifactsByKind('parsed-paper')) {
+            let payload: {
+              source?: string;
+              sourceHash?: string;
+              pages?: { page?: number; links?: string[] }[];
+            };
+            try {
+              payload = JSON.parse(await rt.store.readFinalText(artifact.contentHash)) as typeof payload;
+            } catch {
+              continue;
+            }
+            for (const page of payload.pages ?? []) {
+              for (const url of extractRepoUrls((page.links ?? []).join(' '))) {
+                if (known.has(url)) continue;
+                known.add(url);
+                mentions.push({
+                  paperKey: payload.sourceHash ?? '',
+                  source: payload.source ?? '',
+                  page: Number(page.page) || 0,
+                  url,
+                });
+              }
+            }
+          }
         } finally {
           await rt.close();
         }
