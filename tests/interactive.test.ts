@@ -52,10 +52,22 @@ interface Repl {
   quit(): Promise<{ code: number; stdout: string; stderr: string }>;
 }
 
-function startRepl(cwd: string, extraArgs: string[] = []): Repl {
+function startRepl(
+  cwd: string,
+  extraArgs: string[] = [],
+  extraEnv: Record<string, string | null> = {},
+): Repl {
+  const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+  env.IDEASEEK_CLI = '1';
+  // Merge (not filter): a key that only exists here must still reach the child,
+  // or a test written to stay offline silently spends real credentials.
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (value === null) delete env[key];
+    else env[key] = value;
+  }
   const child = spawn(process.execPath, [CLI_BIN, 'interactive', ...extraArgs], {
     cwd,
-    env: { ...process.env, IDEASEEK_CLI: '1' },
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
   let stdout = '';
@@ -331,6 +343,39 @@ describe('ideaseek interactive (CLI)', () => {
     expect(config).toContain('config_version: 1');
     expect(done.stdout).toContain('next: ideaseek run --question');
   }, 60_000);
+
+  it('outside a project a plain sentence IS the coding turn (IdeaSeek as everyday agent)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-general-ui-'));
+    const repl = startRepl(dir, [], {
+      IDEASEEK_FAKE_AGENT_TURN: '1',
+      IDEASEEK_USER_CONFIG: join(dir, '.state', 'config.yaml'),
+      DEEPSEEK_API_KEY: null,
+    });
+    await repl.waitFor(/GENERAL — not an IdeaSeek project/);
+    // Not "research from evidence" state that does not exist here.
+    expect(repl.output()).not.toContain('· RESEARCH ·');
+
+    repl.write('这个函数为什么返回 null\n');
+    await repl.waitFor(/dsh runtime started/, 60_000);
+    // The turn asks for its tool like any coding session would — answering is
+    // part of the contract, and a dismissed prompt is never an approval.
+    await repl.waitFor(/⏸ approval required: pwsh/, 60_000);
+    repl.write('n\n');
+    await repl.waitFor(/approval rejected: pwsh|standing by without the tool/, 60_000);
+    // The research supervisor never gets the line: no classification, no
+    // pending-approval Decision, no "not sure how to help".
+    expect(repl.output()).not.toContain('classifying');
+    expect(repl.output()).not.toContain('not sure how to help');
+
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    // And the plain repo stays plain: no project or research state invented.
+    expect(repl.output()).not.toContain('NOT_INITIALIZED');
+    const { readdir } = await import('node:fs/promises');
+    const entries = await readdir(dir);
+    expect(entries).not.toContain('research.yaml');
+    expect(entries).not.toContain('.research');
+  }, 120_000);
 
   it('unique prefix resolves (Tab completer contract)', async () => {
     const dir = await makeProjectDir();

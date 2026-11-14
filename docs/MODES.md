@@ -41,6 +41,7 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 
 - 权限预设直接沿用 DSH 默认的 `workspace-write` + `ask`——项目内读写、受限 shell、测试工具本来就是它的能力，写入逐次问询。IdeaSeek 不额外收紧目录，也不存在"需要为它开放什么"这一步；`DSH_PERMISSION_MODE=read-only` 只用于模型抽取的 HarnessAdapter 路径，与 agent 入口无关。
 - **它不要求当前目录是 IdeaSeek 项目。** 在任意仓库里 `ideaseek agent "<指令>"`（TUI 里 `/agent <指令>`）就是一轮通用 coding 会话：运行时、审批、`--resume` 全都照常，session id 落在用户级状态目录（`~/.ideaseek/agent-sessions.json`，随 `IDEASEEK_USER_CONFIG` 走）。此时没有科研侧保证——不记 RunEvent、不做原始输入漂移侦测、不注入项目摘要——CLI 会把这一条明说出来，而不是假装保证仍在。进了 IdeaSeek 项目，三项自动生效。
+- **装了就是通用 agent**：在没有项目的目录里裸 `ideaseek`（真终端）打开的就是通用会话，footer 徽标显示 `GENERAL` 而不是伪造一个研究档位；那里每一句自然语言直接是一轮 coding turn（等价于 `/agent <指令>`），因为没有被保护的科研会话需要区分。一旦目录里有 `research.yaml`，同一行输入立刻回到 `ideaseek ask` 的科研分流。
 - 每条自然语言是一次**真实 DSH coding-session turn**（项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，**跨 TUI 重启**也从 `knowledge/agent-sessions.json`（最新在前）自动续接上一段对话——id 在 DSH 侧失效时记日志回退新建，绝不卡死后续消息（想新开对话：删除该注册表条目）。首轮注入项目上下文摘要，使通用 agent 看得到研究问题与知识 artifact 的位置。无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。**TUI 内工具审批已透传**（输入行切换为 `y allow once · n reject` 提示，应答回传子进程；行式路径用裸 y/n 行，见 TERMINAL_UX 审批界面）；未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve），TTY 下仍走原生问询。
 
 ### 不禁止写入，但侦测写入

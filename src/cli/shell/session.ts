@@ -124,8 +124,10 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
   if (!status?.data) {
     return {
       lines: [
-        'not an IdeaSeek project — /init creates one here, or cd into an existing one',
-        'this directory still works as a general coding session: /agent <指令> (approvals asked per tool)',
+        // GENERAL, not RESEARCH: there is no research tier or run in this
+        // directory, and the footer badge must not imply one.
+        'GENERAL — not an IdeaSeek project · /init creates one here, or cd into an existing one',
+        'this directory still works as a general coding session: /agent <指令>，或者直接说人话',
       ],
       tone: 'warn',
     };
@@ -337,11 +339,16 @@ export class InteractiveSession {
       if (/^\d+$/.test(input) && this.pendingItems.length > 0) {
         await this.approvePending(Number(input));
       } else if (!input.startsWith('/')) {
-        // Plain text always goes through `ideaseek ask` (docs/MODES.md): the
-        // research/analysis tiers differ only in what the science pipeline may
-        // write, and a coding turn is an explicit `/agent <指令>` — never
-        // something a stray sentence silently becomes.
-        await this.relay(['ask', ...tokenizeArgs(input)]);
+        // One input line, two possible conversations (docs/MODES.md). Inside a
+        // project plain text goes through `ideaseek ask`: the research/analysis
+        // tiers differ only in what the science pipeline may write, and a coding
+        // turn stays an explicit `/agent <指令>` — never something a stray
+        // sentence silently turns into. Outside a project there is no research
+        // session to protect and an installed IdeaSeek is meant to be the
+        // everyday agent, so the line IS a coding turn.
+        const root = await findProjectRoot(process.cwd()).catch(() => null);
+        if (root) await this.relay(['ask', ...tokenizeArgs(input)]);
+        else await this.runAgentTurn(input);
       } else {
         outcome = await this.dispatch(input);
       }
@@ -384,20 +391,13 @@ export class InteractiveSession {
   }
 
   /**
-   * Agent-mode plain text → one real DSH coding-session turn (the same
-   * `ideaseek agent` use-case the CLI runs), resumed across messages so
-   * the TUI behaves like a normal agent conversation. Progress logs on
-   * stderr render dim; `error:` lines keep the error tone. A coding turn
-   * can legitimately run for minutes — bounded by a generous timeout.
-   */
-  /**
-   * Newest agent session recorded for this project (registry writes
-   * newest-first) — lets a fresh TUI continue the last conversation.
+   * Newest recorded agent session — the project registry inside a project, the
+   * user-level one otherwise, so a fresh TUI continues the last conversation
+   * wherever it was started (registry files are newest-first).
    */
   private async newestAgentSessionId(): Promise<string | null> {
     try {
       const root = await findProjectRoot(process.cwd());
-      if (!root) return null;
       const { agentSessionsPath } = await import('../../dsh/session.js');
       const { readFile } = await import('node:fs/promises');
       const raw = JSON.parse(await readFile(agentSessionsPath(root), 'utf8')) as {
@@ -410,6 +410,14 @@ export class InteractiveSession {
     }
   }
 
+  /**
+   * One real DSH coding-session turn (the same `ideaseek agent` use-case the
+   * CLI runs), resumed across messages so the UI behaves like a normal agent
+   * conversation. Progress logs on stderr render dim; `error:` lines keep the
+   * error tone. A coding turn can legitimately run for minutes — bounded by a
+   * generous timeout. Reached from `/agent <指令>` inside a project, and from
+   * any plain line outside one.
+   */
   private async runAgentTurn(message: string): Promise<void> {
     const args = ['agent', message];
     if (this.agentSessionId) {

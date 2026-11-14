@@ -291,8 +291,8 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   const ctxLines = bus.header?.lines ?? [STARTING_LINE];
   const modeLabel = ctxLines[0]?.includes('ANALYSIS')
     ? 'Analysis'
-    : ctxLines[0]?.includes('AGENT')
-      ? 'Agent'
+    : ctxLines[0]?.includes('GENERAL')
+      ? 'General'
       : 'Research';
   const tone = bus.header?.tone ?? 'dim';
   const headerLines = ctxLines;
@@ -449,7 +449,7 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
           <Text
             color="black"
             backgroundColor={
-              modeLabel === 'Agent' ? 'magenta' : modeLabel === 'Analysis' ? 'yellow' : 'cyan'
+              modeLabel === 'General' ? 'magenta' : modeLabel === 'Analysis' ? 'yellow' : 'cyan'
             }
             bold
           >
