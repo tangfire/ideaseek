@@ -56,6 +56,8 @@ export interface EngineResult {
   copyLast: boolean;
   /** Ctrl+F opens in-transcript search. */
   searchTranscript: boolean;
+  /** Alt+M toggles terminal mouse-wheel tracking vs native mouse selection. */
+  toggleMouse: boolean;
   /** `?` on an empty line toggles the keyboard shortcuts overlay. */
   toggleHelp: boolean;
 }
@@ -180,6 +182,7 @@ export class ShellEngine {
       clearView: false,
       copyLast: false,
       searchTranscript: false,
+      toggleMouse: false,
       toggleHelp: false,
       ...partial,
     };
@@ -570,6 +573,8 @@ export class ShellEngine {
       case 'wordright':
         this.cursor = nextWordBoundary(this.line, this.cursor);
         return this.snapshot();
+      case 'toggleMouse':
+        return this.snapshot({ toggleMouse: true });
       case 'backspace': {
         if (this.cursor > 0) {
           this.line = this.line.slice(0, this.cursor - 1) + this.line.slice(this.cursor);
@@ -743,6 +748,9 @@ export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
   }
   if ((key.ctrl && key.rightArrow) || input === '\x1b[1;5C' || input === '\x1bf') {
     return { name: 'wordright' };
+  }
+  if ((key.meta && (input === 'm' || input === 'M')) || input === '\x1bm') {
+    return { name: 'toggleMouse' };
   }
   if (key.return) return { name: 'return' };
   if (key.escape) return { name: 'escape' };

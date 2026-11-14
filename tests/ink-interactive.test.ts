@@ -418,6 +418,43 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
     }
   }, 180_000);
 
+  it('renders workspace greeting, ? shortcuts, Ctrl+O details, Ctrl+F search and Alt+M mouse toggle', async () => {
+    const dir = await makeProjectDir('ink-pro-ux');
+    const repl = startInk(dir);
+    try {
+      await repl.waitFor(/ideaseek ›/, 60_000);
+      await repl.waitFor(/workspace: papers 0 · datasets 0/, 60_000);
+
+      // `?` opens the shortcut cheat-sheet overlay; Esc dismisses it.
+      await repl.write('?');
+      await repl.waitFor(/Shortcuts \(Esc \/ \? to close\)/);
+      await repl.write('\x1b');
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      // Ctrl+O toggles compact/expanded details toast in footer.
+      await repl.write('\x0f');
+      await repl.waitFor(/details: expanded/);
+
+      // Alt+M toggles mouse tracking off so terminal drag-select works cleanly.
+      await repl.write('\x1bm');
+      await repl.waitFor(/mouse: text selection/);
+      expect(repl.output()).toContain('\x1b[?1006l\x1b[?1000l');
+
+      // Ctrl+F searches the transcript live and Esc closes search.
+      await repl.write('\x06');
+      await repl.waitFor(/Find:/);
+      await repl.write('papers');
+      await repl.waitFor(/1\/1/);
+      await repl.write('\x1b');
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      await repl.write('\x04');
+      expect(await repl.done).toBe(0);
+    } finally {
+      await cleanup(dir, repl.child);
+    }
+  }, 120_000);
+
   it('Ctrl-D exits without cancelling anything and restores the screen', async () => {
     const dir = await makeProjectDir('ink-interactive-eof');
     const repl = startInk(dir);

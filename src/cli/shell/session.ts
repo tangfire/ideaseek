@@ -1,6 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve } from 'node:path';
-import { renderApprovalBlock, type PendingApproval } from '../../approval/pending.js';
+import {
+  collectPendingApprovals,
+  renderApprovalBlock,
+  type PendingApproval,
+} from '../../approval/pending.js';
 import { renderHeader, type HeaderContext } from '../banner.js';
 import { formatEventLine, paint } from '../format.js';
 import { cliEntryPath, runCli, runCliJson } from '../runner.js';
@@ -9,6 +13,14 @@ import { resolveSlash, helpText } from '../slash-menu.js';
 import { findProjectRoot } from '../../config/paths.js';
 import { readLastSession, writeSessionEnd, writeSessionStart } from '../../session/context.js';
 import { readSessionMode, readSessionFocus, renderSessionSummary } from '../../session/mode.js';
+import { executeSessionModeSwitch } from '../../session/switch.js';
+import { WarmAgentHost, recordAgentSession } from '../../dsh/session.js';
+import {
+  GENERAL_SCOPE_NOTICE,
+  auditProjectAgentTurn,
+  checkInputDriftAfterTurn,
+  composeTurnPrompt,
+} from '../../dsh/turn-runner.js';
 import {
   APPROVAL_ALLOW,
   APPROVAL_REJECT,
@@ -121,22 +133,12 @@ export function createLineStream(onLine: (line: string) => void): {
 
 /**
  * Unpainted project/run context header (renderer decides styling).
- * Startup stays to two lines — project · mode · run state, plus the
- * question; everything else (stage, tasks, papers, GPU, supervisor) is a
- * `/status` query. Also drops the papers/env probes, so the TUI starts
- * with one subprocess instead of four.
+ * Reads persisted state in-process (~5ms) instead of spawning a CLI subprocess,
+ * so TUI startup and mode toggling feel instantaneous.
  */
 export async function buildHeaderLines(): Promise<HeaderInfo> {
-  const status = await runCliJson<{
-    project: string;
-    run: {
-      runId: string;
-      status: string;
-      question: string;
-      blockReason: string | null;
-    } | null;
-  }>(['status', '--json']).catch(() => null);
-  if (!status?.data) {
+  const projectRoot = await findProjectRoot(process.cwd()).catch(() => null);
+  if (!projectRoot) {
     return {
       lines: [
         // GENERAL, not RESEARCH: there is no research tier or run in this
@@ -147,25 +149,35 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
       tone: 'warn',
     };
   }
-  const run = status.data.run ?? null;
-  let sessionMode = 'research';
-  let codingFocus = false;
-  const projectRoot = await findProjectRoot(process.cwd()).catch(() => null);
-  if (projectRoot) {
-    sessionMode = (await readSessionMode(projectRoot).catch(() => 'research')) ?? 'research';
-    codingFocus = (await readSessionFocus(projectRoot).catch(() => 'ask')) === 'coding';
+  try {
+    const { ProjectRuntime } = await import('../../workflow/runtime.js');
+    const runtime = await ProjectRuntime.open({ cwd: projectRoot, recover: false });
+    try {
+      const run = await runtime.db.getLatestRun(runtime.project.id);
+      const sessionMode =
+        (await readSessionMode(projectRoot).catch(() => 'research')) ?? 'research';
+      const codingFocus = (await readSessionFocus(projectRoot).catch(() => 'ask')) === 'coding';
+      const ctx: HeaderContext = {
+        project: runtime.project.name ?? '(unknown project)',
+        sessionMode: codingFocus ? 'CODING' : sessionMode.toUpperCase(),
+        question: run?.question || null,
+        runId: run?.runId ?? null,
+        runStatus: run?.status ?? null,
+        blockReason: run?.blockReason ?? null,
+      };
+      return { lines: renderHeader(ctx).split('\n'), tone: run?.blockReason ? 'warn' : 'dim' };
+    } finally {
+      await runtime.close();
+    }
+  } catch {
+    return {
+      lines: [
+        'GENERAL — not an IdeaSeek project · /init creates one here · /open enters a registered project',
+        'coding turns are one explicit step away: /agent <指令> (this UI stays the research surface)',
+      ],
+      tone: 'warn',
+    };
   }
-  const ctx: HeaderContext = {
-    project: status.data.project ?? '(unknown project)',
-    // The badge shows the focus, because that is what the next sentence will
-    // do; `/mode` still reports the tier underneath it.
-    sessionMode: codingFocus ? 'CODING' : sessionMode.toUpperCase(),
-    question: run?.question || null,
-    runId: run?.runId ?? null,
-    runStatus: run?.status ?? null,
-    blockReason: run?.blockReason ?? null,
-  };
-  return { lines: renderHeader(ctx).split('\n'), tone: run?.blockReason ? 'warn' : 'dim' };
 }
 
 /** Classic line-mode paint for a header block. */
@@ -196,10 +208,14 @@ export class InteractiveSession {
   private agentSessionId: string | null = null;
   /** Abort handle for the in-flight relay/agent turn (Ctrl-C interrupts). */
   private relayAbort: AbortController | null = null;
-  /** Tool approval waiting for the operator (stdio channel, agent turns). */
+  /** Tool approval waiting for the operator (stdio channel or warm DSH host). */
   private approvalWaiting: ApprovalRequest | null = null;
+  private approvalResolve: ((allow: boolean) => void) | null = null;
   /** Kept-open stdin of the agent child — where answers are written. */
   private agentStdin: NodeJS.WritableStream | null = null;
+  /** Warm DSH host reused across agent turns inside the TUI. */
+  private readonly warmAgentHost = new WarmAgentHost();
+  private warmTurnActive = false;
   /** Secret input capture is renderer-owned: only the Ink TUI can mask. */
   private secretCapture = false;
   private secretLabel: string | null = null;
@@ -242,10 +258,16 @@ export class InteractiveSession {
     const request = this.approvalWaiting;
     if (!request) return false;
     this.approvalWaiting = null;
-    try {
-      this.agentStdin?.write(allow ? `${APPROVAL_ALLOW}\n` : `${APPROVAL_REJECT}\n`);
-    } catch {
-      // child already gone — its exit error surfaces the turn outcome
+    if (this.approvalResolve) {
+      const resolve = this.approvalResolve;
+      this.approvalResolve = null;
+      resolve(allow);
+    } else {
+      try {
+        this.agentStdin?.write(allow ? `${APPROVAL_ALLOW}\n` : `${APPROVAL_REJECT}\n`);
+      } catch {
+        // child already gone — its exit error surfaces the turn outcome
+      }
     }
     this.println(
       paint(
@@ -300,6 +322,17 @@ export class InteractiveSession {
       this.answerSecret(null);
       return true;
     }
+    if (this.approvalResolve) {
+      const resolve = this.approvalResolve;
+      this.approvalResolve = null;
+      this.approvalWaiting = null;
+      resolve(false);
+    }
+    if (this.warmTurnActive) {
+      this.warmTurnActive = false;
+      await this.warmAgentHost.abort();
+      return true;
+    }
     if (!this.relayAbort) return false;
     this.relayAbort.abort();
     this.relayAbort = null;
@@ -334,10 +367,7 @@ export class InteractiveSession {
     } catch {
       this.sessionRoot = null; // no project → no session marker
     }
-    const res = await runCliJson<{ items?: PendingApproval[] }>(['pending', '--json']).catch(
-      () => null,
-    );
-    this.pendingItems = res?.data?.items ?? [];
+    this.pendingItems = await this.fetchPending();
     const pending =
       this.pendingItems.length > 0
         ? renderApprovalBlock(this.pendingItems, process.stdout.columns ?? 80)
@@ -412,7 +442,18 @@ export class InteractiveSession {
     const position = coding ? 2 : tier === 'research' ? 0 : 1;
 
     if (position === 0) {
-      await this.relay(['mode', 'analysis']);
+      const res = await executeSessionModeSwitch(root, 'analysis');
+      if (res.changed) {
+        this.println(`session mode: ${res.previous} → ${res.current}`);
+        this.println(
+          res.decisionSeq
+            ? `  decision recorded (event #${res.decisionSeq}); no second run was started`
+            : '  decision not recorded (no run exists yet); no second run was started',
+        );
+        this.println(`  ${res.firstPermission}`);
+      } else {
+        this.println(`session mode already ${res.current}`);
+      }
     } else if (position === 1) {
       await writeSessionFocus(root, 'coding');
       this.println(
@@ -422,7 +463,18 @@ export class InteractiveSession {
     } else {
       await writeSessionFocus(root, 'ask');
       this.println('session focus: coding off — plain text is back on ideaseek ask');
-      await this.relay(['mode', 'research']);
+      const res = await executeSessionModeSwitch(root, 'research');
+      if (res.changed) {
+        this.println(`session mode: ${res.previous} → ${res.current}`);
+        this.println(
+          res.decisionSeq
+            ? `  decision recorded (event #${res.decisionSeq}); no second run was started`
+            : '  decision not recorded (no run exists yet); no second run was started',
+        );
+        this.println(`  ${res.firstPermission}`);
+      } else {
+        this.println(`session mode already ${res.current}`);
+      }
     }
     await this.refreshHeader();
   }
@@ -458,6 +510,103 @@ export class InteractiveSession {
    * any plain line outside one.
    */
   private async runAgentTurn(message: string): Promise<void> {
+    if (
+      process.env.IDEASEEK_FAKE_AGENT_TURN === '1' ||
+      process.env.IDEASEEK_AGENT_SUBPROCESS === '1'
+    ) {
+      await this.runAgentTurnSubprocess(message);
+      return;
+    }
+
+    const root = await findProjectRoot(process.cwd()).catch(() => null);
+    const turnCwd = root ?? process.cwd();
+    let resumeId = this.agentSessionId;
+    if (!resumeId) {
+      resumeId = await this.newestAgentSessionId();
+      if (resumeId) this.agentSessionId = resumeId;
+    }
+
+    const provider = process.env.IDEASEEK_AGENT_PROVIDER;
+    const model = process.env.IDEASEEK_AGENT_MODEL;
+    const prompt = root ? await composeTurnPrompt(root, message, resumeId === null) : message;
+    const streamedTexts: string[] = [];
+
+    this.warmTurnActive = true;
+    try {
+      const result = await this.warmAgentHost.runTurn({
+        cwd: turnCwd,
+        prompt,
+        ...(resumeId ? { sessionId: resumeId } : {}),
+        policy: 'interactive',
+        interactiveSurface: true,
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+        onLog: (msg) => this.println(paint(`  · ${msg}`, 'dim', { plain: this.plain })),
+        onStep: (line) => this.println(paint(line, 'dim', { plain: this.plain })),
+        onAssistantText: (text) => {
+          const trimmed = text.trim();
+          if (!trimmed) return;
+          streamedTexts.push(trimmed);
+          this.println(trimmed);
+        },
+        promptFn: async ({ toolName, reason }) => {
+          return await new Promise<boolean>((resolveApproval) => {
+            this.approvalResolve = resolveApproval;
+            this.beginApproval({ toolName, reason: reason ?? '' });
+          });
+        },
+      });
+      this.agentSessionId = result.sessionId;
+      await recordAgentSession(root, {
+        sessionId: result.sessionId,
+        prompt: message,
+        cwd: turnCwd,
+        finishReason: result.finishReason ?? null,
+      });
+
+      if (root) {
+        await auditProjectAgentTurn(root, {
+          sessionId: result.sessionId,
+          resumed: result.resumed,
+          eventCount: result.eventCount,
+          approvalsCount: result.approvals.length,
+          prompt: message,
+          finishReason: result.finishReason,
+        });
+      }
+      const drift = root ? await checkInputDriftAfterTurn(root) : null;
+
+      this.println(
+        paint(
+          `agent turn → session ${result.sessionId} (${result.resumed ? 'resumed' : 'new'}, ` +
+            `finish=${result.finishReason ?? 'unknown'}, ${result.eventCount} event(s))`,
+          'dim',
+          { plain: this.plain },
+        ),
+      );
+      const finalTrimmed = result.finalResponse.trim();
+      const alreadyStreamed =
+        finalTrimmed.length > 0 && streamedTexts[streamedTexts.length - 1] === finalTrimmed;
+      if (!alreadyStreamed && finalTrimmed.length > 0) {
+        this.println(result.finalResponse);
+      }
+      if (drift) {
+        const { renderDriftReport } = await import('../../knowledge/input-drift.js');
+        for (const line of renderDriftReport(drift.report)) this.println(line);
+      } else if (!root) {
+        this.println(paint(`  ${GENERAL_SCOPE_NOTICE}`, 'dim', { plain: this.plain }));
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') return;
+      throw error;
+    } finally {
+      this.warmTurnActive = false;
+      this.approvalWaiting = null;
+      this.approvalResolve = null;
+    }
+  }
+
+  private async runAgentTurnSubprocess(message: string): Promise<void> {
     const args = ['agent', message];
     if (this.agentSessionId) {
       args.push('--resume', this.agentSessionId);
@@ -645,10 +794,8 @@ export class InteractiveSession {
   private async providerRows(): Promise<
     { id: string; baseUrl: string | null; configured: boolean }[]
   > {
-    const res = await runCliJson<{
-      providers?: { id: string; baseUrl: string | null; configured: boolean }[];
-    }>(['models', 'providers', '--json']).catch(() => null);
-    return res?.data?.providers ?? [];
+    const { listProviders } = await import('../../models/setup.js');
+    return await listProviders().catch(() => []);
   }
 
   /** Step 1 of `/models setup`: show the catalog and how to answer it. */
@@ -676,10 +823,9 @@ export class InteractiveSession {
   }
 
   private async fetchPending(): Promise<PendingApproval[]> {
-    const res = await runCliJson<{ items?: PendingApproval[] }>(['pending', '--json']).catch(
-      () => null,
-    );
-    return res?.data?.items ?? [];
+    const root = await findProjectRoot(process.cwd()).catch(() => null);
+    if (!root) return [];
+    return await collectPendingApprovals(root).catch(() => []);
   }
 
   private showApprovalBlock(items: PendingApproval[]): void {
@@ -885,6 +1031,8 @@ export class InteractiveSession {
         }
         if (payload?.kind === 'project') {
           if (resolve(payload.root) !== resolve(process.cwd())) {
+            await this.warmAgentHost.close().catch(() => undefined);
+            this.agentSessionId = null;
             process.chdir(payload.root);
             this.stopStream(); // events were bound to the previous project
             this.lastSeq = 0; // …and so was the event sequence
@@ -1043,11 +1191,12 @@ export class InteractiveSession {
     }
   }
 
-  /** Stops the stream and writes the clean session-end marker (idempotent). */
+  /** Stops the stream, closes warm runtime, and writes the clean session-end marker. */
   async end(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
     this.stopStream();
+    await this.warmAgentHost.close().catch(() => undefined);
     if (this.sessionRoot) {
       // Awaited: the process may exit right after — a fire-and-forget write
       // would race the exit and lose the clean-end marker.

@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { DeepSeekHarness, HarnessSession } from '@deepseek-ai/dsh-sdk-client';
 import { IdeaseekError } from '../core/errors.js';
 
 /**
@@ -175,6 +176,62 @@ export function formatSubagentLine(method: string, params: unknown): string | nu
   return null;
 }
 
+async function executeTurnOnSession(
+  session: HarnessSession,
+  resumed: boolean,
+  approvals: ApprovalDecision[],
+  opts: AgentTurnOptions,
+): Promise<AgentTurnResult> {
+  const log = opts.onLog ?? (() => undefined);
+  const callNames = new Map<string, string>();
+  const result = await session.run(opts.prompt, {
+    onNotification: (notification) => {
+      const subLine = formatSubagentLine(notification.method, notification.params);
+      if (subLine) {
+        opts.onStep?.(subLine);
+        return;
+      }
+      if (notification.method !== 'session.event') return;
+      const event = (notification.params as { event?: { type?: unknown; data?: unknown } }).event;
+      if (!event || typeof event.type !== 'string') return;
+      if (event.type === 'step/start') {
+        const step = (event.data as { step?: unknown } | undefined)?.step;
+        if (typeof step === 'number' && step > 1) log(`step ${step}…`);
+      }
+      const assistantText = extractAssistantStepText(event.type, event.data);
+      if (assistantText) opts.onAssistantText?.(assistantText);
+      const line = formatStepLine(event.type, event.data, callNames);
+      if (line) opts.onStep?.(line);
+    },
+  });
+  if (result.finishReason === 'error') {
+    throw new IdeaseekError(
+      'MODEL_UNAVAILABLE',
+      `agent turn failed: ${redactAgentText(result.finalResponse || 'runtime error')} — ` +
+        'check provider/key (ideaseek models setup --test) and retry',
+    );
+  }
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const event of result.events) {
+    if (event.type !== 'assistant/message') continue;
+    const usage = (event.data as { usage?: { inputTokens?: number; outputTokens?: number } }).usage;
+    inputTokens += usage?.inputTokens ?? 0;
+    outputTokens += usage?.outputTokens ?? 0;
+  }
+  if (inputTokens > 0 || outputTokens > 0) {
+    opts.onStep?.(`usage: ${inputTokens} in / ${outputTokens} out tokens`);
+  }
+  return {
+    sessionId: result.sessionId,
+    finalResponse: redactAgentText(result.finalResponse),
+    finishReason: result.finishReason,
+    eventCount: result.events.length,
+    approvals,
+    resumed,
+  };
+}
+
 /**
  * Runs ONE real agent turn on a DSH session. Throws IdeaseekError with
  * recovery on boot/session failures; never fabricates a response.
@@ -196,13 +253,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   });
 
   try {
-    // Client must be started before onRequest can install (SDK contract);
-    // harness.start() re-starts idempotently and performs the handshake.
     harness.client.start();
-    // The interactive shell opts into the stdio approval channel
-    // (IDEASEEK_AGENT_APPROVAL=stdio): promptFn answers over stdin, so
-    // treat that pipe as an interactive surface. Plain script pipes
-    // without the opt-in still deny (resolveApproval stays pure).
     const isTTY = process.stdin.isTTY === true || process.env.IDEASEEK_AGENT_APPROVAL === 'stdio';
     harness.client.onRequest(async (method, params) => {
       if (method !== 'approval/request') {
@@ -230,16 +281,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     log('dsh runtime started');
 
     let resumed = false;
-    let session;
+    let session: HarnessSession;
     if (opts.sessionId) {
       try {
         session = await harness.resumeSession(opts.sessionId);
         resumed = true;
         log(`resumed session ${opts.sessionId}`);
       } catch (error) {
-        // Stale registry id (pruned/expired session): fall back to a fresh
-        // session loudly instead of wedging every subsequent message on a
-        // dead id — the summary then honestly reports (new, …).
         log(
           `resume ${opts.sessionId} failed: ${redactAgentText((error as Error).message ?? String(error))}; starting a new session`,
         );
@@ -250,58 +298,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
       log(`new session ${session.id}`);
     }
 
-    // Live step-level lines: tool/call + tool/result + subagent + intermediate
-    // assistant replies stream into the transcript as the model works instead
-    // of the whole turn being a black box until the final reply.
-    const callNames = new Map<string, string>();
-    const result = await session.run(opts.prompt, {
-      onNotification: (notification) => {
-        const subLine = formatSubagentLine(notification.method, notification.params);
-        if (subLine) {
-          opts.onStep?.(subLine);
-          return;
-        }
-        if (notification.method !== 'session.event') return;
-        const event = (notification.params as { event?: { type?: unknown; data?: unknown } }).event;
-        if (!event || typeof event.type !== 'string') return;
-        if (event.type === 'step/start') {
-          const step = (event.data as { step?: unknown } | undefined)?.step;
-          if (typeof step === 'number' && step > 1) log(`step ${step}…`);
-        }
-        const assistantText = extractAssistantStepText(event.type, event.data);
-        if (assistantText) opts.onAssistantText?.(assistantText);
-        const line = formatStepLine(event.type, event.data, callNames);
-        if (line) opts.onStep?.(line);
-      },
-    });
-    if (result.finishReason === 'error') {
-      throw new IdeaseekError(
-        'MODEL_UNAVAILABLE',
-        `agent turn failed: ${redactAgentText(result.finalResponse || 'runtime error')} — ` +
-          'check provider/key (ideaseek models setup --test) and retry',
-      );
-    }
-    // Turn total across steps — cost visibility for a research platform.
-    let inputTokens = 0;
-    let outputTokens = 0;
-    for (const event of result.events) {
-      if (event.type !== 'assistant/message') continue;
-      const usage = (event.data as { usage?: { inputTokens?: number; outputTokens?: number } })
-        .usage;
-      inputTokens += usage?.inputTokens ?? 0;
-      outputTokens += usage?.outputTokens ?? 0;
-    }
-    if (inputTokens > 0 || outputTokens > 0) {
-      opts.onStep?.(`usage: ${inputTokens} in / ${outputTokens} out tokens`);
-    }
-    return {
-      sessionId: result.sessionId,
-      finalResponse: redactAgentText(result.finalResponse),
-      finishReason: result.finishReason,
-      eventCount: result.events.length,
-      approvals,
-      resumed,
-    };
+    return await executeTurnOnSession(session, resumed, approvals, opts);
   } catch (error) {
     if (error instanceof IdeaseekError) throw error;
     throw new IdeaseekError(
@@ -311,6 +308,153 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     );
   } finally {
     await harness.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Reusable warm DSH runtime host for the interactive TUI: keeps the
+ * DeepSeekHarness child and active HarnessSession alive across turns so
+ * follow-up messages respond without re-spawning Node or re-running the
+ * JSON-RPC handshake. Aborting (`Ctrl-C`) or switching projects cleanly
+ * disposes and resets the runtime.
+ */
+export class WarmAgentHost {
+  private harness: DeepSeekHarness | null = null;
+  private sig = '';
+  private activeSession: HarnessSession | null = null;
+  private aborted = false;
+  private turnSink: {
+    policy: ApprovalPolicy;
+    interactive: boolean;
+    promptFn: ApprovalPrompt | null;
+    approvals: ApprovalDecision[];
+    log: (message: string) => void;
+  } | null = null;
+
+  async runTurn(
+    opts: AgentTurnOptions & { interactiveSurface?: boolean },
+  ): Promise<AgentTurnResult> {
+    const { DeepSeekHarness } = await import('@deepseek-ai/dsh-sdk-client');
+    const policy = opts.policy ?? 'interactive';
+    const approvals: ApprovalDecision[] = [];
+    const log = opts.onLog ?? (() => undefined);
+    const nextSig = JSON.stringify({
+      cwd: opts.cwd,
+      provider: opts.provider ?? '',
+      model: opts.model ?? '',
+      dshHome: opts.dshHome ?? '',
+      timeout: opts.requestTimeoutMs ?? null,
+    });
+
+    if (this.harness && this.sig !== nextSig) {
+      await this.close();
+    }
+
+    this.aborted = false;
+    this.turnSink = {
+      policy,
+      interactive: opts.interactiveSurface === true || process.stdin.isTTY === true,
+      promptFn: opts.promptFn ?? null,
+      approvals,
+      log,
+    };
+
+    try {
+      if (!this.harness) {
+        const harness = new DeepSeekHarness({
+          cwd: opts.cwd,
+          approvalRequests: true,
+          ...(opts.provider ? { provider: opts.provider } : {}),
+          ...(opts.model ? { model: opts.model } : {}),
+          ...(opts.dshHome ? { dshHome: opts.dshHome } : {}),
+          ...(opts.requestTimeoutMs !== undefined
+            ? { requestTimeoutMs: opts.requestTimeoutMs }
+            : {}),
+          initializeTimeoutMs: 15_000,
+        });
+        harness.client.start();
+        harness.client.onRequest(async (method, params) => {
+          if (method !== 'approval/request') {
+            throw new Error(`unexpected runtime request ${method}`);
+          }
+          const sink = this.turnSink;
+          if (!sink) return { outcome: 'rejected' as const };
+          const detail = params as {
+            sessionId?: unknown;
+            toolName?: unknown;
+            reason?: unknown;
+          };
+          const decision = await resolveApproval(sink.policy, sink.interactive, sink.promptFn, {
+            toolName: String(detail.toolName ?? 'unknown-tool'),
+            reason: typeof detail.reason === 'string' ? detail.reason : null,
+            sessionId: String(detail.sessionId ?? ''),
+          });
+          sink.approvals.push(decision);
+          sink.log(
+            `approval ${decision.outcome}: ${decision.toolName}` +
+              (decision.reason ? ` (${decision.reason})` : ''),
+          );
+          return { outcome: decision.outcome };
+        });
+        await harness.start();
+        this.harness = harness;
+        this.sig = nextSig;
+        log('dsh runtime started (warm session)');
+      }
+
+      let resumed = false;
+      let session = this.activeSession;
+      if (opts.sessionId && session?.id === opts.sessionId) {
+        resumed = true;
+      } else if (opts.sessionId) {
+        try {
+          session = await this.harness.resumeSession(opts.sessionId);
+          resumed = true;
+          log(`resumed session ${opts.sessionId}`);
+        } catch (error) {
+          log(
+            `resume ${opts.sessionId} failed: ${redactAgentText((error as Error).message ?? String(error))}; starting a new session`,
+          );
+          session = this.harness.session();
+        }
+      } else if (!session) {
+        session = this.harness.session();
+        log(`new session ${session.id}`);
+      }
+      this.activeSession = session;
+
+      return await executeTurnOnSession(session, resumed, approvals, opts);
+    } catch (error) {
+      if (this.aborted) {
+        const abortErr = new Error('agent turn aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+      if (error instanceof IdeaseekError) throw error;
+      // Transport/runtime failure: drop the cached harness so the next turn recovers.
+      await this.close();
+      throw new IdeaseekError(
+        'ENV_UNSUPPORTED',
+        `DSH session failed to start: ${redactAgentText((error as Error).message ?? String(error))} — ` +
+          'the pinned DSH runtime must boot locally (dsh on PATH / SDK profile "sdk"); retry after: ideaseek doctor',
+      );
+    } finally {
+      this.turnSink = null;
+    }
+  }
+
+  /** Reaps the underlying DSH runtime immediately (used on Ctrl-C interrupt). */
+  async abort(): Promise<void> {
+    this.aborted = true;
+    await this.close();
+  }
+
+  async close(): Promise<void> {
+    const harness = this.harness;
+    this.harness = null;
+    this.activeSession = null;
+    this.sig = '';
+    if (harness) await harness.close().catch(() => undefined);
   }
 }
 

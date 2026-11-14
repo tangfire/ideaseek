@@ -92,18 +92,8 @@ async function switchSessionMode(
   target: string,
   opts: { json?: boolean; force?: boolean },
 ): Promise<number> {
-  const {
-    parseSessionMode,
-    readSessionMode,
-    writeSessionMode,
-    buildSessionSummary,
-    MODE_PERMISSIONS,
-    SESSION_MODES,
-    AGENT_ENTRY_HINT,
-  } = await import('../session/mode.js');
+  const { AGENT_ENTRY_HINT } = await import('../session/mode.js');
   if (target === 'agent') {
-    // The old third tier was never enforceable and never was a permission
-    // tier; point at the entry instead of silently switching tiers.
     throw new IdeaseekError('INVALID_ARGUMENT', AGENT_ENTRY_HINT);
   }
   // `coding` and `ask` are the textual spelling of Shift+Tab's third
@@ -135,61 +125,35 @@ async function switchSessionMode(
     return 0;
   }
 
-  const requested = parseSessionMode(target);
-  if (!requested) {
-    throw new IdeaseekError(
-      'INVALID_ARGUMENT',
-      `mode must be one of: ${SESSION_MODES.join(' | ')} (use --strategy for ${RESEARCH_MODES.join('|')})`,
-    );
-  }
-  const current = await readSessionMode(root);
-
-  if (requested === current) {
+  const { executeSessionModeSwitch } = await import('../session/switch.js');
+  const res = await executeSessionModeSwitch(root, target, { force: opts.force === true });
+  if (!res.changed) {
     if (opts.json) {
-      const summary = await buildSessionSummary(root);
-      process.stdout.write(jsonLine({ ...summary, sessionMode: current, changed: false }));
+      process.stdout.write(jsonLine({ ...res.summary, sessionMode: res.current, changed: false }));
     } else {
       // One confirmation line; the full summary is one `ideaseek mode` away.
-      process.stdout.write(`session mode already ${current}\n`);
+      process.stdout.write(`session mode already ${res.current}\n`);
     }
     return 0;
   }
 
-  await writeSessionMode(root, requested, { force: opts.force === true });
-
-  // Audit only: an explicit /mode is confirmation enough, but the switch is
-  // recorded whenever a run exists (decisions are run-bound).
-  const { parseAutonomyMode, recordDecision } = await import('../workflow/autonomy.js');
-  const { ProjectRuntime } = await import('../workflow/runtime.js');
-  let decisionSeq: number | null = null;
-  const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
-  try {
-    const autonomy = parseAutonomyMode(runtime.config.policy.autonomyMode);
-    const decision = await recordDecision(runtime.db, runtime.project.id, {
-      action: 'change-session-mode',
-      target: `${current} → ${requested}`,
-      mode: autonomy,
-      reason: 'ideaseek mode',
-    });
-    decisionSeq = decision?.seq ?? null;
-  } finally {
-    await runtime.close();
-  }
-
   if (opts.json) {
-    const next = await buildSessionSummary(root);
-    process.stdout.write(jsonLine({ ...next, sessionMode: next.mode, changed: true, decisionSeq }));
-  } else {
-    // Concise by design: migration + audit event + one-line permission
-    // recap. The full project/autonomy/permission summary stays one
-    // `ideaseek mode` away — a switch must not wall the activity pane.
-    process.stdout.write(`session mode: ${current} → ${requested}\n`);
     process.stdout.write(
-      decisionSeq
-        ? `  decision recorded (event #${decisionSeq}); no second run was started\n`
+      jsonLine({
+        ...res.summary,
+        sessionMode: res.summary.mode,
+        changed: true,
+        decisionSeq: res.decisionSeq,
+      }),
+    );
+  } else {
+    process.stdout.write(`session mode: ${res.previous} → ${res.current}\n`);
+    process.stdout.write(
+      res.decisionSeq
+        ? `  decision recorded (event #${res.decisionSeq}); no second run was started\n`
         : '  decision not recorded (no run exists yet); no second run was started\n',
     );
-    process.stdout.write(`  ${MODE_PERMISSIONS[requested][0]}\n`);
+    process.stdout.write(`  ${res.firstPermission}\n`);
   }
   return 0;
 }

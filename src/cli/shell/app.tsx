@@ -29,7 +29,6 @@ import {
 } from './transcript.js';
 import { formatWelcomeLines, probeWorkspaceGreeting } from './welcome.js';
 import { renderBanner } from '../banner.js';
-import { runCliJson } from '../runner.js';
 import {
   padVisualEnd,
   sanitizeAnsiForInk,
@@ -41,6 +40,7 @@ import {
 import { collectPendingApprovals } from '../../approval/pending.js';
 import { findProjectRoot } from '../../config/paths.js';
 import { readAgentSessions } from '../../dsh/session.js';
+import { listProviders } from '../../models/setup.js';
 import { listRegisteredProjects } from '../../runtime/registry.js';
 
 /**
@@ -75,6 +75,7 @@ const SHORTCUT_ROWS: readonly { keys: string; desc: string }[] = [
   { keys: 'Ctrl+O', desc: 'Toggle compact / expanded tool & runtime trace' },
   { keys: 'Ctrl+Y', desc: 'Copy latest response to clipboard' },
   { keys: 'Ctrl+L', desc: 'Insert fresh divider & jump to bottom' },
+  { keys: 'Alt+M', desc: 'Toggle mouse wheel vs terminal drag-select copy' },
   { keys: 'PgUp / Wheel', desc: 'Scroll history · Ctrl-C stop · Ctrl-D /quit' },
 ];
 
@@ -339,6 +340,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const [busyStartedAt, setBusyStartedAt] = useState<number | null>(null);
   const [expandedDetails, setExpandedDetails] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [mouseEnabled, setMouseEnabled] = useState(true);
   const [picker, setPicker] = useState<PickerState | null>(null);
   const [transcriptSearch, setTranscriptSearch] = useState<{
     query: string;
@@ -351,6 +353,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const [secretBuf, setSecretBuf] = useState('');
   useSyncExternalStore(bus.subscribe, () => bus.version);
   const stateRef = useRef({ offset: 0, chromeRows: 6, visible: 20 });
+  const inputGenRef = useRef(0);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const prevRowCountRef = useRef(0);
   const [size, setSize] = useState(() => ({
@@ -499,97 +502,95 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     };
   }, [session, bus]);
 
-  const maybeOpenContextualPicker = async (submittedLine: string): Promise<void> => {
+  const maybeOpenContextualPicker = async (
+    submittedLine: string,
+    genAtDispatch: number,
+  ): Promise<void> => {
+    const stillIdle = () => inputGenRef.current === genAtDispatch;
     const trimmed = submittedLine.trim();
     if (trimmed === '/models setup') {
-      const res = await runCliJson<{
-        providers?: { id: string; baseUrl: string | null; configured: boolean }[];
-      }>(['models', 'providers', '--json']).catch(() => null);
-      const rows_ = res?.data?.providers ?? [];
-      if (rows_.length > 0) {
-        const items: PickerItem[] = rows_.map((p) => ({
-          id: p.id,
-          label: p.id,
-          detail: `${p.baseUrl ?? '(--base-url required)'} · ${p.configured ? 'configured' : 'not configured'}`,
-          command: `/models setup ${p.id}`,
-        }));
-        setPicker(
-          createPicker(
-            'provider',
-            'Select Provider',
-            items,
-            '↑/↓ select · Enter configure · type /... or Esc to dismiss',
-          ),
-        );
-      }
+      const rows_ = await listProviders().catch(() => []);
+      if (!stillIdle() || rows_.length === 0) return;
+      const items: PickerItem[] = rows_.map((p) => ({
+        id: p.id,
+        label: p.id,
+        detail: `${p.baseUrl ?? '(--base-url required)'} · ${p.configured ? 'configured' : 'not configured'}`,
+        command: `/models setup ${p.id}`,
+      }));
+      setPicker(
+        createPicker(
+          'provider',
+          'Select Provider',
+          items,
+          '↑/↓ select · Enter configure · type /... or Esc to dismiss',
+        ),
+      );
       return;
     }
     if (trimmed === '/pending') {
       const root = await findProjectRoot(process.cwd()).catch(() => null);
       if (!root) return;
       const pending = await collectPendingApprovals(root).catch(() => []);
-      if (pending.length > 0) {
-        const items: PickerItem[] = pending.map((item, idx) => ({
-          id: item.id,
-          label: `[${idx + 1}] ${item.kind}`,
-          detail: item.summary,
-          command: `/approve ${idx + 1}`,
-        }));
-        setPicker(
-          createPicker(
-            'pending',
-            'Pending Approvals',
-            items,
-            '↑/↓ select · Enter approve · type /... or Esc to dismiss',
-          ),
-        );
-      }
+      if (!stillIdle() || pending.length === 0) return;
+      const items: PickerItem[] = pending.map((item, idx) => ({
+        id: item.id,
+        label: `[${idx + 1}] ${item.kind}`,
+        detail: item.summary,
+        command: `/approve ${idx + 1}`,
+      }));
+      setPicker(
+        createPicker(
+          'pending',
+          'Pending Approvals',
+          items,
+          '↑/↓ select · Enter approve · type /... or Esc to dismiss',
+        ),
+      );
       return;
     }
     if (trimmed === '/agent') {
       const root = await findProjectRoot(process.cwd()).catch(() => null);
       const { sessions } = await readAgentSessions(root).catch(() => ({ sessions: [] }));
-      if (sessions.length > 0) {
-        const items: PickerItem[] = sessions.slice(0, 10).map((s) => ({
-          id: s.sessionId,
-          label: s.title || s.sessionId.slice(0, 14),
-          detail: `${s.turns} turn(s) · ${s.scope}${s.lastFinish ? ` · ${s.lastFinish}` : ''}`,
-          prefill: '/agent ',
-        }));
-        setPicker(
-          createPicker(
-            'session',
-            'Agent Sessions (newest first)',
-            items,
-            '↑/↓ inspect · Enter starts /agent prompt · Esc close',
-          ),
-        );
-      }
+      if (!stillIdle() || sessions.length === 0) return;
+      const items: PickerItem[] = sessions.slice(0, 10).map((s) => ({
+        id: s.sessionId,
+        label: s.title || s.sessionId.slice(0, 14),
+        detail: `${s.turns} turn(s) · ${s.scope}${s.lastFinish ? ` · ${s.lastFinish}` : ''}`,
+        prefill: '/agent ',
+      }));
+      setPicker(
+        createPicker(
+          'session',
+          'Agent Sessions (newest first)',
+          items,
+          '↑/↓ inspect · Enter starts /agent prompt · Esc close',
+        ),
+      );
       return;
     }
     if (trimmed === '/open') {
       const projects = await listRegisteredProjects().catch(() => []);
-      if (projects.length > 0) {
-        const items: PickerItem[] = projects.map((p) => ({
-          id: p.name,
-          label: p.name,
-          detail: p.root,
-          command: `/open "${p.root}" --confirm`,
-        }));
-        setPicker(
-          createPicker(
-            'project',
-            'Registered Projects',
-            items,
-            '↑/↓ select · Enter switch project · Esc close',
-          ),
-        );
-      }
+      if (!stillIdle() || projects.length === 0) return;
+      const items: PickerItem[] = projects.map((p) => ({
+        id: p.name,
+        label: p.name,
+        detail: p.root,
+        command: `/open "${p.root}" --confirm`,
+      }));
+      setPicker(
+        createPicker(
+          'project',
+          'Registered Projects',
+          items,
+          '↑/↓ select · Enter switch project · Esc close',
+        ),
+      );
     }
   };
 
   const dispatchCommand = (line: string): void => {
     if (line === '/') return;
+    const genAtDispatch = inputGenRef.current;
     bus.push(`❯ ${line}`);
     setOffset(0);
     setBusy(true);
@@ -601,7 +602,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
           setTimeout(() => exit(0), 60);
           return;
         }
-        await maybeOpenContextualPicker(line);
+        await maybeOpenContextualPicker(line, genAtDispatch);
       })
       .catch((error: unknown) => {
         bus.push(`error: ${(error as Error).message}`);
@@ -614,6 +615,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   };
 
   useInput((input, key) => {
+    inputGenRef.current += 1;
     if (session.secretPrompt) {
       if (key.return) {
         const answer = secretBuf;
@@ -719,6 +721,17 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     if (result.searchTranscript) {
       setShortcutsOpen(false);
       setTranscriptSearch({ query: '', matchCursor: 0 });
+      return;
+    }
+    if (result.toggleMouse) {
+      const next = !mouseEnabled;
+      setMouseEnabled(next);
+      try {
+        stdout.write(next ? '\x1b[?1000;1006h' : '\x1b[?1006l\x1b[?1000l');
+      } catch {
+        // ignore closed stream
+      }
+      showToast(next ? 'mouse: wheel scroll' : 'mouse: text selection');
       return;
     }
     if (result.toggleHelp) {
