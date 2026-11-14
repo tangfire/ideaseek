@@ -30,12 +30,17 @@ function readStdinAnswer(): Promise<string | null> {
   );
 }
 
+/** Stated once per general-scope turn: what is NOT guaranteed outside a project. */
+const GENERAL_SCOPE_NOTICE =
+  '通用 coding 回合（当前目录不是 IdeaSeek 项目）：审批与 --resume 照常，' +
+  '但不记 RunEvent、不做原始输入漂移侦测、不注入项目摘要。';
+
 /** Canned agent turn for tests (IDEASEEK_FAKE_AGENT_TURN=1). */
 async function runFakeAgentTurn(
   prompt: string,
   json: boolean,
   resume: boolean,
-  root: string,
+  root: string | null,
 ): Promise<number> {
   const sessionId = 'session-fake-e2e';
   process.stderr.write('  · dsh runtime started\n');
@@ -62,13 +67,15 @@ async function runFakeAgentTurn(
   // --resume from the registry (cross-restart continuity e2e).
   const { recordAgentSession } = await import('../dsh/session.js');
   await recordAgentSession(root, { sessionId, prompt });
-  const drift = await checkInputDriftAfterTurn(root);
+  // Outside a project there is no baseline to compare and no run to audit.
+  const drift = root ? await checkInputDriftAfterTurn(root) : null;
   const { renderDriftReport } = await import('../knowledge/input-drift.js');
   if (json) {
     process.stdout.write(
       jsonLine({
         sessionId,
         resumed: resume,
+        scope: root ? 'project' : 'general',
         finishReason: 'completed',
         eventCount: 3,
         approvals: approval
@@ -76,8 +83,8 @@ async function runFakeAgentTurn(
           : [],
         response,
         eventSeq: null,
-        inputDrift: inputDriftJson(drift.report),
-        inputDriftEventSeq: drift.eventSeq,
+        inputDrift: drift ? inputDriftJson(drift.report) : null,
+        inputDriftEventSeq: drift?.eventSeq ?? null,
       }),
     );
     return 0;
@@ -91,7 +98,8 @@ async function runFakeAgentTurn(
     );
   }
   process.stdout.write(`  ${response}\n`);
-  for (const line of renderDriftReport(drift.report)) process.stdout.write(`${line}\n`);
+  if (drift) for (const line of renderDriftReport(drift.report)) process.stdout.write(`${line}\n`);
+  else process.stdout.write(`  ${GENERAL_SCOPE_NOTICE}\n`);
   process.stdout.write(`next: ideaseek agent "<prompt>" --resume ${sessionId}\n`);
   return 0;
 }
@@ -191,19 +199,25 @@ export async function composeTurnPrompt(
 }
 
 /**
- * `ideaseek agent` — Agent mode against a REAL DSH coding session
+ * `ideaseek agent` — the general-purpose entry, a REAL DSH coding session
  * (docs/ARCHITECTURE research-cli; no fixed greetings, no ask-supervisor
- * stand-in): one prompt → pinned DSH runtime → named/resumable session
- * with the project as cwd; tool approvals are operator-driven on a TTY,
- * via the parent shell's stdio channel, and default to rejected
- * everywhere else. Each turn records an audited Decision/Event
- * (truncated, redacted) and the session id for --resume.
+ * stand-in): one prompt → pinned DSH runtime → named/resumable session with
+ * the working directory as cwd; tool approvals are operator-driven on a TTY,
+ * via the parent shell's stdio channel, and default to rejected everywhere
+ * else.
+ *
+ * It runs in ANY directory, because "IdeaSeek is also my everyday coding
+ * agent" is the product requirement (docs/MODES.md). Inside an IdeaSeek
+ * project the turn additionally gets an audited Decision/Event, a provenance
+ * drift check and a first-turn project brief; outside one it is a plain DSH
+ * session and says which guarantees are off, rather than quietly pretending
+ * the research guarantees still hold.
  */
 export function registerAgentCommand(program: Command): void {
   program
     .command('agent')
     .description(
-      'run one real DSH coding-session turn in the project (approvals: TTY prompt, else rejected)',
+      'run one real DSH coding-session turn in this directory (approvals: TTY prompt, else rejected)',
     )
     .argument('[prompt]', 'the instruction for this turn (omit with --list/--resume-only)')
     .option('--resume <sessionId>', 'continue a persisted session instead of minting a new one')
@@ -232,13 +246,10 @@ export function registerAgentCommand(program: Command): void {
           },
         ) => {
           const { findProjectRoot } = await import('../config/paths.js');
+          // No project required: this is the everyday entry. `root` only decides
+          // whether the research-side guarantees (audit, drift, brief) apply.
           const root = await findProjectRoot(process.cwd());
-          if (!root) {
-            throw new IdeaseekError(
-              'NOT_INITIALIZED',
-              'no IdeaSeek project here — agent sessions run inside a project (ideaseek init)',
-            );
-          }
+          const turnCwd = root ?? process.cwd();
 
           const { agentSessionsPath, recordAgentSession } = await import('../dsh/session.js');
 
@@ -254,14 +265,18 @@ export function registerAgentCommand(program: Command): void {
               sessions = [];
             }
             if (opts.json) {
-              process.stdout.write(jsonLine({ sessions }));
+              process.stdout.write(jsonLine({ sessions, registry: agentSessionsPath(root) }));
               return 0;
             }
             if (sessions.length === 0) {
-              process.stdout.write('no agent sessions yet — ideaseek agent "<prompt>"\n');
+              process.stdout.write(
+                `no agent sessions yet — ideaseek agent "<prompt>" (registry: ${agentSessionsPath(root)})\n`,
+              );
               return 0;
             }
-            process.stdout.write(`${sessions.length} agent session(s):\n`);
+            process.stdout.write(
+              `${sessions.length} agent session(s) (${agentSessionsPath(root)}):\n`,
+            );
             for (const session of sessions) {
               process.stdout.write(
                 `  ${session.sessionId}  ${new Date(session.updatedAt).toISOString()}  ${session.promptHead}\n`,
@@ -292,8 +307,10 @@ export function registerAgentCommand(program: Command): void {
 
           const { runAgentTurn, redactAgentText } = await import('../dsh/session.js');
           const result = await runAgentTurn({
-            cwd: root,
-            prompt: await composeTurnPrompt(root, prompt, opts.resume === undefined),
+            cwd: turnCwd,
+            prompt: root
+              ? await composeTurnPrompt(root, prompt, opts.resume === undefined)
+              : prompt,
             ...(opts.resume ? { sessionId: opts.resume } : {}),
             policy: opts.denyTools ? 'deny' : 'interactive',
             ...(opts.provider ? { provider: opts.provider } : {}),
@@ -336,33 +353,36 @@ export function registerAgentCommand(program: Command): void {
             prompt,
           });
 
-          // Audited turn: truncated + redacted, never the key material.
+          // Audited turn: truncated + redacted, never the key material. Only a
+          // project has a run to attach the event to.
           let eventSeq: number | null = null;
-          const { ProjectRuntime } = await import('../workflow/runtime.js');
-          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
-          try {
-            const run = await runtime.db.getLatestRun(runtime.project.id);
-            if (run) {
-              const event = await runtime.db.appendEvent({
-                runId: run.runId,
-                phase: 'DECISION',
-                objectId: result.sessionId,
-                role: 'system',
-                eventType: 'agent_turn',
-                summary:
-                  `agent turn on session ${result.sessionId} ` +
-                  `(${result.resumed ? 'resumed' : 'new'}, ${result.eventCount} event(s), ` +
-                  `${result.approvals.length} approval(s)): ` +
-                  redactAgentText(prompt).slice(0, 160),
-                status: result.finishReason ?? 'completed',
-              });
-              eventSeq = event.seq;
+          if (root) {
+            const { ProjectRuntime } = await import('../workflow/runtime.js');
+            const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+            try {
+              const run = await runtime.db.getLatestRun(runtime.project.id);
+              if (run) {
+                const event = await runtime.db.appendEvent({
+                  runId: run.runId,
+                  phase: 'DECISION',
+                  objectId: result.sessionId,
+                  role: 'system',
+                  eventType: 'agent_turn',
+                  summary:
+                    `agent turn on session ${result.sessionId} ` +
+                    `(${result.resumed ? 'resumed' : 'new'}, ${result.eventCount} event(s), ` +
+                    `${result.approvals.length} approval(s)): ` +
+                    redactAgentText(prompt).slice(0, 160),
+                  status: result.finishReason ?? 'completed',
+                });
+                eventSeq = event.seq;
+              }
+            } finally {
+              await runtime.close();
             }
-          } finally {
-            await runtime.close();
           }
 
-          const drift = await checkInputDriftAfterTurn(root);
+          const drift = root ? await checkInputDriftAfterTurn(root) : null;
           const { renderDriftReport } = await import('../knowledge/input-drift.js');
 
           if (opts.json) {
@@ -370,13 +390,14 @@ export function registerAgentCommand(program: Command): void {
               jsonLine({
                 sessionId: result.sessionId,
                 resumed: result.resumed,
+                scope: root ? 'project' : 'general',
                 finishReason: result.finishReason,
                 eventCount: result.eventCount,
                 approvals: result.approvals,
                 response: result.finalResponse,
                 eventSeq,
-                inputDrift: inputDriftJson(drift.report),
-                inputDriftEventSeq: drift.eventSeq,
+                inputDrift: drift ? inputDriftJson(drift.report) : null,
+                inputDriftEventSeq: drift?.eventSeq ?? null,
               }),
             );
             return 0;
@@ -392,7 +413,11 @@ export function registerAgentCommand(program: Command): void {
           if (eventSeq !== null) {
             process.stdout.write(`  event #${eventSeq} recorded\n`);
           }
-          for (const line of renderDriftReport(drift.report)) process.stdout.write(`${line}\n`);
+          if (drift) {
+            for (const line of renderDriftReport(drift.report)) process.stdout.write(`${line}\n`);
+          } else {
+            process.stdout.write(`  ${GENERAL_SCOPE_NOTICE}\n`);
+          }
           process.stdout.write(`next: ideaseek agent "<prompt>" --resume ${result.sessionId}\n`);
           return 0;
         },

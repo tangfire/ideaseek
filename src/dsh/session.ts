@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 
 /**
@@ -260,26 +262,35 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   }
 }
 
-/** Persisted session registry (ids only — no prompts, no secrets). */
+/** Persisted session registry (ids only — no prompts beyond an 80-char head,
+ * no secrets). */
 export interface AgentSessionRegistry {
   contract: 'agent-sessions-v1';
   sessions: { sessionId: string; updatedAt: number; promptHead: string }[];
 }
 
-export function agentSessionsPath(root: string): string {
-  return `${root}/knowledge/agent-sessions.json`.replace(/\\/g, '/');
+/**
+ * Where resumable session ids live: inside a project under `knowledge/` next to
+ * the other artifacts; outside one in the user-level state directory, so a
+ * general coding turn in an unrelated repo still gets `--resume` tomorrow.
+ */
+export function agentSessionsPath(root: string | null): string {
+  if (root) return `${root}/knowledge/agent-sessions.json`.replace(/\\/g, '/');
+  const override = process.env.IDEASEEK_USER_CONFIG?.trim();
+  const dir = override ? dirname(override) : join(homedir(), '.ideaseek');
+  return join(dir, 'agent-sessions.json');
 }
 
 export async function recordAgentSession(
-  root: string,
+  root: string | null,
   entry: { sessionId: string; prompt: string },
 ): Promise<string> {
   const { readFile } = await import('node:fs/promises');
   const { writeFileAtomic, ensureDir } = await import('../core/atomic.js');
-  const { join } = await import('node:path');
+  const file = agentSessionsPath(root);
   let registry: AgentSessionRegistry = { contract: 'agent-sessions-v1', sessions: [] };
   try {
-    registry = JSON.parse(await readFile(agentSessionsPath(root), 'utf8')) as AgentSessionRegistry;
+    registry = JSON.parse(await readFile(file, 'utf8')) as AgentSessionRegistry;
   } catch {
     registry = { contract: 'agent-sessions-v1', sessions: [] };
   }
@@ -296,7 +307,7 @@ export async function recordAgentSession(
     });
   }
   registry.sessions.sort((a, b) => b.updatedAt - a.updatedAt);
-  await ensureDir(join(root, 'knowledge'));
-  await writeFileAtomic(agentSessionsPath(root), `${JSON.stringify(registry, null, 2)}\n`);
-  return agentSessionsPath(root);
+  await ensureDir(dirname(file));
+  await writeFileAtomic(file, `${JSON.stringify(registry, null, 2)}\n`);
+  return file;
 }

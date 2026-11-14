@@ -134,7 +134,7 @@ IdeaSeek 的科研会话有两个权限档位，外加一个通用工程入口�
 
 - `Analysis`：准备材料。读取论文、数据和 comparison，告诉你还缺什么；只写知识与缺口报告，不启动正式实验。
 - `Research`：执行科研工作流，设计协议、提出 idea、运行受控的 smoke/quick/standard 实验并形成 handoff。
-- `/agent <指令>`（或 `ideaseek agent`）：通用 DSH coding 会话，帮你修数据、修实现、修环境。它**不是**第三个权限档位，也不受目录禁令约束——用 DSH 自带的 `workspace-write` + `ask` 预设，每个工具调用逐次问你；改动了论文/数据/upstream 时，回合结束会报告哪些已提交结论因此不再可复核。
+- `/agent <指令>`（或 `ideaseek agent`）：通用 DSH coding 会话，帮你修数据、修实现、修环境。它**不是**第三个权限档位，也不受目录禁令约束——用 DSH 自带的 `workspace-write` + `ask` 预设，每个工具调用逐次问你；改动了论文/数据/upstream 时，回合结束会报告哪些已提交结论因此不再可复核。它也不需要先 `init`：在任意仓库里都能当日常 agent 用，只是那种情况下没有科研侧的审计与漂移报告，CLI 会写明。
 
 按 `Shift+Tab` 在两个档位之间循环，或使用 `/mode analysis`、`/mode research`；工程改动用 `/agent`，`/mode agent` 会把你指到这条路上。
 

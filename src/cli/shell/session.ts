@@ -124,7 +124,8 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
   if (!status?.data) {
     return {
       lines: [
-        'not an IdeaSeek project — type /init to create one here (or cd into an existing one)',
+        'not an IdeaSeek project — /init creates one here, or cd into an existing one',
+        'this directory still works as a general coding session: /agent <指令> (approvals asked per tool)',
       ],
       tone: 'warn',
     };
@@ -361,7 +362,7 @@ export class InteractiveSession {
     const root = await findProjectRoot(process.cwd());
     if (!root) {
       this.println(
-        'not an IdeaSeek project — type /init to create one here (or cd into an existing one)',
+        'not an IdeaSeek project — no research tier to switch (type /init here, or use /agent for a coding turn)',
       );
       return;
     }

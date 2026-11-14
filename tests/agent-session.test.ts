@@ -29,10 +29,14 @@ function runCli(
   timeoutMs = 90_000,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries({ ...process.env, IDEASEEK_CLI: '1' })) {
-      if (extraEnv[key] === null) continue; // explicit scrub (e.g. API keys)
-      env[key] = (extraEnv[key] as string | undefined) ?? value;
+    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    env.IDEASEEK_CLI = '1';
+    // extraEnv both scrubs (null) and ADDS keys — a caller-provided
+    // IDEASEEK_FAKE_AGENT_TURN must reach the child, or a test written to be
+    // offline silently spends real credentials instead.
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value === null) delete env[key];
+      else env[key] = value;
     }
     const child = spawn(process.execPath, [CLI_BIN, ...args], { cwd, env });
     let stdout = '';
@@ -204,4 +208,56 @@ describe('first-turn project brief', () => {
     // A resumed session already holds this context; its prompt is untouched.
     expect(await composeTurnPrompt(dir, '继续', false)).toBe('继续');
   }, 180_000);
+});
+
+describe('general scope: agent outside an IdeaSeek project', () => {
+  it('runs with no project, keeps resume state user-level and invents no research artifacts', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-general-'));
+    const env = {
+      IDEASEEK_FAKE_AGENT_TURN: '1',
+      IDEASEEK_USER_CONFIG: join(dir, '.state', 'config.yaml'),
+      // Scrubbed so a broken fake hook fails the test instead of spending
+      // whatever key this machine happens to have configured.
+      DEEPSEEK_API_KEY: null,
+    };
+
+    const turn = await runCli(dir, ['agent', '排查这个空指针', '--json'], env);
+    expect(turn.code, turn.stdout + turn.stderr).toBe(0);
+    const payload = JSON.parse(turn.stdout) as {
+      scope: string;
+      sessionId: string;
+      inputDrift: unknown;
+      eventSeq: unknown;
+    };
+    expect(payload.scope).toBe('general');
+    // No baseline, no run: nothing to report drift against and nothing to audit.
+    expect(payload.inputDrift).toBeNull();
+    expect(payload.eventSeq).toBeNull();
+
+    const human = await runCli(dir, ['agent', '排查这个空指针'], env);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain('不记 RunEvent');
+
+    // Session continuity lives in the user-level state dir, not a project store.
+    const registry = JSON.parse(
+      await readFile(join(dir, '.state', 'agent-sessions.json'), 'utf8'),
+    ) as { sessions: { sessionId: string }[] };
+    expect(registry.sessions.some((s) => s.sessionId === payload.sessionId)).toBe(true);
+
+    // And the plain repo gained no IdeaSeek state (no knowledge/, no .research/).
+    await expect(readFile(join(dir, 'knowledge', 'agent-sessions.json'), 'utf8')).rejects.toThrow();
+    await expect(readFile(join(dir, '.research', 'session.json'), 'utf8')).rejects.toThrow();
+
+    const again = await runCli(
+      dir,
+      ['agent', '继续', '--resume', payload.sessionId, '--json'],
+      env,
+    );
+    expect(again.code).toBe(0);
+    expect(JSON.parse(again.stdout)).toMatchObject({ resumed: true, scope: 'general' });
+
+    const listed = await runCli(dir, ['agent', '--list'], env);
+    expect(listed.stdout).toContain('agent-sessions.json');
+    expect(listed.stdout).toContain(payload.sessionId);
+  }, 240_000);
 });
