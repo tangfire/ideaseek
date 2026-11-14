@@ -50,6 +50,10 @@ class ImageProfileError(ValueError):
     """Raised for inputs that are not a profileable image corpus."""
 
 
+class MissingDependencyError(ImageProfileError):
+    """An optional heavy dependency is absent: a fixable environment gap."""
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -106,7 +110,9 @@ def profile_parquet(path: Path) -> dict:
     try:
         import pyarrow.parquet as pq  # noqa: PLC0415 - optional heavy dependency
     except ImportError as exc:  # pragma: no cover - environment dependent
-        raise ImageProfileError(f"pyarrow is not installed: {exc}") from exc
+        raise MissingDependencyError(
+            f"pyarrow is not installed in the IdeaSeek worker environment: {exc}"
+        ) from exc
 
     try:
         schema_names = [field.name for field in pq.ParquetFile(path).schema_arrow]

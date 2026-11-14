@@ -20,7 +20,13 @@ export interface LabelCandidate {
 
 export interface DatasetProfile {
   datasetSnapshotId: string;
-  source: { path: string; bytes: number; sha256: string; format: 'csv' };
+  source: {
+    path: string;
+    bytes: number;
+    sha256: string;
+    /** CSV, or an image corpus in any of the shapes the image profiler reads. */
+    format: 'csv' | 'parquet' | 'parquet-shards' | 'image-dir';
+  };
   rows: number;
   columns: ColumnProfile[];
   quality: { missingCells: number; duplicateRows: number; constantColumns: string[] };

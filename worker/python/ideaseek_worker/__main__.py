@@ -205,11 +205,13 @@ def cmd_dataset(args) -> int:
 
 def cmd_images(args) -> int:
     """Profile an image corpus (directory layout or parquet) for protocol grounding."""
-    from .images import ImageProfileError, profile_images
+    from .images import ImageProfileError, MissingDependencyError, profile_images
 
     path = Path(args.path)
     try:
         profile = profile_images(path)
+    except MissingDependencyError as exc:
+        return _fail("PARSER_MISSING", str(exc))
     except ImageProfileError as exc:
         return _fail("DATASET_LAYOUT", str(exc))
     except FileNotFoundError as exc:

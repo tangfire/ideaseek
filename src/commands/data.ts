@@ -10,6 +10,12 @@ import { writeFileAtomic } from '../core/atomic.js';
 import type { SliceScale } from '../experiment/slices.js';
 import { profileFederatedDataset } from '../knowledge/federated.js';
 import { acquireDataset, formatBytes } from '../knowledge/dataset-acquire.js';
+import {
+  imageProfileToDatasetProfile,
+  profileImages,
+  type ImageProfile,
+} from '../knowledge/image-profile.js';
+import type { DatasetProfile } from '../experiment/dataset-card.js';
 import { buildAllFederatedSlices } from '../experiment/federated-slices.js';
 import { ensureDir } from '../core/atomic.js';
 import { action, buildHarness, jsonLine } from './shared.js';
@@ -321,14 +327,29 @@ export function registerDataCommand(program: Command): void {
             join(runtime.paths.knowledgeDir, 'input-manifest.json'),
           );
           const dataFiles = (manifest?.files ?? []).filter(
-            (file) => file.role === 'data' && file.ext === '.csv',
+            (file) => file.role === 'data' && ['.csv', '.parquet'].includes(file.ext),
           );
 
-          const profiles = [];
+          const profiles: DatasetProfile[] = [];
+          const imageProfiles: ImageProfile[] = [];
           for (const file of dataFiles) {
+            const absolute = join(runtime.paths.root, file.relPath);
             try {
+              if (file.ext === '.csv') {
+                profiles.push(
+                  await profileCsv(absolute, {
+                    now: Date.now(),
+                    generatedBy: 'ideaseek data describe',
+                  }),
+                );
+                continue;
+              }
+              // A downloaded benchmark corpus (PACS-style parquet) is not a
+              // CSV; profiling it is what clears the no-dataset gap.
+              const image = await profileImages(absolute);
+              imageProfiles.push(image);
               profiles.push(
-                await profileCsv(join(runtime.paths.root, file.relPath), {
+                imageProfileToDatasetProfile(image, {
                   now: Date.now(),
                   generatedBy: 'ideaseek data describe',
                 }),
@@ -353,15 +374,37 @@ export function registerDataCommand(program: Command): void {
           const external: {
             path: string;
             profile?: Awaited<ReturnType<typeof profileFederatedDataset>>;
+            imageProfile?: ImageProfile;
             error?: string;
           }[] = [];
           for (const rootPath of runtime.config.inputs.readonlyDatasets) {
             try {
               const profile = await profileFederatedDataset(rootPath);
               external.push({ path: rootPath, profile });
-            } catch (error) {
-              external.push({ path: rootPath, error: (error as Error).message });
+            } catch {
+              // Not a federated npz mount. Before this fallback, an image
+              // corpus under a read-only root could only ever report a layout
+              // error, so the no-dataset gap stayed blocking.
+              try {
+                const imageProfile = await profileImages(rootPath);
+                external.push({ path: rootPath, imageProfile });
+                imageProfiles.push(imageProfile);
+              } catch (imageError) {
+                // Report the image attempt, not the federated one: the
+                // researcher needs the fix that applies (missing pyarrow is
+                // not a dataset layout problem).
+                external.push({ path: rootPath, error: (imageError as Error).message });
+              }
             }
+          }
+          // The card flattens structure for display; protocol synthesis needs
+          // the grouping axis and candidate split rules verbatim. Written
+          // after the external pass so read-only mounts are included too.
+          if (imageProfiles.length > 0) {
+            await writeFileAtomic(
+              join(runtime.paths.knowledgeDir, 'image-profiles.json'),
+              `${JSON.stringify({ generatedAt, profiles: imageProfiles }, null, 2)}\n`,
+            );
           }
           let manifestPath: string | null = null;
           if (external.length > 0) {
@@ -411,7 +454,9 @@ export function registerDataCommand(program: Command): void {
             return 0;
           }
 
-          process.stdout.write(`dataset CSV files (from scan): ${dataFiles.length}\n`);
+          process.stdout.write(
+            `dataset files profiled (from scan, csv/parquet): ${dataFiles.length}\n`,
+          );
           for (const profile of profiles) {
             process.stdout.write(
               `  ${profile.source.path}: ${profile.rows} rows × ${profile.columns.length} columns, missing=${profile.quality.missingCells}, dup=${profile.quality.duplicateRows}\n`,
@@ -428,6 +473,29 @@ export function registerDataCommand(program: Command): void {
           process.stdout.write(`registered slices: ${slices.length}\n`);
           for (const entry of external) {
             process.stdout.write(`  external: ${entry.path}\n`);
+            if (entry.imageProfile) {
+              // An image corpus is profiled differently from a federated npz
+              // mount; treating it as "no profile" reported success as failure.
+              const image = entry.imageProfile;
+              const groups = image.grouping.values
+                .map((item) => `${item.name} ${item.count}`)
+                .join(', ');
+              process.stdout.write(
+                `    ${image.source.format}: ${image.samples} samples, ` +
+                  `${image.classes.distinct} classes` +
+                  (image.grouping.column
+                    ? `, domain axis ${image.grouping.column} [${groups}]`
+                    : ', no domain axis detected') +
+                  '\n',
+              );
+              for (const rule of image.splitRules) {
+                process.stdout.write(`    split candidate: ${rule}\n`);
+              }
+              for (const warning of image.warnings) {
+                process.stdout.write(`    ! ${warning}\n`);
+              }
+              continue;
+            }
             if (!entry.profile) {
               process.stdout.write(`    ! profile failed: ${entry.error}\n`);
               continue;

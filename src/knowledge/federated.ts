@@ -56,7 +56,7 @@ export interface FederatedDatasetProfile {
   };
 }
 
-function workerPythonDir(): string {
+export function workerPythonDir(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   return resolve(here, '..', '..', 'worker', 'python');
 }
