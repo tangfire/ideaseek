@@ -60,7 +60,7 @@ export function registerSearchCommand(program: Command): void {
                   cacheDir,
                   runtime.config.runtime.embeddingModel,
                 );
-                if (probe.packageInstalled) {
+                if (probe.packageInstalled && probe.modelCached) {
                   const local = new LocalFastEmbedProvider({
                     cacheDir,
                     modelId: runtime.config.runtime.embeddingModel,
@@ -68,6 +68,12 @@ export function registerSearchCommand(program: Command): void {
                   embeddingStats = await refreshEmbeddings(runtime, local);
                   if (embeddingStats.failed === 0) provider = local;
                   else embeddingNote = 'embedding failed for pending pages: BM25/FTS only';
+                } else if (probe.packageInstalled) {
+                  // Search never triggers a model download implicitly — the
+                  // one-time fetch belongs to the explicit install step
+                  // (a silent multi-minute download made `search` hang).
+                  embeddingNote =
+                    'model not cached (one-time: ideaseek setup --install-embeddings): BM25/FTS only';
                 } else {
                   embeddingNote =
                     'fastembed not installed (ideaseek setup --install-embeddings): BM25/FTS only';

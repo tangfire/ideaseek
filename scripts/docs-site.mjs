@@ -205,18 +205,22 @@ if (mode === 'build') {
   process.exit(0);
 }
 
-// check: committed artifacts must match a fresh regeneration + CLI sync
+// check: committed artifacts must match a fresh regeneration + CLI sync.
+// Line endings are normalized first: Windows/WSL checkouts with
+// core.autocrlf=true produce CRLF copies of committed LF files, which
+// must not read as "stale" (regenerated content is always LF).
+const lf = (text) => text.split('\r\n').join('\n');
 const problems = [];
 const committedSearch = existsSync(join(outDir, 'search-index.json'))
-  ? readFileSync(join(outDir, 'search-index.json'), 'utf8')
+  ? lf(readFileSync(join(outDir, 'search-index.json'), 'utf8'))
   : null;
-if (committedSearch !== searchIndex) {
+if (committedSearch !== lf(searchIndex)) {
   problems.push('search-index.json is stale — run: node scripts/docs-site.mjs build');
 }
 const committedKeys = existsSync(join(outDir, 'config-keys.json'))
-  ? readFileSync(join(outDir, 'config-keys.json'), 'utf8')
+  ? lf(readFileSync(join(outDir, 'config-keys.json'), 'utf8'))
   : null;
-if (committedKeys !== configKeys) {
+if (committedKeys !== lf(configKeys)) {
   problems.push('config-keys.json is stale — run: node scripts/docs-site.mjs build');
 }
 const committedHtml = readFileSync(htmlPath, 'utf8');
