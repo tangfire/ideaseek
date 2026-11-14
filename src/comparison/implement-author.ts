@@ -79,6 +79,7 @@ export function parseImplementationOutput(output: string): { program: string; no
 export function buildImplementationContext(
   blueprint: ReproductionBlueprint,
   dataPath: string | null,
+  correction?: string,
 ): string {
   const parts = [
     `## method\n${blueprint.methodId}`,
@@ -99,7 +100,10 @@ export function buildImplementationContext(
     `## data path the checks will receive\n${dataPath ?? '(caller supplies --data)'}`,
   ];
   const joined = parts.join('\n\n');
-  return joined.length > 10_000 ? `${joined.slice(0, 10_000)}\n(context truncated)` : joined;
+  const body = joined.length > 10_000 ? `${joined.slice(0, 10_000)}\n(context truncated)` : joined;
+  // Appended after truncation, as in buildBlueprintContext: a retry that
+  // arrives without its feedback is the same request sent twice.
+  return correction ? `${body}\n\n## correction required\n${correction}` : body;
 }
 
 export async function authorImplementation(opts: {
@@ -108,8 +112,10 @@ export async function authorImplementation(opts: {
   dataPath: string | null;
   runId: string;
   now: number;
+  /** Why a previous attempt was refused; see buildImplementationContext. */
+  correction?: string;
 }): Promise<AuthoredImplementation> {
-  const context = buildImplementationContext(opts.blueprint, opts.dataPath);
+  const context = buildImplementationContext(opts.blueprint, opts.dataPath, opts.correction);
   const result = await opts.harness.runTask({
     runId: opts.runId,
     taskId: `implement-${opts.blueprint.methodId}`,

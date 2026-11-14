@@ -885,33 +885,62 @@ export function registerComparisonCommand(program: Command): void {
             }
 
             const { authorImplementation } = await import('../comparison/implement-author.js');
-            const authored = await authorImplementation({
-              harness: runtime.harness!,
-              blueprint,
-              dataPath: opts.data ?? null,
-              runId:
-                (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
-                `implement-${methodId}`,
-              now: Date.now(),
-            });
-
-            // Compile before writing: an unparseable program in the worktree
-            // only fails later, after a venv and a clone have been paid for.
+            const runId =
+              (await runtime.db.getLatestRun(runtime.project.id))?.runId ?? `implement-${methodId}`;
             const { writeFile: writeTmp, mkdtemp, rm } = await import('node:fs/promises');
             const { tmpdir } = await import('node:os');
             const { checkPythonSyntax } = await import('../knowledge/materialize.js');
-            const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-implement-'));
-            try {
-              await writeTmp(join(scratch, 'reproduce.py'), authored.source, 'utf8');
-              const syntax = await checkPythonSyntax(join(scratch, 'reproduce.py'));
-              if (!syntax.ok) {
+            let authored: Awaited<ReturnType<typeof authorImplementation>>;
+            let correction: string | undefined;
+            // Same shape as the blueprint gate: one retry that is told why the
+            // first attempt was refused. Two unparseable programs in a row came
+            // out of this call earlier today, and the only remedy then was a
+            // human rerunning the command — which pays for the model call again
+            // with no new information.
+            for (let attempt = 1; ; attempt += 1) {
+              authored = await authorImplementation({
+                harness: runtime.harness!,
+                blueprint,
+                dataPath: opts.data ?? null,
+                runId,
+                now: Date.now(),
+                correction,
+              });
+
+              // Compile before writing: an unparseable program in the worktree
+              // only fails later, after a venv and a clone have been paid for.
+              const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-implement-'));
+              let syntaxError: string | null = null;
+              try {
+                await writeTmp(join(scratch, 'reproduce.py'), authored.source, 'utf8');
+                const syntax = await checkPythonSyntax(join(scratch, 'reproduce.py'));
+                if (!syntax.ok) {
+                  syntaxError =
+                    `line ${syntax.line}: ${syntax.message} ` +
+                    `(the program you returned is ${authored.lines} lines long)`;
+                }
+              } finally {
+                await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+              }
+
+              if (!syntaxError) break;
+              if (attempt >= 2) {
                 throw new IdeaseekError(
                   'INVALID_ARTIFACT',
-                  `authored implementation does not compile (line ${syntax.line}: ${syntax.message}) — nothing was written; rerun with --force`,
+                  `authored implementation does not compile after ${attempt} attempts ` +
+                    `(${syntaxError}) — nothing was written; ` +
+                    'rerun with --force, and set IDEASEEK_IMPLEMENT_DEBUG to keep the raw response',
                 );
               }
-            } finally {
-              await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+              correction =
+                `the program from the previous attempt was refused because it does not ` +
+                `compile: ${syntaxError}. Return a complete program that parses: check that ` +
+                `every bracket, quote and indentation level is closed, and do not truncate ` +
+                `the middle of the file.`;
+              process.stderr.write(
+                `implementation refused on attempt ${attempt}: does not compile (${syntaxError})\n` +
+                  'retrying with that feedback\n',
+              );
             }
 
             await ensureDir(worktreeDir);

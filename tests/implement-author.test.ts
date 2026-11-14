@@ -91,6 +91,26 @@ describe('buildImplementationContext', () => {
   it('says when the caller supplies the path rather than inventing one', () => {
     expect(buildImplementationContext(blueprint(), null)).toContain('caller supplies');
   });
+
+  it('appends the refusal so a retry is not the identical request', () => {
+    const context = buildImplementationContext(
+      blueprint(),
+      'datasets/x',
+      'line 210: expected ( — the program is 595 lines long',
+    );
+    expect(context).toContain('## correction required');
+    expect(context).toContain('line 210: expected (');
+  });
+
+  it('keeps the correction past a truncated context', () => {
+    const huge = blueprint();
+    huge.algorithm.dataInterface.description = 'd'.repeat(20_000);
+    const context = buildImplementationContext(huge, 'datasets/x', 'fix the brackets');
+    expect(context).toContain('(context truncated)');
+    expect(context.indexOf('## correction required')).toBeGreaterThan(
+      context.indexOf('(context truncated)'),
+    );
+  });
 });
 
 describe('authorImplementation', () => {
