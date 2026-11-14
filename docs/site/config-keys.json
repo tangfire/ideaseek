@@ -27,13 +27,11 @@
     "runtime.allow_network",
     "runtime.container_runtime",
     "runtime.default_data_scale",
-    "runtime.embedding_model",
     "runtime.heartbeat_interval_seconds",
     "runtime.lease_ttl_seconds",
     "runtime.max_attempts",
     "runtime.model_route",
     "runtime.profile",
-    "runtime.use_embeddings",
     "runtime.worker_poll_ms"
   ]
 }
