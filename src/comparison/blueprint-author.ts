@@ -53,7 +53,11 @@ Rules:
   succeed is worse than one that fails, because everything downstream trusts it.
 - Assume the method may run with no third-party packages installed: state in
   assumptions exactly which packages the implementation needs, and keep the
-  smoke path honest about whether they were present.`;
+  smoke path honest about whether they were present.
+- List those packages again in algorithm.requirements as bare pip requirement
+  specs (e.g. ["torch","pillow","scikit-learn"]). The runner builds an isolated
+  venv from that list before checking; leave it empty only if the code truly
+  needs nothing beyond the standard library.`;
 
 export const BLUEPRINT_OUTPUT_SCHEMA = 'reproduction-blueprint-v1';
 
@@ -76,6 +80,12 @@ export interface BlueprintEvidence {
     domains: string[];
     classes: number;
   } | null;
+  /**
+   * Feedback from a rejected previous attempt, appended to the context so a
+   * corrective retry changes the model's input rather than being the same
+   * request again. Without this the retry is a coin flip on identical prompt.
+   */
+  correction?: string;
 }
 
 export function buildBlueprintContext(evidence: BlueprintEvidence): string {
@@ -104,6 +114,18 @@ export function buildBlueprintContext(evidence: BlueprintEvidence): string {
         .map((metric) => `${metric.name} (${metric.direction})`)
         .join(', ')}\nsplit rules: ${evidence.protocol.splitRules.join(' | ')}`,
     );
+    // "reuse verbatim" is an instruction the model can satisfy in spirit and
+    // miss in fact; naming the required keys makes the mismatch detectable by
+    // the platform's feasibility check instead of a later reproduce run.
+    const keys = evidence.protocol.primaryMetrics.map((metric) => metric.name);
+    if (keys.length > 0) {
+      parts.push(
+        `## required output metric keys\nalgorithm.metrics MUST report every one of these names ` +
+          `exactly as written: ${keys.join(', ')}\n` +
+          `Additional metrics are allowed; a closer-sounding name is not a substitute — ` +
+          `results keyed differently cannot answer the locked protocol.`,
+      );
+    }
   } else {
     parts.push('## locked protocol\n(none — metrics must be proposed as assumptions)');
   }
@@ -118,9 +140,12 @@ export function buildBlueprintContext(evidence: BlueprintEvidence): string {
     parts.push('## measured corpus\n(not profiled — describe the data interface as an assumption)');
   }
   const joined = parts.join('\n\n');
-  return joined.length > MAX_CONTEXT
-    ? `${joined.slice(0, MAX_CONTEXT)}\n(context truncated)`
-    : joined;
+  const body =
+    joined.length > MAX_CONTEXT ? `${joined.slice(0, MAX_CONTEXT)}\n(context truncated)` : joined;
+  // Appended after truncation: a corrective retry whose correction got sliced
+  // off is the identical request again, and would silently return the same
+  // rejected answer.
+  return evidence.correction ? `${body}\n\n## correction required\n${evidence.correction}` : body;
 }
 
 export function parseBlueprintOutput(output: string, methodId: string): ReproductionBlueprint {

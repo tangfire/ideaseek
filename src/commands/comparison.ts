@@ -638,27 +638,18 @@ export function registerComparisonCommand(program: Command): void {
               );
             }
 
+            // The protocol is read from the artifact store like every other
+            // consumer. This used to open knowledge/protocol-lock.json, a file
+            // nothing ever wrote, so authoring always concluded "no protocol is
+            // locked" and proposed metric names that reproduce then refused.
+            const { readLockedProtocol, protocolMetricNames } =
+              await import('../experiment/protocol-source.js');
             const { readFile } = await import('node:fs/promises');
-            let protocol: {
-              primaryMetrics: { name: string; direction: string }[];
-              splitRules: string[];
-            } | null = null;
-            try {
-              const stored = JSON.parse(
-                await readFile(join(root, 'knowledge', 'protocol-lock.json'), 'utf8'),
-              ) as {
-                protocol?: {
-                  primaryMetrics?: { name: string; direction: string }[];
-                  splitRules?: string[];
-                };
-              };
-              protocol = {
-                primaryMetrics: stored.protocol?.primaryMetrics ?? [],
-                splitRules: stored.protocol?.splitRules ?? [],
-              };
-            } catch {
-              // No locked protocol yet: the agent must propose metrics as assumptions.
-            }
+            const stored = await readLockedProtocol(runtime);
+            const protocol = stored
+              ? { primaryMetrics: stored.primaryMetrics, splitRules: stored.splitRules }
+              : null;
+            const requiredMetricNames = protocolMetricNames(stored);
             let corpus: {
               samples: number;
               domainAxis: string | null;
@@ -690,60 +681,103 @@ export function registerComparisonCommand(program: Command): void {
 
             const { authorBlueprint, describeBlueprint } =
               await import('../comparison/blueprint-author.js');
-            const { validateReproductionBlueprint } = await import('../comparison/reproduce.js');
-            const { blueprint, contextHash } = await authorBlueprint({
-              harness: runtime.harness!,
-              evidence: {
-                methodId,
-                question: runtime.config.research.question,
-                papers: grounded.map((card) => ({
-                  source: card.source,
-                  title: card.title,
-                  topClaims: card.topClaims,
-                })),
-                protocol,
-                corpus,
-              },
-              runId:
-                (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
-                `blueprint-${methodId}`,
-              now: Date.now(),
-            });
-
-            const validation = validateReproductionBlueprint(blueprint, {
+            const { blueprintMetricNames, checkMetricFeasibility, validateReproductionBlueprint } =
+              await import('../comparison/reproduce.js');
+            const runId =
+              (await runtime.db.getLatestRun(runtime.project.id))?.runId ?? `blueprint-${methodId}`;
+            const evidenceBase = {
               methodId,
-              paperRefs: method.paperRefs,
-            });
-            if (!validation.ok) {
-              throw new IdeaseekError(
-                'INVALID_ARTIFACT',
-                `authored blueprint is not usable: ${validation.errors.join('; ')} — nothing was written`,
-                { errors: validation.errors },
-              );
-            }
+              question: runtime.config.research.question,
+              papers: grounded.map((card) => ({
+                source: card.source,
+                title: card.title,
+                topClaims: card.topClaims,
+              })),
+              protocol,
+              corpus,
+            };
+            let blueprint: Awaited<ReturnType<typeof authorBlueprint>>['blueprint'];
+            let contextHash = '';
+            let correction: string | undefined;
+            // Two authoring turns maximum. The second one sees exactly why the
+            // first was refused, so a retry changes the input instead of
+            // sampling the same response twice.
+            for (let attempt = 1; ; attempt += 1) {
+              const authored = await authorBlueprint({
+                harness: runtime.harness!,
+                evidence: { ...evidenceBase, correction },
+                runId,
+                now: Date.now(),
+              });
+              blueprint = authored.blueprint;
+              contextHash = authored.contextHash;
 
-            // Parse the implementation before persisting it. A blueprint whose
-            // code cannot compile is not a plan; leaving it in place only moves
-            // the failure into a later reproduce run.
-            const implementation = blueprint.algorithm?.source;
-            if (implementation && implementation.trim()) {
-              const { writeFile: writeTmp, mkdtemp, rm } = await import('node:fs/promises');
-              const { tmpdir } = await import('node:os');
-              const { checkPythonSyntax } = await import('../knowledge/materialize.js');
-              const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-bp-syntax-'));
-              const probe = join(scratch, 'algorithm.py');
-              try {
-                await writeTmp(probe, implementation, 'utf8');
-                const syntax = await checkPythonSyntax(probe);
-                if (!syntax.ok) {
-                  throw new IdeaseekError(
-                    'INVALID_ARTIFACT',
-                    `authored implementation does not compile (line ${syntax.line}: ${syntax.message}) — nothing was written; rerun with --force`,
-                  );
-                }
-              } finally {
-                await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+              const problems: string[] = [];
+              const validation = validateReproductionBlueprint(blueprint, {
+                methodId,
+                paperRefs: method.paperRefs,
+              });
+              if (!validation.ok) problems.push(...validation.errors);
+
+              // Checked at authoring time, not at reproduce time: a plan that
+              // reports the protocol's metrics under other names cannot answer
+              // the protocol no matter what it later computes.
+              const feasibility = checkMetricFeasibility(
+                requiredMetricNames,
+                blueprintMetricNames(blueprint),
+              );
+              if (feasibility.status === 'blocked') {
+                problems.push(
+                  `algorithm.metrics must report every locked protocol metric — protocol measures ` +
+                    `[${requiredMetricNames.join(', ')}] but the plan offers ` +
+                    `[${blueprintMetricNames(blueprint).join(', ')}]; use the protocol names ` +
+                    `verbatim as the printed keys (additional metrics are allowed)`,
+                );
+              } else if (feasibility.status === 'partial') {
+                process.stderr.write(
+                  `feasibility: blueprint covers ${feasibility.covered.length}/` +
+                    `${requiredMetricNames.length} protocol metrics — missing ` +
+                    `[${feasibility.uncovered.join(', ')}]\n`,
+                );
               }
+
+              // Parse the implementation before persisting it. A blueprint whose
+              // code cannot compile is not a plan; leaving it in place only moves
+              // the failure into a later reproduce run.
+              const implementation = blueprint.algorithm?.source;
+              if (implementation && implementation.trim()) {
+                const { writeFile: writeTmp, mkdtemp, rm } = await import('node:fs/promises');
+                const { tmpdir } = await import('node:os');
+                const { checkPythonSyntax } = await import('../knowledge/materialize.js');
+                const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-bp-syntax-'));
+                const probe = join(scratch, 'algorithm.py');
+                try {
+                  await writeTmp(probe, implementation, 'utf8');
+                  const syntax = await checkPythonSyntax(probe);
+                  if (!syntax.ok) {
+                    problems.push(
+                      `the inline algorithm in algorithm.source does not compile: ` +
+                        `line ${syntax.line}: ${syntax.message}`,
+                    );
+                  }
+                } finally {
+                  await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+                }
+              }
+
+              if (problems.length === 0) break;
+              if (attempt >= 2) {
+                throw new IdeaseekError(
+                  'INVALID_ARTIFACT',
+                  `authored blueprint is not usable after ${attempt} attempts: ` +
+                    `${problems.join('; ')} — nothing was written`,
+                  { errors: problems },
+                );
+              }
+              correction = `the previous blueprint was refused:\n- ${problems.join('\n- ')}`;
+              process.stderr.write(
+                `blueprint refused on attempt ${attempt}: ${problems[0]}\nretrying with that feedback\n`,
+              );
             }
 
             const dir = join(root, 'comparisons', methodId);

@@ -10,6 +10,7 @@ import {
 } from '../comparison/repair.js';
 import { inferDependencies } from '../comparison/dep-inference.js';
 import {
+  blueprintMetricNames,
   checkMetricFeasibility,
   computeAlgorithmFingerprint,
   defaultEntry,
@@ -535,6 +536,28 @@ async function prepareReproduction(
     join(root, 'comparisons', opts.method, 'worktree'),
   );
   const entry = defaultEntry(blueprint.algorithm);
+  if (origin === 'code-path') {
+    // A hand-supplied program is the one source that never passed the
+    // authoring gates. If it cannot parse, the four reproduction checks all
+    // fail on the same missing colon and the diagnosis points at the method.
+    const { checkPythonSyntax } = await import('../knowledge/materialize.js');
+    const { mkdtemp, writeFile: writeTmp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-code-gate-'));
+    const probe = join(scratch, 'candidate.py');
+    try {
+      await writeTmp(probe, source, 'utf8');
+      const syntax = await checkPythonSyntax(probe);
+      if (!syntax.ok) {
+        throw new IdeaseekError(
+          'INVALID_ARTIFACT',
+          `the program passed with --code does not compile: line ${syntax.line}: ${syntax.message} — fix the file; the blueprint and worktree were not touched`,
+        );
+      }
+    } finally {
+      await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
   const fingerprint = computeAlgorithmFingerprint({
     source,
     entry,
@@ -574,28 +597,16 @@ async function prepareReproduction(
   // produces none of them can still emit a confident-looking number that means
   // nothing. Comparing name sets keeps this domain-neutral — the platform never
   // decides what a metric should be.
-  let protocolId: string | null = null;
-  let protocolMetrics: string[] = [];
-  try {
-    const artifacts = await runtime.db.listArtifactsByKind('protocol-proposal');
-    const chosen = artifacts[artifacts.length - 1];
-    if (chosen) {
-      const proposal = JSON.parse(await runtime.store.readFinalText(chosen.contentHash)) as {
-        protocolId?: unknown;
-        primaryMetrics?: { name?: unknown }[];
-      };
-      if (typeof proposal.protocolId === 'string') protocolId = proposal.protocolId;
-      protocolMetrics = (proposal.primaryMetrics ?? [])
-        .map((metric) => (typeof metric?.name === 'string' ? metric.name : null))
-        .filter((name): name is string => !!name?.trim());
-    }
-  } catch {
-    // no protocol yet — linkage stays null
-  }
+  // Read through the same module `comparison blueprint` uses; this block used
+  // to parse the artifact itself and count only primaryMetrics, so the two
+  // gates could disagree about what the protocol demands.
+  const { protocolMetricNames, readLockedProtocol } =
+    await import('../experiment/protocol-source.js');
+  const storedProtocol = await readLockedProtocol(runtime);
+  const protocolId = storedProtocol?.protocolId ?? null;
+  const protocolMetrics = protocolMetricNames(storedProtocol);
 
-  const implementationMetrics = (blueprint.algorithm?.metrics ?? [])
-    .map((metric) => metric.name)
-    .filter((name) => typeof name === 'string' && name.trim());
+  const implementationMetrics = blueprintMetricNames(blueprint);
   const feasibility = checkMetricFeasibility(protocolMetrics, implementationMetrics);
   if (feasibility.status === 'blocked') {
     throw new IdeaseekError(

@@ -426,6 +426,18 @@ export async function generateWorktree(
  * implementation produces. Zero overlap is blocking: the run would emit a
  * reproducible number that cannot answer the question.
  */
+/**
+ * Metric names an implementation claims to report, taken from the blueprint.
+ * Shared because both the authoring gate and the reproduce gate need the same
+ * reading; three copies of `algorithm.metrics[].name` filtering is how the
+ * previous two-source-of-truth defects kept appearing.
+ */
+export function blueprintMetricNames(blueprint: ReproductionBlueprint): string[] {
+  return (blueprint.algorithm?.metrics ?? [])
+    .map((metric) => metric.name)
+    .filter((name) => typeof name === 'string' && name.trim());
+}
+
 export function checkMetricFeasibility(
   protocolMetrics: string[],
   implementationMetrics: string[],
