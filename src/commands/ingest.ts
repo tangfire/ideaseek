@@ -276,7 +276,39 @@ export function registerIngestCommand(program: Command): void {
               `ingest → ${finalRun?.status}: parsed ${enqueued.length} new paper(s), tables ${tablesEnqueued}, skipped ${alreadyParsed}\n`,
             );
             process.stdout.write(`  index: ${refreshed} paper(s) searchable\n`);
-            process.stdout.write('next: ideaseek search <terms>\n');
+            // A FAILED summary that names no input is not actionable: one
+            // unreadable PDF among many produced the same red word as a total
+            // failure, and the reason lived only in the task table.
+            if (finalRun?.status === 'FAILED') {
+              const tasks = await runtime.db.listTasks(runId);
+              const failed = tasks.filter((task) => task.status === 'failed');
+              const succeeded = tasks.filter((task) => task.status === 'succeeded').length;
+              for (const task of failed.slice(0, 5)) {
+                const where = String(
+                  (task.payload as { pdfPath?: string; texPath?: string }).pdfPath ??
+                    (task.payload as { texPath?: string }).texPath ??
+                    '',
+                );
+                process.stdout.write(
+                  `  failed: ${task.type}${where ? ` — ${where}` : ''}` +
+                    `${task.error?.message ? ` (${task.error.message})` : ''}\n`,
+                );
+              }
+              if (failed.length > 5) {
+                process.stdout.write(`  … ${failed.length - 5} more\n`);
+              }
+              // Stated as task counts, not as "N papers lost": a paper can
+              // appear in both the parse and the table task for one file, and
+              // arithmetic over those would quietly report the wrong number of
+              // usable inputs.
+              process.stdout.write(
+                `  ${failed.length} task(s) failed, ${succeeded} succeeded — ` +
+                  'the successes are kept and the failures are listed above\n',
+              );
+              process.stdout.write('next: ideaseek intake  (re-check the inputs)\n');
+            } else {
+              process.stdout.write('next: ideaseek search <terms>\n');
+            }
           }
           switch (exit.reason) {
             case 'completed':

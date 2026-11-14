@@ -169,3 +169,27 @@ describe('ideaseek ingest', () => {
     expect(outside.stderr).toContain('NOT_INITIALIZED');
   }, 30_000);
 });
+
+describe('ingest failure reporting', () => {
+  it('names the input that failed instead of only reporting FAILED', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-ingest-bad-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+    const { makeFixturePdf } = await import('../src/knowledge/pdf.js');
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'papers'), { recursive: true });
+    try {
+      await makeFixturePdf(join(dir, 'papers', 'good.pdf'), 'Good');
+    } catch {
+      return; // python/pypdf unavailable
+    }
+    await writeFile(join(dir, 'papers', 'broken.pdf'), '%PDF-1.4\nnot a pdf at all\n%%EOF\n');
+
+    await runCli(dir, ['scan']);
+    const out = await runCli(dir, ['ingest']);
+    // The exit code is not the useful part: one unreadable file among many has
+    // to say which one, or FAILED reads as the whole input being rejected.
+    expect(out.stdout).toContain('task(s) failed');
+    expect(out.stdout).toContain('broken.pdf');
+    expect(out.stdout).toContain('next: ideaseek intake');
+  }, 180_000);
+});
