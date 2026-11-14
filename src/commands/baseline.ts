@@ -8,6 +8,7 @@ import {
   parseEntryCommand,
   repairStore,
 } from '../comparison/repair.js';
+import { inferDependencies } from '../comparison/dep-inference.js';
 import {
   computeAlgorithmFingerprint,
   defaultEntry,
@@ -162,6 +163,26 @@ export function registerBaselineCommand(program: Command): void {
               maxRounds: opts.rounds,
               timeoutMs: opts.timeout,
               store: repairStore(root, current),
+              // Repositories without a requirements file are the common case
+              // in conference code; inference keeps repair general.
+              allowNetworkInstall: runtime.config.runtime.allowNetwork,
+              // Repairs can run before any research run exists; the harness
+              // call still needs an attribution id, and inventing a run would
+              // be worse than a clearly synthetic one.
+              inferDependencies: runtime.harness
+                ? async (failure, runOutput) =>
+                    inferDependencies({
+                      harness: runtime.harness!,
+                      worktreeDir,
+                      entry,
+                      failureLog: runOutput || failure.summary,
+                      runId:
+                        (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
+                        `repair-${current}`,
+                      taskId: `repair-${current}`,
+                      now: Date.now(),
+                    })
+                : undefined,
             });
 
             const attempts = result.record.attempts;

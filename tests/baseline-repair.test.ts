@@ -182,6 +182,28 @@ describe('executeRepair', () => {
     };
   }
 
+  it('routes a no-requirements failure through inference and records it', async () => {
+    // The repository ships no requirements file (typical conference code):
+    // the loop must ask the agent rather than block, and the attempt record
+    // has to show which fix was chosen and what was proposed.
+    let inferred = 0;
+    const request = input({
+      inferDependencies: async (failure, runOutput) => {
+        inferred += 1;
+        expect(failure.kind).toBe('missing-dependency');
+        expect(runOutput).toContain('module_that_does_not_exist_zz');
+        return { packages: ['somepackage'], notes: 'inferred for the test' };
+      },
+      allowNetworkInstall: true,
+    });
+    const result = await executeRepair(request);
+    expect(inferred).toBe(1);
+    expect(result.record.attempts[0]?.fixApplied).toBe('venv-install-inferred');
+    // The install itself cannot succeed here (no network/no such package);
+    // what is under test is that inference was consulted and recorded.
+    expect(result.outcome).not.toBe('passed');
+  });
+
   it('stops after one round when no fix applies (no blind retries)', async () => {
     const result = await executeRepair(input());
     expect(result.outcome).toBe('blocked-no-fix');

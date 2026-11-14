@@ -70,7 +70,7 @@ export interface RepairAttempt {
   failureKind?: RepairFailureKind;
   /** First matching log line, redacted and truncated. */
   failureSummary?: string;
-  fixApplied: 'none' | 'venv-install';
+  fixApplied: 'none' | 'venv-install' | 'venv-install-inferred';
   /** Result of applying the planned fix (absent when none was planned). */
   fixOk?: boolean;
   fixDetail?: string;

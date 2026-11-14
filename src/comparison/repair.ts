@@ -284,29 +284,59 @@ async function findRequirementsFile(worktreeDir: string): Promise<string | null>
 }
 
 export interface FixPlan {
-  kind: 'none' | 'venv-install';
+  kind: 'none' | 'venv-install' | 'venv-install-inferred';
   detail: string;
+  /** Validated requirement specs for 'venv-install-inferred'. */
+  packages?: string[];
 }
 
 /**
- * Chooses a safe, deterministic fix for a classified failure. Only
- * missing-dependency failures with a requirements file and no existing venv
- * get an automated fix; everything else stops the loop (no blind retries).
+ * Chooses a fix for a classified failure. A requirements file is the preferred
+ * route; when the repository ships none (most conference code), an agent
+ * inference over the repository's own evidence is tried before giving up, so a
+ * missing file no longer ends the repair. Inferred specs are validated by
+ * dep-inference before they can ever reach pip.
  */
-export async function planFix(failure: RepairFailure, worktreeDir: string): Promise<FixPlan> {
+export async function planFix(
+  failure: RepairFailure,
+  worktreeDir: string,
+  opts: {
+    infer?: (
+      failure: RepairFailure,
+      runOutput: string,
+    ) => Promise<{ packages: string[]; notes: string }>;
+    allowNetworkInstall?: boolean;
+    runOutput?: string;
+  } = {},
+): Promise<FixPlan> {
   if (failure.kind !== 'missing-dependency') {
     return { kind: 'none', detail: `no automated fix for ${failure.kind}` };
-  }
-  const requirements = await findRequirementsFile(worktreeDir);
-  if (!requirements) {
-    return { kind: 'none', detail: 'no requirements file to install from' };
   }
   if (await pathExists(join(worktreeDir, '.venv'))) {
     return { kind: 'none', detail: 'venv already present; failure persists' };
   }
+  const requirements = await findRequirementsFile(worktreeDir);
+  if (requirements) {
+    return {
+      kind: 'venv-install',
+      detail: `python -m venv .venv && .venv pip install -r ${requirements}`,
+    };
+  }
+  if (!opts.infer) {
+    return { kind: 'none', detail: 'no requirements file to install from' };
+  }
+  if (opts.allowNetworkInstall === false) {
+    return {
+      kind: 'none',
+      detail:
+        'no requirements file, and dependency inference needs network access — set runtime.allow_network: true to let the repair agent install into the method venv',
+    };
+  }
+  const inferred = await opts.infer(failure, opts.runOutput ?? '');
   return {
-    kind: 'venv-install',
-    detail: `python -m venv .venv && .venv pip install -r ${requirements}`,
+    kind: 'venv-install-inferred',
+    packages: inferred.packages,
+    detail: `python -m venv .venv && .venv pip install ${inferred.packages.join(' ')} (agent-inferred: ${inferred.notes.slice(0, 160)})`,
   };
 }
 
@@ -326,7 +356,7 @@ export async function applyFix(
   worktreeDir: string,
   opts: { installTimeoutMs?: number; python?: string } = {},
 ): Promise<{ ok: boolean; detail: string }> {
-  if (plan.kind !== 'venv-install') {
+  if (plan.kind !== 'venv-install' && plan.kind !== 'venv-install-inferred') {
     return { ok: true, detail: plan.detail };
   }
   const venvDir = join(worktreeDir, '.venv');
@@ -342,20 +372,22 @@ export async function applyFix(
       };
     }
   }
-  const requirements = await findRequirementsFile(worktreeDir);
-  if (!requirements) {
-    return { ok: false, detail: 'requirements file vanished before install' };
+  // argv array, never a shell string: an inferred spec cannot become a command.
+  const installArgs = [venvPython(venvDir), '-m', 'pip', 'install', '--disable-pip-version-check'];
+  if (plan.kind === 'venv-install-inferred') {
+    if (!plan.packages || plan.packages.length === 0) {
+      return { ok: false, detail: 'inferred plan carries no packages' };
+    }
+    installArgs.push(...plan.packages);
+  } else {
+    const requirements = await findRequirementsFile(worktreeDir);
+    if (!requirements) {
+      return { ok: false, detail: 'requirements file vanished before install' };
+    }
+    installArgs.push('-r', requirements);
   }
   const install = await runRepairCommand(
-    [
-      venvPython(venvDir),
-      '-m',
-      'pip',
-      'install',
-      '-r',
-      requirements,
-      '--disable-pip-version-check',
-    ],
+    installArgs,
     worktreeDir,
     opts.installTimeoutMs ?? 300_000,
   );
@@ -392,6 +424,18 @@ export interface ExecuteRepairInput {
     load(): Promise<RepairRecord | null>;
     save(record: RepairRecord): Promise<void>;
   };
+  /**
+   * Proposes pip specs when the repository ships no requirements file. Receives
+   * the classified failure and the command output, so the caller does not have
+   * to re-read logs. Omitted callers keep the previous behaviour (block
+   * instead of guessing).
+   */
+  inferDependencies?: (
+    failure: RepairFailure,
+    runOutput: string,
+  ) => Promise<{ packages: string[]; notes: string }>;
+  /** False blocks installs that need network egress. */
+  allowNetworkInstall?: boolean;
 }
 
 export interface ExecuteRepairResult {
@@ -476,7 +520,11 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
 
     const failure = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
     lastFailure = failure;
-    const plan = await planFix(failure, input.worktreeDir);
+    const plan = await planFix(failure, input.worktreeDir, {
+      infer: input.inferDependencies,
+      allowNetworkInstall: input.allowNetworkInstall,
+      runOutput: run.out,
+    });
     const attempt: RepairAttempt = {
       round,
       at: Date.now(),
