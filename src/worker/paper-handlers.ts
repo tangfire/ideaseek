@@ -282,19 +282,8 @@ export const paperExtract: TaskHandler = async (ctx: TaskContext) => {
   // instead of being persisted for later stages to trip over.
   assertAgainstSchema('papercard-v1', card.card);
 
-  // Persist an audit trail of every tool call the agent made: summaries are
-  // sanitized by the adapter (no secrets, truncated arguments).
-  for (const call of result.toolCalls) {
-    await ctx.runtime.db.appendEvent({
-      runId: ctx.run.runId,
-      phase: ctx.task.phase,
-      objectId: ctx.task.taskId,
-      role: 'paper-extractor',
-      eventType: 'harness_tool_call',
-      summary: `${call.tool}(${call.summary}) ${call.ok ? 'ok' : 'failed'}`,
-      status: call.ok ? 'ok' : 'error',
-    });
-  }
+  // Tool-call audit events are appended LIVE by the usage recorder
+  // wrapper around every harness (PROGRESS 86) — no batch here.
 
   return {
     artifacts: [

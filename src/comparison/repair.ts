@@ -211,6 +211,8 @@ export function runRepairCommand(
   cwd: string,
   timeoutMs: number,
   extraEnv?: Record<string, string>,
+  /** Live stdout chunks (progress heartbeats, PROGRESS 86). Never throws. */
+  onOutput?: (text: string) => void,
 ): Promise<RunCommandResult> {
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
@@ -225,7 +227,17 @@ export function runRepairCommand(
       return;
     }
     let out = '';
-    child.stdout?.on('data', (chunk) => (out += String(chunk)));
+    child.stdout?.on('data', (chunk) => {
+      const text = String(chunk);
+      out += text;
+      if (onOutput) {
+        try {
+          onOutput(text);
+        } catch {
+          // observer failures never break the command
+        }
+      }
+    });
     child.stderr?.on('data', (chunk) => (out += String(chunk)));
     const started = Date.now();
     let timedOut = false;

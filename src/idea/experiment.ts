@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256Of } from '../core/hash.js';
+import type { ProgressLine } from '../experiment/checkpoint.js';
+import { parseProgressLine } from '../experiment/checkpoint.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { classifyRepairFailure, runRepairCommand, writeRepairLog } from '../comparison/repair.js';
 import { stableJson, type ExperimentSpec, type RunResult } from '../experiment/spec.js';
@@ -319,6 +321,8 @@ export interface RunIdeaExperimentOptions {
   waiveReview?: string;
   /** Auto-retry ONCE after a resource-category failure (OOM/device). Default true. */
   retryResource?: boolean;
+  /** Live progress lines → RunEvent (PROGRESS 86). */
+  onProgress?: (line: ProgressLine) => void;
 }
 
 /** The subset of WorkflowDb the spec lifecycle needs (main runs + ablations). */
@@ -430,6 +434,8 @@ export interface ExecuteSpecRunOptions {
   /** Working directory override (comparison full-runs execute in the
    *  method worktree; idea runs default to the idea workspace). */
   cwd?: string;
+  /** Live progress lines parsed from entry output (PROGRESS 86). */
+  onProgress?: (line: ProgressLine) => void;
 }
 
 export async function executeSpecRun(
@@ -467,7 +473,31 @@ export async function executeSpecRun(
   }
 
   const startedAt = Date.now();
-  const run = await runRepairCommand(command, opts.cwd ?? workspace, timeoutMs);
+  let lineBuffer = '';
+  const onOutput = opts.onProgress
+    ? (text: string) => {
+        lineBuffer += text;
+        let newlineAt = lineBuffer.indexOf('\n');
+        while (newlineAt >= 0) {
+          const line = lineBuffer.slice(0, newlineAt);
+          lineBuffer = lineBuffer.slice(newlineAt + 1);
+          try {
+            const parsed = parseProgressLine(line);
+            if (parsed) opts.onProgress?.(parsed);
+          } catch {
+            // ignore malformed progress lines
+          }
+          newlineAt = lineBuffer.indexOf('\n');
+        }
+      }
+    : undefined;
+  const run = await runRepairCommand(
+    command,
+    opts.cwd ?? workspace,
+    timeoutMs,
+    undefined,
+    onOutput,
+  );
   const logName = `idea-${logTag}.log`;
   await writeRepairLog(projectRoot, logName, command, run.exitCode, run.out);
   const logRef = `.research/logs/${logName}`;
@@ -854,7 +884,7 @@ export async function runIdeaExperiment(
     `idea-${ideaId}-experiment-${opts.scale}`,
     prepared.spec,
     opts.timeoutMs,
-    { resumeFrom },
+    { resumeFrom, onProgress: opts.onProgress },
   );
   const result = await attachSpecResult(
     db,

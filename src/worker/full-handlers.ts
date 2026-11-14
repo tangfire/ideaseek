@@ -117,6 +117,7 @@ async function runFull(ctx: TaskContext): Promise<{
 
     await recordPlannedSpec(runtime.db, prepared, existing);
 
+    const { makeExperimentProgressRecorder } = await import('../experiment/progress-events.js');
     const exec = await executeSpecRun(
       root,
       `full-${item.id}`,
@@ -124,7 +125,17 @@ async function runFull(ctx: TaskContext): Promise<{
       // Long-task bound: full runs honor run-level pause/cancel at item
       // boundaries; the per-command timeout stays generous but finite.
       6 * 60 * 60 * 1000,
-      { cwd },
+      {
+        cwd,
+        onProgress: makeExperimentProgressRecorder({
+          specId: item.specId,
+          role: 'full-run',
+          sink: {
+            appendEvent: (event) => runtime.db.appendEvent(event),
+            getLatestRunId: async () => ctx.run.runId,
+          },
+        }),
+      },
     );
     const result = await attachSpecResult(
       runtime.db,

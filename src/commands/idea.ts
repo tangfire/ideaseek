@@ -1,3 +1,5 @@
+import type { ProjectRuntime } from '../workflow/runtime.js';
+import type { ProgressLine } from '../experiment/checkpoint.js';
 import type { Command } from 'commander';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -144,6 +146,22 @@ export async function runIdeaHandoffDelivery(
   } finally {
     await runtime.close();
   }
+}
+
+/** Progress lines → experiment_progress RunEvents on the latest run (PROGRESS 86). */
+async function makeIdeaProgressRecorder(
+  runtime: ProjectRuntime,
+  ideaId: string,
+): Promise<(line: ProgressLine) => void> {
+  const { makeExperimentProgressRecorder } = await import('../experiment/progress-events.js');
+  return makeExperimentProgressRecorder({
+    specId: `idea-${ideaId}`,
+    sink: {
+      appendEvent: (event) => runtime.db.appendEvent(event),
+      getLatestRunId: async () =>
+        (await runtime.db.getLatestRun(runtime.project.id))?.runId ?? null,
+    },
+  });
 }
 
 export function registerIdeaCommand(program: Command): void {
@@ -2530,6 +2548,7 @@ export function registerIdeaCommand(program: Command): void {
                 resume: opts.resume,
                 waiveNovelty: opts.waiveNovelty,
                 waiveReview: opts.waiveReview,
+                onProgress: await makeIdeaProgressRecorder(runtime, ideaId),
               },
               runtime,
               runtime.db,

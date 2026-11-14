@@ -59,6 +59,39 @@ function readFakeUsage(): { inputTokens: number; outputTokens: number; cost?: nu
   return { inputTokens: 0, outputTokens: 0, cost: 0 };
 }
 
+/** Test hook + opts: tool calls the fake agent "makes" (emitted as live tool_call events). */
+function readFakeToolCalls(
+  optsToolCalls?: { tool: string; summary: string; ok: boolean }[],
+): { tool: string; summary: string; ok: boolean }[] {
+  const fromOpts = optsToolCalls ?? [];
+  const raw = process.env.IDEASEEK_FAKE_TOOL_CALLS;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        return [
+          ...fromOpts,
+          ...parsed
+            .filter(
+              (item): item is { tool: string; summary: string; ok: boolean } =>
+                !!item &&
+                typeof item === 'object' &&
+                typeof (item as { tool?: unknown }).tool === 'string',
+            )
+            .map((item) => ({
+              tool: item.tool,
+              summary: typeof item.summary === 'string' ? item.summary : '',
+              ok: item.ok !== false,
+            })),
+        ];
+      }
+    } catch {
+      // bad hook value → fall through to opts only (never invent calls)
+    }
+  }
+  return fromOpts;
+}
+
 function readJsonContext(request: HarnessTaskRequest): Record<string, unknown> {
   const texts = request.inputs.filter((input) => input.kind === 'text');
   for (const input of [...texts].reverse()) {
@@ -1003,6 +1036,20 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       summary: `fake harness started ${request.profile} (call ${count})`,
     });
 
+    // Live tool_call events (PROGRESS 86): the fake agent "makes" the
+    // configured calls as the real DSH adapter would — observers see
+    // them as they happen, not batched after completion.
+    for (const call of readFakeToolCalls(this.opts.toolCalls)) {
+      onEvent?.({
+        type: 'tool_call',
+        ts: Date.now(),
+        runId: request.runId,
+        taskId: request.taskId,
+        summary: `${call.tool}(${call.summary}) ${call.ok ? 'ok' : 'failed'}`,
+        toolCall: call,
+      });
+    }
+
     if (this.opts.latencyMs) {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, this.opts.latencyMs);
@@ -1041,7 +1088,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
       output: payload, // buildFakeOutput already returns JSON text
       usage: readFakeUsage(),
       model: 'fake-model',
-      toolCalls: this.opts.toolCalls ?? [],
+      toolCalls: readFakeToolCalls(this.opts.toolCalls),
       runtime: { kind: 'fake', version: this.version },
       sessionId: null,
       finishedAt: Date.now(),

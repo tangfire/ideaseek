@@ -28,15 +28,16 @@ import {
 export interface UsageRecorderDeps {
   rates: ModelRates | null;
   ceilingUsd: number;
-  /** Append one model_usage event (wired to WorkflowDb.appendEvent). */
-  record(entry: {
+  /** Append one audit event (wired to WorkflowDb.appendEvent). */
+  recordEvent(entry: {
     runId: string;
     taskId: string;
-    ideaId: string | null;
-    model: string | null;
-    inputTokens: number;
-    outputTokens: number;
-    costUsd: number | null;
+    ideaId?: string | null;
+    phase: string;
+    eventType: string;
+    role: string | null;
+    summary: string;
+    status: string | null;
   }): Promise<void>;
   /** Aggregate the run's current usage (wired to collectUsage). */
   load(runId: string): Promise<ReturnType<typeof summarizeUsage>>;
@@ -106,21 +107,49 @@ export class UsageRecordingHarness implements HarnessAdapter {
       assertCostWithinBudget(summary);
     }
 
-    const result = await this.inner.runTask(request, onEvent, signal);
+    // Live step visibility (PROGRESS 86): every tool_call the runtime
+    // reports is appended to the RunEvent stream as it happens — the
+    // summary is already sanitized by the adapter (HarnessEvent contract).
+    // Always install an observer: most handlers call runTask WITHOUT an
+    // onEvent argument — the live stream must not depend on callers.
+    const observed = (event: HarnessEvent) => {
+      if (deps && event.type === 'tool_call') {
+        void deps
+          .recordEvent({
+            runId: effectiveRunId,
+            taskId: event.taskId || request.taskId,
+            phase: 'HARNESS',
+            eventType: 'harness_tool_call',
+            role: event.toolCall?.tool ?? null,
+            summary: event.summary,
+            status: event.toolCall ? (event.toolCall.ok ? 'ok' : 'error') : null,
+          })
+          .catch(() => undefined); // telemetry never fails the task
+      }
+      onEvent?.(event);
+    };
+
+    const result = await this.inner.runTask(request, observed, signal);
 
     const input = result.usage?.inputTokens ?? 0;
     const output = result.usage?.outputTokens ?? 0;
     if (deps && (input > 0 || output > 0)) {
       const costUsd = computeCostUsd(deps.rates, input, output);
       await deps
-        .record({
+        .recordEvent({
           runId: effectiveRunId,
           taskId: request.taskId,
-          ideaId: null,
-          model: result.model,
-          inputTokens: input,
-          outputTokens: output,
-          costUsd,
+          phase: 'USAGE',
+          eventType: 'model_usage',
+          role: result.model,
+          summary: JSON.stringify({
+            in: input,
+            out: output,
+            cost: costUsd,
+            model: result.model,
+            taskId: request.taskId,
+          }),
+          status: null,
         })
         .catch(() => undefined); // telemetry must never fail the task itself
     }
@@ -156,8 +185,9 @@ export function usageRecorderDeps(opts: {
   return {
     rates: opts.rates,
     ceilingUsd: opts.maxModelCost,
-    async record(entry) {
-      if (entry.ideaId === null && entry.taskId) {
+    async recordEvent(entry) {
+      let objectId = entry.ideaId ?? null;
+      if (objectId === null && entry.taskId) {
         // Attribute to the task's idea when the payload carries one
         // (cached per run — payloads are immutable after enqueue).
         if (!ideaByTask.has(entry.taskId)) {
@@ -166,22 +196,16 @@ export function usageRecorderDeps(opts: {
           const payload = (task?.payload ?? {}) as { ideaId?: unknown };
           ideaByTask.set(entry.taskId, typeof payload.ideaId === 'string' ? payload.ideaId : null);
         }
+        objectId = ideaByTask.get(entry.taskId) ?? null;
       }
-      const ideaId = entry.ideaId ?? (entry.taskId ? (ideaByTask.get(entry.taskId) ?? null) : null);
       await opts.db.appendEvent({
         runId: entry.runId,
-        phase: 'USAGE',
-        objectId: ideaId,
-        role: entry.model,
-        eventType: 'model_usage',
-        summary: JSON.stringify({
-          in: entry.inputTokens,
-          out: entry.outputTokens,
-          cost: entry.costUsd,
-          model: entry.model,
-          taskId: entry.taskId,
-        }),
-        status: null,
+        phase: entry.phase,
+        objectId,
+        role: entry.role,
+        eventType: entry.eventType,
+        summary: entry.summary,
+        status: entry.status,
       });
     },
     async load(runId) {

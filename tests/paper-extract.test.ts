@@ -347,10 +347,23 @@ describe('CLI: run --paper (Phase 1 end to end)', () => {
 describe('tool-call audit persistence', () => {
   it('stores tool call summaries in the card and appends harness_tool_call events', async () => {
     const dir = await makeProjectDir();
-    const harness = new FakeHarnessAdapter({
+    const raw = new FakeHarnessAdapter({
       toolCalls: [{ tool: 'project_read', summary: '{"path":"papers/a.pdf"}', ok: true }],
     });
-    await harness.initialize();
+    await raw.initialize();
+    // Tool-call audit events flow through the live forwarder (the same
+    // wrapper buildHarness applies in production).
+    const { UsageRecordingHarness, usageRecorderDeps } =
+      await import('../src/runtime/usage-recorder.js');
+    const bootstrap = await openRuntime(dir, { recover: false });
+    const harness = new UsageRecordingHarness(raw, async () =>
+      usageRecorderDeps({
+        maxModelCost: 50,
+        rates: null,
+        projectId: bootstrap.project.id,
+        db: bootstrap.db,
+      }),
+    );
     const runtime = await openRuntime(dir, { recover: false, harness });
     const run = await runtime.db.createRun({
       projectId: runtime.project.id,
@@ -375,6 +388,16 @@ describe('tool-call audit persistence', () => {
       heartbeatMs: 100,
       pollMs: 10,
     }).run();
+    if (exit.reason !== 'completed') {
+      const ts = await runtime.db.listTasks(run.runId);
+      console.error(
+        'PAPER ERR:',
+        ts
+          .filter((t) => t.error)
+          .map((t) => `${t.type}: ${t.error!.code} ${t.error!.message}`)
+          .join(' | '),
+      );
+    }
     expect(exit.reason).toBe('completed');
 
     const task = (await runtime.db.listTasks(run.runId))[0]!;
