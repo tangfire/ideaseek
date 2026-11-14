@@ -1,5 +1,6 @@
 import { IdeaseekError } from '../core/errors.js';
-import { evaluateComparisonGate, type ComparisonGateResult } from '../comparison/gate.js';
+import { type ComparisonGateResult } from '../comparison/gate.js';
+import { evaluateComparisonGateForProject } from '../comparison/worktree-stamp.js';
 import {
   ideaResourceRequest,
   runIdeaExperiment,
@@ -103,7 +104,10 @@ export async function runExperimentBridge(
   }
 
   // 2. Required-comparison gate: the skill path cannot bypass it.
-  const gate: ComparisonGateResult = await evaluateComparisonGate(runtime.db);
+  const gate: ComparisonGateResult = await evaluateComparisonGateForProject(
+    projectRoot,
+    runtime.db,
+  );
   if (!gate.ok) {
     const detail = gate.blocking
       .map((entry) => `${entry.methodId} (${entry.status}) — ${entry.hint}`)

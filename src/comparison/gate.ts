@@ -53,7 +53,10 @@ export interface ComparisonGateResult {
 /** Statuses that prove a runnable result under the current protocol. */
 const PASSING = new Set(['smoke-tested', 'evaluated', 'validated']);
 
-export async function evaluateComparisonGate(db: ComparisonGateDb): Promise<ComparisonGateResult> {
+export async function evaluateComparisonGate(
+  db: ComparisonGateDb,
+  opts: { staleWorktrees?: ReadonlySet<string> } = {},
+): Promise<ComparisonGateResult> {
   const methods = await db.listComparisons({ required: true });
   const skipped: GateSkipped[] = [];
   const passed: GatePassed[] = [];
@@ -84,6 +87,14 @@ export async function evaluateComparisonGate(db: ComparisonGateDb): Promise<Comp
       continue;
     }
     if (PASSING.has(method.status)) {
+      if (opts.staleWorktrees?.has(method.methodId)) {
+        blocking.push({
+          methodId: method.methodId,
+          status: `${method.status} (worktree modified)`,
+          hint: `worktree changed since the passing smoke test — rerun: ideaseek comparison smoke ${method.methodId}`,
+        });
+        continue;
+      }
       const repro = method.record.reproduction as { algorithmModified?: boolean } | undefined;
       passed.push({
         methodId: method.methodId,

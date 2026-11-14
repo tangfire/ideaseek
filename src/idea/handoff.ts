@@ -4,7 +4,8 @@ import { stringify as yamlStringify } from 'yaml';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { runRepairCommand } from '../comparison/repair.js';
-import { evaluateComparisonGate, type ComparisonGateDb } from '../comparison/gate.js';
+import { type ComparisonGateDb } from '../comparison/gate.js';
+import { evaluateComparisonGateForProject } from '../comparison/worktree-stamp.js';
 import type { ExperimentSpec } from '../experiment/spec.js';
 import { collectAnalysisInput } from './analyze.js';
 import { analyzeIdea, type IdeaAnalysis } from './analysis.js';
@@ -207,7 +208,7 @@ export async function buildIdeaHandoff(
   }
 
   // Gate 3: required comparisons.
-  const comparisonGate = await evaluateComparisonGate(db);
+  const comparisonGate = await evaluateComparisonGateForProject(projectRoot, db);
 
   // Gate 4: coverage ladder.
   const succeededScales = new Set<string>();

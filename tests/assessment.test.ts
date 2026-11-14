@@ -360,4 +360,92 @@ describe('ideaseek assessment (research material gaps)', () => {
     expect(slices.blocks).toEqual(['smokeQuick']);
     expect(slices.fillIn).toContain('data slices');
   }, 180_000);
+
+  it('flags newly dropped unparsed papers and invalidates cache when knowledge files change', async () => {
+    const dir = await makeProjectDir();
+    await mkdir(join(dir, 'knowledge'), { recursive: true });
+    await writeFile(
+      join(dir, 'knowledge', 'dataset-card.json'),
+      JSON.stringify({
+        profiles: [
+          {
+            source: { path: 'datasets/x.csv' },
+            rows: 10,
+            columns: { name: ['a'] },
+            labelCandidates: [{ column: 'a' }],
+          },
+        ],
+      }),
+      'utf8',
+    );
+    await mkdir(join(dir, 'papers'), { recursive: true });
+    await writeFile(join(dir, 'papers', 'one.pdf'), '%PDF-1.4 one', 'utf8');
+    const rt = await openRuntime(dir, { recover: false });
+    try {
+      const stage = async (kind: string, payload: Record<string, unknown>) => {
+        const staged = await rt.store.stage(kind, `${JSON.stringify(payload, null, 2)}\n`, {});
+        const run = await createDemoRun(rt, `seed ${kind}`);
+        const task = await rt.db.claimNextTask(run.runId, 'seed-worker', { leaseMs: 60_000 });
+        await rt.db.beginCommit({
+          taskId: task!.taskId,
+          workerId: 'seed-worker',
+          attempt: task!.attempt,
+          artifacts: [
+            {
+              kind,
+              tempPath: staged.tempPath,
+              contentHash: staged.contentHash,
+              size: staged.size,
+              meta: staged.meta,
+            },
+          ],
+          result: { summary: 'seeded', artifacts: [] },
+        });
+        await rt.store.promote([staged]);
+        await rt.db.finalizeCommit({ taskId: task!.taskId, workerId: 'seed-worker' });
+      };
+      await stage('parsed-paper', {
+        source: 'papers/one.pdf',
+        sourceHash: 'sha256:' + 'e'.repeat(64),
+        pages: [{ page: 1, text: 'text' }],
+      });
+      await stage('papercard', {
+        paper_id: 'paper-y',
+        document_hash: 'sha256:' + 'f'.repeat(64),
+        title: 'T',
+        claims: [{ text: 'c', evidence: [{ page: 1, quote: 'c' }] }],
+      });
+    } finally {
+      await rt.close();
+    }
+
+    const baseline = await runCli(dir, ['assessment', '--question', 'q?', '--json']);
+    const basePayload = JSON.parse(baseline.stdout) as AssessmentPayload;
+    expect(basePayload.assessment.gaps.map((g) => g.id)).not.toContain('papers-unparsed-new');
+
+    // Coding/user edits dataset-card.json → assessment cache invalidates.
+    await writeFile(
+      join(dir, 'knowledge', 'dataset-card.json'),
+      JSON.stringify({
+        profiles: [
+          {
+            source: { path: 'datasets/x.csv' },
+            rows: 20,
+            columns: { name: ['a', 'b'] },
+            labelCandidates: [{ column: 'b' }],
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const afterDataEdit = await runCli(dir, ['assessment', '--question', 'q?', '--json']);
+    expect((JSON.parse(afterDataEdit.stdout) as AssessmentPayload).reused).toBe(false);
+
+    // Dropping a second PDF in papers/ surfaces papers-unparsed-new.
+    await writeFile(join(dir, 'papers', 'two.pdf'), '%PDF-1.4 two', 'utf8');
+    const afterPaperDrop = await runCli(dir, ['assessment', '--question', 'q?', '--json']);
+    const dropPayload = JSON.parse(afterPaperDrop.stdout) as AssessmentPayload;
+    expect(dropPayload.reused).toBe(false);
+    expect(dropPayload.assessment.gaps.map((g) => g.id)).toContain('papers-unparsed-new');
+  }, 180_000);
 });

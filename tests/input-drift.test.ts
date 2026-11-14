@@ -111,6 +111,30 @@ describe('detectInputDrift', () => {
     expect(lines.join('\n')).toContain('ideaseek scan');
   });
 
+  it('flags a changed comparison upstream file under comparisons/<methodId>/upstream (real import layout)', async () => {
+    const dir = await makeProjectDir('drift-real-layout');
+    await mkdir(join(dir, 'comparisons', 'fedavg', 'upstream'), { recursive: true });
+    await writeFile(join(dir, 'comparisons', 'fedavg', 'upstream', 'train.py'), 'print(1)\n');
+    await mkdir(join(dir, 'comparisons', 'fedavg', 'worktree'), { recursive: true });
+    await writeFile(join(dir, 'comparisons', 'fedavg', 'worktree', 'train.py'), 'print(1)\n');
+    await performScan(dir);
+
+    // Editing worktree is working material — must remain clean.
+    await writeFile(join(dir, 'comparisons', 'fedavg', 'worktree', 'train.py'), 'print(2)\n');
+    expect(hasInputDrift(await detectInputDrift(dir))).toBe(false);
+
+    // Editing upstream/ or adding a new file under another method's upstream/ must trigger drift.
+    await writeFile(join(dir, 'comparisons', 'fedavg', 'upstream', 'train.py'), 'print("dirty")\n');
+    await mkdir(join(dir, 'comparisons', 'fedprox', 'upstream'), { recursive: true });
+    await writeFile(join(dir, 'comparisons', 'fedprox', 'upstream', 'new.py'), 'x = 1\n');
+    const report = await detectInputDrift(dir);
+    expect(report.drifted.map((file) => file.relPath)).toEqual([
+      'comparisons/fedavg/upstream/train.py',
+      'comparisons/fedprox/upstream/new.py',
+    ]);
+    expect(driftConsequences(report.drifted).join(' ')).toContain('upstream');
+  });
+
   it('flags a changed comparison upstream file (not merely anything under comparisons)', async () => {
     const dir = await scannedProject();
     await writeFile(

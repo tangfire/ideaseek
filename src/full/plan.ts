@@ -176,8 +176,8 @@ export async function buildFullPlan(root: string, ideaId: string): Promise<FullP
     } | null;
 
     const methods = await runtime.db.listComparisons({});
-    const { evaluateComparisonGate } = await import('../comparison/gate.js');
-    const gate = await evaluateComparisonGate(runtime.db);
+    const { evaluateComparisonGateForProject } = await import('../comparison/worktree-stamp.js');
+    const gate = await evaluateComparisonGateForProject(root, runtime.db);
 
     const { loadConfig } = await import('../config/config.js');
     const { projectPaths } = await import('../config/paths.js');

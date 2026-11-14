@@ -65,6 +65,7 @@ export function registerStaleCommand(program: Command): void {
         }
         rows.push(await matrixRow(root));
         rows.push(await protocolRow(root));
+        rows.push(...(await comparisonWorktreeRows(root)));
         const inputs = await inputsRow(root);
         if (inputs) rows.push(inputs);
 
@@ -492,6 +493,54 @@ async function analysisRow(root: string, ideaId: string): Promise<StaleRow> {
   };
 }
 
+async function comparisonWorktreeRows(root: string): Promise<StaleRow[]> {
+  const { checkWorktreeStaleness } = await import('../comparison/worktree-stamp.js');
+  const { ProjectRuntime } = await import('../workflow/runtime.js');
+  const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+  const rows: StaleRow[] = [];
+  try {
+    const methods = await runtime.db.listComparisons({});
+    for (const method of methods) {
+      const outcome = await checkWorktreeStaleness(root, method.methodId);
+      if (outcome.state === 'no-stamp') continue;
+      if (outcome.state === 'stale') {
+        rows.push({
+          id: `comparison-worktree:${method.methodId}`,
+          scope: 'project',
+          status: 'stale',
+          detail: `worktree modified since passing smoke test (${outcome.recordedHash.slice(0, 16)}…)`,
+          invalidates: ['comparison gate', 'idea experiment', 'handoff gate'],
+          recovery: `ideaseek comparison smoke ${method.methodId}`,
+        });
+      } else {
+        rows.push({
+          id: `comparison-worktree:${method.methodId}`,
+          scope: 'project',
+          status: 'current',
+          detail: 'worktree matches passing smoke stamp',
+          invalidates: [],
+          recovery: `ideaseek comparison smoke ${method.methodId}`,
+        });
+      }
+    }
+  } finally {
+    await runtime.close();
+  }
+  return rows;
+}
+
+async function currentIdeaCardHash(root: string, ideaId: string): Promise<string | null> {
+  try {
+    const { loadIdeaCard } = await import('../idea/workspace.js');
+    const { sha256Of } = await import('../core/hash.js');
+    const { stableJson } = await import('../experiment/spec.js');
+    const card = await loadIdeaCard(root, ideaId);
+    return sha256Of(stableJson(card));
+  } catch {
+    return null;
+  }
+}
+
 async function noveltyRow(root: string, ideaId: string): Promise<StaleRow> {
   const id = `novelty:${ideaId}`;
   const invalidates = ['novelty gate (ABANDON blocks runs)'];
@@ -519,6 +568,19 @@ async function noveltyRow(root: string, ideaId: string): Promise<StaleRow> {
       invalidates,
       recovery,
     };
+  }
+  if (report.cardHash) {
+    const liveHash = await currentIdeaCardHash(root, ideaId);
+    if (liveHash && liveHash !== report.cardHash) {
+      return {
+        id,
+        scope: 'idea',
+        status: 'stale',
+        detail: 'idea.json content changed since novelty check',
+        invalidates,
+        recovery,
+      };
+    }
   }
   return {
     id,
@@ -558,6 +620,22 @@ async function reviewRow(root: string, ideaId: string): Promise<StaleRow> {
       recovery,
     };
   }
+  const cardInput = review.inputs.find((entry) => entry.kind === 'ideacard');
+  if (cardInput) {
+    const { sha256OfFile } = await import('../core/hash.js');
+    const { join } = await import('node:path');
+    const liveSha = await sha256OfFile(join(root, 'ideas', ideaId, 'idea.json')).catch(() => null);
+    if (liveSha && liveSha !== cardInput.sha256) {
+      return {
+        id,
+        scope: 'idea',
+        status: 'stale',
+        detail: `idea.json content changed since review v${review.version}`,
+        invalidates,
+        recovery,
+      };
+    }
+  }
   return {
     id,
     scope: 'idea',
@@ -595,6 +673,19 @@ async function claimAuditRow(root: string, ideaId: string): Promise<StaleRow> {
       invalidates,
       recovery,
     };
+  }
+  if (audit.cardHash) {
+    const liveHash = await currentIdeaCardHash(root, ideaId);
+    if (liveHash && liveHash !== audit.cardHash) {
+      return {
+        id,
+        scope: 'idea',
+        status: 'stale',
+        detail: 'idea.json content changed since claim audit',
+        invalidates,
+        recovery,
+      };
+    }
   }
   return {
     id,

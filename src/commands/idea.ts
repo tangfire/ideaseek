@@ -1262,6 +1262,7 @@ export function registerIdeaCommand(program: Command): void {
             },
             {
               inputHash: request.inputHash,
+              cardHash: request.cardHash,
               skills: {
                 novelty: { name: noveltySkill.name, sha256: noveltySkill.sha256 },
                 priorArt: { name: priorArtSkill.name, sha256: priorArtSkill.sha256 },

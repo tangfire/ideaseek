@@ -40,6 +40,8 @@ export interface NoveltyReport {
   contract: typeof NOVELTY_SCHEMA;
   ideaId: string;
   cardVersion: number;
+  /** Stable content hash of IdeaCard at generation (detects unversioned edits). */
+  cardHash?: string;
   inputHash: string;
   skills: { novelty: { name: string; sha256: string }; priorArt: { name: string; sha256: string } };
   generatedAt: number;
@@ -90,6 +92,7 @@ Rules:
 export interface NoveltyRequest {
   instruction: string;
   inputHash: string;
+  cardHash: string;
   idempotencyKey: string;
 }
 
@@ -104,6 +107,8 @@ export function buildNoveltyRequest(
     question: string | null;
   },
 ): NoveltyRequest {
+  const parsedCard = JSON.parse(context.cardJson) as unknown;
+  const cardHash = sha256Of(stableJson(parsedCard));
   const inputHash = sha256Of(
     stableJson({
       contract: NOVELTY_SCHEMA,
@@ -111,7 +116,7 @@ export function buildNoveltyRequest(
       priorArtSkillSha256: skills.priorArt.sha256,
       ideaId: context.ideaId,
       cardVersion: context.cardVersion,
-      card: JSON.parse(context.cardJson),
+      card: parsedCard,
       constraints: context.constraints,
       candidateRefs: context.candidates.map((candidate) => candidate.paperKey),
       question: context.question,
@@ -148,7 +153,7 @@ export function buildNoveltyRequest(
         )
       : ['  (local paper index is empty — closestPaperRef must be null, priorArtDegraded=true)']),
   ].join('\n');
-  return { instruction, inputHash, idempotencyKey: `novelty:${inputHash}` };
+  return { instruction, inputHash, cardHash, idempotencyKey: `novelty:${inputHash}` };
 }
 
 export interface NoveltyValidation {
@@ -245,6 +250,7 @@ export function parseNoveltyOutput(
   expected: { ideaId: string; cardVersion: number; candidateRefs: string[] },
   meta: {
     inputHash: string;
+    cardHash?: string;
     skills: NoveltyReport['skills'];
     harnessRuntime: string;
   },
@@ -273,6 +279,7 @@ export function parseNoveltyOutput(
     contract: NOVELTY_SCHEMA,
     ideaId: expected.ideaId,
     cardVersion: expected.cardVersion,
+    ...(meta.cardHash ? { cardHash: meta.cardHash } : {}),
     inputHash: meta.inputHash,
     skills: meta.skills,
     generatedAt: Date.now(),

@@ -18,7 +18,10 @@ import type { InputManifest, ManifestFile } from './scan.js';
  * job, and the user decides when the new reality becomes the baseline).
  */
 
-/** Roots whose files are provenance anchors, not working material. */
+/** Roots whose files are provenance anchors, not working material.
+ * Note: real imported comparisons live under `comparisons/<methodId>/upstream`,
+ * while some fixtures/legacy layouts use `comparisons/upstream`. Both are
+ * matched whenever `comparisons/upstream` is in `roots`. */
 export const DRIFT_ROOTS: readonly string[] = ['papers', 'datasets', 'comparisons/upstream'];
 
 export type DriftChange = 'modified' | 'removed' | 'added';
@@ -44,8 +47,46 @@ export interface InputDriftReport {
   manifestGeneratedAt: number | null;
 }
 
+export function isComparisonUpstreamPath(relPath: string): boolean {
+  return (
+    relPath === 'comparisons/upstream' ||
+    relPath.startsWith('comparisons/upstream/') ||
+    /^comparisons\/[^/]+\/upstream(?:\/|$)/.test(relPath)
+  );
+}
+
 function underRoot(relPath: string, roots: readonly string[]): boolean {
-  return roots.some((root) => relPath === root || relPath.startsWith(`${root}/`));
+  return roots.some((root) => {
+    if (root === 'comparisons/upstream') return isComparisonUpstreamPath(relPath);
+    return relPath === root || relPath.startsWith(`${root}/`);
+  });
+}
+
+async function resolveDiskScanDirs(
+  projectRoot: string,
+  roots: readonly string[],
+): Promise<string[]> {
+  const dirs: string[] = [];
+  for (const root of roots) {
+    dirs.push(join(projectRoot, ...root.split('/')));
+    if (root === 'comparisons/upstream') {
+      const { readdir } = await import('node:fs/promises');
+      const compDir = join(projectRoot, 'comparisons');
+      const entries = await readdir(compDir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (
+          entry.name === 'upstream' ||
+          entry.name === '_candidates' ||
+          entry.name.startsWith('.')
+        ) {
+          continue;
+        }
+        dirs.push(join(compDir, entry.name, 'upstream'));
+      }
+    }
+  }
+  return dirs;
 }
 
 function absFor(projectRoot: string, relPath: string): string {
@@ -112,9 +153,9 @@ export async function detectInputDrift(
   // New files under an anchor root mean the manifest no longer describes the
   // inputs the downstream results were built from.
   const { walk } = await import('./scan.js');
-  for (const root of roots) {
+  for (const absDir of await resolveDiskScanDirs(projectRoot, roots)) {
     const absFiles: string[] = [];
-    await walk(join(projectRoot, ...root.split('/')), absFiles);
+    await walk(absDir, absFiles);
     for (const abs of absFiles) {
       const relPath = relative(projectRoot, abs).split(sep).join('/');
       if (recorded.has(relPath)) continue;
@@ -186,7 +227,7 @@ export function driftConsequences(drifted: DriftFile[]): string[] {
   if (roots.has('datasets')) {
     consequences.push('DatasetCard、fairness lock 与按该数据训练的 RunResult 不再可复核');
   }
-  if (drifted.some((file) => file.relPath.startsWith('comparisons/upstream'))) {
+  if (drifted.some((file) => isComparisonUpstreamPath(file.relPath))) {
     consequences.push('comparison 复现结论所依赖的 upstream commit/内容已改变');
   }
   consequences.push('重跑 scan 后依赖 inputManifestHash 的 round/plan/check-report 会转为 stale');

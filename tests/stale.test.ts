@@ -244,4 +244,123 @@ describe('ideaseek stale (difference preview)', () => {
     expect(matrix.invalidates.join(' ')).toContain('matrix --confirm');
     expect(matrix.recovery).toContain('comparison matrix');
   }, 180_000);
+
+  it('detects worktree drift after passing smoke and blocks comparison gate', async () => {
+    const dir = await makeProjectDir();
+    const { mkdir } = await import('node:fs/promises');
+    const { openRuntime } = await import('./helpers.js');
+    const worktree = join(dir, 'comparisons', 'fedavg', 'worktree');
+    await mkdir(worktree, { recursive: true });
+    await writeFile(join(worktree, 'train.py'), 'print("ok")\n', 'utf8');
+
+    const rt = await openRuntime(dir, { recover: false });
+    try {
+      await rt.db.upsertComparison({
+        methodId: 'fedavg',
+        status: 'implemented',
+        required: true,
+        record: {
+          methodId: 'fedavg',
+          paperRefs: ['p1'],
+          required: true,
+          sourceKind: 'user',
+          entry: ['node', '-e', 'process.exit(0)'],
+          notes: [],
+          status: 'implemented',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        updatedAt: 1,
+      });
+    } finally {
+      await rt.close();
+    }
+
+    const smoked = await runCli(dir, ['comparison', 'smoke', 'fedavg', '--json']);
+    expect(smoked.code, smoked.stdout + smoked.stderr).toBe(0);
+    expect((await runCli(dir, ['comparison', 'gate', '--json'])).code).toBe(0);
+
+    // Coding turn modifies the worktree without re-smoking.
+    await writeFile(join(worktree, 'train.py'), 'raise RuntimeError("broken")\n', 'utf8');
+    const stale = await runCli(dir, ['stale', '--json']);
+    expect(stale.code).toBe(2);
+    const rows = (JSON.parse(stale.stdout) as { rows: { id: string; status: string }[] }).rows;
+    expect(rows.find((r) => r.id === 'comparison-worktree:fedavg')?.status).toBe('stale');
+
+    const gated = await runCli(dir, ['comparison', 'gate', '--json']);
+    expect(gated.code).toBe(2);
+  }, 180_000);
+
+  it('detects unversioned idea.json edits as stale for claim-audit and novelty', async () => {
+    const dir = await makeProjectDir();
+    const cardPath = join(dir, 'card.json');
+    const card = {
+      ideaId: 'alpha',
+      version: 1,
+      parentVersion: null,
+      status: 'DRAFT_COMPOSITION',
+      hypothesis: { statement: 'Drift lifts recall.', targetProblem: 'gap' },
+      paperEvidence: [{ paperRef: 'p1', statement: 'fedavg', evidence: 'p.1' }],
+      contradictions: ['prior work disagrees'],
+      novelty: { claim: 'term', uncertainty: 'thin', whyNotRestatement: 'new' },
+      mechanismChain: {
+        designPrincipleLink: 'x',
+        steps: [{ kind: 'observation', text: 'y' }],
+      },
+      nearestComparisons: [{ methodId: 'fedavg', difference: 'adds term', evidence: 'table 2' }],
+      componentNecessity: [],
+      competingExplanations: ['lr explains it'],
+      boundaryConditions: ['label-skew only'],
+      risks: ['noise'],
+      minimalExperiment: {
+        code: 'src/train.py',
+        data: 'smoke',
+        baselines: ['fedavg'],
+        metrics: ['dice'],
+        ablations: ['w/o term'],
+      },
+      falsification: { conditions: ['no gain'] },
+      budget: { maxRounds: 3, maxGpuMinutes: 60 },
+      stopConditions: ['budget'],
+      createdAt: 1,
+    };
+    await writeFile(cardPath, JSON.stringify(card), 'utf8');
+    expect(
+      (
+        await runCli(dir, [
+          'comparison',
+          'register',
+          'fedavg',
+          '--repo',
+          'https://example.org/f.git',
+        ])
+      ).code,
+    ).toBe(0);
+    expect((await runCli(dir, ['idea', 'create', 'alpha', '--from-card', cardPath])).code).toBe(0);
+    expect((await runCli(dir, ['idea', 'claim-audit', 'alpha', '--json'])).code).toBe(0);
+    expect(
+      (await runCli(dir, ['idea', 'novelty', 'alpha', '--harness', 'fake', '--json'])).code,
+    ).toBe(0);
+    expect(
+      (await runCli(dir, ['idea', 'review', 'alpha', '--harness', 'fake', '--json'])).code,
+    ).toBe(0);
+
+    // Edit idea.json directly (e.g. from Coding) without bumping currentVersion.
+    const edited = {
+      ...card,
+      hypothesis: { statement: 'Completely different hypothesis.', targetProblem: 'gap' },
+    };
+    await writeFile(
+      join(dir, 'ideas', 'alpha', 'idea.json'),
+      JSON.stringify(edited, null, 2),
+      'utf8',
+    );
+
+    const stale = await runCli(dir, ['stale', '--idea', 'alpha', '--json']);
+    expect(stale.code).toBe(2);
+    const rows = (JSON.parse(stale.stdout) as { rows: { id: string; status: string }[] }).rows;
+    expect(rows.find((r) => r.id === 'claim-audit:alpha')?.status).toBe('stale');
+    expect(rows.find((r) => r.id === 'novelty:alpha')?.status).toBe('stale');
+    expect(rows.find((r) => r.id === 'review:alpha')?.status).toBe('stale');
+  }, 180_000);
 });

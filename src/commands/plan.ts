@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
-import { evaluateComparisonGate } from '../comparison/gate.js';
+import { evaluateComparisonGateForProject } from '../comparison/worktree-stamp.js';
 import { listWorkspaces } from '../idea/workspace.js';
 import { probeCapacity } from '../runtime/capacity.js';
 import { action, jsonLine } from './shared.js';
@@ -72,7 +72,7 @@ export function registerPlanCommand(program: Command): void {
 
           // --- comparisons + gate preview.
           const methods = await runtime.db.listComparisons({});
-          const gate = await evaluateComparisonGate(runtime.db);
+          const gate = await evaluateComparisonGateForProject(root, runtime.db);
 
           // --- ideas + slices.
           const ideas = await listWorkspaces(root);

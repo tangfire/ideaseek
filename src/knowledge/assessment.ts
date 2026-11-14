@@ -1,4 +1,4 @@
-import { sha256Of } from '../core/hash.js';
+import { sha256Of, sha256OfFile } from '../core/hash.js';
 import { stableJson } from '../experiment/spec.js';
 
 /**
@@ -105,7 +105,8 @@ export async function buildResearchMaterialAssessment(
   opts: { question?: string; force?: boolean } = {},
 ): Promise<ResearchMaterialAssessment> {
   const { readdir, readFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
+  const { join, relative, sep } = await import('node:path');
+  const { walk } = await import('./scan.js');
   const { loadConfig } = await import('../config/config.js');
   const { projectPaths } = await import('../config/paths.js');
   const config = (await loadConfig(projectPaths(root))).resolved;
@@ -116,9 +117,13 @@ export async function buildResearchMaterialAssessment(
 
   // ---- papers: files → parsed → PaperCards ----
   const papersDir = join(root, config.inputs.papersDir);
-  const papersDirFiles = (await readdir(papersDir).catch(() => [])).filter((name) =>
+  const paperAbsFiles: string[] = [];
+  await walk(papersDir, paperAbsFiles);
+  const paperRelFiles = paperAbsFiles.map((abs) => relative(root, abs).split(sep).join('/'));
+  const papersDirFiles = paperRelFiles.filter((name) =>
     /\.(pdf|md|txt|tex|bib)$/i.test(name),
   ).length;
+  const ingestiblePaperRels = paperRelFiles.filter((name) => /\.(pdf|tex)$/i.test(name));
 
   const { ProjectRuntime } = await import('../workflow/runtime.js');
   const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
@@ -134,8 +139,8 @@ export async function buildResearchMaterialAssessment(
 
     let gateOk: boolean | null = null;
     if (comparisons.some((method) => method.required)) {
-      const { evaluateComparisonGate } = await import('../comparison/gate.js');
-      gateOk = (await evaluateComparisonGate(runtime.db)).ok;
+      const { evaluateComparisonGateForProject } = await import('../comparison/worktree-stamp.js');
+      gateOk = (await evaluateComparisonGateForProject(root, runtime.db)).ok;
     }
 
     // ---- dataset card + labels ----
@@ -297,6 +302,79 @@ export async function buildResearchMaterialAssessment(
         area: 'papers',
         detail: `${cards.length} PaperCard(s) from ${parsed.length} parsed paper(s)`,
       });
+      // Detect newly added papers in papers/ or newly parsed papers lacking PaperCards
+      // so Analysis does not call the corpus complete after new materials drop in.
+      let unparsedCount = 0;
+      if (ingestiblePaperRels.length > 0) {
+        const parsedSources = new Set<string>();
+        const parsedSourceHashes = new Set<string>();
+        for (const artifact of parsed) {
+          try {
+            const payload = JSON.parse(await runtime.store.readFinalText(artifact.contentHash)) as {
+              source?: unknown;
+              sourceHash?: unknown;
+            };
+            if (typeof payload.source === 'string') parsedSources.add(payload.source);
+            if (typeof payload.sourceHash === 'string') parsedSourceHashes.add(payload.sourceHash);
+          } catch {
+            continue;
+          }
+        }
+        const manifestHashes = new Map<string, string>();
+        try {
+          const manifestRaw = JSON.parse(
+            await readFile(join(root, 'knowledge', 'input-manifest.json'), 'utf8'),
+          ) as { files?: { relPath?: unknown; sha256?: unknown }[] };
+          for (const entry of manifestRaw.files ?? []) {
+            if (typeof entry.relPath === 'string' && typeof entry.sha256 === 'string') {
+              manifestHashes.set(entry.relPath, entry.sha256);
+            }
+          }
+        } catch {
+          // no manifest yet — fall back to path matching
+        }
+        for (const rel of ingestiblePaperRels) {
+          const hash = manifestHashes.get(rel);
+          if (parsedSources.has(rel)) continue;
+          if (hash && parsedSourceHashes.has(hash)) continue;
+          unparsedCount += 1;
+        }
+      }
+      if (unparsedCount > 0) {
+        gaps.push(
+          gap({
+            id: 'papers-unparsed-new',
+            priority: 'recommended',
+            area: 'papers',
+            reason: `${unparsedCount} paper(s) in ${config.inputs.papersDir} are not yet parsed into the index`,
+            evidence: [
+              `ingestible files: ${ingestiblePaperRels.length}`,
+              `parsed: ${parsed.length}`,
+              `unparsed: ${unparsedCount}`,
+            ],
+            confidence: 'high',
+            fillIn: 'ideaseek ingest',
+            cost: 'minutes per paper (local parse, no GPU)',
+            blocks: [],
+          }),
+        );
+      }
+      if (parsed.length > cards.length) {
+        const unextracted = parsed.length - cards.length;
+        gaps.push(
+          gap({
+            id: 'papers-unextracted-new',
+            priority: 'recommended',
+            area: 'paper-cards',
+            reason: `${unextracted} parsed paper(s) do not yet have structured PaperCards`,
+            evidence: [`parsed: ${parsed.length}`, `PaperCards: ${cards.length}`],
+            confidence: 'high',
+            fillIn: 'ideaseek extract',
+            cost: 'one model call per paper (bounded, uses configured route)',
+            blocks: [],
+          }),
+        );
+      }
     }
 
     // ---- gaps: data ----
@@ -536,9 +614,18 @@ export async function buildResearchMaterialAssessment(
     const verdict = blockingProtocol.length === 0 && blockingSmoke.length === 0 ? 'ready' : 'gaps';
 
     // ---- contextHash for incremental reuse ----
+    const fileHashOrAbsent = async (filePath: string): Promise<string> =>
+      sha256OfFile(filePath).catch(() => 'absent');
+    const knowledgeFileHashes = await Promise.all([
+      fileHashOrAbsent(join(root, 'knowledge', 'dataset-card.json')),
+      fileHashOrAbsent(join(root, 'knowledge', 'research-map.md')),
+      fileHashOrAbsent(join(root, 'knowledge', 'mechanism-graph.json')),
+      fileHashOrAbsent(join(root, 'knowledge', 'input-manifest.json')),
+    ]);
     contextHashParts = [
       question,
       JSON.stringify(stats),
+      ...knowledgeFileHashes,
       ...cards.map((card) => card.contentHash).sort(),
       ...parsed.map((paper) => paper.contentHash).sort(),
       ...proposals.map((proposal) => proposal.contentHash).sort(),

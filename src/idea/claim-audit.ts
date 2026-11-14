@@ -1,4 +1,6 @@
 import { writeFileAtomic } from '../core/atomic.js';
+import { sha256Of } from '../core/hash.js';
+import { stableJson } from '../experiment/spec.js';
 import { locateQuote } from '../knowledge/checker.js';
 
 /**
@@ -31,6 +33,7 @@ export interface EvidenceAudit {
   contract: typeof CLAIM_AUDIT_SCHEMA;
   ideaId: string;
   cardVersion: number;
+  cardHash?: string;
   generatedAt: number;
   verdict: ClaimAuditVerdict;
   checks: EvidenceCheck[];
@@ -183,6 +186,7 @@ export async function runClaimAudit(root: string, ideaId: string): Promise<Evide
     contract: CLAIM_AUDIT_SCHEMA,
     ideaId,
     cardVersion: meta.currentVersion,
+    cardHash: sha256Of(stableJson(card)),
     generatedAt: Date.now(),
     verdict,
     checks,

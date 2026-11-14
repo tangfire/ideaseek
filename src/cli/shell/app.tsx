@@ -828,7 +828,9 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     : [];
   const touchesAnchor = Boolean(
     activeApproval?.reason &&
-    /(?:papers|datasets|comparisons\/upstream)[/\\]/i.test(activeApproval.reason),
+    /(?:papers|datasets|comparisons[/\\](?:[^/\\]+[/\\])?upstream)[/\\]/i.test(
+      activeApproval.reason,
+    ),
   );
   const approvalCardRows = activeApproval
     ? 4 + approvalReasonLines.length + (touchesAnchor ? 1 : 0)
