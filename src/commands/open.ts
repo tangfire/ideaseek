@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import type { RegisteredProject } from '../runtime/registry.js';
 import { IdeaseekError } from '../core/errors.js';
 import { action, jsonLine } from './shared.js';
 
@@ -156,24 +157,68 @@ async function openDocument(
 }
 
 /**
+ * Registered projects that still exist on disk, plus the count of records
+ * whose directory is gone. The registry is a user-level file that outlives
+ * temp and test projects, and a list of 80 entries with 60 dead ones does not
+ * help anyone find their work — so dead records are counted, not shown.
+ * Nothing is deleted: this is a read path.
+ */
+async function listLiveProjects(): Promise<{ live: RegisteredProject[]; stale: number }> {
+  const { access } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { listRegisteredProjects } = await import('../runtime/registry.js');
+  const all = await listRegisteredProjects();
+  const live: RegisteredProject[] = [];
+  let stale = 0;
+  for (const project of all) {
+    try {
+      await access(join(project.root, 'research.yaml'));
+      live.push(project);
+    } catch {
+      stale += 1;
+    }
+  }
+  return { live, stale };
+}
+
+/**
  * Bare `open` with no current project: list what is registered and say how to
  * enter it. The door back into research work has to be findable from inside a
  * general coding session, otherwise "switch back" has no discoverable answer.
  */
 async function showRegistryOnly(opts: { json?: boolean }): Promise<number> {
-  const { listRegisteredProjects } = await import('../runtime/registry.js');
-  const registered = await listRegisteredProjects();
+  const { registryPath } = await import('../runtime/registry.js');
+  const { live, stale } = await listLiveProjects();
   if (opts.json) {
-    process.stdout.write(jsonLine({ kind: 'projects', current: null, projects: registered }));
+    process.stdout.write(
+      jsonLine({
+        kind: 'projects',
+        current: null,
+        projects: live,
+        hiddenStale: stale,
+        registry: registryPath(),
+      }),
+    );
     return 0;
   }
-  if (registered.length === 0) {
-    process.stdout.write('no registered projects — ideaseek init here, or: ideaseek open <path>\n');
+  if (live.length === 0) {
+    process.stdout.write(
+      `no registered projects on disk${stale ? ` (${stale} stale record(s) hidden)` : ''} — ideaseek init here, or: ideaseek open <path>\n`,
+    );
     return 0;
   }
-  process.stdout.write(`${registered.length} registered project(s):\n`);
-  for (const project of registered) {
+  const shown = live.slice(0, 20);
+  process.stdout.write(`${live.length} registered project(s):\n`);
+  for (const project of shown) {
     process.stdout.write(`  ${project.name.padEnd(22)}${project.root}\n`);
+  }
+  if (live.length > shown.length) {
+    process.stdout.write(`  …${live.length - shown.length} more (use the full name or a path)\n`);
+  }
+  if (stale > 0) {
+    process.stdout.write(
+      `  ${stale} record(s) point at missing directories and are hidden (registry: ${registryPath()})\n`,
+    );
   }
   process.stdout.write('enter one: /open <name|path> --confirm   (or: cd <path> && ideaseek)\n');
   process.stdout.write('until then this directory stays a general coding session\n');
@@ -182,9 +227,8 @@ async function showRegistryOnly(opts: { json?: boolean }): Promise<number> {
 
 async function showOverview(root: string, opts: { json?: boolean }): Promise<number> {
   const { buildSessionSummary, renderSessionSummary } = await import('../session/mode.js');
-  const { listRegisteredProjects } = await import('../runtime/registry.js');
   const summary = await buildSessionSummary(root);
-  const registered = await listRegisteredProjects();
+  const { live: registered, stale } = await listLiveProjects();
   const docs = await listDocuments(root);
 
   if (opts.json) {
@@ -194,6 +238,7 @@ async function showOverview(root: string, opts: { json?: boolean }): Promise<num
         ...summary,
         sessionMode: summary.mode,
         projects: registered.map((p) => ({ name: p.name, root: p.root })),
+        hiddenStale: stale,
         documents: docs.map((d) => d.relPath),
       }),
     );
@@ -207,6 +252,9 @@ async function showOverview(root: string, opts: { json?: boolean }): Promise<num
       const mark = project.root === summary.root ? '>' : ' ';
       process.stdout.write(` ${mark} ${project.name}  ${project.root}\n`);
     }
+  }
+  if (stale > 0) {
+    process.stdout.write(`  ${stale} record(s) point at missing directories and are hidden\n`);
   }
   if (docs.length > 0) {
     process.stdout.write(`${docs.length} document(s):\n`);

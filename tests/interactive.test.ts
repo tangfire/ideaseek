@@ -10,7 +10,7 @@ import {
 import { helpText, resolveSlash, slashCompleter, SLASH_COMMANDS } from '../src/cli/repl.js';
 import type { RunEvent } from '../src/workflow/types.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -330,9 +330,9 @@ describe('ideaseek interactive (CLI)', () => {
     const repl = startRepl(dir);
     // The header must point at an in-UI command, not a shell round trip.
     await repl.waitFor(/\/init creates one here/);
-    // A directory with no project is still usable as a coding session, so the
-    // first contact never dead-ends at "run /init first".
-    await repl.waitFor(/general coding session: \/agent/);
+    // First contact does not dead-end: the doors (open a project, or an
+    // explicit coding turn) are stated at startup.
+    await repl.waitFor(/coding turns are one explicit step away: \/agent/);
     repl.write('/init\n');
     await repl.waitFor(/initialized IdeaSeek project/);
     const done = await repl.quit();
@@ -344,7 +344,7 @@ describe('ideaseek interactive (CLI)', () => {
     expect(done.stdout).toContain('next: ideaseek run --question');
   }, 60_000);
 
-  it('outside a project a plain sentence IS the coding turn (IdeaSeek as everyday agent)', async () => {
+  it('outside a project a plain sentence opens doors, it does not start a coding turn', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-general-ui-'));
     const repl = startRepl(dir, [], {
       IDEASEEK_FAKE_AGENT_TURN: '1',
@@ -352,30 +352,59 @@ describe('ideaseek interactive (CLI)', () => {
       DEEPSEEK_API_KEY: null,
     });
     await repl.waitFor(/GENERAL — not an IdeaSeek project/);
-    // Not "research from evidence" state that does not exist here.
+    // The research UI does not impersonate a general agent: a directory with no
+    // project gets its doors, and a coding turn stays an explicit /agent.
     expect(repl.output()).not.toContain('· RESEARCH ·');
 
     repl.write('这个函数为什么返回 null\n');
+    await repl.waitFor(/no IdeaSeek project here/);
+    const output = repl.output();
+    expect(output).toContain('/init ·');
+    expect(output).toContain('/open ·');
+    expect(output).toContain('/agent <指令> ·');
+    // No turn was started, no supervisor consulted, nothing spent.
+    expect(output).not.toContain('dsh runtime started');
+    expect(output).not.toContain('classifying');
+
+    // The explicit form still works from here.
+    repl.write('/agent 修一下这个空指针\n');
     await repl.waitFor(/dsh runtime started/, 60_000);
-    // The turn asks for its tool like any coding session would — answering is
-    // part of the contract, and a dismissed prompt is never an approval.
     await repl.waitFor(/⏸ approval required: pwsh/, 60_000);
     repl.write('n\n');
     await repl.waitFor(/approval rejected: pwsh|standing by without the tool/, 60_000);
-    // The research supervisor never gets the line: no classification, no
-    // pending-approval Decision, no "not sure how to help".
-    expect(repl.output()).not.toContain('classifying');
-    expect(repl.output()).not.toContain('not sure how to help');
 
     const done = await repl.quit();
     expect(done.code).toBe(0);
-    // And the plain repo stays plain: no project or research state invented.
-    expect(repl.output()).not.toContain('NOT_INITIALIZED');
+    expect(done.stdout).not.toContain('NOT_INITIALIZED');
     const { readdir } = await import('node:fs/promises');
     const entries = await readdir(dir);
     expect(entries).not.toContain('research.yaml');
     expect(entries).not.toContain('.research');
-  }, 120_000);
+  }, 180_000);
+
+  it('inside a project the coding focus routes plain text to a DSH turn', async () => {
+    const dir = await makeProjectDir();
+    // Focus is a stored preference (Shift+Tab sets it in the TUI); writing it
+    // directly keeps this test about routing rather than about keypresses.
+    await writeFile(
+      join(dir, '.research', 'session.json'),
+      JSON.stringify({ mode: 'research', focus: 'coding' }),
+      'utf8',
+    );
+    const repl = startRepl(dir, [], {
+      IDEASEEK_FAKE_AGENT_TURN: '1',
+      IDEASEEK_USER_CONFIG: join(dir, '.state', 'config.yaml'),
+      DEEPSEEK_API_KEY: null,
+    });
+    await repl.waitFor(/· CODING ·|CODING/);
+    repl.write('帮我看看这个报错\n');
+    await repl.waitFor(/dsh runtime started/, 60_000);
+    expect(repl.output()).not.toContain('classifying');
+    repl.write('n\n');
+    await repl.waitFor(/standing by without the tool|approval rejected/, 60_000);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+  }, 180_000);
 
   it('unique prefix resolves (Tab completer contract)', async () => {
     const dir = await makeProjectDir();

@@ -106,6 +106,35 @@ async function switchSessionMode(
     // tier; point at the entry instead of silently switching tiers.
     throw new IdeaseekError('INVALID_ARGUMENT', AGENT_ENTRY_HINT);
   }
+  // `coding` and `ask` are the textual spelling of Shift+Tab's third
+  // position: they switch the conversation FOCUS, not the tier, and record no
+  // Decision because they grant nothing (the turns they produce are audited).
+  if (target === 'coding' || target === 'ask') {
+    const { readSessionFocus, writeSessionFocus, readSessionMode } =
+      await import('../session/mode.js');
+    const focus = target === 'coding' ? 'coding' : 'ask';
+    const current = await readSessionFocus(root);
+    if (current === focus) {
+      if (opts.json) process.stdout.write(jsonLine({ focus, changed: false }));
+      else process.stdout.write(`session focus already ${focus}\n`);
+      return 0;
+    }
+    await writeSessionFocus(root, focus);
+    if (opts.json) {
+      process.stdout.write(
+        jsonLine({ focus, changed: true, sessionMode: await readSessionMode(root) }),
+      );
+    } else {
+      process.stdout.write(`session focus: ${current} → ${focus}\n`);
+      process.stdout.write(
+        focus === 'coding'
+          ? '  每行输入都是一轮 DSH coding 会话；权限档位不变，回合仍受审计与漂移侦测\n'
+          : '  普通句子回到 ideaseek ask；权限档位不变\n',
+      );
+    }
+    return 0;
+  }
+
   const requested = parseSessionMode(target);
   if (!requested) {
     throw new IdeaseekError(

@@ -119,6 +119,53 @@ describe('ideaseek mode (session mode)', () => {
     expect(bad.stderr).toContain('research | analysis');
   });
 
+  it('keeps the coding focus across tier switches (focus is not a tier)', async () => {
+    const dir = await makeProjectDir();
+    const { readSessionFocus, writeSessionFocus, writeSessionMode } =
+      await import('../src/session/mode.js');
+
+    expect(await readSessionFocus(dir)).toBe('ask');
+    await writeSessionFocus(dir, 'coding');
+    expect(await readSessionFocus(dir)).toBe('coding');
+
+    // Switching tiers must not silently drop the conversation the user is in.
+    await writeSessionMode(dir, 'analysis');
+    expect(await readSessionFocus(dir)).toBe('coding');
+    const file = JSON.parse(await readFile(join(dir, '.research', 'session.json'), 'utf8')) as {
+      mode: string;
+      focus: string;
+    };
+    expect(file).toMatchObject({ mode: 'analysis', focus: 'coding' });
+
+    // And turning the focus off leaves the tier alone.
+    await writeSessionFocus(dir, 'ask');
+    expect(await readSessionFocus(dir)).toBe('ask');
+    const { readSessionMode } = await import('../src/session/mode.js');
+    expect(await readSessionMode(dir)).toBe('analysis');
+  });
+
+  it('switches the coding focus textually, without touching the tier or the audit log', async () => {
+    const dir = await makeProjectDir();
+    const on = await runCli(dir, ['mode', 'coding', '--json']);
+    expect(on.code).toBe(0);
+    expect(JSON.parse(on.stdout)).toMatchObject({ focus: 'coding', sessionMode: 'research' });
+
+    const shown = await runCli(dir, ['mode', '--json']);
+    expect(JSON.parse(shown.stdout)).toMatchObject({ mode: 'research', focus: 'coding' });
+    const human = await runCli(dir, ['mode']);
+    expect(human.stdout).toContain('text goes to : CODING focus');
+
+    // A routing preference grants nothing, so it records no Decision — unlike
+    // a tier switch, which still does.
+    const events = await runCli(dir, ['events']);
+    expect(events.stdout).not.toContain('change-session-focus');
+
+    const off = await runCli(dir, ['mode', 'ask']);
+    expect(off.stdout).toContain('session focus: coding → ask');
+    const same = await runCli(dir, ['mode', 'ask']);
+    expect(same.stdout).toContain('session focus already ask');
+  });
+
   it('refuses to run outside an IdeaSeek project', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-noproject-'));
     const result = await runCli(dir, ['mode']);

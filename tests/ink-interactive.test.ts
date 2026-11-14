@@ -159,15 +159,23 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       expect(repl.output()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 
       // Shift+Tab cycles the two research tiers through the audited /mode
-      // use-case (docs/MODES.md). Agent is deliberately absent from the
-      // cycle: it is an entry (`/agent`), and cycling into it used to turn
-      // every following sentence into a coding turn.
+      // use-case (docs/MODES.md) — three positions: RESEARCH → ANALYSIS →
+      // CODING → RESEARCH. The third is a conversation FOCUS, not a permission
+      // tier: it only reroutes plain text to DSH turns, and `agent` never comes
+      // back as a tier because no code ever enforced the limits it claimed.
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: research → analysis/);
       await repl.waitFor(/ink-interactive · ANALYSIS/);
-      // Cycling back out hits the Analysis→Research preparation gate (PROGRESS
-      // 84): a project with no papers must not be switched by one keystroke.
       await repl.write('\x1b[Z');
+      await repl.waitFor(/session focus: coding —/);
+      await repl.waitFor(/focus grants no permissions/);
+      await repl.waitFor(/ink-interactive · CODING/);
+      // Leaving the focus turns it off first, then asks for the next tier —
+      // and the Analysis→Research preparation gate (PROGRESS 84) legitimately
+      // refuses, so one keystroke cannot drop an unprepared project into
+      // experiment mode.
+      await repl.write('\x1b[Z');
+      await repl.waitFor(/session focus: coding off/);
       await repl.waitFor(/blocked by material gaps/);
       await repl.waitFor(/ink-interactive · ANALYSIS/);
       await repl.write('/mode research --force');

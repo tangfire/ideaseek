@@ -134,9 +134,9 @@ IdeaSeek 的科研会话有两个权限档位，外加一个通用工程入口�
 
 - `Analysis`：准备材料。读取论文、数据和 comparison，告诉你还缺什么；只写知识与缺口报告，不启动正式实验。
 - `Research`：执行科研工作流，设计协议、提出 idea、运行受控的 smoke/quick/standard 实验并形成 handoff。
-- `/agent <指令>`（或 `ideaseek agent`）：通用 DSH coding 会话，帮你修数据、修实现、修环境。它**不是**第三个权限档位，也不受目录禁令约束——用 DSH 自带的 `workspace-write` + `ask` 预设，每个工具调用逐次问你；改动了论文/数据/upstream 时，回合结束会报告哪些已提交结论因此不再可复核。它也不需要先 `init`：在没有项目的目录里裸 `ideaseek` 打开的就是通用会话（徽标显示 `GENERAL`），每一句话直接是一轮 coding turn；那种情况下没有科研侧的审计与漂移报告，工具会明说。
+- `/agent <指令>`（或 `ideaseek agent`）：通用 DSH coding 会话，帮你修数据、修实现、修环境。它**不是**第三个权限档位，也不受目录禁令约束——用 DSH 自带的 `workspace-write` + `ask` 预设，每个工具调用逐次问你；改动了论文/数据/upstream 时，回合结束会报告哪些已提交结论因此不再可复核。它也不需要先 `init`：在任意目录 `ideaseek agent "<指令>"` 都能跑，可 `--resume` 续、可 `--list` 回看。但在**没有项目的目录里打开交互界面**，看到的不是通用 agent，而是门口：`GENERAL` 徽标 + 三条门（`/init`、`/open`、`/agent`）——一句话不会偷偷变成 coding 回合，因为同一个命令不该因为在哪个目录启动就变成另一种产品。那种显式起的 coding 回合没有科研侧的审计与漂移报告，工具会明说。
 
-按 `Shift+Tab` 在两个档位之间循环，或使用 `/mode analysis`、`/mode research`；工程改动用 `/agent`，`/mode agent` 会把你指到这条路上。
+按 `Shift+Tab` 循环三档：Research → Analysis → **Coding** → Research。第三档是对话焦点而不是权限档位——它只决定下一句话送去哪儿（焦点下每行都是一轮 DSH coding 会话），底层档位不变，`/mode` 看到的仍是原来那档，`/agent <指令>` 是同一件事的单次写法。也可以用 `/mode analysis`、`/mode research` 直接指定档位；`/mode agent` 会把你指到 `/agent` 这条路上。
 
 怎么"切回去"取决于你在哪：
 

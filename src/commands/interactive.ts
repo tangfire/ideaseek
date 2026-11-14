@@ -25,17 +25,19 @@ export function registerInteractiveCommand(program: Command): void {
             parseSessionMode,
             readSessionMode,
             writeSessionMode,
+            writeSessionFocus,
             SESSION_MODES,
             AGENT_ENTRY_HINT,
           } = await import('../session/mode.js');
           if (opts.mode === 'agent') {
             throw new IdeaseekError('INVALID_ARGUMENT', AGENT_ENTRY_HINT);
           }
-          const mode = parseSessionMode(opts.mode);
-          if (!mode) {
+          const isFocus = opts.mode === 'coding' || opts.mode === 'ask';
+          const mode = isFocus ? null : parseSessionMode(opts.mode);
+          if (!isFocus && !mode) {
             throw new IdeaseekError(
               'INVALID_ARGUMENT',
-              `mode must be one of: ${SESSION_MODES.join(' | ')}`,
+              `mode must be one of: ${SESSION_MODES.join(' | ')} | coding | ask`,
             );
           }
           const { findProjectRoot } = await import('../config/paths.js');
@@ -46,7 +48,14 @@ export function registerInteractiveCommand(program: Command): void {
               'no IdeaSeek project here; run: ideaseek init',
             );
           }
-          if ((await readSessionMode(root)) !== mode) await writeSessionMode(root, mode);
+          if (isFocus) {
+            // The focus only routes plain text inside a research session, so it
+            // is meaningless in a directory with no project — and this command
+            // has already refused to start the UI there.
+            await writeSessionFocus(root, opts.mode === 'coding' ? 'coding' : 'ask');
+          } else if (mode && (await readSessionMode(root)) !== mode) {
+            await writeSessionMode(root, mode);
+          }
         }
         return startInteractive({ plain: opts.plain === true || global.plain === true });
       }),

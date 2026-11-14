@@ -39,15 +39,63 @@ export function sessionModeFile(root: string): string {
   return join(root, '.research', 'session.json');
 }
 
+/**
+ * Conversation focus — a UI routing preference, NOT a permission tier.
+ * `ask` sends plain sentences to the research supervisor; `coding` sends them
+ * to a real DSH coding turn. It grants nothing: coding turns are already
+ * audited (`agent_turn` events + the drift check) however they start, so
+ * focus is deliberately absent from the Decision log — recording routing
+ * changes would only bury the decisions that matter.
+ */
+export type SessionFocus = 'ask' | 'coding';
+
+interface SessionRecord {
+  mode?: unknown;
+  focus?: unknown;
+}
+
+async function readSessionRecord(
+  root: string,
+): Promise<{ mode: SessionMode; focus: SessionFocus }> {
+  try {
+    const parsed = JSON.parse(await readFile(sessionModeFile(root), 'utf8')) as SessionRecord;
+    return {
+      mode:
+        parseSessionMode(parsed.mode) ??
+        LEGACY_TIER_FALLBACK.get(String(parsed.mode)) ??
+        'research',
+      focus: parsed.focus === 'coding' ? 'coding' : 'ask',
+    };
+  } catch {
+    return { mode: 'research', focus: 'ask' };
+  }
+}
+
+async function writeSessionRecord(
+  root: string,
+  next: { mode: SessionMode; focus: SessionFocus },
+): Promise<void> {
+  const file = sessionModeFile(root);
+  await mkdir(join(root, '.research'), { recursive: true });
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, `${JSON.stringify({ ...next, updatedAt: Date.now() }, null, 2)}\n`, 'utf8');
+  await rename(tmp, file);
+}
+
 /** Reads the persisted tier (default `research`; a corrupt file is ignored). */
 export async function readSessionMode(root: string): Promise<SessionMode> {
-  try {
-    const parsed = JSON.parse(await readFile(sessionModeFile(root), 'utf8')) as { mode?: unknown };
-    const raw = parsed.mode;
-    return parseSessionMode(raw) ?? LEGACY_TIER_FALLBACK.get(String(raw)) ?? 'research';
-  } catch {
-    return 'research';
-  }
+  return (await readSessionRecord(root)).mode;
+}
+
+/** Reads the persisted coding focus (default `ask`). */
+export async function readSessionFocus(root: string): Promise<SessionFocus> {
+  return (await readSessionRecord(root)).focus;
+}
+
+/** Switches the coding focus, leaving the tier exactly as it is. */
+export async function writeSessionFocus(root: string, focus: SessionFocus): Promise<void> {
+  const current = await readSessionRecord(root);
+  await writeSessionRecord(root, { mode: current.mode, focus });
 }
 
 /** Crash-safe write: temp file + rename inside the project's .research/. */
@@ -80,11 +128,9 @@ export async function writeSessionMode(
       }
     }
   }
-  const file = sessionModeFile(root);
-  await mkdir(join(root, '.research'), { recursive: true });
-  const tmp = `${file}.tmp`;
-  await writeFile(tmp, `${JSON.stringify({ mode, updatedAt: Date.now() }, null, 2)}\n`, 'utf8');
-  await rename(tmp, file);
+  // Preserves the coding focus: switching tiers is not switching conversations.
+  const { focus } = await readSessionRecord(root);
+  await writeSessionRecord(root, { mode, focus });
 }
 
 /** Permission summary per tier — what this session may and may not do. */
@@ -118,6 +164,8 @@ export const AGENT_ENTRY_PERMISSIONS: readonly string[] = [
 
 export interface SessionSummary {
   mode: SessionMode;
+  /** Where plain text goes; reported so no surface has to guess (docs/MODES.md). */
+  focus: SessionFocus;
   project: string;
   root: string;
   autonomy: string;
@@ -130,14 +178,15 @@ export async function buildSessionSummary(root: string): Promise<SessionSummary>
   const { loadConfig } = await import('../config/config.js');
   const { projectPaths } = await import('../config/paths.js');
   const config = await loadConfig(projectPaths(root));
-  const mode = await readSessionMode(root);
+  const record = await readSessionRecord(root);
   return {
-    mode,
+    mode: record.mode,
+    focus: record.focus,
     project: config.resolved.project.name,
     root,
     autonomy: config.resolved.policy.autonomyMode,
     strategy: config.resolved.research.mode,
-    permissions: MODE_PERMISSIONS[mode],
+    permissions: MODE_PERMISSIONS[record.mode],
   };
 }
 
@@ -145,6 +194,11 @@ export async function buildSessionSummary(root: string): Promise<SessionSummary>
 export function renderSessionSummary(summary: SessionSummary): string[] {
   return [
     `session mode : ${summary.mode}`,
+    `text goes to : ${
+      summary.focus === 'coding'
+        ? 'CODING focus — one DSH turn per line (Shift+Tab or /mode coding|ask; tier unchanged)'
+        : 'ideaseek ask'
+    }`,
     `project      : ${summary.project} (${summary.root})`,
     `autonomy     : ${summary.autonomy} · research strategy: ${summary.strategy}`,
     'permissions  :',

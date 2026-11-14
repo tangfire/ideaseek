@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -173,6 +173,28 @@ describe('ideaseek open (project selection)', () => {
     expect(shown.stdout).toContain('registered project(s)');
     expect(shown.stdout).toContain('beta');
     expect(shown.stdout).toContain('/open <name|path> --confirm');
+
+    // A registry outlives temp and test projects; dead records are counted,
+    // not listed, so the real work stays findable.
+    const ghost = await makeProjectDir('ghost');
+    const previous = process.env.IDEASEEK_REGISTRY_PATH;
+    process.env.IDEASEEK_REGISTRY_PATH = registry;
+    try {
+      await registerProject(ghost, 'ghost');
+    } finally {
+      if (previous === undefined) delete process.env.IDEASEEK_REGISTRY_PATH;
+      else process.env.IDEASEEK_REGISTRY_PATH = previous;
+    }
+    await rm(ghost, { recursive: true, force: true });
+
+    const withStale = await runCli(elsewhere, ['open'], { IDEASEEK_REGISTRY_PATH: registry });
+    expect(withStale.stdout).toContain('beta');
+    expect(withStale.stdout).not.toContain('ghost');
+    expect(withStale.stdout).toContain('1 record(s) point at missing directories and are hidden');
+    const staleJson = await runCli(elsewhere, ['open', '--json'], {
+      IDEASEEK_REGISTRY_PATH: registry,
+    });
+    expect((JSON.parse(staleJson.stdout) as { hiddenStale: number }).hiddenStale).toBe(1);
 
     const json = await runCli(elsewhere, ['open', '--json'], {
       IDEASEEK_REGISTRY_PATH: registry,

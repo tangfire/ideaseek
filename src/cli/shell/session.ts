@@ -8,7 +8,7 @@ import { tokenizeArgs } from '../tokens.js';
 import { resolveSlash, helpText } from '../slash-menu.js';
 import { findProjectRoot } from '../../config/paths.js';
 import { readLastSession, writeSessionEnd, writeSessionStart } from '../../session/context.js';
-import { readSessionMode, renderSessionSummary } from '../../session/mode.js';
+import { readSessionMode, readSessionFocus, renderSessionSummary } from '../../session/mode.js';
 import {
   APPROVAL_ALLOW,
   APPROVAL_REJECT,
@@ -65,6 +65,21 @@ const FLAG_VALUES = new Set(['--provider', '--api-key-env', '--base-url', '--api
  */
 export function isSessionUiNoise(event: { type: string; summary: string }): boolean {
   return event.type === 'decision' && event.summary.startsWith('change-session-mode:');
+}
+
+/**
+ * The doors in a directory that holds no IdeaSeek project. A sentence here is
+ * deliberately NOT a coding turn and NOT a research query: this UI is the
+ * research surface, and letting it impersonate a general agent made the
+ * product change identity depending on where you happened to start it
+ * (docs/MODES.md). Exported for tests.
+ */
+export function generalDoorLines(): string[] {
+  return [
+    '/init · 在这个目录建一个研究项目(papers/ datasets/ …)',
+    '/open · 列出你注册过的项目;/open <名称|路径> --confirm 直接切过去',
+    '/agent <指令> · 只想写代码:这里就能起一轮通用 DSH coding 会话(逐次授权,可 --resume)',
+  ];
 }
 
 /**
@@ -126,22 +141,25 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
       lines: [
         // GENERAL, not RESEARCH: there is no research tier or run in this
         // directory, and the footer badge must not imply one.
-        'GENERAL — not an IdeaSeek project · /init creates one here, or cd into an existing one',
-        'this directory still works as a general coding session: /agent <指令>，或者直接说人话',
-        'back to research work: /open lists your registered projects · /open <name|path> --confirm enters one',
+        'GENERAL — not an IdeaSeek project · /init creates one here · /open enters a registered project',
+        'coding turns are one explicit step away: /agent <指令> (this UI stays the research surface)',
       ],
       tone: 'warn',
     };
   }
   const run = status.data.run ?? null;
   let sessionMode = 'research';
+  let codingFocus = false;
   const projectRoot = await findProjectRoot(process.cwd()).catch(() => null);
   if (projectRoot) {
     sessionMode = (await readSessionMode(projectRoot).catch(() => 'research')) ?? 'research';
+    codingFocus = (await readSessionFocus(projectRoot).catch(() => 'ask')) === 'coding';
   }
   const ctx: HeaderContext = {
     project: status.data.project ?? '(unknown project)',
-    sessionMode: sessionMode.toUpperCase(),
+    // The badge shows the focus, because that is what the next sentence will
+    // do; `/mode` still reports the tier underneath it.
+    sessionMode: codingFocus ? 'CODING' : sessionMode.toUpperCase(),
     question: run?.question || null,
     runId: run?.runId ?? null,
     runStatus: run?.status ?? null,
@@ -340,16 +358,22 @@ export class InteractiveSession {
       if (/^\d+$/.test(input) && this.pendingItems.length > 0) {
         await this.approvePending(Number(input));
       } else if (!input.startsWith('/')) {
-        // One input line, two possible conversations (docs/MODES.md). Inside a
-        // project plain text goes through `ideaseek ask`: the research/analysis
-        // tiers differ only in what the science pipeline may write, and a coding
-        // turn stays an explicit `/agent <指令>` — never something a stray
-        // sentence silently turns into. Outside a project there is no research
-        // session to protect and an installed IdeaSeek is meant to be the
-        // everyday agent, so the line IS a coding turn.
+        // One input line, one clear meaning (docs/MODES.md). Inside a project
+        // plain text goes through `ideaseek ask`; the research/analysis tiers
+        // differ only in what the science pipeline may write, and a coding turn
+        // is an explicit `/agent <指令>` — never something a stray sentence
+        // silently turns into. Outside a project a sentence is neither: this
+        // directory has no research session, so say what it is and open the
+        // two doors instead of pretending to be a different product.
         const root = await findProjectRoot(process.cwd()).catch(() => null);
-        if (root) await this.relay(['ask', ...tokenizeArgs(input)]);
-        else await this.runAgentTurn(input);
+        if (!root) {
+          this.println('no IdeaSeek project here —');
+          for (const line of generalDoorLines()) this.println(`  ${line}`);
+        } else if ((await readSessionFocus(root)) === 'coding') {
+          // Shift+Tab's third position: the sentence is one coding turn, with
+          // the same audit and drift check `/agent <指令>` gets.
+          await this.runAgentTurn(input);
+        } else await this.relay(['ask', ...tokenizeArgs(input)]);
       } else {
         outcome = await this.dispatch(input);
       }
@@ -365,7 +389,14 @@ export class InteractiveSession {
     }
   }
 
-  /** Shift+Tab cycles the two research tiers through the same audited CLI use-case. */
+  /**
+   * Shift+Tab cycles three positions: RESEARCH → ANALYSIS → CODING → RESEARCH.
+   * CODING is a conversation focus, not a permission tier: it only decides
+   * where the next sentence goes, and the tier underneath it is whatever it
+   * already was. Leaving it therefore turns the focus off and asks for the next
+   * tier — where the Analysis→Research preparation gate may legitimately
+   * refuse, exactly as it does for a plain `/mode research`.
+   */
   async cycleMode(): Promise<void> {
     const root = await findProjectRoot(process.cwd());
     if (!root) {
@@ -374,14 +405,25 @@ export class InteractiveSession {
       );
       return;
     }
-    const { readSessionMode, SESSION_MODES } = await import('../../session/mode.js');
-    const current = await readSessionMode(root);
-    // Agent is deliberately not in this cycle: it is an entry (`/agent`), not
-    // a permission tier, and cycling into it used to silently reclassify every
-    // following sentence as a coding turn.
-    const next =
-      SESSION_MODES[(SESSION_MODES.indexOf(current) + 1) % SESSION_MODES.length] ?? 'research';
-    await this.relay(['mode', next]);
+    const { readSessionMode, readSessionFocus, writeSessionFocus } =
+      await import('../../session/mode.js');
+    const tier = await readSessionMode(root);
+    const coding = (await readSessionFocus(root)) === 'coding';
+    const position = coding ? 2 : tier === 'research' ? 0 : 1;
+
+    if (position === 0) {
+      await this.relay(['mode', 'analysis']);
+    } else if (position === 1) {
+      await writeSessionFocus(root, 'coding');
+      this.println(
+        'session focus: coding — every line is now one DSH turn (/agent does the same, one at a time)',
+      );
+      this.println('  focus grants no permissions; turns are still audited + drift-checked');
+    } else {
+      await writeSessionFocus(root, 'ask');
+      this.println('session focus: coding off — plain text is back on ideaseek ask');
+      await this.relay(['mode', 'research']);
+    }
     await this.refreshHeader();
   }
 

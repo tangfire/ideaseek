@@ -81,8 +81,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: '/mode',
-    usage: '/mode [research|analysis]',
-    description: 'show tier, project and permissions; switch the research tier',
+    usage: '/mode [research|analysis|coding]',
+    description: 'show tier/project/permissions; switch tier, or the coding focus',
   },
   {
     name: '/agent',

@@ -42,7 +42,8 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 - 权限预设直接沿用 DSH 默认的 `workspace-write` + `ask`——项目内读写、受限 shell、测试工具本来就是它的能力，写入逐次问询。IdeaSeek 不额外收紧目录，也不存在"需要为它开放什么"这一步；`DSH_PERMISSION_MODE=read-only` 只用于模型抽取的 HarnessAdapter 路径，与 agent 入口无关。
 - **它不要求当前目录是 IdeaSeek 项目。** 在任意仓库里 `ideaseek agent "<指令>"`（TUI 里 `/agent <指令>`）就是一轮通用 coding 会话：运行时、审批、`--resume` 全都照常。此时没有科研侧保证——不记 RunEvent、不做原始输入漂移侦测、不注入项目摘要——CLI 会把这一条明说出来，而不是假装保证仍在。进了 IdeaSeek 项目，三项自动生效。
 - **通用回合也留一份可回看的流水**：`~/.ideaseek/agent-sessions.json`（跟随 `IDEASEEK_USER_CONFIG`）记录每个会话的首轮指令作标题、最近一轮、累计回合数、所在目录和 `general`/`project` 归属；`ideaseek agent --list` 或 TUI `/agent`（不带指令）就是那个列表，`--resume <id>` 直接续上。完整的对话逐句正文仍然只在 DSH 自己的 session 历史里，IdeaSeek 不复制第二份事实源；列表上限 50 条，旧的自动淘汰。
-- **装了就是通用 agent**：在没有项目的目录里裸 `ideaseek`（真终端）打开的就是通用会话，footer 徽标显示 `GENERAL` 而不是伪造一个研究档位；那里每一句自然语言直接是一轮 coding turn（等价于 `/agent <指令>`），因为没有被保护的科研会话需要区分。一旦目录里有 `research.yaml`，同一行输入立刻回到 `ideaseek ask` 的科研分流。
+- **通用能力随处可用,但它不是这个界面的默认身份。** 在没有项目的目录里裸 `ideaseek` 打开的是"门口"状态:footer 显示 `GENERAL`(不伪造研究档位),你说的每一句话既不是 coding 回合也不是科研查询,而是列出三条门——`/init` 在这里建项目、`/open` 进入已注册项目、`/agent <指令>` 起一轮通用 coding 会话。通用活照干,只是要**显式按名字要**:`ideaseek agent "<指令>"` 在任意目录可用、可 `--resume`、可 `--list` 回看。让随机目录默认变成 agent,会让同一个命令在两个目录下是两种产品——那正是你不该猜的东西。
+- **`Shift+Tab` 是三档:Research → Analysis → Coding → Research。** 第三档是**对话焦点**而不是权限档位:它只决定下一句话送去哪儿(coding 焦点下每行都是一轮 DSH 回合,与 `/agent` 同一 use-case),底层档位保持不变,`/mode` 报的还是档位。焦点不记进 Decision——它不授予任何权限,而它产生的回合本来就有 `agent_turn` 事件和漂移检查兜底。
 - 每条自然语言是一次**真实 DSH coding-session turn**（项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，**跨 TUI 重启**也从 `knowledge/agent-sessions.json`（最新在前）自动续接上一段对话——id 在 DSH 侧失效时记日志回退新建，绝不卡死后续消息（想新开对话：删除该注册表条目）。首轮注入项目上下文摘要，使通用 agent 看得到研究问题与知识 artifact 的位置。无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。**TUI 内工具审批已透传**（输入行切换为 `y allow once · n reject` 提示，应答回传子进程；行式路径用裸 y/n 行，见 TERMINAL_UX 审批界面）；未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve），TTY 下仍走原生问询。
 
 ### 不禁止写入，但侦测写入
@@ -73,9 +74,9 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 /mode research
 /mode analysis
 /mode
-/agent <指令>：起一轮通用 DSH coding 会话（不参与 Shift+Tab 轮换）
-/open         在没有项目的目录里列出已注册项目；/open <名称|路径> --confirm 进入其中一个（通用会话回到科研工作的门）
-Shift+Tab：在 Research 和 Analysis 两个权限档位之间循环（终端支持时）
+/agent <指令>：起一轮通用 DSH coding 会话；不带指令时列出可回看、可续的会话
+/open         列出已注册项目（失效记录只计数不显示）；/open <名称|路径> --confirm 进入其中一个
+Shift+Tab：Research → Analysis → Coding（对话焦点，不是权限档位）→ Research（终端支持时）
 ```
 
 命令行：
