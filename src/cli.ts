@@ -93,7 +93,13 @@ export function buildProgram(): Command {
     .enablePositionalOptions()
     .configureOutput({
       writeErr: (text) => process.stderr.write(text),
-    });
+    })
+    // Without this, commander answers usage errors by calling process.exit
+    // itself: the documented exit codes never pass through the mapping below,
+    // and an embedder (the TUI, a test, anything importing runCli) gets killed
+    // by a forgotten flag instead of being told about it. Subcommands inherit
+    // this setting when they are created.
+    .exitOverride();
 
   registerInitCommand(program);
   registerStartCommand(program);
@@ -210,6 +216,15 @@ async function extractProjectOverride(argv: string[]): Promise<string[]> {
   return out;
 }
 
+/** Commander failures that mean "the caller did not say what to run". */
+const COMMANDER_INPUT_ERRORS = new Set([
+  'commander.missingMandatoryOptionValue',
+  'commander.missingArgument',
+  'commander.unknownOption',
+  'commander.excessArguments',
+  'commander.invalidArgument',
+]);
+
 export async function runCli(argv: string[]): Promise<number> {
   loadLocalEnv(); // names-only, never overrides host env, never logs values
   try {
@@ -218,7 +233,12 @@ export async function runCli(argv: string[]): Promise<number> {
     return typeof code === 'number' ? code : 0;
   } catch (error) {
     if (error instanceof CommanderError) {
-      // Help/version requests exit 0; misuse exits with commander's code.
+      // docs/CLI_SPEC: 2 is "user input or configuration is missing". A missing
+      // required option is exactly that, and commander's own 1 reads as a task
+      // failure to anything scripting the CLI — including the recovery paths
+      // that decide whether to retry.
+      if (COMMANDER_INPUT_ERRORS.has(error.code)) return 2;
+      // Help and version requests are successful output, not failures.
       return typeof error.exitCode === 'number' ? error.exitCode : 1;
     }
     if (error instanceof IdeaseekError) {

@@ -285,6 +285,8 @@ export function buildHarness(kind: string | undefined): HarnessAdapter {
       new DshHarnessAdapter({
         dshHome: join(researchDir, 'dsh-home'),
         cwd: process.cwd(),
+        // Opt-in: the raw text of a response that failed to parse.
+        rawCapturePath: process.env.IDEASEEK_DSH_RAW?.trim() || undefined,
       }),
     );
   }

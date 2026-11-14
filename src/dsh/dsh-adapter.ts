@@ -38,6 +38,12 @@ export interface DshAdapterOptions {
   /** Handshake/launch bound; the per-task bound comes from the task budget. */
   initializeTimeoutMs?: number;
   /**
+   * File path for the raw text of a response that failed to parse, set from
+   * IDEASEEK_DSH_RAW. Opt-in by the operator: the alternative is arguing about
+   * what the model returned.
+   */
+  rawCapturePath?: string;
+  /**
    * Project root exposed to tools as the sandbox workspace and to
    * project_read as IDEASEEK_WORKSPACE_ROOT. Defaults to `cwd`.
    */
@@ -145,14 +151,50 @@ export function extractJson(text: string): string | null {
  * which the request's budget.maxOutputTokens does not control (it is set at
  * spawn time), so the message has to name the real ceiling.
  */
-export function describeJsonFailure(text: string, maxTokens: number): string {
+/**
+ * Why a response that should be JSON was not usable — stated only as far as
+ * the evidence goes.
+ *
+ * The first version of this said "most likely truncated" for every failure,
+ * including the one that started this: 20205 characters with
+ * finishReason=completed, i.e. the harness reported a normal end. A guess that
+ * names a number sends the reader off to raise a token cap that was never the
+ * problem, so the finish reason now decides what may be claimed, and the tail
+ * is shown next to the head because trailing prose and an unterminated string
+ * look nothing alike.
+ */
+export function describeJsonFailure(
+  text: string,
+  maxTokens: number,
+  finishReason?: string,
+): string {
   const trimmed = text.trim();
   if (!trimmed.includes('{')) return 'the response contains no JSON object';
+  const size = `Received ${trimmed.length} characters (output cap maxTokens=${maxTokens}, set at spawn).`;
+  if (finishReason === 'length') {
+    return (
+      `the response was cut off at the output cap: ${size} It begins like JSON and ends ` +
+      `mid-structure: …${trimmed.slice(-120)}`
+    );
+  }
   return (
-    `the response begins like JSON but does not parse — most likely truncated at the ` +
-    `harness output limit (maxTokens=${maxTokens}, set at spawn; the request's ` +
-    `budget.maxOutputTokens is advisory and does not raise it). Received ${trimmed.length} characters`
+    `the response is not valid JSON although the harness reported no length limit ` +
+    `(finishReason=${finishReason ?? 'unknown'}); ${size} Causes to rule out in order: prose ` +
+    `before or after the object, an unescaped quote or newline inside a string value, or ` +
+    `several JSON objects concatenated. head: ${trimmed.slice(0, 160)} … tail: ${trimmed.slice(-160)}`
   );
+}
+
+async function captureFailedResponse(path: string | undefined, text: string): Promise<void> {
+  if (!path || !text) return;
+  try {
+    const { writeFile } = await import('node:fs/promises');
+    const { dirname } = await import('node:path');
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, text, 'utf8');
+  } catch {
+    // Diagnostics must never be the reason a command fails.
+  }
 }
 
 function collectToolCalls(events: SessionEvent[]): HarnessToolCallSummary[] {
@@ -265,11 +307,10 @@ export class DshHarnessAdapter implements HarnessAdapter {
       provider: this.opts.provider ?? 'deepseek-official',
       model: this.opts.model ?? 'deepseek-v4-flash',
       // Output cap is a ceiling, not an allocation: raising it costs nothing
-      // unless a response is actually long. 8192 was too small for the
-      // artifacts that legitimately need a whole program inside one JSON
-      // object (reproduction blueprints), which surfaced as an opaque
-      // "no JSON object" failure rather than a visible truncation.
-      maxTokens: this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS, // spawn-time; budget.maxOutputTokens is advisory
+      // unless a response is actually long. It is fixed at spawn, so a
+      // request's budget.maxOutputTokens cannot lift it — which the failure
+      // text now says only when finishReason actually reports a length cut.
+      maxTokens: this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
       reasoningEffort: ReasoningEffortId(this.opts.reasoningEffort ?? 'off'),
       initializeTimeoutMs: this.opts.initializeTimeoutMs ?? 15_000,
     });
@@ -337,8 +378,11 @@ export class DshHarnessAdapter implements HarnessAdapter {
 
     const json = extractJson(result.finalResponse);
     if (!json) {
-      const head = (result.finalResponse ?? '').replace(/\s+/g, ' ').slice(0, 200);
       const reason = result.finishReason ?? 'null';
+      // Same escape hatch that settled the implementation-generation question:
+      // without the bytes the model actually returned, every explanation of a
+      // malformed response is a guess — including mine.
+      await captureFailedResponse(this.opts.rawCapturePath, result.finalResponse ?? '');
       if (reason === 'length' || reason === 'max-tokens') {
         throw new Error(
           `dsh response was truncated by the output token cap (finishReason=${reason})`,
@@ -348,7 +392,8 @@ export class DshHarnessAdapter implements HarnessAdapter {
         `dsh response did not yield usable JSON (finishReason=${reason}): ${describeJsonFailure(
           result.finalResponse ?? '',
           this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
-        )}${head ? ` — starts: ${head}` : ''}`,
+          reason,
+        )}`,
       );
     }
 

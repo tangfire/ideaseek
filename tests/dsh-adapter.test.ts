@@ -94,15 +94,32 @@ describe('RunResult interpretation', () => {
   });
 });
 
-describe('describeJsonFailure (truncation must not be reported as absent JSON)', () => {
-  it('names truncation and the ceiling the harness actually used', () => {
+describe('describeJsonFailure (the cause is stated only as far as the evidence goes)', () => {
+  it('names truncation and the ceiling when the finish reason says length', () => {
     const truncated = '{"methodId":"fedavg","paperExplicit":[{"statement":"x"';
-    const message = describeJsonFailure(truncated, DEFAULT_DSH_MAX_TOKENS);
-    expect(message).toContain('does not parse');
-    expect(message).toContain('truncated');
+    const message = describeJsonFailure(truncated, DEFAULT_DSH_MAX_TOKENS, 'length');
+    expect(message).toContain('cut off at the output cap');
     expect(message).toContain(`maxTokens=${DEFAULT_DSH_MAX_TOKENS}`);
-    expect(message).toContain('advisory');
     expect(message).toContain(`${truncated.length} characters`);
+    expect(message).toContain('ends mid-structure');
+  });
+
+  it('does not blame the token cap when the harness reported a normal end', () => {
+    // The real shape that started this: 20205 characters, finishReason
+    // completed. The old text called that "most likely truncated at the
+    // harness output limit" and named a number, which sent the reader to raise
+    // a cap that was never the problem.
+    const complete = `{"candidates": [{"ideaId": "x", "hypothesis": {"statement": "unterminated`;
+    const message = describeJsonFailure(complete, DEFAULT_DSH_MAX_TOKENS, 'completed');
+    expect(message).not.toContain('most likely truncated');
+    expect(message).not.toContain('cut off at the output cap');
+    expect(message).toContain('harness reported no length limit');
+    expect(message).toContain('finishReason=completed');
+    // Both ends are shown: trailing prose and an unterminated string are
+    // distinguishable only if you can see them.
+    expect(message).toContain('head:');
+    expect(message).toContain('tail:');
+    expect(message).toContain('unescaped quote or newline');
   });
 
   it('says plainly when there is no JSON at all', () => {
