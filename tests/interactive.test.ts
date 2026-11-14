@@ -317,7 +317,10 @@ describe('ideaseek interactive (CLI)', () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-first-contact-'));
     const repl = startRepl(dir);
     // The header must point at an in-UI command, not a shell round trip.
-    await repl.waitFor(/type \/init to create one here/);
+    await repl.waitFor(/\/init creates one here/);
+    // A directory with no project is still usable as a coding session, so the
+    // first contact never dead-ends at "run /init first".
+    await repl.waitFor(/general coding session: \/agent/);
     repl.write('/init\n');
     await repl.waitFor(/initialized IdeaSeek project/);
     const done = await repl.quit();
