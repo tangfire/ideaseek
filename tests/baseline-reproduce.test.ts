@@ -201,6 +201,38 @@ describe('ideaseek baseline reproduce (CLI)', () => {
     await writeFile(join(dir, 'blueprint.json'), JSON.stringify(bp, null, 2), 'utf8');
   }
 
+  it('rejects a smoke run that reports metrics it did not compute', async () => {
+    // Observed live: generated code exited 0 with
+    // {"deps":"torch unavailable...","status":"ephemeral_passed"}. A passing
+    // smoke that faked its numbers would poison every downstream conclusion.
+    const FAKE_PASS = `import json, sys
+cmd = sys.argv[1] if len(sys.argv) > 1 else ''
+if cmd == 'check-data':
+    print(json.dumps({"status": "ok", "samples": 1}))
+elif cmd == 'check-metrics':
+    print(json.dumps({"metrics": {"acc": 0.5}}))
+elif cmd == 'smoke':
+    print(json.dumps({"status": "ephemeral_passed", "metrics": {"acc": 0.91}}))
+`;
+    await registerReimpl('fedavg-fake');
+    await writeBlueprint('fedavg-fake', blueprint('fedavg-fake', FAKE_PASS));
+
+    const repro = await runCli(project, [
+      'baseline',
+      'reproduce',
+      '--method',
+      'fedavg-fake',
+      '--json',
+    ]);
+    const payload = JSON.parse(repro.stdout) as {
+      outcome: string;
+      failedPhase?: string;
+      summary?: string;
+    };
+    expect(payload.outcome).not.toBe('validated');
+    expect(payload.failedPhase ?? payload.summary ?? '').toMatch(/smoke/i);
+  }, 120_000);
+
   it('success: validates, records provenance, attaches an experiment result and passes the gate', async () => {
     await registerReimpl('fedavg');
     await writeBlueprint('fedavg', blueprint('fedavg', GOOD_SOURCE));

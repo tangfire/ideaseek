@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/materialization-report-v1.json",
+  "title": "IdeaSeek corpus materialization report (materialization-report-v1)",
+  "description": "Structural contract for the report emitted by `ideaseek_worker materialize`: what was written, where, from which read-only source, at which scale and seed. Provenance matters more than the file list here — an experiment result is only auditable if the corpus it ran on can be traced back to the exact acquired source bytes, so sourceHash, manifestHash, scale and seed are required. The source is never modified.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "generatedBy",
+    "status",
+    "source",
+    "sourceHash",
+    "outDir",
+    "manifest",
+    "manifestHash",
+    "scale",
+    "seed",
+    "columns",
+    "totalSourceRows",
+    "materializedSamples",
+    "perDomain",
+    "domains",
+    "bytes",
+    "readOnlySourcePreserved"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "materialization-report-v1" },
+    "generatedBy": { "type": "string", "minLength": 1 },
+    "status": { "const": "ok" },
+    "source": { "type": "string", "minLength": 1 },
+    "sourceHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "outDir": { "type": "string", "minLength": 1 },
+    "manifest": { "type": "string", "minLength": 1 },
+    "manifestHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "scale": { "enum": ["smoke", "quick", "standard"] },
+    "seed": { "type": "integer" },
+    "columns": {
+      "type": "object",
+      "required": ["image", "group", "label"],
+      "properties": {
+        "image": { "type": "string", "minLength": 1 },
+        "group": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "totalSourceRows": { "type": "integer", "minimum": 0 },
+    "materializedSamples": { "type": "integer", "minimum": 0 },
+    "perDomain": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "domains": { "type": "integer", "minimum": 0 },
+    "bytes": { "type": "integer", "minimum": 0 },
+    "readOnlySourcePreserved": { "const": true },
+    "already": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

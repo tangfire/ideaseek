@@ -500,6 +500,105 @@ export function registerDataCommand(program: Command): void {
     );
 
   data
+    .command('materialize')
+    .description(
+      'write an acquired parquet corpus into the <domain>/<class>/* layout experiments read, with a manifest',
+    )
+    .argument('<parquet>', 'project-relative or absolute parquet path')
+    .option('--out <dir>', 'output directory (default: datasets-derived/<name>-<scale>)')
+    .option('--scale <scale>', 'smoke|quick|standard', 'standard')
+    .option('--seed <n>', 'selection seed (materialization is deterministic)', (v) => Number(v), 42)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (
+          parquet: string,
+          opts: { out?: string; scale?: string; seed?: number; json?: boolean },
+        ) => {
+          const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+          try {
+            const { isAbsolute, resolve: resolvePath } = await import('node:path');
+            const { stat } = await import('node:fs/promises');
+            const scale = (opts.scale ?? 'standard') as 'smoke' | 'quick' | 'standard';
+            if (!['smoke', 'quick', 'standard'].includes(scale)) {
+              throw new IdeaseekError(
+                'INVALID_ARGUMENT',
+                `--scale must be smoke|quick|standard, got "${opts.scale}"`,
+              );
+            }
+            const source = isAbsolute(parquet) ? parquet : resolvePath(runtime.paths.root, parquet);
+            const info = await stat(source).catch(() => null);
+            if (!info?.isFile()) {
+              throw new IdeaseekError(
+                'FILE_NOT_FOUND',
+                `no parquet file to materialize: ${source}`,
+              );
+            }
+            const base = source.split(/[\\/]/).pop() ?? 'corpus';
+            const outDir = opts.out
+              ? isAbsolute(opts.out)
+                ? opts.out
+                : resolvePath(runtime.paths.root, opts.out)
+              : resolvePath(
+                  runtime.paths.root,
+                  `datasets-derived/${base.replace(/\.parquet$/i, '')}-${scale}`,
+                );
+            // Containment, not a string prefix: `datasets-derived` starts with
+            // `datasets` and would otherwise be refused by this guard.
+            const withinDatasets = (target: string): boolean => {
+              const rel = relative(runtime.paths.datasetsDir, target);
+              return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+            };
+            if (withinDatasets(outDir)) {
+              throw new IdeaseekError(
+                'INVALID_ARGUMENT',
+                `--out must not write inside the read-only datasets directory (${runtime.paths.datasetsDir})`,
+              );
+            }
+            const { materializeCorpus } = await import('../knowledge/materialize.js');
+            const report = await materializeCorpus(source, outDir, {
+              scale,
+              seed: Number.isFinite(opts.seed) ? opts.seed : 42,
+            });
+            const ledgerPath = join(runtime.paths.knowledgeDir, 'materializations.json');
+            const existing = await readFile(ledgerPath, 'utf8')
+              .then((text) => JSON.parse(text) as { records?: unknown[] })
+              .catch(() => ({ records: [] }));
+            const records = [
+              ...(Array.isArray(existing.records) ? existing.records : []),
+              { ...report, at: Date.now() },
+            ];
+            await writeFileAtomic(
+              ledgerPath,
+              `${JSON.stringify({ schemaVersion: 1, records }, null, 2)}\n`,
+            );
+            if (opts.json) {
+              process.stdout.write(jsonLine(report));
+              return 0;
+            }
+            process.stdout.write(
+              `materialized ${report.materializedSamples}/${report.totalSourceRows} samples ` +
+                `(${report.scale}, seed ${report.seed}) into ${relative(runtime.paths.root, outDir).replace(/\\/g, '/')}\n` +
+                `  domains: ${report.domains} (${Object.entries(report.perDomain)
+                  .map(([name, count]) => `${name} ${count}`)
+                  .join(', ')})\n` +
+                `  bytes: ${(report.bytes / 1024 / 1024).toFixed(1)} MiB${report.already ? ' · already current, nothing rewritten' : ''}\n` +
+                `  source: ${report.sourceHash.slice(0, 19)}… manifest: ${report.manifestHash.slice(0, 19)}…\n`,
+            );
+            process.stdout.write(
+              'next: ideaseek baseline reproduce --method <id> --data ' +
+                `${relative(runtime.paths.root, outDir).replace(/\\/g, '/')}\n` +
+                '  (pass the path as shown; it resolves against the project root)\n',
+            );
+            return 0;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
+    );
+
+  data
     .command('describe')
     .description('profile dataset files into a deterministic dataset card')
     .option('--json', 'machine-readable output')

@@ -775,12 +775,31 @@ async function executeReproduction(
   }
 
   const worktreeDir = join(root, 'comparisons', methodId, 'worktree');
+  // Checks run inside the worktree, so a relative --data would resolve
+  // against the wrong root and the method would truthfully report zero
+  // samples instead of "path not found". Resolve against the project and
+  // refuse a path that does not exist.
+  let dataPath = opts.data;
+  if (dataPath) {
+    const { stat } = await import('node:fs/promises');
+    const { isAbsolute, resolve: resolvePath } = await import('node:path');
+    const absolute = isAbsolute(dataPath) ? dataPath : resolvePath(root, dataPath);
+    const info = await stat(absolute).catch(() => null);
+    if (!info) {
+      throw new IdeaseekError(
+        'FILE_NOT_FOUND',
+        `--data path does not exist: ${dataPath} (looked at ${absolute})`,
+      );
+    }
+    dataPath = absolute;
+  }
+
   const checkOpts = {
     projectRoot: root,
     methodId,
     worktreeDir,
     entry,
-    dataPath: opts.data,
+    dataPath,
     timeoutMs: opts.timeout,
     smokeTimeoutMs: opts.smokeTimeout,
     onPhase,

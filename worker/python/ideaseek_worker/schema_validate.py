@@ -24,6 +24,7 @@ SCHEMA_FILENAMES = {
     "parsed-paper-v1": "parsed-paper-v1.json",
     "dataset-profile-v1": "dataset-profile-v1.json",
     "image-profile-v1": "image-profile-v1.json",
+    "materialization-report-v1": "materialization-report-v1.json",
 }
 
 

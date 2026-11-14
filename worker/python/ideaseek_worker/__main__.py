@@ -225,6 +225,31 @@ def cmd_images(args) -> int:
     return 0
 
 
+def cmd_materialize(args) -> int:
+    """Write an acquired parquet corpus into the on-disk layout experiments read."""
+    from .materialize import MaterializeError, materialize
+
+    try:
+        report = materialize(
+            Path(args.parquet),
+            Path(args.out),
+            scale=args.scale,
+            seed=args.seed,
+            image_column=args.image_column,
+            group_column=args.group_column,
+            label_column=args.label_column,
+        )
+    except MaterializeError as exc:
+        return _fail("DATASET_LAYOUT", str(exc))
+    except Exception as exc:  # noqa: BLE001 - normalize loader failures
+        return _fail("PARSE_FAILED", f"cannot materialize corpus: {exc}")
+    violation = validate_payload("materialization-report-v1", report)
+    if violation is not None:
+        return _fail("SCHEMA_VIOLATION", violation)
+    _emit(report)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -253,6 +278,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     img_cmd.add_argument("path")
     img_cmd.set_defaults(func=cmd_images)
+
+    mat_cmd = sub.add_parser(
+        "materialize", help="write an acquired parquet corpus into <domain>/<class>/* plus a manifest"
+    )
+    mat_cmd.add_argument("parquet")
+    mat_cmd.add_argument("out")
+    mat_cmd.add_argument("--scale", default="standard", choices=["smoke", "quick", "standard"])
+    mat_cmd.add_argument("--seed", type=int, default=42)
+    mat_cmd.add_argument("--image-column", default=None)
+    mat_cmd.add_argument("--group-column", default=None)
+    mat_cmd.add_argument("--label-column", default=None)
+    mat_cmd.set_defaults(func=cmd_materialize)
 
     tables_cmd = sub.add_parser("tables", help="extract table grids from a PDF")
     tables_cmd.add_argument("path")

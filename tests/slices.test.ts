@@ -315,3 +315,33 @@ describe('CLI: data slices / describe', () => {
     expect(badScale.stderr).toContain('unknown scale');
   }, 60_000);
 });
+
+describe('CLI: data materialize guards', () => {
+  it('refuses to write inside the read-only datasets directory but allows a sibling', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-matguard-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+    await mkdir(join(dir, 'datasets'), { recursive: true });
+    await writeFile(join(dir, 'datasets', 'corpus.parquet'), 'not a parquet', 'utf8');
+
+    // The containment check must be path-aware: `datasets-derived` starts with
+    // `datasets` as a string and was once rejected by mistake.
+    const inside = await runCli(dir, [
+      'data',
+      'materialize',
+      'datasets/corpus.parquet',
+      '--out',
+      'datasets/nested',
+    ]);
+    expect(inside.stderr + inside.stdout).toContain('read-only datasets directory');
+
+    const sibling = await runCli(dir, [
+      'data',
+      'materialize',
+      'datasets/corpus.parquet',
+      '--out',
+      'datasets-derived/smoke',
+    ]);
+    // Accepted by the guard; fails later on the fake bytes, which is correct.
+    expect(sibling.stderr + sibling.stdout).not.toContain('read-only datasets directory');
+  }, 120_000);
+});

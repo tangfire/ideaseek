@@ -631,8 +631,20 @@ export async function runSmoke(
   let parsed: { metrics?: Record<string, unknown> } | null = null;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     try {
-      const candidate = JSON.parse(lines[i]!) as { metrics?: Record<string, unknown> };
-      if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
+      const candidate = JSON.parse(lines[i]!) as {
+        metrics?: Record<string, unknown>;
+        status?: unknown;
+      };
+      // A line that declares itself skipped, ephemeral or partial is not a
+      // result even if it also carries numbers: generated code can report
+      // metrics it never computed, and everything downstream would trust them.
+      const declared = typeof candidate.status === 'string' ? candidate.status.toLowerCase() : '';
+      if (
+        candidate &&
+        typeof candidate.metrics === 'object' &&
+        candidate.metrics &&
+        !/skip|ephemeral|partial|not run|unavailable/.test(declared)
+      ) {
         parsed = candidate;
         break;
       }

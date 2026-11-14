@@ -45,7 +45,15 @@ Rules:
 - algorithm.metrics must reuse the locked protocol's primary and secondary metric names
   verbatim when a protocol is supplied. Do not collapse several distinct metrics into one
   generic name; if the protocol lists three, emit three.
-- Never claim the reimplementation equals official code.`;
+- Never claim the reimplementation equals official code.
+- Never degrade into a fake pass. If a dependency, the data or a required
+  computation is unavailable, exit non-zero and say why. Do not emit a status
+  like "skipped", "ephemeral_passed" or "partial" with exit code 0, and do not
+  report metrics that were not actually computed — a smoke run that pretends to
+  succeed is worse than one that fails, because everything downstream trusts it.
+- Assume the method may run with no third-party packages installed: state in
+  assumptions exactly which packages the implementation needs, and keep the
+  smoke path honest about whether they were present.`;
 
 export const BLUEPRINT_OUTPUT_SCHEMA = 'reproduction-blueprint-v1';
 
