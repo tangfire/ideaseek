@@ -21,6 +21,7 @@
     "resources.max_gpu_hours",
     "resources.max_iteration_rounds",
     "resources.max_model_cost",
+    "resources.max_model_tokens",
     "resources.max_parallel_agents",
     "resources.max_parallel_ideas",
     "resources.model_rates",
