@@ -312,6 +312,7 @@ export function registerAgentCommand(program: Command): void {
           }
 
           const { runAgentTurn, redactAgentText } = await import('../dsh/session.js');
+          const streamedTexts: string[] = [];
           const result = await runAgentTurn({
             cwd: turnCwd,
             prompt: root
@@ -326,6 +327,13 @@ export function registerAgentCommand(program: Command): void {
             // Step-level transcript lines (tool/call, tool/result, usage) —
             // stderr rides the TUI's dim streamer, not the red error path.
             onStep: (line) => process.stderr.write(`${line}\n`),
+            onAssistantText: (text) => {
+              if (opts.json) return;
+              const trimmed = text.trim();
+              if (!trimmed) return;
+              streamedTexts.push(trimmed);
+              process.stdout.write(`${trimmed}\n`);
+            },
             // Interactive approval on a real TTY, or the parent shell's
             // stdio channel (magic request line + stdin answer); every
             // other pipe context denies (never auto-approve).
@@ -417,7 +425,12 @@ export function registerAgentCommand(program: Command): void {
           for (const approval of result.approvals) {
             process.stdout.write(`  approval ${approval.outcome}: ${approval.toolName}\n`);
           }
-          process.stdout.write(`  ${result.finalResponse.replace(/\n/g, '\n  ')}\n`);
+          const finalTrimmed = result.finalResponse.trim();
+          const alreadyStreamed =
+            finalTrimmed.length > 0 && streamedTexts[streamedTexts.length - 1] === finalTrimmed;
+          if (!alreadyStreamed && finalTrimmed.length > 0) {
+            process.stdout.write(`${result.finalResponse}\n`);
+          }
           if (eventSeq !== null) {
             process.stdout.write(`  event #${eventSeq} recorded\n`);
           }

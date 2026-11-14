@@ -312,4 +312,43 @@ export function fitFooterHint(text: string, maxCols: number): string {
   return truncateVisual(text, maxCols);
 }
 
+/** Finds wrapped visual row indices matching `query` (case-insensitive). */
+export function findTranscriptMatches(rows: readonly WrappedRow[], query: string): number[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const matches: number[] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    if (stripAnsi(rows[i]!.text).toLowerCase().includes(needle)) {
+      matches.push(i);
+    }
+  }
+  return matches;
+}
+
+/**
+ * Highlights case-insensitive occurrences of `query` in `line` without
+ * splitting ANSI escape sequences.
+ */
+export function highlightSearchMatches(
+  line: string,
+  query: string,
+  isActiveRow: boolean,
+  plain = false,
+): string {
+  const needle = query.trim();
+  if (!needle || plain) return line;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(escaped, 'gi');
+  const hlOpen = isActiveRow ? '\x1b[43m\x1b[30m' : '\x1b[4m\x1b[33m';
+  const hlClose = isActiveRow ? '\x1b[49m\x1b[39m' : '\x1b[24m\x1b[39m';
+  // Split around ANSI escape tokens so regex never touches CSI parameters.
+  // eslint-disable-next-line no-control-regex
+  const parts = line.split(/(\x1B\[[0-?]*[ -/]*[@-~])/g);
+  return parts
+    .map((part) =>
+      part.startsWith('\x1B') ? part : part.replace(re, (m) => `${hlOpen}${m}${hlClose}`),
+    )
+    .join('');
+}
+
 export { TOOL_CALL_RE, TOOL_RESULT_RE };

@@ -54,6 +54,8 @@ export interface EngineResult {
   clearView: boolean;
   /** Ctrl+Y copies the most recent reply/output block to the clipboard. */
   copyLast: boolean;
+  /** Ctrl+F opens in-transcript search. */
+  searchTranscript: boolean;
   /** `?` on an empty line toggles the keyboard shortcuts overlay. */
   toggleHelp: boolean;
 }
@@ -135,6 +137,14 @@ export class ShellEngine {
     this.openTargetPool = entries;
   }
 
+  /** Programmatically replaces the composer buffer (e.g. from a picker). */
+  setLine(text: string): EngineResult {
+    this.line = text;
+    this.cursor = text.length;
+    this.refreshPalette();
+    return this.snapshot();
+  }
+
   private findSearchMatch(): string | null {
     const q = this.searchQuery.toLowerCase();
     let seen = 0;
@@ -169,6 +179,7 @@ export class ShellEngine {
       toggleDetails: false,
       clearView: false,
       copyLast: false,
+      searchTranscript: false,
       toggleHelp: false,
       ...partial,
     };
@@ -631,6 +642,8 @@ export class ShellEngine {
           return this.snapshot({ clearView: true });
         case 'y':
           return this.snapshot({ copyLast: true });
+        case 'f':
+          return this.snapshot({ searchTranscript: true });
         default:
           return this.snapshot();
       }

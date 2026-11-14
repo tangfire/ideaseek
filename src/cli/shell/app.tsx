@@ -3,6 +3,13 @@ import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
 import { copyToClipboard } from './clipboard.js';
 import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
 import { scanWorkspaceMentions, type CompletionEntry } from './mentions.js';
+import {
+  createPicker,
+  movePicker,
+  selectedPickerItem,
+  type PickerItem,
+  type PickerState,
+} from './pickers.js';
 import { InteractiveSession, type HeaderInfo, type SessionStartup } from './session.js';
 import {
   formatStatusTelemetry,
@@ -15,10 +22,14 @@ import {
   TranscriptWrapCache,
   classifyLineKind,
   computeViewportSlice,
+  findTranscriptMatches,
   formatElapsed,
+  highlightSearchMatches,
   type TranscriptBlock,
 } from './transcript.js';
+import { formatWelcomeLines, probeWorkspaceGreeting } from './welcome.js';
 import { renderBanner } from '../banner.js';
+import { runCliJson } from '../runner.js';
 import {
   padVisualEnd,
   sanitizeAnsiForInk,
@@ -27,6 +38,9 @@ import {
   truncateVisual,
   visualWidth,
 } from '../text-width.js';
+import { collectPendingApprovals } from '../../approval/pending.js';
+import { findProjectRoot } from '../../config/paths.js';
+import { readAgentSessions } from '../../dsh/session.js';
 import { listRegisteredProjects } from '../../runtime/registry.js';
 
 /**
@@ -37,7 +51,7 @@ import { listRegisteredProjects } from '../../runtime/registry.js';
  * the non-interactive CLI). Business state never lives here.
  */
 
-const FOOTER_HINTS = 'Shift+Tab mode · / menu · @ files · ? help';
+const FOOTER_HINTS = 'Shift+Tab mode · / menu · @ files · Ctrl+F find · ? help';
 /** Lines the wheel scrolls per notch (terminals already repeat events). */
 const WHEEL_SCROLL_LINES = 6;
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
@@ -56,6 +70,7 @@ const SHORTCUT_ROWS: readonly { keys: string; desc: string }[] = [
   { keys: 'Shift+Tab', desc: 'Cycle Research / Analysis / Coding focus' },
   { keys: '/ · @ · Tab', desc: 'Commands, @-mentions & sub-argument completion' },
   { keys: 'Shift+Enter', desc: 'Insert newline (Ctrl+J also inserts newline)' },
+  { keys: 'Ctrl+F', desc: 'Find in transcript (Enter/↓ next · ↑ prev)' },
   { keys: 'Ctrl+R', desc: 'Reverse incremental search in command history' },
   { keys: 'Ctrl+O', desc: 'Toggle compact / expanded tool & runtime trace' },
   { keys: 'Ctrl+Y', desc: 'Copy latest response to clipboard' },
@@ -269,7 +284,6 @@ interface ComposerRow {
   after: string;
 }
 
-/** Builds up to `MAX_COMPOSER_LINES` visible composer rows tracking multi-line cursor. */
 function buildComposerRows(line: string, cursor: number, cols: number): ComposerRow[] {
   const allLines = line.split('\n');
   const beforeCursor = line.slice(0, cursor);
@@ -325,13 +339,18 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const [busyStartedAt, setBusyStartedAt] = useState<number | null>(null);
   const [expandedDetails, setExpandedDetails] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [picker, setPicker] = useState<PickerState | null>(null);
+  const [transcriptSearch, setTranscriptSearch] = useState<{
+    query: string;
+    matchCursor: number;
+  } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatusSnapshot | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStatusRefreshRef = useRef(0);
   const [secretBuf, setSecretBuf] = useState('');
   useSyncExternalStore(bus.subscribe, () => bus.version);
-  const stateRef = useRef({ offset: 0, chromeRows: 6 });
+  const stateRef = useRef({ offset: 0, chromeRows: 6, visible: 20 });
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const prevRowCountRef = useRef(0);
   const [size, setSize] = useState(() => ({
@@ -430,13 +449,31 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     [wrapCache, bus.blocks, bus.version, paneCols, plain, expandedDetails],
   );
 
+  const searchMatches = useMemo(
+    () => (transcriptSearch ? findTranscriptMatches(wrappedRows, transcriptSearch.query) : []),
+    [transcriptSearch, wrappedRows],
+  );
+  const activeSearchRow =
+    transcriptSearch && searchMatches.length > 0
+      ? searchMatches[
+          ((transcriptSearch.matchCursor % searchMatches.length) + searchMatches.length) %
+            searchMatches.length
+        ]
+      : undefined;
+
   useEffect(() => {
     const delta = wrappedRows.length - prevRowCountRef.current;
     prevRowCountRef.current = wrappedRows.length;
     if (delta > 0 && offset > 0) setOffset((prev) => prev + delta);
   }, [wrappedRows.length, offset]);
 
-  // Periodically refresh live statusline telemetry when new events arrive.
+  useEffect(() => {
+    if (activeSearchRow === undefined) return;
+    const half = Math.floor(stateRef.current.visible / 2);
+    const targetOffset = Math.max(0, wrappedRows.length - activeSearchRow - half);
+    setOffset(targetOffset);
+  }, [activeSearchRow, wrappedRows.length]);
+
   useEffect(() => {
     if (bus.startup) refreshLiveStatus(false);
   }, [bus.version, bus.startup]);
@@ -461,6 +498,120 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
       session.stopStream();
     };
   }, [session, bus]);
+
+  const maybeOpenContextualPicker = async (submittedLine: string): Promise<void> => {
+    const trimmed = submittedLine.trim();
+    if (trimmed === '/models setup') {
+      const res = await runCliJson<{
+        providers?: { id: string; baseUrl: string | null; configured: boolean }[];
+      }>(['models', 'providers', '--json']).catch(() => null);
+      const rows_ = res?.data?.providers ?? [];
+      if (rows_.length > 0) {
+        const items: PickerItem[] = rows_.map((p) => ({
+          id: p.id,
+          label: p.id,
+          detail: `${p.baseUrl ?? '(--base-url required)'} · ${p.configured ? 'configured' : 'not configured'}`,
+          command: `/models setup ${p.id}`,
+        }));
+        setPicker(
+          createPicker(
+            'provider',
+            'Select Provider',
+            items,
+            '↑/↓ select · Enter configure · type /... or Esc to dismiss',
+          ),
+        );
+      }
+      return;
+    }
+    if (trimmed === '/pending') {
+      const root = await findProjectRoot(process.cwd()).catch(() => null);
+      if (!root) return;
+      const pending = await collectPendingApprovals(root).catch(() => []);
+      if (pending.length > 0) {
+        const items: PickerItem[] = pending.map((item, idx) => ({
+          id: item.id,
+          label: `[${idx + 1}] ${item.kind}`,
+          detail: item.summary,
+          command: `/approve ${idx + 1}`,
+        }));
+        setPicker(
+          createPicker(
+            'pending',
+            'Pending Approvals',
+            items,
+            '↑/↓ select · Enter approve · type /... or Esc to dismiss',
+          ),
+        );
+      }
+      return;
+    }
+    if (trimmed === '/agent') {
+      const root = await findProjectRoot(process.cwd()).catch(() => null);
+      const { sessions } = await readAgentSessions(root).catch(() => ({ sessions: [] }));
+      if (sessions.length > 0) {
+        const items: PickerItem[] = sessions.slice(0, 10).map((s) => ({
+          id: s.sessionId,
+          label: s.title || s.sessionId.slice(0, 14),
+          detail: `${s.turns} turn(s) · ${s.scope}${s.lastFinish ? ` · ${s.lastFinish}` : ''}`,
+          prefill: '/agent ',
+        }));
+        setPicker(
+          createPicker(
+            'session',
+            'Agent Sessions (newest first)',
+            items,
+            '↑/↓ inspect · Enter starts /agent prompt · Esc close',
+          ),
+        );
+      }
+      return;
+    }
+    if (trimmed === '/open') {
+      const projects = await listRegisteredProjects().catch(() => []);
+      if (projects.length > 0) {
+        const items: PickerItem[] = projects.map((p) => ({
+          id: p.name,
+          label: p.name,
+          detail: p.root,
+          command: `/open "${p.root}" --confirm`,
+        }));
+        setPicker(
+          createPicker(
+            'project',
+            'Registered Projects',
+            items,
+            '↑/↓ select · Enter switch project · Esc close',
+          ),
+        );
+      }
+    }
+  };
+
+  const dispatchCommand = (line: string): void => {
+    if (line === '/') return;
+    bus.push(`❯ ${line}`);
+    setOffset(0);
+    setBusy(true);
+    queueRef.current = queueRef.current
+      .then(async () => {
+        const outcome = await session.submit(line);
+        if (outcome === 'quit') {
+          bus.push(QUIT_LINE);
+          setTimeout(() => exit(0), 60);
+          return;
+        }
+        await maybeOpenContextualPicker(line);
+      })
+      .catch((error: unknown) => {
+        bus.push(`error: ${(error as Error).message}`);
+      })
+      .finally(() => {
+        setBusy(false);
+        refreshLiveStatus(true);
+        refreshMentionsAndProjects();
+      });
+  };
 
   useInput((input, key) => {
     if (session.secretPrompt) {
@@ -490,12 +641,86 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         session.respondApproval(false);
       return;
     }
+    if (transcriptSearch) {
+      if (key.escape || (key.ctrl && input === 'c') || input === '\x03') {
+        setTranscriptSearch(null);
+        return;
+      }
+      if (key.return || key.downArrow || (key.ctrl && input === 'f') || input === '\x06') {
+        if (searchMatches.length > 0) {
+          setTranscriptSearch((prev) =>
+            prev ? { ...prev, matchCursor: (prev.matchCursor + 1) % searchMatches.length } : null,
+          );
+        }
+        return;
+      }
+      if (key.upArrow) {
+        if (searchMatches.length > 0) {
+          setTranscriptSearch((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  matchCursor: (prev.matchCursor - 1 + searchMatches.length) % searchMatches.length,
+                }
+              : null,
+          );
+        }
+        return;
+      }
+      if (key.backspace || input === '\x7f' || input === '\b') {
+        setTranscriptSearch((prev) =>
+          prev ? { query: prev.query.slice(0, -1), matchCursor: 0 } : null,
+        );
+        return;
+      }
+      if (input && !key.ctrl && !key.meta && input !== '\t' && input !== '\r') {
+        setTranscriptSearch((prev) =>
+          prev ? { query: prev.query + input, matchCursor: 0 } : null,
+        );
+      }
+      return;
+    }
+
+    if (picker) {
+      if (key.upArrow) {
+        setPicker((prev) => (prev ? movePicker(prev, -1) : null));
+        return;
+      }
+      if (key.downArrow) {
+        setPicker((prev) => (prev ? movePicker(prev, 1) : null));
+        return;
+      }
+      if (key.escape) {
+        setPicker(null);
+        return;
+      }
+      if (key.return) {
+        const chosen = selectedPickerItem(picker);
+        setPicker(null);
+        if (chosen?.command) {
+          dispatchCommand(chosen.command);
+        } else if (chosen?.prefill) {
+          setSnap(engine.setLine(chosen.prefill));
+          showToast(`selected ${chosen.id.slice(0, 12)}`);
+        }
+        return;
+      }
+      // Typing any other key automatically dismisses the picker and falls
+      // through to the composer so the user is never trapped in an overlay.
+      setPicker(null);
+    }
+
     if (shortcutsOpen && (key.escape || input === '?')) {
       setShortcutsOpen(false);
       return;
     }
 
     const result = engine.handle(toEngineKey(input, key));
+    if (result.searchTranscript) {
+      setShortcutsOpen(false);
+      setTranscriptSearch({ query: '', matchCursor: 0 });
+      return;
+    }
     if (result.toggleHelp) {
       setShortcutsOpen((prev) => !prev);
       return;
@@ -565,27 +790,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     }
     if (result.submit) {
       setSnap(result);
-      const line = result.submit;
-      if (line === '/') return;
-      bus.push(`❯ ${line}`);
-      setOffset(0);
-      setBusy(true);
-      queueRef.current = queueRef.current
-        .then(async () => {
-          const outcome = await session.submit(line);
-          if (outcome === 'quit') {
-            bus.push(QUIT_LINE);
-            setTimeout(() => exit(0), 60);
-          }
-        })
-        .catch((error: unknown) => {
-          bus.push(`error: ${(error as Error).message}`);
-        })
-        .finally(() => {
-          setBusy(false);
-          refreshLiveStatus(true);
-          refreshMentionsAndProjects();
-        });
+      dispatchCommand(result.submit);
       return;
     }
     setSnap(result);
@@ -617,7 +822,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     : 0;
 
   const composerInnerRows =
-    session.secretPrompt || activeApproval
+    session.secretPrompt || activeApproval || transcriptSearch
       ? 1
       : snap.historySearch
         ? 1
@@ -625,25 +830,31 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const composerRows = activeApproval ? approvalCardRows : 2 + composerInnerRows;
   const footerRows = 1;
   const maxOverlayRows = Math.max(3, rows - headerRows - composerRows - footerRows - 2);
+  const showPicker = !activeApproval && picker !== null && picker.items.length > 0;
+  const shownPickerItems = showPicker ? picker.items.slice(0, Math.max(2, maxOverlayRows - 2)) : [];
   const showShortcutsPanel =
-    !activeApproval && shortcutsOpen && maxOverlayRows >= SHORTCUT_ROWS.length + 1;
+    !activeApproval && !showPicker && shortcutsOpen && maxOverlayRows >= SHORTCUT_ROWS.length + 1;
   const shownPalette =
-    !activeApproval && !showShortcutsPanel && snap.paletteOpen
+    !activeApproval && !showPicker && !showShortcutsPanel && snap.paletteOpen
       ? snap.paletteOptions.slice(0, maxOverlayRows)
       : [];
   const paletteTruncated =
     !activeApproval &&
+    !showPicker &&
     !showShortcutsPanel &&
     snap.paletteOpen &&
     snap.paletteOptions.length > shownPalette.length;
-  const overlayRows = showShortcutsPanel
-    ? 1 + SHORTCUT_ROWS.length
-    : shownPalette.length > 0
-      ? 1 + shownPalette.length + (paletteTruncated ? 1 : 0)
-      : 0;
+  const overlayRows = showPicker
+    ? 2 + shownPickerItems.length
+    : showShortcutsPanel
+      ? 1 + SHORTCUT_ROWS.length
+      : shownPalette.length > 0
+        ? 1 + shownPalette.length + (paletteTruncated ? 1 : 0)
+        : 0;
 
   stateRef.current.chromeRows = headerRows + overlayRows + composerRows + footerRows;
   const visible = Math.max(1, rows - stateRef.current.chromeRows);
+  stateRef.current.visible = visible;
   const probeViewport = computeViewportSlice(wrappedRows.length, visible, offset);
   const contentRows = probeViewport.effOffset > 0 ? Math.max(1, visible - 1) : visible;
   const viewport = computeViewportSlice(wrappedRows.length, contentRows, offset);
@@ -676,6 +887,14 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         ? `─── Arguments (Tab / ↑↓ pick) ${hairline}`
         : hairline;
 
+  const searchSummary = transcriptSearch
+    ? searchMatches.length > 0
+      ? `${(((transcriptSearch.matchCursor % searchMatches.length) + searchMatches.length) % searchMatches.length) + 1}/${searchMatches.length}`
+      : transcriptSearch.query
+        ? '0/0'
+        : ''
+    : '';
+
   return (
     <Box flexDirection="column" width={cols} height={rows}>
       <Box flexDirection="column" height={headerRows} flexShrink={0}>
@@ -691,9 +910,19 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         ))}
       </Box>
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        {pane.map((row, index) => (
-          <Text key={`p-${viewport.start + index}`}>{row.text}</Text>
-        ))}
+        {pane.map((row, index) => {
+          const absIndex = viewport.start + index;
+          const display =
+            transcriptSearch && transcriptSearch.query
+              ? highlightSearchMatches(
+                  row.text,
+                  transcriptSearch.query,
+                  absIndex === activeSearchRow,
+                  plain,
+                )
+              : row.text;
+          return <Text key={`p-${absIndex}`}>{display}</Text>;
+        })}
         {viewport.effOffset > 0 ? (
           <Text dimColor>
             {truncateVisual(
@@ -703,7 +932,32 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
           </Text>
         ) : null}
       </Box>
-      {showShortcutsPanel ? (
+      {showPicker && picker ? (
+        <Box flexDirection="column" flexShrink={0}>
+          <Text color="cyan" bold>
+            {truncateVisual(`─── ${picker.title} ${hairline}`, cols)}
+          </Text>
+          {shownPickerItems.map((item, idx) => {
+            const selected = idx === picker.selected;
+            const left = padVisualEnd(
+              selected ? ` › ${item.label}` : `   ${item.label}`,
+              Math.min(28, Math.floor(cols * 0.4)),
+            );
+            const desc = truncateVisual(item.detail, Math.max(8, cols - visualWidth(left) - 1));
+            return (
+              <Box key={`pk-${item.id}`} flexDirection="row">
+                <Text color={selected ? 'cyan' : undefined} bold={selected}>
+                  {left}
+                </Text>
+                <Text color={selected ? 'white' : undefined} dimColor={!selected}>
+                  {desc}
+                </Text>
+              </Box>
+            );
+          })}
+          <Text dimColor>{truncateVisual(`   ${picker.hint}`, cols)}</Text>
+        </Box>
+      ) : showShortcutsPanel ? (
         <Box flexDirection="column" flexShrink={0}>
           <Text dimColor>
             {truncateVisual(`─── Shortcuts (Esc / ? to close) ${hairline}`, cols)}
@@ -785,6 +1039,20 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
               </Text>
               <Text>{secretBullets}</Text>
               <Text color="cyan">{cursorOn ? '▏' : ' '}</Text>
+            </Text>
+          ) : transcriptSearch ? (
+            <Text>
+              <Text color="cyan" bold>
+                {'Find: '}
+              </Text>
+              <Text>{transcriptSearch.query}</Text>
+              <Text color="cyan">{cursorOn ? '▏' : ' '}</Text>
+              <Text dimColor>
+                {truncateVisual(
+                  `  ${searchSummary ? `${searchSummary} · ` : ''}Enter/↓ next · ↑ prev · Esc close`,
+                  Math.max(0, cols - 8 - visualWidth(transcriptSearch.query)),
+                )}
+              </Text>
             </Text>
           ) : snap.historySearch ? (
             <Text>
@@ -901,6 +1169,12 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
   const greetingColumns =
     Number(process.env.IDEASEEK_TTY_COLS ?? '') || process.stdout.columns || 80;
   bus.pushBanner(renderBanner({ columns: greetingColumns, plain }));
+  const greeting = await probeWorkspaceGreeting(process.cwd()).catch(() => null);
+  if (greeting) {
+    for (const line of formatWelcomeLines(greeting, plain)) {
+      bus.push(line);
+    }
+  }
 
   const session = new InteractiveSession({
     plain,

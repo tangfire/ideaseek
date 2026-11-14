@@ -80,6 +80,11 @@ export interface AgentTurnOptions {
    * persistence into RunEvent stays the registered gap).
    */
   onStep?: (line: string) => void;
+  /**
+   * Intermediate assistant message text blocks emitted between tool steps
+   * so multi-step turns stream visible progress instead of staying silent.
+   */
+  onAssistantText?: (text: string) => void;
 }
 
 export interface AgentTurnResult {
@@ -132,6 +137,42 @@ export function formatStepLine(
   if (d.message?.isError !== true) return `⚙ ✓ ${name}`;
   const errName = typeof d.error?.name === 'string' && d.error.name ? d.error.name : 'failed';
   return `⚙ ✗ ${name} — ${errName}`;
+}
+
+/**
+ * Extracts visible assistant text blocks from an `assistant/message` event
+ * payload (never hidden `reasoning` blocks), returning null if absent.
+ */
+export function extractAssistantStepText(type: string, data: unknown): string | null {
+  if (type !== 'assistant/message') return null;
+  const content = (data as { message?: { content?: unknown } } | null)?.message?.content;
+  if (!Array.isArray(content)) return null;
+  const chunks: string[] = [];
+  for (const block of content) {
+    const b = block as { type?: unknown; text?: unknown } | null;
+    if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+      chunks.push(redactAgentText(b.text));
+    }
+  }
+  return chunks.length > 0 ? chunks.join('\n') : null;
+}
+
+/** Formats subagent start/finish notifications for live step visibility. */
+export function formatSubagentLine(method: string, params: unknown): string | null {
+  if (method === 'subagent.started') {
+    const childId = (params as { childSessionId?: unknown } | null)?.childSessionId;
+    if (typeof childId === 'string' && childId) {
+      return `  ↳ subagent started (${childId.slice(0, 12)})`;
+    }
+  }
+  if (method === 'subagent.finished') {
+    const p = (params as { childSessionId?: unknown; status?: unknown } | null) ?? {};
+    const status = typeof p.status === 'string' ? p.status : 'done';
+    const childId =
+      typeof p.childSessionId === 'string' ? ` (${p.childSessionId.slice(0, 12)})` : '';
+    return `  ↳ subagent ${status}${childId}`;
+  }
+  return null;
 }
 
 /**
@@ -209,15 +250,26 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
       log(`new session ${session.id}`);
     }
 
-    // Live step-level lines: tool/call + tool/result stream into the
-    // transcript as the model works (pairing names via callId), instead
+    // Live step-level lines: tool/call + tool/result + subagent + intermediate
+    // assistant replies stream into the transcript as the model works instead
     // of the whole turn being a black box until the final reply.
     const callNames = new Map<string, string>();
     const result = await session.run(opts.prompt, {
       onNotification: (notification) => {
+        const subLine = formatSubagentLine(notification.method, notification.params);
+        if (subLine) {
+          opts.onStep?.(subLine);
+          return;
+        }
         if (notification.method !== 'session.event') return;
         const event = (notification.params as { event?: { type?: unknown; data?: unknown } }).event;
         if (!event || typeof event.type !== 'string') return;
+        if (event.type === 'step/start') {
+          const step = (event.data as { step?: unknown } | undefined)?.step;
+          if (typeof step === 'number' && step > 1) log(`step ${step}…`);
+        }
+        const assistantText = extractAssistantStepText(event.type, event.data);
+        if (assistantText) opts.onAssistantText?.(assistantText);
         const line = formatStepLine(event.type, event.data, callNames);
         if (line) opts.onStep?.(line);
       },
