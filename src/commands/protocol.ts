@@ -12,6 +12,7 @@ import {
   buildHandlers,
   countByStatus,
   jsonLine,
+  resolveHarnessKind,
   runWorkerInteractive,
 } from './shared.js';
 
@@ -28,14 +29,17 @@ export function registerProtocolCommand(program: Command): void {
   protocol
     .command('propose')
     .description('synthesize an ExperimentalProtocolProposal from verified cards and data profile')
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--enqueue-only', 'enqueue the proposal task without executing')
     .option('--json', 'machine-readable output')
     .action(
       action(async (opts: { harness?: string; enqueueOnly?: boolean; json?: boolean }) => {
         const runtime = await ProjectRuntime.open({
           cwd: process.cwd(),
-          harness: buildHarness(opts.harness),
+          harness: buildHarness(resolveHarnessKind(opts.harness)),
         });
         try {
           assertConfigUsable(runtime.configLoad);

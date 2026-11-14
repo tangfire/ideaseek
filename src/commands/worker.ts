@@ -10,6 +10,7 @@ import {
   isTerminalRun,
   jsonLine,
   resolveRun,
+  resolveHarnessKind,
   runWorkerInteractive,
 } from './shared.js';
 
@@ -22,7 +23,10 @@ export function registerWorkerCommand(program: Command): void {
     .option('--idle-exit <ms>', 'exit after this many ms without claimable work', (value) =>
       Number(value),
     )
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
@@ -35,7 +39,7 @@ export function registerWorkerCommand(program: Command): void {
         }) => {
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
-            harness: buildHarness(opts.harness),
+            harness: buildHarness(resolveHarnessKind(opts.harness)),
           });
           try {
             assertConfigUsable(runtime.configLoad);

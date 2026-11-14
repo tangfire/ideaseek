@@ -9,6 +9,7 @@ import {
   buildHandlers,
   buildHarness,
   resolveRun,
+  resolveHarnessKind,
   runWorkerInteractive,
 } from './shared.js';
 
@@ -23,12 +24,15 @@ export function registerSuperviseCommand(program: Command): void {
     .command('supervise')
     .description('internal: background supervisor loop (spawned by run --detach)')
     .option('--run <runId>', 'run id (default: latest)')
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .action(
       action(async (opts: { run?: string; harness?: string }) => {
         const runtime = await ProjectRuntime.open({
           cwd: process.cwd(),
-          harness: buildHarness(opts.harness),
+          harness: buildHarness(resolveHarnessKind(opts.harness)),
         });
         const paths = projectPaths(process.cwd());
         try {

@@ -24,6 +24,7 @@ import {
   buildHandlers,
   countByStatus,
   jsonLine,
+  resolveHarnessKind,
   runWorkerInteractive,
 } from './shared.js';
 
@@ -53,7 +54,10 @@ export function registerSynthesizeCommand(program: Command): void {
     .command('synthesize')
     .description('cluster PaperCards, synthesize topics and build the research map')
     .option('--max-topics <n>', 'cap on topic clusters (tail merged)', (value) => Number(value))
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--enqueue-only', 'enqueue synthesis tasks without executing')
     .option('--json', 'machine-readable output')
     .action(
@@ -66,7 +70,7 @@ export function registerSynthesizeCommand(program: Command): void {
         }) => {
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
-            harness: buildHarness(opts.harness),
+            harness: buildHarness(resolveHarnessKind(opts.harness)),
           });
           try {
             assertConfigUsable(runtime.configLoad);

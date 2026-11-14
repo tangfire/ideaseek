@@ -21,6 +21,7 @@ import {
   isTerminalRun,
   jsonLine,
   parseFaultSpec,
+  resolveHarnessKind,
   runWorkerInteractive,
 } from './shared.js';
 
@@ -34,7 +35,10 @@ export function registerRunCommand(program: Command): void {
     .option('--detach', 'start a background supervisor and return immediately')
     .option('--fault <json>', 'fault injection map, e.g. \'{"demo.analyze":{"crash":true}}\'')
     .option('--paper <path>', 'also enqueue a Phase 1 paper.extract task for this text file')
-    .option('--harness <kind>', 'agent harness: fake (default) or dsh', 'fake')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
     .option('--force', 'attach even if another live worker holds this run')
     .option('--json', 'machine-readable output')
     .action(
@@ -65,7 +69,7 @@ export function registerRunCommand(program: Command): void {
           }
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
-            harness: buildHarness(opts.harness),
+            harness: buildHarness(resolveHarnessKind(opts.harness)),
           });
           try {
             assertConfigUsable(runtime.configLoad);
