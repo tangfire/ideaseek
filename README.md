@@ -20,12 +20,15 @@ IdeaSeek is a DSH-based multi-agent research workflow platform — 从研究问�
 
 ```bash
 git clone <repo> ideaseek && cd ideaseek
-node scripts/install.mjs    # 一条命令：自举依赖 → 构建 → 装入 ~/.ideaseek
-ideaseek doctor             # 验证安装（新 shell 生效）
+node scripts/install.mjs    # 一条命令：自举依赖（缺 pnpm 自动走 corepack）→ 构建 → 安装
+ideaseek doctor             # 验证全局可用
 ```
 
-- **POSIX**：TTY 下会先征求确认，把带标记的 PATH 块写入 `~/.profile`（`--no-path` 跳过）
-- **Windows**：launcher 在 `%USERPROFILE%\.ideaseek\bin\ideaseek.cmd`，把该目录加入用户 PATH 后开新终端即可（PowerShell 一行命令见 `scripts/install.mjs` 输出的 next 提示）
+装完即可全局使用，按 shell 自动选型：
+
+- **优先落到 npm 全局 bin 目录**（`npm prefix -g`，天然在 PATH）——Windows 下同时写 sh / `.cmd` / `.ps1` 三个壳，**Git Bash、cmd、PowerShell 都能直接敲 `ideaseek`**，零 PATH 配置
+- 否则走 `~/.ideaseek` launcher：POSIX 下 TTY 先征求确认再写 `~/.profile`（`--no-path` 跳过）
+- 默认目录 `~/.ideaseek` 同时是用户数据目录（`config.yaml`/`projects.json`）——只有已知自有文件时自动采用并保留原文件，出现陌生文件仍然拒绝写入
 - GPU / 服务器 / WSL2、升级回滚等完整说明：[docs/PACKAGING.md](docs/PACKAGING.md)
 
 正式发布后（目标形态）：`npm install -g ideaseek`。

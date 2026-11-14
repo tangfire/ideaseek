@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -15,11 +15,14 @@ import { describe, expect, it } from 'vitest';
 function run(
   script: string,
   args: string[],
+  extraEnv: Record<string, string> = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [join(process.cwd(), 'scripts', script), ...args], {
       cwd: process.cwd(),
-      env: { ...process.env },
+      // Default OFF so tests never write into the machine's real npm
+      // global bin; the shim e2e opts in with a temp dir.
+      env: { ...process.env, IDEASEEK_NPM_BIN: '', ...extraEnv },
     });
     let stdout = '';
     let stderr = '';
@@ -93,6 +96,76 @@ describe('ideaseek install / uninstall (one command)', () => {
     expect(existsSync(join(prefix, 'install-manifest.json'))).toBe(false);
     expect(existsSync(join(prefix, 'someone-elses', 'keep.txt'))).toBe(true);
     expect(readdirSync(prefix)).toEqual(['someone-elses']);
+  }, 60_000);
+
+  it('adopts the ideaseek user-data home without touching its files', async () => {
+    // ~/.ideaseek doubles as the runtime's user-data home (config.yaml +
+    // projects.json from normal usage) — a dir made ONLY of well-known
+    // ideaseek files must install, never be treated as foreign.
+    const prefix = join(await mkdtemp(join(tmpdir(), 'ideaseek-adopt-')), 'prefix');
+    mkdirSync(prefix, { recursive: true });
+    writeFileSync(join(prefix, 'config.yaml'), 'notifications:\n  enabled: false\n', 'utf8');
+    writeFileSync(join(prefix, 'projects.json'), '{"registry":{"contract":"x"}}\n', 'utf8');
+
+    const installed = await run('install.mjs', ['--prefix', prefix, '--json']);
+    expect(installed.code, installed.stderr).toBe(0);
+    // Original data byte-identical; we only ADDED install files.
+    expect(readFileSync(join(prefix, 'config.yaml'), 'utf8')).toBe(
+      'notifications:\n  enabled: false\n',
+    );
+    expect(readFileSync(join(prefix, 'projects.json'), 'utf8')).toBe(
+      '{"registry":{"contract":"x"}}\n',
+    );
+    expect(existsSync(join(prefix, 'install-manifest.json'))).toBe(true);
+    expect(existsSync(join(prefix, 'bin'))).toBe(true);
+  }, 60_000);
+});
+
+describe('npm global-bin shim (instant ideaseek on PATH)', () => {
+  it('writes the shim, reports PATH state, and uninstalls it with the manifest', async () => {
+    const prefix = join(await mkdtemp(join(tmpdir(), 'ideaseek-shim-')), 'prefix');
+    const npmBin = join(await mkdtemp(join(tmpdir(), 'ideaseek-npmbin-')), 'bin');
+    const shimName = process.platform === 'win32' ? 'ideaseek.cmd' : 'ideaseek';
+    const shim = join(npmBin, shimName);
+
+    // Shim dir NOT on PATH → honest needs-path report, shim still written.
+    const installed = await run('install.mjs', ['--prefix', prefix, '--json'], {
+      IDEASEEK_NPM_BIN: npmBin,
+    });
+    expect(installed.code, installed.stderr).toBe(0);
+    const report = JSON.parse(installed.stdout) as { ok: boolean; path: string };
+    expect(report.ok).toBe(true);
+    expect(report.path).toBe('npm-shim-needs-path');
+    expect(existsSync(shim)).toBe(true);
+    // npm's Windows convention: sh + .cmd + .ps1 — one per shell family
+    // (Git Bash executes the extension-less sh shim).
+    const expectedShims =
+      process.platform === 'win32'
+        ? [join(npmBin, 'ideaseek'), join(npmBin, 'ideaseek.cmd'), join(npmBin, 'ideaseek.ps1')]
+        : [join(npmBin, 'ideaseek')];
+    if (process.platform === 'win32') {
+      expect(readFileSync(join(npmBin, 'ideaseek'), 'utf8')).toContain('#!/bin/sh');
+    }
+    const manifest = JSON.parse(readFileSync(join(prefix, 'install-manifest.json'), 'utf8')) as {
+      npmShims?: string[];
+    };
+    expect(manifest.npmShims).toEqual(expectedShims);
+
+    // Shim dir ON PATH → zero-configuration "ready" state.
+    const prefix2 = join(await mkdtemp(join(tmpdir(), 'ideaseek-shim2-')), 'prefix');
+    const npmBin2 = join(await mkdtemp(join(tmpdir(), 'ideaseek-npmbin2-')), 'bin');
+    const installed2 = await run('install.mjs', ['--prefix', prefix2, '--json'], {
+      IDEASEEK_NPM_BIN: npmBin2,
+      PATH: `${npmBin2}${delimiter}${process.env.PATH ?? ''}`,
+    });
+    expect(installed2.code, installed2.stderr).toBe(0);
+    expect((JSON.parse(installed2.stdout) as { path: string }).path).toBe('npm-shim');
+
+    // Uninstall removes every shim via manifest attribution.
+    const removed = await run('uninstall.mjs', ['--prefix', prefix, '--json']);
+    expect(removed.code, removed.stderr).toBe(0);
+    for (const file of expectedShims) expect(existsSync(file)).toBe(false);
+    expect(existsSync(join(prefix, 'install-manifest.json'))).toBe(false);
   }, 60_000);
 });
 

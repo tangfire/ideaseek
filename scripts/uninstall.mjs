@@ -48,6 +48,15 @@ if (manifest.launcherPath && existsSync(manifest.launcherPath)) {
   rmSync(manifest.launcherPath, { force: true });
   removed.push(manifest.launcherPath);
 }
+// npm global-bin shims (attribution via the manifest — same trust rule).
+// `npmShims` is the array form; `npmShimPath` was the single-file form.
+const npmShims = manifest.npmShims ?? (manifest.npmShimPath ? [manifest.npmShimPath] : []);
+for (const shim of npmShims) {
+  if (shim && existsSync(shim)) {
+    rmSync(shim, { force: true });
+    removed.push(shim);
+  }
+}
 rmSync(manifestPath, { force: true });
 removed.push(manifestPath);
 

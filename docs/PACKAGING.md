@@ -28,13 +28,18 @@ cd ideaseek
 node scripts/install.mjs
 ```
 
-`install.mjs` 自举整个流程：`node_modules` 缺失时先 `pnpm install --frozen-lockfile`，`dist` 缺失时走**带锁构建**（`scripts/build.mjs`，并行会话不互踩），然后装进 `~/.ideaseek`（launcher + manifest + sha256 指纹展示，幂等重装）。POSIX 且在 TTY 下会**先征求确认**再把带标记的 PATH 块追加进 `~/.profile`（`--no-path` 跳过；非 TTY/`--json` 只打印指引，从不擅自改环境）。装完开新 shell：
+`install.mjs` 自举整个流程：`node_modules` 缺失时先 `pnpm install --frozen-lockfile`（**pnpm 缺失自动降级 `corepack pnpm`**），`dist` 缺失时走**带锁构建**（`scripts/build.mjs`，并行会话不互踩），然后：
+
+1. **npm 全局 bin shim（优先，零 PATH 配置）**：往 `npm prefix -g` 目录写 launcher——Windows 按 npm 惯例写 sh / `.cmd` / `.ps1` 三个壳（Git Bash、cmd、PowerShell 全覆盖），POSIX 写 `bin/ideaseek`；该目录天然在 PATH，装完直接可用。目录不在 PATH 时如实提示；写入失败回退到第 2 步
+2. **`~/.ideaseek` launcher + PATH**：sha256 指纹展示、幂等重装；POSIX 且 TTY 下**先征求确认**再把带标记的 PATH 块追加进 `~/.profile`（`--no-path` 跳过；非 TTY/`--json` 只打印指引，从不擅自改环境）
+
+默认 prefix `~/.ideaseek` 同时是用户数据目录（`config.yaml`/`projects.json` 由日常使用创建）：仅含已知自有文件时**采用（adopt）**并只新增安装文件；出现任何陌生文件仍然拒绝写入。装完验证：
 
 ```bash
 ideaseek doctor
 ```
 
-需要 pnpm 引导依赖（缺失时脚本给出 `npm i -g pnpm` / `corepack enable` 提示）。卸载：`node scripts/uninstall.mjs`。开发安装要求读取仓库根目录 `AGENTS.md` 和 `docs/` 文档。DSH 上游作为独立仓库或锁定依赖使用，不复制进 IdeaSeek 业务目录。
+卸载：`node scripts/uninstall.mjs`（manifest 归属的 launcher + 全部 npm shim + 空目录；数据文件与源码永不触碰）。开发安装要求读取仓库根目录 `AGENTS.md` 和 `docs/` 文档。DSH 上游作为独立仓库或锁定依赖使用，不复制进 IdeaSeek 业务目录。
 
 ## 安装后检查
 
