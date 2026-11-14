@@ -201,6 +201,159 @@ export async function buildDependencyContext(
   return bounded.length > 12_000 ? `${bounded.slice(0, 12_000)}\n(context truncated)` : bounded;
 }
 
+/**
+ * Python standard-library roots. Used to tell "needs no third-party package"
+ * from "the declaration was left empty by mistake" — without this, every
+ * stdlib import would look like a dependency to install.
+ */
+const STDLIB_ROOTS = new Set([
+  'abc',
+  'argparse',
+  'array',
+  'ast',
+  'asyncio',
+  'base64',
+  'bisect',
+  'builtins',
+  'cmath',
+  'collections',
+  'concurrent',
+  'copy',
+  'csv',
+  'ctypes',
+  'datetime',
+  'decimal',
+  'difflib',
+  'enum',
+  'errno',
+  'fnmatch',
+  'fractions',
+  'functools',
+  'gc',
+  'glob',
+  'gzip',
+  'hashlib',
+  'heapq',
+  'hmac',
+  'importlib',
+  'inspect',
+  'io',
+  'itertools',
+  'json',
+  'keyword',
+  'linecache',
+  'locale',
+  'logging',
+  'math',
+  'mimetypes',
+  'numbers',
+  'operator',
+  'os',
+  'pathlib',
+  'pickle',
+  'platform',
+  'pprint',
+  'random',
+  're',
+  'readline',
+  'reprlib',
+  'secrets',
+  'shutil',
+  'signal',
+  'socket',
+  'sqlite3',
+  'ssl',
+  'stat',
+  'statistics',
+  'string',
+  'subprocess',
+  'sys',
+  'tempfile',
+  'termios',
+  'textwrap',
+  'threading',
+  'time',
+  'timeit',
+  'tokenize',
+  'traceback',
+  'types',
+  'typing',
+  'unicodedata',
+  'unittest',
+  'urllib',
+  'uuid',
+  'warnings',
+  'weakref',
+  'xml',
+  'zipfile',
+]);
+
+/** Import root → pip distribution, where the two differ (the common ones). */
+const DISTRIBUTION_NAMES: Record<string, string> = {
+  PIL: 'pillow',
+  cv2: 'opencv-python',
+  sklearn: 'scikit-learn',
+  yaml: 'pyyaml',
+  dateutil: 'python-dateutil',
+  fitz: 'pymupdf',
+};
+
+/**
+ * Third-party import roots of one Python source. Cross-checks what a blueprint
+ * declares: an empty list beside code that imports torch would run checks in an
+ * environment that cannot satisfy them, and the reverse wastes an install.
+ */
+export function deriveImportRoots(source: string): string[] {
+  const roots = new Set<string>();
+  for (const match of source.matchAll(/^\s*(?:import|from)\s+([A-Za-z_][\w.]*)/gm)) {
+    const root = (match[1] ?? '').split('.')[0];
+    if (!root || STDLIB_ROOTS.has(root)) continue;
+    roots.add(root);
+  }
+  return [...roots].sort();
+}
+
+/**
+ * Import roots mapped to pip specs, deduplicated and grammar-validated.
+ * When a worktree is given, roots that resolve inside it are dropped: they are
+ * the repository's own modules, and pip has nothing to install for them (the
+ * same distinction that keeps repair from pip-installing an internal package).
+ */
+export async function deriveRequirementsForWorktree(
+  source: string,
+  worktreeDir: string,
+): Promise<string[]> {
+  const { stat } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const specs = new Set<string>();
+  for (const root of deriveImportRoots(source)) {
+    const asPath = join(worktreeDir, root);
+    const local =
+      (await stat(asPath).then(
+        () => true,
+        () => false,
+      )) ||
+      (await stat(`${asPath}.py`).then(
+        () => true,
+        () => false,
+      ));
+    if (local) continue;
+    const spec = DISTRIBUTION_NAMES[root] ?? root.toLowerCase();
+    if (validateRequirementSpec(spec)) specs.add(spec);
+  }
+  return [...specs].sort();
+}
+
+/** Import roots mapped to pip specs, without worktree awareness. */
+export function deriveRequirements(source: string): string[] {
+  const specs = new Set<string>();
+  for (const root of deriveImportRoots(source)) {
+    const spec = DISTRIBUTION_NAMES[root] ?? root.toLowerCase();
+    if (validateRequirementSpec(spec)) specs.add(spec);
+  }
+  return [...specs].sort();
+}
+
 /** Asks the harness for a dependency plan and validates what comes back. */
 export async function inferDependencies(opts: {
   harness: HarnessAdapter;

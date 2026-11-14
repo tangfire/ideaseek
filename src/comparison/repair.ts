@@ -420,15 +420,21 @@ function venvPathDir(venvDir: string): string {
   return process.platform === 'win32' ? join(venvDir, 'Scripts') : join(venvDir, 'bin');
 }
 
-/** Applies a planned fix inside the worktree only (never upstream/system). */
-export async function applyFix(
-  plan: FixPlan,
+/**
+ * Creates the method venv and installs into it. Shared by repair and
+ * reproduce: two copies of this drifted apart, and reproduce ended up running
+ * checks with the system python while repair had installed dependencies into a
+ * venv it never used. One implementation, one policy.
+ */
+export async function ensureMethodVenv(
   worktreeDir: string,
-  opts: { installTimeoutMs?: number; python?: string } = {},
-): Promise<{ ok: boolean; detail: string }> {
-  if (plan.kind !== 'venv-install' && plan.kind !== 'venv-install-inferred') {
-    return { ok: true, detail: plan.detail };
-  }
+  opts: {
+    requirementsFile?: string;
+    packages?: string[];
+    installTimeoutMs?: number;
+    python?: string;
+  } = {},
+): Promise<{ ok: boolean; detail: string; venvDir: string }> {
   const venvDir = join(worktreeDir, '.venv');
   const python = opts.python ?? 'python';
   const create = await runRepairCommand([python, '-m', 'venv', '.venv'], worktreeDir, 180_000);
@@ -439,35 +445,58 @@ export async function applyFix(
       return {
         ok: false,
         detail: redactSecrets(`venv create failed: ${(retry.out || create.out).slice(-400)}`),
+        venvDir,
       };
     }
   }
-  // argv array, never a shell string: an inferred spec cannot become a command.
   const installArgs = [venvPython(venvDir), '-m', 'pip', 'install', '--disable-pip-version-check'];
-  if (plan.kind === 'venv-install-inferred') {
-    if (!plan.packages || plan.packages.length === 0) {
-      return { ok: false, detail: 'inferred plan carries no packages' };
-    }
-    installArgs.push(...plan.packages);
+  if (opts.requirementsFile) {
+    installArgs.push('-r', opts.requirementsFile);
+  } else if (opts.packages && opts.packages.length > 0) {
+    // argv array, never a shell string: an inferred spec cannot become a command.
+    installArgs.push(...opts.packages);
   } else {
-    const requirements = await findRequirementsFile(worktreeDir);
-    if (!requirements) {
-      return { ok: false, detail: 'requirements file vanished before install' };
-    }
-    installArgs.push('-r', requirements);
+    return { ok: true, detail: 'venv created (nothing to install)', venvDir };
   }
   const install = await runRepairCommand(
     installArgs,
     worktreeDir,
-    opts.installTimeoutMs ?? 300_000,
+    opts.installTimeoutMs ?? 600_000,
   );
   if (install.exitCode !== 0) {
     return {
       ok: false,
       detail: redactSecrets(`pip install failed: ${install.out.slice(-400)}`),
+      venvDir,
     };
   }
-  return { ok: true, detail: plan.detail };
+  return { ok: true, detail: `installed into ${venvDir}`, venvDir };
+}
+
+/** Applies a planned fix inside the worktree only (never upstream/system). */
+export async function applyFix(
+  plan: FixPlan,
+  worktreeDir: string,
+  opts: { installTimeoutMs?: number; python?: string } = {},
+): Promise<{ ok: boolean; detail: string }> {
+  if (plan.kind !== 'venv-install' && plan.kind !== 'venv-install-inferred') {
+    return { ok: true, detail: plan.detail };
+  }
+  if (plan.kind === 'venv-install-inferred' && (!plan.packages || plan.packages.length === 0)) {
+    return { ok: false, detail: 'inferred plan carries no packages' };
+  }
+  const requirements =
+    plan.kind === 'venv-install' ? await findRequirementsFile(worktreeDir) : undefined;
+  if (plan.kind === 'venv-install' && !requirements) {
+    return { ok: false, detail: 'requirements file vanished before install' };
+  }
+  const applied = await ensureMethodVenv(worktreeDir, {
+    requirementsFile: requirements ?? undefined,
+    packages: plan.packages,
+    installTimeoutMs: opts.installTimeoutMs,
+    python: opts.python,
+  });
+  return { ok: applied.ok, detail: applied.ok ? plan.detail : applied.detail };
 }
 
 /**

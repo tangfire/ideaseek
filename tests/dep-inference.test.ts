@@ -5,6 +5,9 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_PACKAGES,
   buildDependencyContext,
+  deriveImportRoots,
+  deriveRequirements,
+  deriveRequirementsForWorktree,
   parseDependencyPlan,
   validateRequirementSpec,
 } from '../src/comparison/dep-inference.js';
@@ -218,6 +221,38 @@ describe('planFix with inference', () => {
     );
     expect(plan.kind).toBe('none');
     expect(called).toBe(0);
+  });
+});
+
+describe('deriveRequirements (cross-checks what a blueprint declares)', () => {
+  it('maps third-party imports to distributions and ignores the stdlib', () => {
+    const source = [
+      'import torch',
+      'import numpy as np',
+      'from torch import nn',
+      'from PIL import Image',
+      'import sklearn.cluster',
+      'import os, json, csv, tempfile',
+      'from collections import defaultdict',
+    ].join('\n');
+    expect(deriveRequirements(source)).toEqual(['numpy', 'pillow', 'scikit-learn', 'torch']);
+    expect(deriveImportRoots(source)).toEqual(['PIL', 'numpy', 'sklearn', 'torch']);
+  });
+
+  it('returns nothing for a pure-stdlib implementation, so no venv is built', () => {
+    const source = 'import argparse, csv, json, math, os, random, sys, tempfile\n';
+    expect(deriveRequirements(source)).toEqual([]);
+  });
+
+  it('drops roots that exist inside the worktree: they are local modules, not packages', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-derive-'));
+    await mkdir(join(dir, 'models'), { recursive: true });
+    await writeFile(join(dir, 'models', '__init__.py'), '', 'utf8');
+    await writeFile(join(dir, 'utils.py'), '', 'utf8');
+    const source = 'import torch\nimport models\nfrom utils import training\n';
+    expect(await deriveRequirementsForWorktree(source, dir)).toEqual(['torch']);
+    // Without the worktree, the local names cannot be recognised.
+    expect(deriveRequirements(source)).toEqual(['models', 'torch', 'utils']);
   });
 });
 

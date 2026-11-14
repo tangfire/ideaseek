@@ -794,6 +794,49 @@ async function executeReproduction(
     dataPath = absolute;
   }
 
+  // Dependencies come from two places: what the blueprint declares, and what
+  // the code it ships actually imports. Union them — a declaration that
+  // contradicts the source is surfaced, not silently preferred, because either
+  // side can be the wrong one.
+  const { deriveRequirementsForWorktree } = await import('../comparison/dep-inference.js');
+  const declared = (blueprint.algorithm?.requirements ?? []).filter(
+    (spec) => typeof spec === 'string' && spec.trim(),
+  );
+  const derived = await deriveRequirementsForWorktree(
+    blueprint.algorithm?.source ?? '',
+    worktreeDir,
+  );
+  const requirements = [...new Set([...declared, ...derived])].sort();
+  let extraEnv: Record<string, string> | undefined;
+  if (requirements.length > 0) {
+    const mismatch =
+      declared.length > 0 && derived.length > 0
+        ? derived.filter((spec) => !declared.includes(spec))
+        : [];
+    process.stderr.write(
+      `method venv: installing ${requirements.length} package(s) [${requirements.join(', ')}]` +
+        (mismatch.length > 0
+          ? ` — blueprint did not declare: ${mismatch.join(', ')}`
+          : declared.length === 0
+            ? ' (derived from the implementation imports)'
+            : '') +
+        '\n',
+    );
+    const { ensureMethodVenv, venvEnv } = await import('../comparison/repair.js');
+    const venv = await ensureMethodVenv(worktreeDir, { packages: requirements });
+    if (!venv.ok) {
+      // An unavailable dependency is what the validation phases are built to
+      // classify (missing-dependency → blocked, resumable). Turning the helper
+      // into a hard precondition would replace that report with an abort.
+      process.stderr.write(
+        `warning: method venv could not be built: ${venv.detail}\n` +
+          '  continuing without it; the checks will classify the missing dependency instead\n',
+      );
+    } else {
+      extraEnv = venvEnv(worktreeDir);
+    }
+  }
+
   const checkOpts = {
     projectRoot: root,
     methodId,
@@ -802,6 +845,7 @@ async function executeReproduction(
     dataPath,
     timeoutMs: opts.timeout,
     smokeTimeoutMs: opts.smokeTimeout,
+    extraEnv,
     onPhase,
   };
 

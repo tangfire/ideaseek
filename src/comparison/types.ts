@@ -135,6 +135,12 @@ export interface ReproductionBlueprint {
     source?: string;
     /** argv prefix; defaults to ['python', 'reproduce.py']. */
     entry?: string[];
+    /**
+     * pip requirement specs the implementation needs, declared explicitly so
+     * the runner can build a method venv instead of letting the code fail into
+     * a fake pass. Validated as specs, never as shell.
+     */
+    requirements?: string[];
     dataInterface: { description: string };
     metrics: { name: string; direction: 'higher' | 'lower' }[];
     hyperparameters?: Record<string, unknown>;

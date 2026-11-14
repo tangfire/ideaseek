@@ -12,6 +12,7 @@ import {
 } from './repair.js';
 import { stableJson } from '../experiment/spec.js';
 import { mergeRunEnv } from '../experiment/run-env.js';
+import { validateRequirementSpec } from './dep-inference.js';
 import type {
   RepairFailureKind,
   ReproductionBlueprint,
@@ -113,6 +114,21 @@ export function validateReproductionBlueprint(
     if (algorithm.entry !== undefined) {
       if (!Array.isArray(algorithm.entry) || algorithm.entry.some((c) => typeof c !== 'string')) {
         errors.push('algorithm.entry must be an argv array of strings');
+      }
+    }
+    if (algorithm.requirements !== undefined) {
+      if (!Array.isArray(algorithm.requirements)) {
+        errors.push('algorithm.requirements must be an array of pip requirement specs');
+      } else {
+        for (const [i, spec] of algorithm.requirements.entries()) {
+          if (typeof spec !== 'string' || !validateRequirementSpec(spec)) {
+            errors.push(
+              `algorithm.requirements[${i}] is not a bare requirement spec (got ${JSON.stringify(
+                spec,
+              )}): no flags, paths, URLs or shell`,
+            );
+          }
+        }
       }
     }
     if (
@@ -392,6 +408,8 @@ export interface CheckOptions {
   dataPath?: string;
   timeoutMs: number;
   smokeTimeoutMs: number;
+  /** Method venv and other per-check environment (see ensureMethodVenv). */
+  extraEnv?: Record<string, string>;
   /** Called after each phase so crashes resume from the last OK phase. */
   onPhase: (record: ReproductionRecord) => Promise<void>;
 }
@@ -430,7 +448,7 @@ export async function runValidationPhases(
       command,
       opts.worktreeDir,
       timeoutMs,
-      await mergeRunEnv(opts.projectRoot),
+      await mergeRunEnv(opts.projectRoot, opts.extraEnv),
     );
     const logName = `reproduce-${opts.methodId}-${phase}.log`;
     const logPath = `.research/logs/${logName}`;
@@ -597,7 +615,7 @@ export async function runSmoke(
     command,
     opts.worktreeDir,
     opts.smokeTimeoutMs,
-    await mergeRunEnv(opts.projectRoot),
+    await mergeRunEnv(opts.projectRoot, opts.extraEnv),
   );
   const logName = `reproduce-${opts.methodId}-smoke.log`;
   const logPath = `.research/logs/${logName}`;
