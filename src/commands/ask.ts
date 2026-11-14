@@ -235,6 +235,10 @@ export function registerAskCommand(program: Command): void {
           opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
         const { buildHarness } = await import('./shared.js');
         const harness = buildHarness(kind);
+        // Announce the classifier before the (potentially slow) model round
+        // trip — a silent spinner for tens of seconds felt dead. Streams
+        // through the relay's line framer; JSON mode stays machine-pure.
+        if (!opts.json) process.stdout.write(`supervisor (${kind}): classifying…\n`);
         await harness.initialize();
         try {
           const result = await harness.runTask({

@@ -123,7 +123,7 @@ ideaseek ›
 
 活动区 transcript 有三类可区分的行：**用户输入**以 `❯ ` 前缀回显（青色加粗——输入行提交后即清空，不回显就只剩响应，用户无法对照自己问了什么）；**响应**为普通行，紧跟在 `❯` 行之后；**事件**带 `[HH:MM:SS]` 时间戳与阶段标签。错误行红色。行式 `--plain` 路径由 readline 原生回显输入，无需此机制。
 
-命令输出按行**流式**进入活动区：子进程每产生一行立即显示，长任务（extract/report/agent 回合的 DSH 进度日志）的进度不再等到退出才整体出现。运行中按 `Ctrl-C` 立即中止当前命令（整棵子进程树 kill，活动区回一行 `interrupted — the running command was stopped`）；空闲时 `Ctrl-C` 仍只提示 `/quit`。
+命令输出按行**流式**进入活动区：子进程每产生一行立即显示，长任务（extract/report/agent 回合的 DSH 进度日志）的进度不再等到退出才整体出现。Research 模式的自然语言进入 supervisor 前先打一行 `supervisor (<harness>): classifying…`——真模型分类的几十秒不再是死寂的 spinner。运行中按 `Ctrl-C` 立即中止当前命令（整棵子进程树 kill，活动区回一行 `interrupted — the running command was stopped`）；空闲时 `Ctrl-C` 仍只提示 `/quit`。
 
 agent 回合内的**步骤级行**实时进入活动区：`⚙ <tool> <参数摘要>`（模型请求工具，参数压成单行截断）、`⚙ ✓ <tool>` / `⚙ ✗ <tool> — <错误>`（执行结果，经 callId 与请求配对）、回合结束一行 `usage: N in / M out tokens`（科研成本可见）。这些行由 `session.run` 的 `onNotification` 观察 `tool/call`/`tool/result` 事件渲染——**仅回合内展示**；持久化进 RunEvent 流（attach 回放、`ideaseek events`）仍是已登记的步骤级缺口。
 

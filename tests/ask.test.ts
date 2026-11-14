@@ -132,6 +132,9 @@ describe('ask free-text quality (CLI)', () => {
       IDEASEEK_FAKE_SUPERVISOR_OUTPUT: override,
     });
     expect(unclear.code).toBe(0);
+    // The classifier announces itself before the model round trip — the
+    // silent-spinner dead air was a field complaint.
+    expect(unclear.stdout).toContain('supervisor (fake): classifying…');
     expect(unclear.stdout).toContain('not sure how to help');
     expect(unclear.stdout).not.toContain('rephrase');
   }, 60_000);
