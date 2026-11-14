@@ -122,10 +122,16 @@ export function registerUpdateCommands(program: Command): void {
           process.stderr.write('update failed: typescript not installed\nnext: pnpm install\n');
           return 1;
         }
-        const build = spawnSync(process.execPath, [tsc, '-p', join(root, 'tsconfig.build.json')], {
-          cwd: root,
-          encoding: 'utf8',
-        });
+        // Source checkouts share the cross-session build lock via
+        // scripts/build.mjs (parallel tsc runs tear dist); packed
+        // layouts ship only dist/ and fall back to raw tsc.
+        const lockedBuild = join(root, 'scripts', 'build.mjs');
+        const build = existsSync(lockedBuild)
+          ? spawnSync(process.execPath, [lockedBuild], { cwd: root, encoding: 'utf8' })
+          : spawnSync(process.execPath, [tsc, '-p', join(root, 'tsconfig.build.json')], {
+              cwd: root,
+              encoding: 'utf8',
+            });
         if (build.status !== 0) {
           const detail = (build.stderr || build.stdout || '').slice(-600);
           if (opts.json) {

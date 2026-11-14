@@ -15,7 +15,9 @@ export default function globalSetup(): void {
   // Deterministic supervisor for `ideaseek ask` in tests (never the real model).
   process.env.IDEASEEK_ASK_HARNESS = 'fake';
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-  execSync('node node_modules/typescript/bin/tsc -p tsconfig.build.json', {
+  // Locked build (scripts/build.mjs): parallel sessions tearing dist by
+  // running two tsc instances at once was observed repeatedly.
+  execSync('node scripts/build.mjs', {
     cwd: root,
     stdio: 'inherit',
   });

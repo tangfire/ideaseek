@@ -46,3 +46,6 @@ coverage/
 
 # config backups written by ideaseek setup
 research.yaml.bak-*
+
+# cross-session build lock (scripts/build.mjs)
+.build-lock/
