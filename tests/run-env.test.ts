@@ -3,6 +3,7 @@ import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildRunEnv, mergeRunEnv, RUN_ENV_KEYS } from '../src/experiment/run-env.js';
 import { executeRepair } from '../src/comparison/repair.js';
+import { runSmoke } from '../src/comparison/reproduce.js';
 import type { RepairRecord } from '../src/comparison/types.js';
 import { executeSpecRun } from '../src/idea/experiment.js';
 import type { ExperimentSpec } from '../src/experiment/spec.js';
@@ -17,6 +18,7 @@ import { makeProjectDir } from './helpers.js';
 const ECHO = [
   `console.log("${RUN_ENV_KEYS.datasetRoots}=" + (process.env.${RUN_ENV_KEYS.datasetRoots}` +
     ` || "<none>") + " ${RUN_ENV_KEYS.projectRoot}=" + (process.env.${RUN_ENV_KEYS.projectRoot}` +
+    ` || "<none>") + " ${RUN_ENV_KEYS.dataPath}=" + (process.env.${RUN_ENV_KEYS.dataPath}` +
     ` || "<none>"))`,
   'console.log(JSON.stringify({metrics:{accuracy:0.5}}))',
 ].join('; ');
@@ -65,6 +67,34 @@ describe('buildRunEnv', () => {
     expect(merged.VIRTUAL_ENV).toBe('/tmp/venv-a');
     expect(merged[RUN_ENV_KEYS.projectRoot]).toBe(dir);
   });
+
+  it('includes materialized corpora, which is the only form an entry can train on', async () => {
+    const dir = await projectWithDatasets((d) => [join(d, 'datasets')]);
+    const derived = join(dir, 'datasets-derived', 'pacs-quick');
+    await mkdir(join(dir, 'knowledge'), { recursive: true });
+    await mkdir(derived, { recursive: true });
+    await writeFile(
+      join(dir, 'knowledge', 'materializations.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        records: [
+          { status: 'ok', outDir: derived },
+          { status: 'ok', outDir: derived },
+        ],
+      }),
+      'utf8',
+    );
+    const env = await buildRunEnv(dir);
+    // Configured root first, then the derived corpus, with duplicates folded.
+    expect(env[RUN_ENV_KEYS.datasetRoots]).toBe([join(dir, 'datasets'), derived].join(delimiter));
+  });
+
+  it('survives a missing materialization ledger', async () => {
+    const dir = await projectWithDatasets((d) => [join(d, 'datasets')]);
+    expect(await buildRunEnv(dir)).toMatchObject({
+      [RUN_ENV_KEYS.datasetRoots]: join(dir, 'datasets'),
+    });
+  });
 });
 
 describe('run env reaches the spawned entry', () => {
@@ -89,9 +119,50 @@ describe('run env reaches the spawned entry', () => {
     });
     expect(result.outcome).toBe('passed');
     expect(stored).not.toBeNull();
-    const log = await readFile(join(dir, '.research', 'logs', 'repair-fedavg-r1.log'), 'utf8');
-    expect(log).toContain(`=${join(dir, 'data', 'pacs')} `);
-    expect(log).toContain(`${RUN_ENV_KEYS.projectRoot}=${dir}`);
+    const repairLog = await readFile(
+      join(dir, '.research', 'logs', 'repair-fedavg-r1.log'),
+      'utf8',
+    );
+    expect(repairLog).toContain(`=${join(dir, 'data', 'pacs')} `);
+    expect(repairLog).toContain(`${RUN_ENV_KEYS.projectRoot}=${dir}`);
+  });
+
+  it('smoke is handed the exact selection the caller asked for', async () => {
+    // smoke is invoked with no path argument at all. Without the environment
+    // the entry can only guess, and guessing means the worktree: the first
+    // real reimplementation run reported "no images found" about a corpus that
+    // was present because of nothing but that missing handoff.
+    const dir = await projectWithDatasets((d) => [join(d, 'data', 'pacs')]);
+    const worktree = join(dir, 'comparisons', 'fedavg', 'worktree');
+    await mkdir(worktree, { recursive: true });
+    const record = {
+      methodId: 'fedavg',
+      completedPhases: [],
+      phases: [],
+      outcome: 'running',
+    } as unknown as Parameters<typeof runSmoke>[0];
+    const { failure } = await runSmoke(
+      record,
+      {
+        projectRoot: dir,
+        methodId: 'fedavg',
+        worktreeDir: worktree,
+        entry: ['node', '-e', ECHO],
+        dataPath: join(dir, 'datasets-derived', 'pacs-quick'),
+        timeoutMs: 30_000,
+        smokeTimeoutMs: 30_000,
+        onPhase: async () => undefined,
+      } as Parameters<typeof runSmoke>[1],
+      [{ name: 'accuracy', direction: 'higher' }],
+    );
+    expect(failure).toBeNull();
+    const log = await readFile(
+      join(dir, '.research', 'logs', 'reproduce-fedavg-smoke.log'),
+      'utf8',
+    );
+    expect(log).toContain(
+      `${RUN_ENV_KEYS.dataPath}=${join(dir, 'datasets-derived', 'pacs-quick')}`,
+    );
   });
 
   it('idea experiment: the spec run sees the dataset roots in its log', async () => {

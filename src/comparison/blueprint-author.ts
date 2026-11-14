@@ -42,6 +42,12 @@ Rules:
   smoke | check-data | check-metrics and must not require GPU to pass smoke.
 - algorithm.entry is the ARGV PREFIX used to invoke the file, e.g. ["python","reproduce.py"].
   Never put the subcommands there; smoke/check-data/check-metrics are appended by the runner.
+- Only check-data receives a path. The data interface must therefore also be reachable from the
+  environment the platform injects into every phase: IDEASEEK_DATA_PATH (the exact selection the
+  caller requested), IDEASEEK_DATASET_ROOTS (usable corpus roots, OS path-delimiter separated) and
+  IDEASEEK_PROJECT_ROOT. Describe resolution in that order, and say what is checked inside each
+  candidate (manifest, expected layout) so a missing corpus is reported as a missing corpus rather
+  than as zero samples.
 - algorithm.metrics must reuse the locked protocol's primary and secondary metric names
   verbatim when a protocol is supplied. Do not collapse several distinct metrics into one
   generic name; if the protocol lists three, emit three.

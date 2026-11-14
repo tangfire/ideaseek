@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildImplementationContext,
   authorImplementation,
+  IMPLEMENT_INSTRUCTION,
   parseImplementationOutput,
 } from '../src/comparison/implement-author.js';
 import type { ReproductionBlueprint } from '../src/comparison/types.js';
@@ -77,6 +78,15 @@ describe('parseImplementationOutput', () => {
 });
 
 describe('buildImplementationContext', () => {
+  it('tells the program where data actually comes from during smoke', () => {
+    // smoke is invoked with no path argument. A program that only understands
+    // --data resolves the corpus from its working directory, which is the
+    // worktree: it reports "no images found" about a corpus that is present.
+    expect(IMPLEMENT_INSTRUCTION).toContain('IDEASEEK_DATASET_ROOTS');
+    expect(IMPLEMENT_INSTRUCTION).toContain('IDEASEEK_PROJECT_ROOT');
+    expect(IMPLEMENT_INSTRUCTION).toContain('current working directory');
+  });
+
   it('carries the plan, the metric names and the honesty constraints', () => {
     const context = buildImplementationContext(blueprint(), 'datasets-derived/pacs-smoke');
     expect(context).toContain('clients average model weights');

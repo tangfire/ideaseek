@@ -29,6 +29,15 @@ Hard requirements for the program:
 - check-metrics: print one JSON line {"metrics": {...}} using exactly the blueprint's metric names.
 - smoke: run the method end to end on a small slice and print one JSON line
   {"metrics": {...}} with the blueprint's metric names and values actually computed.
+- Where the data lives: only check-data is handed a --data path. smoke and check-metrics get no
+  path, so resolve the data location in this order: an explicit --data/--data-root flag if you
+  provide one, then the environment variable IDEASEEK_DATA_PATH (the exact selection the caller
+  asked for, injected into every phase), then IDEASEEK_DATASET_ROOTS (all usable corpus roots,
+  OS path-delimiter separated; take the first that holds the expected layout), then
+  IDEASEEK_PROJECT_ROOT joined with the blueprint's data interface. Do NOT invent a
+  method-specific variable name and do NOT fall back to the current working directory: the program
+  runs from its own worktree, so a cwd guess resolves to an empty directory and reports "no data"
+  as if the corpus were missing. If nothing resolves, exit non-zero listing every location tried.
 - Emit only that JSON line on stdout for the metrics-bearing commands; diagnostics go to stderr.
 - Do not fabricate results. If a dependency or the data is unavailable, exit non-zero and explain.
   Never report a status such as "skipped" or "ephemeral_passed" with exit code 0.

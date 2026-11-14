@@ -1,9 +1,17 @@
 import { expect, it } from 'vitest';
 import {
+  BLUEPRINT_INSTRUCTION,
   buildBlueprintContext,
   type BlueprintEvidence,
 } from '../src/comparison/blueprint-author.js';
 import { blueprintMetricNames, checkMetricFeasibility } from '../src/comparison/reproduce.js';
+
+it('the blueprint contract names the environment the program will really run in', () => {
+  // Only check-data gets a path handed to it, so a plan that describes data
+  // access purely as "the caller passes a path" leaves smoke guessing.
+  expect(BLUEPRINT_INSTRUCTION).toContain('IDEASEEK_DATASET_ROOTS');
+  expect(BLUEPRINT_INSTRUCTION).toContain('Only check-data receives a path');
+});
 
 const PROTOCOL = {
   primaryMetrics: [

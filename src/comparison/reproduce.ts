@@ -11,7 +11,7 @@ import {
   writeRepairLog,
 } from './repair.js';
 import { stableJson } from '../experiment/spec.js';
-import { mergeRunEnv } from '../experiment/run-env.js';
+import { RUN_ENV_KEYS, mergeRunEnv } from '../experiment/run-env.js';
 import { validateRequirementSpec } from './dep-inference.js';
 import type {
   RepairFailureKind,
@@ -328,6 +328,11 @@ function renderReadme(
     '<entry> smoke                     # minimal run; prints {"metrics": {...}} JSON',
     '```',
     '',
+    'Only check-data is handed a path. smoke and check-metrics must locate the corpus through',
+    'IDEASEEK_DATA_PATH (the exact selection requested, injected into every phase), then',
+    'IDEASEEK_DATASET_ROOTS (usable corpus roots, OS path-delimiter separated), then',
+    'IDEASEEK_PROJECT_ROOT — never the working directory, which is this worktree and holds no data.',
+    '',
     'Top-level module code must not execute on import (the platform imports it',
     'for the dependency check). Scale is smoke-only — no full training here.',
     '',
@@ -479,6 +484,23 @@ export interface CheckOptions {
   onPhase: (record: ReproductionRecord) => Promise<void>;
 }
 
+/**
+ * Environment for one entry invocation.
+ *
+ * `--data` reaches only check-data; smoke and check-metrics are called with no
+ * path at all. A program that then looks in its working directory — the
+ * worktree, which holds no data — reports an existing corpus as missing, which
+ * is what happened on the first real reimplementation run. The specific
+ * selection the caller asked for therefore travels through the environment too,
+ * because argv cannot be extended for official code whose CLI is not ours.
+ */
+async function entryEnv(opts: CheckOptions): Promise<Record<string, string>> {
+  return mergeRunEnv(opts.projectRoot, {
+    ...opts.extraEnv,
+    ...(opts.dataPath ? { [RUN_ENV_KEYS.dataPath]: opts.dataPath } : {}),
+  });
+}
+
 async function pythonFiles(worktreeDir: string): Promise<string[]> {
   const names = await readdir(worktreeDir).catch(() => [] as string[]);
   return names.filter((name) => name.endsWith('.py'));
@@ -509,12 +531,7 @@ export async function runValidationPhases(
   ): Promise<ReproductionPhaseResult | null> => {
     if (done.has(phase)) return null;
     const started = Date.now();
-    const run = await runRepairCommand(
-      command,
-      opts.worktreeDir,
-      timeoutMs,
-      await mergeRunEnv(opts.projectRoot, opts.extraEnv),
-    );
+    const run = await runRepairCommand(command, opts.worktreeDir, timeoutMs, await entryEnv(opts));
     const logName = `reproduce-${opts.methodId}-${phase}.log`;
     const logPath = `.research/logs/${logName}`;
     await writeRepairLog(opts.projectRoot, logName, command, run.exitCode, run.out);
@@ -680,7 +697,7 @@ export async function runSmoke(
     command,
     opts.worktreeDir,
     opts.smokeTimeoutMs,
-    await mergeRunEnv(opts.projectRoot, opts.extraEnv),
+    await entryEnv(opts),
   );
   const logName = `reproduce-${opts.methodId}-smoke.log`;
   const logPath = `.research/logs/${logName}`;
@@ -695,13 +712,26 @@ export async function runSmoke(
   };
   if (run.exitCode !== 0 || run.timedOut) {
     const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+    // When nothing matches a known failure shape, the entry's own last
+    // diagnostic is the only explanation available, and it is otherwise hidden
+    // three levels down in the log file. The first real smoke failure this ran
+    // said "exit 2: unknown" while the program had printed exactly which
+    // directories it had searched and what domains it expected.
+    const ownWords = run.out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('{'))
+      .reverse()
+      .find((line) => /error|not found|missing|expected|cannot|no such/i.test(line));
     const failure: ReproductionPhaseResult = {
       ...base,
       ok: false,
       failureKind: run.timedOut ? 'timeout' : classified.kind,
       summary: run.timedOut
         ? `smoke timed out after ${opts.smokeTimeoutMs}ms`
-        : classified.summary.slice(0, 300),
+        : classified.kind === 'unknown' && ownWords
+          ? `${classified.summary.slice(0, 120)} — ${ownWords.slice(0, 200)}`
+          : classified.summary.slice(0, 300),
     };
     record.phases.push(failure);
     record.outcome = 'failed';

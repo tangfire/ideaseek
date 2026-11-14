@@ -8,6 +8,7 @@ import {
   computeAlgorithmFingerprint,
   defaultEntry,
   resolveSource,
+  runSmoke,
   validateReproductionBlueprint,
 } from '../src/comparison/reproduce.js';
 import type { ReproductionBlueprint, ReproductionRecord } from '../src/comparison/types.js';
@@ -623,5 +624,44 @@ elif cmd == 'smoke':
     // FILE_NOT_FOUND maps to the task-failed exit code (docs/CLI_SPEC).
     expect(noBlueprint.code).toBe(1);
     expect(noBlueprint.stderr).toContain('blueprint');
+  }, 60_000);
+});
+
+describe('runSmoke failure diagnosis', () => {
+  it("carries the entry's own explanation when nothing matches a known failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'smoke-diagnosis-'));
+    const worktree = join(root, 'worktree');
+    await mkdir(worktree, { recursive: true });
+    const record = {
+      schemaVersion: 1,
+      methodId: 'fedavg',
+      fingerprint: 'sha256:x',
+      outcome: 'running',
+      completedPhases: [],
+      phases: [],
+    } as unknown as ReproductionRecord;
+    const entry = [
+      'node',
+      '-e',
+      'console.log("ERROR: no images found under D:/x for domains [sketch, cartoon]"); process.exit(2)',
+    ];
+    const { failure } = await runSmoke(
+      record,
+      {
+        projectRoot: root,
+        methodId: 'fedavg',
+        worktreeDir: worktree,
+        entry,
+        timeoutMs: 30_000,
+        smokeTimeoutMs: 30_000,
+        onPhase: async () => undefined,
+      },
+      [{ name: 'accuracy', direction: 'higher' }],
+    );
+    expect(failure?.failureKind).toBe('unknown');
+    // Before this, the terminal said only "exit 2" and the searched paths were
+    // three levels down in a log file.
+    expect(failure?.summary).toContain('no images found under D:/x');
+    expect(failure?.summary).toContain('sketch');
   }, 60_000);
 });
