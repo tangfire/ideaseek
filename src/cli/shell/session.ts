@@ -23,9 +23,11 @@ import { executeSessionModeSwitch } from '../../session/switch.js';
 import { WarmAgentHost, recordAgentSession } from '../../dsh/session.js';
 import {
   GENERAL_SCOPE_NOTICE,
+  assertProjectAgentBudget,
   auditProjectAgentTurn,
   checkInputDriftAfterTurn,
   composeTurnPrompt,
+  recordProjectAgentUsage,
 } from '../../dsh/turn-runner.js';
 import {
   APPROVAL_ALLOW,
@@ -570,14 +572,20 @@ export class InteractiveSession {
 
     const provider = process.env.IDEASEEK_AGENT_PROVIDER;
     const model = process.env.IDEASEEK_AGENT_MODEL;
-    const prompt = root ? await composeTurnPrompt(root, message, resumeId === null) : message;
+    if (root) await assertProjectAgentBudget(root);
     const streamedTexts: string[] = [];
 
     this.warmTurnActive = true;
     try {
       const result = await this.warmAgentHost.runTurn({
         cwd: turnCwd,
-        prompt,
+        prompt: message,
+        ...(root
+          ? {
+              resolvePrompt: (resumed: boolean, sid: string) =>
+                composeTurnPrompt(root, message, !resumed, { sessionId: sid }),
+            }
+          : {}),
         ...(resumeId ? { sessionId: resumeId } : {}),
         policy: 'interactive',
         interactiveSurface: true,
@@ -614,6 +622,12 @@ export class InteractiveSession {
           approvalsCount: result.approvals.length,
           prompt: message,
           finishReason: result.finishReason,
+        });
+        await recordProjectAgentUsage(root, {
+          sessionId: result.sessionId,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          model: result.model,
         });
       }
       const drift = root ? await checkInputDriftAfterTurn(root) : null;

@@ -64,6 +64,8 @@ export async function resolveApproval(
 export interface AgentTurnOptions {
   cwd: string;
   prompt: string;
+  /** Optional dynamic prompt composer invoked once resume outcome is known. */
+  resolvePrompt?: (resumed: boolean, sessionId: string) => Promise<string> | string;
   /** Continue this persisted session instead of minting a new one. */
   sessionId?: string;
   policy?: ApprovalPolicy;
@@ -95,6 +97,8 @@ export interface AgentTurnResult {
   eventCount: number;
   approvals: ApprovalDecision[];
   resumed: boolean;
+  usage: { inputTokens: number; outputTokens: number };
+  model: string | null;
 }
 
 /** Redacts anything key-shaped from diagnostics before they leave this module. */
@@ -184,7 +188,10 @@ async function executeTurnOnSession(
 ): Promise<AgentTurnResult> {
   const log = opts.onLog ?? (() => undefined);
   const callNames = new Map<string, string>();
-  const result = await session.run(opts.prompt, {
+  const promptText = opts.resolvePrompt
+    ? await opts.resolvePrompt(resumed, session.id)
+    : opts.prompt;
+  const result = await session.run(promptText, {
     onNotification: (notification) => {
       const subLine = formatSubagentLine(notification.method, notification.params);
       if (subLine) {
@@ -213,9 +220,15 @@ async function executeTurnOnSession(
   }
   let inputTokens = 0;
   let outputTokens = 0;
+  let model: string | null = opts.model ?? null;
   for (const event of result.events) {
     if (event.type !== 'assistant/message') continue;
-    const usage = (event.data as { usage?: { inputTokens?: number; outputTokens?: number } }).usage;
+    const data = event.data as {
+      model?: unknown;
+      usage?: { inputTokens?: number; outputTokens?: number };
+    };
+    if (typeof data.model === 'string' && data.model.trim()) model = data.model;
+    const usage = data.usage;
     inputTokens += usage?.inputTokens ?? 0;
     outputTokens += usage?.outputTokens ?? 0;
   }
@@ -229,6 +242,8 @@ async function executeTurnOnSession(
     eventCount: result.events.length,
     approvals,
     resumed,
+    usage: { inputTokens, outputTokens },
+    model,
   };
 }
 

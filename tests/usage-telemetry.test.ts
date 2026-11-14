@@ -300,4 +300,62 @@ describe('cost pause gate (QUOTA_EXHAUSTED parking)', () => {
     expect(payload.usage?.costUsd ?? 0).toBeGreaterThanOrEqual(0.024 - 1e-9);
     expect(payload.usage?.ceilingUsd).toBe(0.013);
   }, 180_000);
+
+  it('records coding agent usage into the active run and enforces the same cost gate', async () => {
+    const dir = await makeProjectDir();
+    const configPath = join(dir, 'research.yaml');
+    const config = await readFile(configPath, 'utf8');
+    await writeFile(
+      configPath,
+      config.replace(
+        /max_model_cost:.*/m,
+        'max_model_cost: 0.02\n  model_rates:\n    input_per_mtok: 10\n    output_per_mtok: 20',
+      ),
+      'utf8',
+    );
+    expect((await runCli(dir, ['run', '--question', 'coding budget', '--enqueue-only'])).code).toBe(
+      0,
+    );
+
+    // First coding turn spends $0.014 (1000 in + 200 out) → allowed and recorded.
+    const turn = await runCli(
+      dir,
+      ['agent', 'inspect metrics', '--json'],
+      {
+        IDEASEEK_FAKE_AGENT_TURN: '1',
+        IDEASEEK_FAKE_USAGE: JSON.stringify({ inputTokens: 1000, outputTokens: 200 }),
+      },
+      180_000,
+    );
+    expect(turn.code, turn.stdout + turn.stderr).toBe(0);
+
+    const status = await runCli(dir, ['status', '--json']);
+    const statusPayload = JSON.parse(status.stdout) as {
+      usage: { inputTokens: number; outputTokens: number; costUsd: number | null } | null;
+    };
+    expect(statusPayload.usage?.inputTokens).toBeGreaterThanOrEqual(1000);
+    expect(statusPayload.usage?.costUsd ?? 0).toBeCloseTo(0.014, 5);
+
+    // Push cost past 90% of $0.02 ($0.018+) → next coding turn is blocked by QUOTA_EXHAUSTED.
+    const turn2 = await runCli(
+      dir,
+      ['agent', 'inspect again', '--json'],
+      {
+        IDEASEEK_FAKE_AGENT_TURN: '1',
+        IDEASEEK_FAKE_USAGE: JSON.stringify({ inputTokens: 1000, outputTokens: 200 }),
+      },
+      180_000,
+    );
+    expect(turn2.code, turn2.stdout + turn2.stderr).toBe(0);
+
+    const blocked = await runCli(
+      dir,
+      ['agent', 'third turn should block'],
+      { IDEASEEK_FAKE_AGENT_TURN: '1' },
+      180_000,
+    );
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain('max_model_cost');
+    expect(blocked.stdout + blocked.stderr).toContain('ideaseek continue');
+  }, 240_000);
 });

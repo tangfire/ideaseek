@@ -167,6 +167,19 @@ export async function buildAskContext(
     // no research map yet
   }
 
+  try {
+    const { readRecentProjectAgentAudits } = await import('../dsh/turn-runner.js');
+    const audits = await readRecentProjectAgentAudits(root, 4);
+    const summaries = audits
+      .filter((a) => a.eventType !== 'model_usage' && typeof a.summary === 'string')
+      .map((a) => `  - ${String(a.summary)}`);
+    if (summaries.length > 0) {
+      sections.push(`recentCodingActivity:\n${summaries.join('\n')}`);
+    }
+  } catch {
+    // optional ledger
+  }
+
   const history = await readAskHistory(root);
   if (history.length > 0) {
     const lines = history

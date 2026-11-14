@@ -281,7 +281,45 @@ describe('first-turn project brief', () => {
 
     // A resumed session already holds this context; its prompt is untouched.
     expect(await composeTurnPrompt(dir, '继续', false)).toBe('继续');
+
+    // With sessionId tracking, unchanged state returns prompt verbatim; a tier
+    // switch injects a compact state delta on the next resumed turn.
+    const firstTracked = await composeTurnPrompt(dir, '第一步', true, { sessionId: 'ses-track-1' });
+    expect(firstTracked).toContain('research tier: research');
+    expect(await composeTurnPrompt(dir, '第二步', false, { sessionId: 'ses-track-1' })).toBe(
+      '第二步',
+    );
+    const { writeSessionMode } = await import('../src/session/mode.js');
+    await writeSessionMode(dir, 'analysis');
+    const afterSwitch = await composeTurnPrompt(dir, '第三步', false, {
+      sessionId: 'ses-track-1',
+    });
+    expect(afterSwitch).toContain('[IdeaSeek 状态同步]');
+    expect(afterSwitch).toContain('tier=analysis');
+    expect(afterSwitch.trimEnd().endsWith('第三步')).toBe(true);
+    // Next turn with unchanged state stays clean again.
+    expect(await composeTurnPrompt(dir, '第四步', false, { sessionId: 'ses-track-1' })).toBe(
+      '第四步',
+    );
   }, 180_000);
+
+  it('audits coding turns to project-agent-audit.jsonl when no active run exists', async () => {
+    const dir = await makeProjectDir();
+    const { auditProjectAgentTurn, readRecentProjectAgentAudits } =
+      await import('../src/dsh/turn-runner.js');
+    const seq = await auditProjectAgentTurn(dir, {
+      sessionId: 'ses-no-run',
+      resumed: false,
+      eventCount: 2,
+      approvalsCount: 1,
+      prompt: 'fix data loader',
+      finishReason: 'completed',
+    });
+    expect(seq).toBeNull();
+    const entries = await readRecentProjectAgentAudits(dir);
+    expect(entries).toHaveLength(1);
+    expect(String(entries[0]!.summary)).toContain('fix data loader');
+  }, 60_000);
 });
 
 describe('general scope: agent outside an IdeaSeek project', () => {

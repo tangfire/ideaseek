@@ -3,10 +3,12 @@ import { IdeaseekError } from '../core/errors.js';
 import { APPROVAL_ALLOW, encodeApprovalRequest } from '../dsh/approval-channel.js';
 import {
   GENERAL_SCOPE_NOTICE,
+  assertProjectAgentBudget,
   auditProjectAgentTurn,
   checkInputDriftAfterTurn,
   composeTurnPrompt,
   inputDriftJson,
+  recordProjectAgentUsage,
 } from '../dsh/turn-runner.js';
 import { action, jsonLine } from './shared.js';
 
@@ -46,6 +48,7 @@ async function runFakeAgentTurn(
   root: string | null,
   cwd: string,
 ): Promise<number> {
+  if (root) await assertProjectAgentBudget(root);
   const sessionId = 'session-fake-e2e';
   process.stderr.write('  · dsh runtime started\n');
   process.stderr.write(
@@ -71,6 +74,22 @@ async function runFakeAgentTurn(
   // --resume from the registry (cross-restart continuity e2e).
   const { recordAgentSession } = await import('../dsh/session.js');
   await recordAgentSession(root, { sessionId, prompt, cwd, finishReason: 'completed' });
+  if (root && process.env.IDEASEEK_FAKE_USAGE) {
+    try {
+      const parsed = JSON.parse(process.env.IDEASEEK_FAKE_USAGE) as {
+        inputTokens?: unknown;
+        outputTokens?: unknown;
+      };
+      await recordProjectAgentUsage(root, {
+        sessionId,
+        inputTokens: typeof parsed.inputTokens === 'number' ? parsed.inputTokens : 0,
+        outputTokens: typeof parsed.outputTokens === 'number' ? parsed.outputTokens : 0,
+        model: 'fake-agent',
+      });
+    } catch {
+      // ignore malformed test hook
+    }
+  }
   // Outside a project there is no baseline to compare and no run to audit.
   const drift = root ? await checkInputDriftAfterTurn(root) : null;
   const { renderDriftReport } = await import('../knowledge/input-drift.js');
@@ -221,12 +240,17 @@ export function registerAgentCommand(program: Command): void {
           }
 
           const { runAgentTurn } = await import('../dsh/session.js');
+          if (root) await assertProjectAgentBudget(root);
           const streamedTexts: string[] = [];
           const result = await runAgentTurn({
             cwd: turnCwd,
-            prompt: root
-              ? await composeTurnPrompt(root, prompt, opts.resume === undefined)
-              : prompt,
+            prompt,
+            ...(root
+              ? {
+                  resolvePrompt: (resumed: boolean, sid: string) =>
+                    composeTurnPrompt(root, prompt, !resumed, { sessionId: sid }),
+                }
+              : {}),
             ...(opts.resume ? { sessionId: opts.resume } : {}),
             policy: opts.denyTools ? 'deny' : 'interactive',
             ...(opts.provider ? { provider: opts.provider } : {}),
@@ -290,6 +314,14 @@ export function registerAgentCommand(program: Command): void {
                 finishReason: result.finishReason,
               })
             : null;
+          if (root) {
+            await recordProjectAgentUsage(root, {
+              sessionId: result.sessionId,
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              model: result.model,
+            });
+          }
 
           const drift = root ? await checkInputDriftAfterTurn(root) : null;
           const { renderDriftReport } = await import('../knowledge/input-drift.js');
