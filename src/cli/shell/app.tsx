@@ -14,7 +14,7 @@ import { SLASH_COMMANDS } from '../slash-menu.js';
  */
 
 const FOOTER =
-  'Shift+Tab mode · Tab complete · ↑/↓ palette · Esc close · wheel/PgUp scrolls history · Ctrl-D or /quit exits';
+  'Shift+Tab mode · Tab complete · ↑/↓ palette or history · Esc close · wheel/PgUp scrolls history · Ctrl-D or /quit exits';
 /** Lines the wheel scrolls per notch (terminals already repeat events). */
 const WHEEL_SCROLL_LINES = 6;
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';

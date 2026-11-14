@@ -45,6 +45,10 @@ export class ShellEngine {
   private paletteOpen = false;
   private paletteIndex = 0;
   private paletteItems: string[] = [];
+  /** Submitted input, oldest first. ↑/↓ walk it when the palette is closed. */
+  private history: string[] = [];
+  private historyIndex = -1;
+  private draft = '';
 
   constructor(
     private readonly commands: () => string[] = () => SLASH_COMMANDS.map((c) => c.name),
@@ -90,6 +94,51 @@ export class ShellEngine {
     this.cursor = this.line.length;
   }
 
+  /** Keeps one copy of each submitted line, newest last, bounded. */
+  private rememberHistory(entry: string): void {
+    const value = entry.trim();
+    if (!value) return;
+    if (this.history[this.history.length - 1] === value) return;
+    this.history.push(value);
+    if (this.history.length > 50) this.history.shift();
+    this.historyIndex = -1;
+    this.draft = '';
+  }
+
+  /**
+   * ↑/↓ with the palette closed walk submitted input the way a shell does.
+   * The in-progress line is kept so ↓ back past the newest entry restores it.
+   * A recalled line is complete, so the palette stays closed — reopening it
+   * would steal the next keystroke from the history walk.
+   */
+  private recall(direction: -1 | 1): void {
+    if (this.history.length === 0) return;
+    const dismissPalette = (): void => {
+      this.paletteOpen = false;
+      this.paletteItems = [];
+      this.paletteIndex = 0;
+    };
+    if (this.historyIndex === -1) {
+      if (direction === 1) return; // nothing newer than the live line
+      this.draft = this.line;
+      this.historyIndex = this.history.length - 1;
+    } else {
+      const next = this.historyIndex + direction;
+      if (next >= this.history.length) {
+        this.historyIndex = -1;
+        this.line = this.draft;
+        this.cursor = this.line.length;
+        dismissPalette();
+        return;
+      }
+      if (next < 0) return; // oldest entry stays
+      this.historyIndex = next;
+    }
+    this.line = this.history[this.historyIndex] ?? '';
+    this.cursor = this.line.length;
+    dismissPalette();
+  }
+
   handle(key: EngineKey): EngineResult {
     const { name, sequence, ctrl } = key;
 
@@ -123,6 +172,7 @@ export class ShellEngine {
         if (submit === '/') {
           this.refreshPalette();
         } else {
+          this.rememberHistory(submit);
           this.line = '';
           this.cursor = 0;
           this.paletteOpen = false;
@@ -143,6 +193,14 @@ export class ShellEngine {
         return this.snapshot();
       }
       case 'tab': {
+        if (this.line === '') {
+          // The footer advertises Tab; on an empty line it must reveal the
+          // command list rather than swallow the keystroke.
+          this.paletteItems = this.commands();
+          this.paletteOpen = this.paletteItems.length > 0;
+          this.paletteIndex = 0;
+          return this.snapshot();
+        }
         if (!this.line.startsWith('/')) return this.snapshot();
         const matches = this.commands().filter((name_) => name_.startsWith(this.line));
         if (matches.length === 1) {
@@ -166,9 +224,11 @@ export class ShellEngine {
       }
       case 'up':
         if (this.paletteOpen) this.move(-1);
+        else this.recall(-1);
         return this.snapshot();
       case 'down':
         if (this.paletteOpen) this.move(1);
+        else this.recall(1);
         return this.snapshot();
       case 'pageup':
         return this.snapshot({ scrollDelta: 1 });

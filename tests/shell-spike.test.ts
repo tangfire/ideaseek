@@ -110,6 +110,51 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
     expect(snap.submit).toBeNull();
   });
 
+  it('↑/↓ walk submitted input once the palette is closed', () => {
+    const engine = new ShellEngine();
+    for (const entry of ['/status', '/papers', '/models setup deepseek']) {
+      for (const ch of entry) engine.handle({ sequence: ch });
+      engine.handle(key('return'));
+    }
+
+    let snap = engine.handle(key('up'));
+    expect(snap.line).toBe('/models setup deepseek');
+    snap = engine.handle(key('up'));
+    expect(snap.line).toBe('/papers');
+    snap = engine.handle(key('up'));
+    expect(snap.line).toBe('/status');
+    // Oldest entry stays; ↓ walks forward again.
+    snap = engine.handle(key('up'));
+    expect(snap.line).toBe('/status');
+    snap = engine.handle(key('down'));
+    expect(snap.line).toBe('/papers');
+  }, 60_000);
+
+  it('↓ past the newest entry restores the line being typed', () => {
+    const engine = new ShellEngine();
+    for (const ch of '/status') engine.handle({ sequence: ch });
+    engine.handle(key('return'));
+    for (const ch of '/next') engine.handle({ sequence: ch });
+
+    engine.handle(key('up')); // recall /status, draft kept
+    const snap = engine.handle(key('down'));
+    expect(snap.line).toBe('/next');
+    // Consecutive duplicates are stored once.
+    for (const ch of '/status') engine.handle({ sequence: ch });
+    engine.handle(key('return'));
+    for (const ch of '/status') engine.handle({ sequence: ch });
+    engine.handle(key('return'));
+    expect(engine.handle(key('up')).line).toBe('/status');
+  }, 60_000);
+
+  it('Tab on an empty line reveals the command list', () => {
+    const engine = new ShellEngine();
+    const snap = engine.handle(key('tab'));
+    expect(snap.paletteOpen).toBe(true);
+    expect(snap.paletteItems.length).toBeGreaterThan(10);
+    expect(snap.line).toBe('');
+  }, 60_000);
+
   it('Ctrl-C clears text first, then hints; Ctrl-D on empty line is EOF', () => {
     const engine = new ShellEngine();
     engine.handle({ sequence: 'abc' });
