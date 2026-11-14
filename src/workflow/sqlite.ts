@@ -1135,6 +1135,15 @@ export class SqliteWorkflowDb implements WorkflowDb {
     );
   }
 
+  deleteSlice(sliceId: string): Promise<boolean> {
+    return Promise.resolve().then(() =>
+      this.tx(() => {
+        const result = this.db.prepare('DELETE FROM dataset_slice WHERE slice_id = ?').run(sliceId);
+        return Number(result.changes ?? 0) > 0;
+      }),
+    );
+  }
+
   getSlice(sliceId: string): Promise<DatasetSliceRecord | null> {
     const row = this.db.prepare('SELECT * FROM dataset_slice WHERE slice_id = ?').get(sliceId) as
       | {

@@ -201,6 +201,62 @@ function runCli(
   });
 }
 
+describe('CLI: data slices --prune-invalid', () => {
+  it('removes only records whose hashes violate the contract', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-prune-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+    await mkdir(join(dir, 'datasets', 'toy'), { recursive: true });
+    await writeFile(join(dir, 'datasets', 'toy', 'train.csv'), csvFixture(30));
+    expect((await runCli(dir, ['scan'])).code).toBe(0);
+    expect(
+      (
+        await runCli(dir, [
+          'data',
+          'slices',
+          '--build-from',
+          'datasets/toy/train.csv',
+          '--seed',
+          '5',
+        ])
+      ).code,
+    ).toBe(0);
+
+    // A record as the fold-collision bug produced it: doubled `sha256:` prefix.
+    const runtime = await openRuntime(dir, { recover: false });
+    try {
+      await runtime.db.upsertSlice({
+        sliceId: 'ds-toysmoke-sha256',
+        datasetSnapshotId: 'data-toy',
+        scale: 'smoke',
+        record: {
+          sliceId: 'ds-toysmoke-sha256',
+          inputHash: 'sha256:sha256:deadbeef',
+          outputHash: 'sha256:sha256:cafebabe',
+        } as unknown as Record<string, unknown>,
+        createdAt: Date.now(),
+      });
+      expect((await runtime.db.listSlices()).length).toBe(4);
+    } finally {
+      await runtime.close();
+    }
+
+    const pruned = await runCli(dir, ['data', 'slices', '--prune-invalid', '--json']);
+    expect(pruned.code).toBe(0);
+    const payload = JSON.parse(pruned.stdout) as { removed: number; sliceIds: string[] };
+    expect(payload.removed).toBe(1);
+    expect(payload.sliceIds).toEqual(['ds-toysmoke-sha256']);
+
+    const after = await openRuntime(dir, { recover: false });
+    try {
+      const remaining = await after.db.listSlices();
+      expect(remaining.length).toBe(3);
+      expect(remaining.map((record) => record.sliceId)).not.toContain('ds-toysmoke-sha256');
+    } finally {
+      await after.close();
+    }
+  }, 120_000);
+});
+
 describe('CLI: data slices / describe', () => {
   it('builds slices from a CSV and lists them (Phase 3 vertical)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-data-'));

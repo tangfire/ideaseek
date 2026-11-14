@@ -246,6 +246,12 @@ export interface WorkflowDb {
 
   // Dataset slice registry (migration v3)
   upsertSlice(slice: DatasetSliceRecord): Promise<void>;
+  /**
+   * Removes one slice record. Used to prune derived artifacts that violate the
+   * DatasetSlice contract (a malformed hash blocks the protocol lock), since
+   * slices are rebuildable by rule + seed.
+   */
+  deleteSlice(sliceId: string): Promise<boolean>;
   getSlice(sliceId: string): Promise<DatasetSliceRecord | null>;
   listSlices(opts?: { datasetSnapshotId?: string; scale?: string }): Promise<DatasetSliceRecord[]>;
 

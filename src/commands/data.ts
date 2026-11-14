@@ -230,6 +230,10 @@ export function registerDataCommand(program: Command): void {
       '--from-protocol',
       'expand the protocol slicing spec against the measured corpus (any direction)',
     )
+    .option(
+      '--prune-invalid',
+      'delete slice records whose stored hashes violate the DatasetSlice contract (they block the protocol lock and are rebuildable by rule + seed)',
+    )
     .option('--scales <list>', 'comma-separated scales when building', 'smoke,quick,standard')
     .option('--seed <n>', 'selection seed when building', (value) => Number(value))
     .option('--json', 'machine-readable output')
@@ -240,12 +244,39 @@ export function registerDataCommand(program: Command): void {
           scale?: string;
           buildFrom?: string;
           fromProtocol?: boolean;
+          pruneInvalid?: boolean;
           scales?: string;
           seed?: number;
           json?: boolean;
         }) => {
           const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           try {
+            if (opts.pruneInvalid) {
+              const { isContentHash } = await import('../core/hash.js');
+              const removed: string[] = [];
+              for (const record of await runtime.db.listSlices()) {
+                const slice = record.record as { inputHash?: unknown; outputHash?: unknown };
+                const valid = (value: unknown): boolean =>
+                  typeof value === 'string' && isContentHash(value);
+                if (!valid(slice.inputHash) || !valid(slice.outputHash)) {
+                  if (await runtime.db.deleteSlice(record.sliceId)) removed.push(record.sliceId);
+                }
+              }
+              if (opts.json) {
+                process.stdout.write(jsonLine({ removed: removed.length, sliceIds: removed }));
+                return 0;
+              }
+              if (removed.length === 0) {
+                process.stdout.write('no invalid slice records found\n');
+                return 0;
+              }
+              process.stdout.write(`pruned ${removed.length} invalid slice record(s):\n`);
+              for (const id of removed) process.stdout.write(`  ${id}\n`);
+              process.stdout.write(
+                'slices are rebuildable by rule + seed — rerun: ideaseek data slices --from-protocol\n',
+              );
+              return 0;
+            }
             if (opts.fromProtocol) {
               const scales = (opts.scales ?? 'smoke,quick,standard')
                 .split(',')
