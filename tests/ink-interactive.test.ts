@@ -333,6 +333,38 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
     }
   }, 120_000);
 
+  it('models setup masks the API key and fails closed offline', async () => {
+    const dir = await makeProjectDir('ink-models');
+    const repl = startInk(dir);
+    try {
+      await repl.waitFor(/ideaseek ›/, 60_000);
+      await repl.waitFor(/ink-models · RESEARCH/, 60_000);
+
+      // Open the wizard with a dead base URL — the connection test then
+      // fails offline (same trick as tests/models-setup.test.ts), so the
+      // full prompt → stdin → child chain runs without any network.
+      await repl.write('/models setup --base-url http://127.0.0.1:1');
+      await repl.write('\r');
+      await repl.waitFor(/API key \(input hidden\)/);
+
+      const secret = 'sk-test-super-secret-42';
+      await repl.write(secret);
+      await repl.waitFor(/•{10,}/); // masked as bullets
+      expect(repl.output()).not.toContain(secret); // never echoed anywhere
+
+      await repl.write('\r'); // submit → child reads stdin, test fails, nothing written
+      await repl.waitFor(/connection test FAILED/);
+      expect(repl.output()).not.toContain(secret); // still nowhere
+
+      await repl.write('/');
+      await repl.write('quit');
+      await repl.write('\r');
+      expect(await repl.done).toBe(0);
+    } finally {
+      await cleanup(dir, repl.child);
+    }
+  }, 120_000);
+
   it('Ctrl-D exits without cancelling anything and restores the screen', async () => {
     const dir = await makeProjectDir('ink-interactive-eof');
     const repl = startInk(dir);

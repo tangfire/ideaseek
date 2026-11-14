@@ -173,6 +173,37 @@ export class InteractiveSession {
   private approvalWaiting: ApprovalRequest | null = null;
   /** Kept-open stdin of the agent child — where answers are written. */
   private agentStdin: NodeJS.WritableStream | null = null;
+  /** Secret input capture is renderer-owned: only the Ink TUI can mask. */
+  private secretCapture = false;
+  private secretLabel: string | null = null;
+  private secretResolve: ((value: string | null) => void) | null = null;
+
+  /** Enables masked key capture (called by the Ink renderer at startup). */
+  enableSecretCapture(): void {
+    this.secretCapture = true;
+  }
+
+  /** Active secret prompt for renderers (null when idle). */
+  get secretPrompt(): { label: string } | null {
+    return this.secretLabel ? { label: this.secretLabel } : null;
+  }
+
+  private beginSecretPrompt(label: string): Promise<string | null> {
+    this.secretLabel = label;
+    return new Promise((resolve) => {
+      this.secretResolve = resolve;
+    });
+  }
+
+  /** Resolves the pending secret prompt; false when none is waiting. */
+  answerSecret(value: string | null): boolean {
+    if (!this.secretResolve) return false;
+    const resolve = this.secretResolve;
+    this.secretResolve = null;
+    this.secretLabel = null;
+    resolve(value);
+    return true;
+  }
 
   /** Pending tool-approval request (renderers draw an input prompt for it). */
   get pendingApproval(): ApprovalRequest | null {
@@ -236,6 +267,12 @@ export class InteractiveSession {
    * stopped (idle Ctrl-C keeps the plain exit hint instead).
    */
   async interrupt(): Promise<boolean> {
+    // A pending secret prompt blocks the same way a relay does — Ctrl-C
+    // cancels it (answerSecret(null) → caller reports the cancel).
+    if (this.secretResolve) {
+      this.answerSecret(null);
+      return true;
+    }
     if (!this.relayAbort) return false;
     this.relayAbort.abort();
     this.relayAbort = null;
@@ -444,7 +481,7 @@ export class InteractiveSession {
    * `extract`/`report` shows progress live instead of appearing all at
    * once when it exits.
    */
-  private async relay(args: string[]): Promise<void> {
+  private async relay(args: string[], opts: { stdinPayload?: string } = {}): Promise<void> {
     const out = createLineStream((line) => this.println(line));
     const err = createLineStream((line) =>
       this.println(paint(line, 'error', { plain: this.plain })),
@@ -461,6 +498,17 @@ export class InteractiveSession {
       await runCli(args, {
         timeoutMs: 60_000,
         signal: abort.signal,
+        // stdinPayload (e.g. a masked API key) is written and closed at
+        // spawn so the child's read-until-EOF completes immediately.
+        ...(opts.stdinPayload !== undefined
+          ? {
+              keepStdinOpen: true,
+              onStdin: (stdin: NodeJS.WritableStream) => {
+                stdin.write(opts.stdinPayload!);
+                stdin.end();
+              },
+            }
+          : {}),
         onStdout: (chunk) => out.push(chunk),
         onStderr: (chunk) => err.push(chunk),
       });
@@ -469,6 +517,35 @@ export class InteractiveSession {
       err.flush();
       if (this.relayAbort === abort) this.relayAbort = null;
     }
+  }
+
+  /**
+   * `/models setup` inside the TUI: the renderer captures the key
+   * masked (never echoed, never argv, never in the transcript) and the
+   * child reads it from stdin via --api-key-stdin. The connection test
+   * runs by default so a bad key fails closed before anything is wired.
+   */
+  private async runModelsSetup(flags: string[]): Promise<void> {
+    if (!this.secretCapture) {
+      // Classic line mode cannot mask a secret (readline echoes it) —
+      // point at the real terminal instead of leaking the key.
+      this.println(
+        'hidden key capture needs the TUI — run `ideaseek models setup` in a terminal (or pipe via --api-key-stdin)',
+      );
+      return;
+    }
+    const key = await this.beginSecretPrompt('API key (input hidden)');
+    if (key === null) {
+      this.println(paint('setup cancelled — nothing written', 'warn', { plain: this.plain }));
+      return;
+    }
+    if (!key.trim()) {
+      this.println(paint('empty API key — nothing written', 'warn', { plain: this.plain }));
+      return;
+    }
+    await this.relay(['models', 'setup', '--api-key-stdin', '--test', ...flags], {
+      stdinPayload: `${key}\n`,
+    });
   }
 
   private async fetchPending(): Promise<PendingApproval[]> {
@@ -618,9 +695,16 @@ export class InteractiveSession {
       case '/report':
         await this.relay(['report']);
         return 'continue';
-      case '/models':
+      case '/models': {
+        // `/models setup` needs masked key capture — never a plain relay
+        // (the child would see an empty stdin and there is no masking).
+        if (restArgs[0] === 'setup') {
+          await this.runModelsSetup(restArgs.slice(1));
+          return 'continue';
+        }
         await this.relay(['models', ...restArgs]);
         return 'continue';
+      }
       case '/mode':
         await this.relay(['mode', ...restArgs]);
         await this.refreshHeader();

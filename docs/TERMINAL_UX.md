@@ -22,6 +22,8 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 
 输入编辑区必须始终固定在同一行；命令菜单是覆盖层，不能把输入复制成多行。用户继续输入时只更新候选和高亮，不滚动整个终端。上下键、Tab、Enter、Esc、Ctrl-C 和终端 resize 由 TUI 输入层统一处理。输入行本身有明确的“输入感”：加粗品牌前缀 + 全宽淡色底条（用 U+2800 盲文空白填充到终端右缘——Ink 对每行做 `trimEnd`，普通空格会被裁掉，U+2800 不是 Unicode 空白所以保留），空闲时光标块闪烁（约 530ms），执行命令时同一格原位显示 braille spinner，忙碌状态在输入行直接可见。
 
+输入行有三种互斥状态：**常规编辑**（composer）、**工具审批**（琥珀 `⏸ allow …`，见审批界面）、**密钥捕获**（`🔐 API key (input hidden): •••`——字符只存在于渲染组件的本地缓冲，Enter 提交、Esc/Ctrl-C 取消、Backspace 删除，**绝不回显、绝不进转录、绝不走 argv**）。`/models setup` 走该状态：捕获后以 `models setup --api-key-stdin --test` 拉起子进程（默认先连接测试，失败零写入），行式 `--plain` 路径无法掩码 → 提示改用真实终端运行 `ideaseek models setup`。
+
 TUI 的顶部状态区保持最多两行：项目 · Research/Agent 会话模式 · run 状态（阻塞时附原因），以及当前研究问题；阶段、任务、论文、资源等完整细节一律由 `/status` 提供，不在启动时铺开。block 字标是活动区首部的一次性问候，随事件滚动离开，不永久占据固定行。底部固定显示高对比度的当前模式徽标和 `Shift+Tab` 切换提示。输入 `/` 时，命令面板同时显示命令名与简短用途，选择态清晰突出；活动区把命令输出按逻辑行呈现并移除内嵌 ANSI 控制码，防止外部 CLI 输出破坏 Ink 重绘。
 
 交互模式可以使用成熟的 TypeScript TUI/terminal renderer，但必须保留 IdeaSeek 的事件、权限和 use-case 边界。不要继续在 readline 上堆叠更多光标逃逸来模拟全屏应用。

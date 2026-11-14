@@ -54,7 +54,7 @@ ideaseek setup
 ideaseek doctor
 ```
 
-IdeaSeek 会检测 Node、Python、容器、CUDA、GPU、磁盘和 DSH provider。全文检索走 SQLite FTS5/BM25（本地嵌入层已按产品决策移除——语义查找由 Agent 的 grep/read 按需完成）。`/models`（`ideaseek models`）用于查看模型 route/凭据状态、切换项目 route，以及 `ideaseek models setup`（隐藏输入配置向导：写 DSH credential store 的变量名与 user-config 引用，key 值从不落盘）和 `ideaseek models test`（最小连接测试，输出永不含 key）。不要把 key 写入项目文件。
+IdeaSeek 会检测 Node、Python、容器、CUDA、GPU、磁盘和 DSH provider。全文检索走 SQLite FTS5/BM25（本地嵌入层已按产品决策移除——语义查找由 Agent 的 grep/read 按需完成）。`/models`（`ideaseek models`）用于查看模型 route/凭据状态、切换项目 route，以及 `ideaseek models setup`（隐藏输入配置向导：写 DSH credential store 的变量名与 user-config 引用，key 值从不落盘；TUI 内直接 `/models setup`——输入行切到 `🔐` 掩码状态，默认先连接测试、失败零写入）和 `ideaseek models test`（最小连接测试，输出永不含 key）。不要把 key 写入项目文件。
 
 ### 放入输入
 
@@ -111,7 +111,7 @@ ideaseek interactive
 常用命令：
 
 ```text
-/models       查看模型 route/provider
+/models       查看模型 route/provider；/models setup 在 TUI 内掩码配置 key
 /status       查看阶段、任务、资源和预算
 /next         查看阻塞和下一步
 /papers       查看论文进度和解析失败

@@ -230,6 +230,32 @@ describe('banner and event formatting (unit)', () => {
     expect(await session.interrupt()).toBe(false);
   });
 
+  it('models setup: line-mode hints, Ink capture resolves or cancels once', async () => {
+    const lines: string[] = [];
+    const session = new InteractiveSession({
+      plain: true,
+      sink: { println: (line) => lines.push(line) },
+    });
+
+    // Classic line mode cannot mask a secret (readline echoes it) —
+    // honest hint, no prompt, no child spawned.
+    expect(await session.submit('/models setup')).toBe('continue');
+    expect(lines.join('\n')).toContain('ideaseek models setup');
+    expect(session.secretPrompt).toBeNull();
+
+    // Ink enables capture: the prompt appears synchronously with submit,
+    // cancel resolves the single-shot promise, Ctrl-C path reuses it.
+    session.enableSecretCapture();
+    const pending = session.submit('/models setup');
+    expect(session.secretPrompt?.label).toContain('API key');
+    expect(await session.interrupt()).toBe(true); // cancels via answerSecret(null)
+    await pending;
+    expect(lines.join('\n')).toContain('setup cancelled');
+    expect(session.secretPrompt).toBeNull();
+    expect(session.answerSecret('sk-late')).toBe(false); // single-shot
+    expect(lines.join('\n')).not.toContain('sk-late'); // never echoed
+  });
+
   it('keeps session-mode audit decisions out of the TUI event stream', () => {
     // Every Shift+Tab records one of these (docs/MODES.md — never silent);
     // streaming them floods the startup pane with identical DECISION lines.

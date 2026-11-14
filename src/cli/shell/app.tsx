@@ -97,6 +97,9 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   const [snap, setSnap] = useState<EngineResult>(() => engine.handle({ name: 'noop' }));
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  // Masked secret entry (models setup): the buffer never leaves this
+  // component except as the resolved answer — no echo, no transcript.
+  const [secretBuf, setSecretBuf] = useState('');
   // Re-renders whenever the bus changes (early session lines flush here).
   useSyncExternalStore(bus.subscribe, () => bus.version);
   const stateRef = useRef({ offset: 0, headerLines: 0 });
@@ -179,6 +182,31 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   }, [session, bus]);
 
   useInput((input, key) => {
+    // Secret capture owns the input line (models setup): characters are
+    // masked as bullets in a local buffer — they are never inserted into
+    // the engine, echoed, or pushed to the transcript. Enter submits,
+    // Esc/Ctrl-C cancels, Backspace edits.
+    if (session.secretPrompt) {
+      if (key.return) {
+        const answer = secretBuf;
+        setSecretBuf('');
+        session.answerSecret(answer);
+        return;
+      }
+      if (key.escape) {
+        setSecretBuf('');
+        session.answerSecret(null);
+        return;
+      }
+      if (key.backspace) {
+        setSecretBuf((value) => value.slice(0, -1));
+        return;
+      }
+      if (input && !key.ctrl && !key.meta && input !== '\t' && input !== '\r') {
+        setSecretBuf((value) => value + input);
+      }
+      return;
+    }
     // Tool-approval prompt owns the input line while an agent turn waits:
     // y allow once, n/Enter/Esc reject, everything else is ignored.
     if (session.pendingApproval) {
@@ -350,7 +378,25 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
           ) : null}
         </Box>
       ) : null}
-      {session.pendingApproval ? (
+      {session.secretPrompt ? (
+        <Box flexShrink={0}>
+          {/* Masked secret entry (models setup): bullets only — the real
+              characters exist solely in this component's state until the
+              answer is handed to the session and written to child stdin. */}
+          <Text wrap="truncate" backgroundColor={INPUT_BG}>
+            <Text color="cyan" bold>{` 🔐 ${session.secretPrompt.label}: `}</Text>
+            <Text>{'•'.repeat(secretBuf.length)}</Text>
+            <Text color="cyan">{cursorOn ? '▏' : ' '}</Text>
+            {'⠀'.repeat(
+              Math.max(
+                0,
+                size.columns -
+                  (` 🔐 ${session.secretPrompt.label}: `.length + secretBuf.length + 1),
+              ),
+            )}
+          </Text>
+        </Box>
+      ) : session.pendingApproval ? (
         <Box flexShrink={0}>
           {/* Approval owns the line (Claude-Code style): the agent turn
               is blocked on this answer, so nothing else is typeable.
@@ -456,6 +502,9 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
       onHeader: (header) => bus.setHeader(header),
     },
   });
+  // Only this renderer can mask input — classic line mode stays on the
+  // terminal-prompt path for secrets (readline would echo them).
+  session.enableSecretCapture();
 
   // Enter the alternate screen BEFORE the first frame so no startup output
   // ever lands on the primary screen (restore lives in ShellApp unmount).
