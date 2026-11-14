@@ -126,6 +126,28 @@ function isProbablyText(path, content) {
   return !content.includes('\0');
 }
 
+/**
+ * Fixtures that must LOOK like credentials in order to prove they never leak
+ * (the test writes the value into a session, then asserts it appears nowhere).
+ * Renaming them to something inert would keep the assertion green while
+ * quietly deleting what it was checking, so the scan is narrowed instead: an
+ * exception is the exact file AND the exact literal, applied only when that
+ * literal is the material the pattern matched. A real key on the same line,
+ * or this fixture value in any other file, still fails the scan.
+ */
+const ALLOWED_SECRET_FIXTURES = [
+  { file: 'tests/ink-interactive.test.ts', literal: 'sk-catalog-probe-secret-1' },
+];
+
+function isAllowedFixture(file, match) {
+  // git prints forward slashes, the working-tree walk prints native ones; the
+  // exception must mean the same file either way.
+  const normalized = file.replace(/\\/g, '/');
+  return ALLOWED_SECRET_FIXTURES.some(
+    (allowed) => allowed.file === normalized && match.includes(allowed.literal),
+  );
+}
+
 function scanSecrets(files) {
   const findings = [];
   for (const file of files) {
@@ -139,7 +161,7 @@ function scanSecrets(files) {
     if (!isProbablyText(abs, content)) continue;
     for (const pattern of SECRET_PATTERNS) {
       const match = pattern.re.exec(content);
-      if (match) {
+      if (match && !isAllowedFixture(file, match[0])) {
         const line = content.slice(0, match.index).split('\n').length;
         findings.push({ file, line, pattern: pattern.name });
         break; // one finding per file keeps reports tight
