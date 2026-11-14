@@ -48,6 +48,8 @@ export interface EngineResult {
   eof: boolean;
   /** Shift+Tab cycles the session mode through the shared mode command. */
   cycleMode: boolean;
+  /** Alt+C toggles the Coding focus without touching the underlying research/analysis tier. */
+  toggleCodingFocus: boolean;
   /** Ctrl+O toggles compact/expanded tool & diagnostic details. */
   toggleDetails: boolean;
   /** Ctrl+L adds a visual fresh-view divider and jumps to tail. */
@@ -178,6 +180,7 @@ export class ShellEngine {
       interrupt: false,
       eof: false,
       cycleMode: false,
+      toggleCodingFocus: false,
       toggleDetails: false,
       clearView: false,
       copyLast: false,
@@ -575,6 +578,8 @@ export class ShellEngine {
         return this.snapshot();
       case 'toggleMouse':
         return this.snapshot({ toggleMouse: true });
+      case 'toggleCoding':
+        return this.snapshot({ toggleCodingFocus: true });
       case 'backspace': {
         if (this.cursor > 0) {
           this.line = this.line.slice(0, this.cursor - 1) + this.line.slice(this.cursor);
@@ -751,6 +756,9 @@ export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
   }
   if ((key.meta && (input === 'm' || input === 'M')) || input === '\x1bm') {
     return { name: 'toggleMouse' };
+  }
+  if ((key.meta && (input === 'c' || input === 'C')) || input === '\x1bc') {
+    return { name: 'toggleCoding' };
   }
   if (key.return) return { name: 'return' };
   if (key.escape) return { name: 'escape' };

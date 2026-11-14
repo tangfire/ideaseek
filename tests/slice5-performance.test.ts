@@ -62,7 +62,7 @@ describe('In-process mode switch and header build (no cold child spawns)', () =>
 
       await writeSessionFocus(projectDir, 'coding');
       const coding = await buildHeaderLines();
-      expect(coding.lines[0]).toContain('hdr-proj · CODING');
+      expect(coding.lines[0]).toContain('hdr-proj · CODING · RESEARCH');
     } finally {
       process.chdir(prevCwd);
       await rm(emptyDir, { recursive: true, force: true }).catch(() => undefined);
@@ -78,12 +78,18 @@ describe('WarmAgentHost and Alt+M mouse selection toggle', () => {
     await expect(host.abort()).resolves.toBeUndefined();
   });
 
-  it('maps Alt+M to toggleMouse without inserting characters', () => {
+  it('maps Alt+M to toggleMouse and Alt+C to toggleCodingFocus without inserting characters', () => {
     const engine = new ShellEngine();
     expect(toEngineKey('m', { meta: true })).toEqual({ name: 'toggleMouse' });
     expect(toEngineKey('\x1bm', {})).toEqual({ name: 'toggleMouse' });
     const snap = engine.handle({ name: 'toggleMouse' });
     expect(snap.toggleMouse).toBe(true);
     expect(snap.line).toBe('');
+
+    expect(toEngineKey('c', { meta: true })).toEqual({ name: 'toggleCoding' });
+    expect(toEngineKey('\x1bc', {})).toEqual({ name: 'toggleCoding' });
+    const codingSnap = engine.handle({ name: 'toggleCoding' });
+    expect(codingSnap.toggleCodingFocus).toBe(true);
+    expect(codingSnap.line).toBe('');
   });
 });

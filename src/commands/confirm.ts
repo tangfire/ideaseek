@@ -3,6 +3,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { lockProtocolProposal, validateProtocolProposal } from '../experiment/protocol.js';
 import { checkLeakage } from '../experiment/leakage.js';
+import { assertEffectiveAutonomy } from '../workflow/autonomy.js';
 import { action, jsonLine } from './shared.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
 
@@ -25,6 +26,14 @@ export function registerConfirmCommand(program: Command): void {
       action(async (opts: { run?: string; by?: string; json?: boolean }) => {
         const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
         try {
+          // Confirming/locking a protocol is a protected scientific action
+          // (refused in analysis read-only prep mode and review-only mode).
+          await assertEffectiveAutonomy(
+            runtime.paths.root,
+            runtime.config.policy.autonomyMode,
+            'lock-protocol',
+            { confirmed: true },
+          );
           let artifacts = await runtime.db.listArtifactsByKind('protocol-proposal');
           if (opts.run) {
             artifacts = artifacts.filter((entry) => entry.runId === opts.run);

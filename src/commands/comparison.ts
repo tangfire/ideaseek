@@ -14,7 +14,11 @@ import {
 import { buildEntrySuggestions } from '../comparison/entry-suggest.js';
 import { assertWorktree } from '../comparison/repair.js';
 import { analyzeRepository } from '../knowledge/repository.js';
-import { assertAutonomy, parseAutonomyMode, recordDecision } from '../workflow/autonomy.js';
+import {
+  assertEffectiveAutonomy,
+  parseAutonomyMode,
+  recordDecision,
+} from '../workflow/autonomy.js';
 import {
   COMPARISON_TRANSITIONS,
   REASON_REQUIRED,
@@ -528,7 +532,12 @@ export function registerComparisonCommand(program: Command): void {
           const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
           // Structural confirm: --confirm IS the guided confirmation; the
           // protected action records the Decision (never silent).
-          const check = assertAutonomy(mode, 'change-required-comparison', { confirmed: true });
+          const check = await assertEffectiveAutonomy(
+            root,
+            runtime.config.policy.autonomyMode,
+            'change-required-comparison',
+            { confirmed: true },
+          );
           const { applied } = await applyComparisonMatrix(root, stored);
           const now = Date.now();
           const stamped = {
@@ -1012,9 +1021,12 @@ export function registerComparisonCommand(program: Command): void {
             let decision: { seq: number } | null = null;
             if (status === 'excluded' && before.required) {
               const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-              const check = assertAutonomy(mode, 'change-required-comparison', {
-                confirmed: opts.confirm,
-              });
+              const check = await assertEffectiveAutonomy(
+                root,
+                mode,
+                'change-required-comparison',
+                { confirmed: opts.confirm },
+              );
               if (check.needsDecision) {
                 decision = await recordDecision(runtime.db, runtime.project.id, {
                   action: 'change-required-comparison',

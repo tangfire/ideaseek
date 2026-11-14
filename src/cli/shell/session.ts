@@ -12,7 +12,13 @@ import { tokenizeArgs } from '../tokens.js';
 import { resolveSlash, helpText } from '../slash-menu.js';
 import { findProjectRoot } from '../../config/paths.js';
 import { readLastSession, writeSessionEnd, writeSessionStart } from '../../session/context.js';
-import { readSessionMode, readSessionFocus, renderSessionSummary } from '../../session/mode.js';
+import {
+  formatModeDisplay,
+  readSessionMode,
+  readSessionFocus,
+  renderSessionSummary,
+  toggleSessionFocus,
+} from '../../session/mode.js';
 import { executeSessionModeSwitch } from '../../session/switch.js';
 import { WarmAgentHost, recordAgentSession } from '../../dsh/session.js';
 import {
@@ -155,11 +161,11 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
     try {
       const run = await runtime.db.getLatestRun(runtime.project.id);
       const sessionMode =
-        (await readSessionMode(projectRoot).catch(() => 'research')) ?? 'research';
+        (await readSessionMode(projectRoot).catch(() => 'research' as const)) ?? 'research';
       const codingFocus = (await readSessionFocus(projectRoot).catch(() => 'ask')) === 'coding';
       const ctx: HeaderContext = {
         project: runtime.project.name ?? '(unknown project)',
-        sessionMode: codingFocus ? 'CODING' : sessionMode.toUpperCase(),
+        sessionMode: formatModeDisplay(sessionMode, codingFocus ? 'coding' : 'ask'),
         question: run?.question || null,
         runId: run?.runId ?? null,
         runStatus: run?.status ?? null,
@@ -400,10 +406,10 @@ export class InteractiveSession {
           this.println('no IdeaSeek project here —');
           for (const line of generalDoorLines()) this.println(`  ${line}`);
         } else if ((await readSessionFocus(root)) === 'coding') {
-          // Shift+Tab's third position: the sentence is one coding turn, with
-          // the same audit and drift check `/agent <指令>` gets.
+          // Shift+Tab's third position (or Alt+C): the sentence is one coding
+          // turn, with the same audit and drift check `/agent <指令>` gets.
           await this.runAgentTurn(input);
-        } else await this.relay(['ask', ...tokenizeArgs(input)]);
+        } else await this.relay(['ask', '--', input]);
       } else {
         outcome = await this.dispatch(input);
       }
@@ -457,25 +463,61 @@ export class InteractiveSession {
     } else if (position === 1) {
       await writeSessionFocus(root, 'coding');
       this.println(
-        'session focus: coding — every line is now one DSH turn (/agent does the same, one at a time)',
+        'session focus: coding — every line is now one DSH turn (tier stays analysis; Alt+C toggles coding)',
       );
       this.println('  focus grants no permissions; turns are still audited + drift-checked');
     } else {
       await writeSessionFocus(root, 'ask');
       this.println('session focus: coding off — plain text is back on ideaseek ask');
-      const res = await executeSessionModeSwitch(root, 'research');
-      if (res.changed) {
-        this.println(`session mode: ${res.previous} → ${res.current}`);
-        this.println(
-          res.decisionSeq
-            ? `  decision recorded (event #${res.decisionSeq}); no second run was started`
-            : '  decision not recorded (no run exists yet); no second run was started',
-        );
-        this.println(`  ${res.firstPermission}`);
+      if (tier === 'research') {
+        this.println('session mode remains: research');
       } else {
-        this.println(`session mode already ${res.current}`);
+        try {
+          const res = await executeSessionModeSwitch(root, 'research');
+          if (res.changed) {
+            this.println(`session mode: ${res.previous} → ${res.current}`);
+            this.println(
+              res.decisionSeq
+                ? `  decision recorded (event #${res.decisionSeq}); no second run was started`
+                : '  decision not recorded (no run exists yet); no second run was started',
+            );
+            this.println(`  ${res.firstPermission}`);
+          } else {
+            this.println(`session mode already ${res.current}`);
+          }
+        } catch (error) {
+          this.println(paint((error as Error).message, 'warn', { plain: this.plain }));
+          this.println(
+            paint(
+              '  tip: Alt+C toggles Coding anytime without leaving Analysis · /mode research --force overrides',
+              'dim',
+              { plain: this.plain },
+            ),
+          );
+        }
       }
     }
+    await this.refreshHeader();
+  }
+
+  /**
+   * Alt+C orthogonal coding toggle: turns `coding` focus on/off while leaving
+   * the underlying Research or Analysis tier completely untouched (no gate hit,
+   * no Decision spam).
+   */
+  async toggleCodingFocus(): Promise<void> {
+    const root = await findProjectRoot(process.cwd());
+    if (!root) {
+      this.println('not an IdeaSeek project — use /agent <指令> for a general coding turn');
+      return;
+    }
+    const res = await toggleSessionFocus(root);
+    this.println(`session focus: ${res.previous} → ${res.current} (tier remains ${res.mode})`);
+    this.println(
+      res.current === 'coding'
+        ? '  every plain line now runs a DSH coding turn; Alt+C returns to ask'
+        : '  plain text returns to ideaseek ask; Alt+C re-enters coding',
+    );
     await this.refreshHeader();
   }
 
@@ -950,6 +992,12 @@ export class InteractiveSession {
         return 'continue';
       case '/next':
         await this.relay(['next']);
+        return 'continue';
+      case '/assessment':
+        await this.relay(['assessment', ...restArgs]);
+        return 'continue';
+      case '/drift':
+        await this.relay(['stale', ...restArgs]);
         return 'continue';
       case '/papers':
         await this.relay(['papers']);

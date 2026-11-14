@@ -183,6 +183,15 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.waitFor(/session mode: analysis → research/);
       await repl.waitFor(/ink-interactive · RESEARCH/);
       await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
+
+      // Alt+C toggles CODING focus orthogonally while keeping the research tier
+      // visible (CODING · RESEARCH) and without hitting the Analysis gate on exit.
+      await repl.write('\x1bc');
+      await repl.waitFor(/session focus: ask → coding \(tier remains research\)/);
+      await repl.waitFor(/ink-interactive · CODING · RESEARCH/);
+      await repl.write('\x1bc');
+      await repl.waitFor(/session focus: coding → ask \(tier remains research\)/);
+      await repl.waitFor(/ink-interactive · RESEARCH/);
       // Session-mode audit decisions are recorded but must never stream —
       // otherwise every startup replays a wall of identical DECISION lines
       // (the DB record stays queryable via `ideaseek events`). Wait long

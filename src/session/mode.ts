@@ -98,6 +98,30 @@ export async function writeSessionFocus(root: string, focus: SessionFocus): Prom
   await writeSessionRecord(root, { mode: current.mode, focus });
 }
 
+/** Toggles `ask` ↔ `coding` without changing the permission tier. */
+export async function toggleSessionFocus(
+  root: string,
+): Promise<{ mode: SessionMode; previous: SessionFocus; current: SessionFocus }> {
+  const record = await readSessionRecord(root);
+  const next: SessionFocus = record.focus === 'coding' ? 'ask' : 'coding';
+  await writeSessionRecord(root, { mode: record.mode, focus: next });
+  return { mode: record.mode, previous: record.focus, current: next };
+}
+
+/** Formats the combined tier+focus label shown in TUI header and footer. */
+export function formatModeDisplay(
+  mode: SessionMode | 'general',
+  focus: SessionFocus = 'ask',
+  compact = false,
+): string {
+  if (mode === 'general') return 'GENERAL';
+  if (focus === 'coding') {
+    if (compact) return mode === 'analysis' ? 'CODING[A]' : 'CODING[R]';
+    return mode === 'analysis' ? 'CODING · ANALYSIS' : 'CODING · RESEARCH';
+  }
+  return mode === 'analysis' ? 'ANALYSIS' : 'RESEARCH';
+}
+
 /** Crash-safe write: temp file + rename inside the project's .research/. */
 export async function writeSessionMode(
   root: string,

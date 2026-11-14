@@ -22,7 +22,11 @@ import { buildAllFederatedSlices } from '../experiment/federated-slices.js';
 import { ensureDir } from '../core/atomic.js';
 import { action, buildHarness, jsonLine } from './shared.js';
 import { isHarnessBlockError } from '../dsh/adapter.js';
-import { assertAutonomy, parseAutonomyMode, recordDecision } from '../workflow/autonomy.js';
+import {
+  assertEffectiveAutonomy,
+  parseAutonomyMode,
+  recordDecision,
+} from '../workflow/autonomy.js';
 import { readManifest } from '../knowledge/organize.js';
 import {
   DEFAULT_DISCOVERY_SOURCES,
@@ -1351,7 +1355,9 @@ export function registerDataCommand(program: Command): void {
               grant && (requiresUserConfirmation(candidate) || candidate.status === 'rejected');
             const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
             if (needsConfirm) {
-              assertAutonomy(mode, 'change-data-usage', { confirmed: opts.confirm === true });
+              await assertEffectiveAutonomy(root, mode, 'change-data-usage', {
+                confirmed: opts.confirm === true,
+              });
             }
 
             const now = Date.now();
@@ -1486,7 +1492,9 @@ export function registerDataCommand(program: Command): void {
               requiresUserConfirmation(candidate) || candidate.access.size === 'unknown';
             const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
             if (needsConfirm) {
-              assertAutonomy(mode, 'change-data-usage', { confirmed: opts.confirm === true });
+              await assertEffectiveAutonomy(root, mode, 'change-data-usage', {
+                confirmed: opts.confirm === true,
+              });
             }
 
             const acquired = await acquireDataset({

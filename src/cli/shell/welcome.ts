@@ -1,6 +1,12 @@
 import { access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { findProjectRoot } from '../../config/paths.js';
+import {
+  readSessionFocus,
+  readSessionMode,
+  type SessionFocus,
+  type SessionMode,
+} from '../../session/mode.js';
 
 /**
  * Lightweight, read-only workspace summary rendered under the startup wordmark
@@ -15,6 +21,8 @@ export interface WorkspaceGreetingStats {
   comparisons: number;
   ideas: number;
   hasKeyEnv: boolean;
+  mode?: SessionMode;
+  focus?: SessionFocus;
 }
 
 async function countVisibleEntries(dir: string): Promise<number> {
@@ -46,14 +54,18 @@ export async function probeWorkspaceGreeting(cwd: string): Promise<WorkspaceGree
       comparisons: 0,
       ideas: 0,
       hasKeyEnv: keyInProcess || (await hasDotEnvKey(cwd)),
+      mode: 'research',
+      focus: 'ask',
     };
   }
-  const [papers, datasets, comparisons, ideas, dotEnv] = await Promise.all([
+  const [papers, datasets, comparisons, ideas, dotEnv, mode, focus] = await Promise.all([
     countVisibleEntries(join(root, 'papers')),
     countVisibleEntries(join(root, 'datasets')),
     countVisibleEntries(join(root, 'comparisons')),
     countVisibleEntries(join(root, 'ideas')),
     hasDotEnvKey(root),
+    readSessionMode(root).catch(() => 'research' as SessionMode),
+    readSessionFocus(root).catch(() => 'ask' as SessionFocus),
   ]);
   return {
     isProject: true,
@@ -62,6 +74,8 @@ export async function probeWorkspaceGreeting(cwd: string): Promise<WorkspaceGree
     comparisons,
     ideas,
     hasKeyEnv: keyInProcess || dotEnv,
+    mode,
+    focus,
   };
 }
 
@@ -91,10 +105,11 @@ export function formatWelcomeLines(stats: WorkspaceGreetingStats, plain = false)
     ];
   }
   const counts = `papers ${stats.papers} · datasets ${stats.datasets} · comparisons ${stats.comparisons} · ideas ${stats.ideas}`;
-  return [
-    dim(`workspace: ${counts} · `) + keyStatus,
-    dim(
-      `tips: ${cyan('/next')} advice · ${cyan('/')} commands · ${cyan('@')} mention files · ${cyan('?')} shortcuts`,
-    ),
-  ];
+  const modeHint =
+    stats.focus === 'coding'
+      ? `coding focus (${stats.mode} tier) · ${cyan('Alt+C')} exit coding · ${cyan('/drift')} check drift · ${cyan('?')} shortcuts`
+      : stats.mode === 'analysis'
+        ? `analysis (read-only prep) · ${cyan('/assessment')} gaps · ${cyan('/drift')} drift · ${cyan('Alt+C')} coding · ${cyan('?')} shortcuts`
+        : `tips: ${cyan('/next')} advice · ${cyan('/pending')} approvals · ${cyan('Alt+C')} coding · ${cyan('@')} files · ${cyan('?')} shortcuts`;
+  return [dim(`workspace: ${counts} · `) + keyStatus, dim(modeHint)];
 }

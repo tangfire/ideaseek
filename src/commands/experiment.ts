@@ -10,7 +10,7 @@ import {
   type RunResult,
 } from '../experiment/spec.js';
 import {
-  assertAutonomy,
+  assertEffectiveAutonomy,
   checkAutonomy,
   parseAutonomyMode,
   recordDecision,
@@ -507,9 +507,10 @@ export function registerExperimentCommand(program: Command): void {
           const { ProjectRuntime } = await import('../workflow/runtime.js');
           const runtime = await ProjectRuntime.open({ cwd: root });
           try {
-            // Permission denial first: review-only never starts experiments.
-            assertAutonomy(
-              parseAutonomyMode(runtime.config.policy.autonomyMode),
+            // Permission denial first: analysis/review-only never starts experiments.
+            await assertEffectiveAutonomy(
+              root,
+              runtime.config.policy.autonomyMode,
               'start-experiment',
             );
             const { runExperimentBridge } = await import('../experiment/bridge.js');

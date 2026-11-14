@@ -55,6 +55,35 @@ describe('autonomy mode matrix (unit)', () => {
     expect(mutation.allowed).toBe(true);
     expect(mutation.needsDecision).toBe(true); // audited, never silent
   });
+
+  it('analysis sessionMode blocks scientific writes/locks/experiments even under autonomous policy', () => {
+    for (const action of [
+      'write-code',
+      'start-experiment',
+      'lock-protocol',
+      'lock-fairness',
+      'finalize-handoff',
+      'full-research',
+      'change-required-comparison',
+      'change-hypothesis',
+      'change-primary-metric',
+      'change-data-usage',
+    ] as const) {
+      const check = checkAutonomy('autonomous', action, {
+        confirmed: true,
+        sessionMode: 'analysis',
+      });
+      expect(check.allowed, action).toBe(false);
+      expect(check.reason).toContain('analysis mode');
+      expect(() =>
+        assertAutonomy('autonomous', action, { confirmed: true, sessionMode: 'analysis' }),
+      ).toThrow(/analysis mode/);
+    }
+    expect(
+      checkAutonomy('guided', 'change-model-route', { confirmed: true, sessionMode: 'analysis' })
+        .allowed,
+    ).toBe(true);
+  });
 });
 
 describe('primary-metric protocol guard (unit)', () => {

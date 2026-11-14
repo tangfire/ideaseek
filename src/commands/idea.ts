@@ -14,8 +14,9 @@ import { runAnalysis } from '../idea/analyze.js';
 import { buildIdeaHandoff } from '../idea/handoff.js';
 import type { ForensicsBundle, IntegrityForensics } from '../idea/forensics.js';
 import {
-  assertAutonomy,
+  assertEffectiveAutonomy,
   checkAutonomy,
+  checkEffectiveAutonomy,
   getAutonomyMode,
   parseAutonomyMode,
   recordDecision,
@@ -83,9 +84,12 @@ export async function runIdeaHandoffDelivery(
   const runtime = await ProjectRuntime.open({ cwd: root });
   try {
     const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-    if (mode === 'review-only') {
-      // Review-only never delivers packages (analysis only).
-      assertAutonomy(mode, 'finalize-handoff', { confirmed: opts.confirm });
+    // Analysis/review-only never delivers packages.
+    const preCheck = await checkEffectiveAutonomy(root, mode, 'finalize-handoff', {
+      confirmed: opts.confirm,
+    });
+    if (mode === 'review-only' || preCheck.reason?.startsWith('analysis mode')) {
+      await assertEffectiveAutonomy(root, mode, 'finalize-handoff', { confirmed: opts.confirm });
     }
     const result = await buildIdeaHandoff(root, ideaId, runtime.db);
     if (result.gate.handoffReady) {
@@ -2170,7 +2174,7 @@ export function registerIdeaCommand(program: Command): void {
     .action(
       action(async (ideaId: string, opts: { kind: string; summary: string; json?: boolean }) => {
         const root = await openRoot();
-        assertAutonomy(await getAutonomyMode(root), 'write-code');
+        await assertEffectiveAutonomy(root, await getAutonomyMode(root), 'write-code');
         assertEngineeringRevision(opts.kind);
         const { version, meta } = await reviseEngineering(root, ideaId, opts.summary);
         if (opts.json) {
@@ -2222,7 +2226,9 @@ export function registerIdeaCommand(program: Command): void {
           // Protected change: a new scientific hypothesis needs the mode's
           // approval BEFORE any workspace is created (no partial side effects).
           const mode = await getAutonomyMode(root);
-          assertAutonomy(mode, 'change-hypothesis', { confirmed: opts.confirm });
+          await assertEffectiveAutonomy(root, mode, 'change-hypothesis', {
+            confirmed: opts.confirm,
+          });
 
           const card = await readCardFile(opts.fromCard);
           const { meta } = await createWorkspace(root, {
@@ -2318,7 +2324,7 @@ export function registerIdeaCommand(program: Command): void {
     .action(
       action(async (ideaId: string, opts: { message: string; json?: boolean }) => {
         const root = await openRoot();
-        assertAutonomy(await getAutonomyMode(root), 'write-code');
+        await assertEffectiveAutonomy(root, await getAutonomyMode(root), 'write-code');
         const result = await checkpointCode(root, ideaId, opts.message);
         if (opts.json) {
           process.stdout.write(
@@ -2352,7 +2358,7 @@ export function registerIdeaCommand(program: Command): void {
     .action(
       action(async (ideaId: string, opts: { json?: boolean }) => {
         const root = await openRoot();
-        assertAutonomy(await getAutonomyMode(root), 'write-code');
+        await assertEffectiveAutonomy(root, await getAutonomyMode(root), 'write-code');
         const result = await scaffoldIdea(root, ideaId);
         if (opts.json) {
           process.stdout.write(jsonLine({ ideaId, ...result }));
@@ -2485,8 +2491,9 @@ export function registerIdeaCommand(program: Command): void {
           const { ProjectRuntime } = await import('../workflow/runtime.js');
           const runtime = await ProjectRuntime.open({ cwd: root });
           try {
-            assertAutonomy(
-              parseAutonomyMode(runtime.config.policy.autonomyMode),
+            await assertEffectiveAutonomy(
+              root,
+              runtime.config.policy.autonomyMode,
               'start-experiment',
             );
 
@@ -2640,7 +2647,11 @@ export function registerIdeaCommand(program: Command): void {
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
         try {
-          assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'start-experiment');
+          await assertEffectiveAutonomy(
+            root,
+            runtime.config.policy.autonomyMode,
+            'start-experiment',
+          );
           const result = await runReadyExperiments(
             root,
             {
@@ -2740,7 +2751,11 @@ export function registerIdeaCommand(program: Command): void {
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
         try {
-          assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'start-experiment');
+          await assertEffectiveAutonomy(
+            root,
+            runtime.config.policy.autonomyMode,
+            'start-experiment',
+          );
           const result = await runAblations(
             root,
             ideaId,

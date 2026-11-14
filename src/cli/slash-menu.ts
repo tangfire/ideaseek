@@ -31,6 +31,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/status', usage: '/status', description: 'run state, tasks, workers, recent events' },
   { name: '/next', usage: '/next', description: 'state-aware suggestion for the next command' },
   {
+    name: '/assessment',
+    usage: '/assessment [--force]',
+    description: 'material readiness & gap report (Analysis prep check)',
+  },
+  {
+    name: '/drift',
+    usage: '/drift [--idea <id>]',
+    description: 'preview input drift & invalidated downstream artifacts',
+  },
+  {
     name: '/pending',
     usage: '/pending',
     description: 'approvals waiting for you (protocol, code revisions, requests)',
@@ -126,7 +136,7 @@ export function resolveSlash(input: string): SlashResolution {
 
 /** Help sections: how a researcher actually walks through a session. */
 const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
-  { title: 'overview', names: ['/help', '/init', '/status', '/next'] },
+  { title: 'overview', names: ['/help', '/init', '/status', '/next', '/assessment', '/drift'] },
   { title: 'approvals', names: ['/pending', '/approve', '/reject'] },
   { title: 'research', names: ['/papers', '/comparisons', '/ideas', '/experiments', '/logs'] },
   { title: 'ideation', names: ['/rounds', '/ideate', '/feedback'] },

@@ -51,7 +51,7 @@ import { listRegisteredProjects } from '../../runtime/registry.js';
  * the non-interactive CLI). Business state never lives here.
  */
 
-const FOOTER_HINTS = 'Shift+Tab mode · / menu · @ files · Ctrl+F find · ? help';
+const FOOTER_HINTS = 'Shift+Tab mode · Alt+C coding · / menu · @ files · Ctrl+F find · ? help';
 /** Lines the wheel scrolls per notch (terminals already repeat events). */
 const WHEEL_SCROLL_LINES = 6;
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
@@ -68,6 +68,7 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 
 const SHORTCUT_ROWS: readonly { keys: string; desc: string }[] = [
   { keys: 'Shift+Tab', desc: 'Cycle Research / Analysis / Coding focus' },
+  { keys: 'Alt+C', desc: 'Toggle Coding focus directly (keeps Research/Analysis tier)' },
   { keys: '/ · @ · Tab', desc: 'Commands, @-mentions & sub-argument completion' },
   { keys: 'Shift+Enter', desc: 'Insert newline (Ctrl+J also inserts newline)' },
   { keys: 'Ctrl+F', desc: 'Find in transcript (Enter/↓ next · ↑ prev)' },
@@ -778,6 +779,20 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         });
       return;
     }
+    if (result.toggleCodingFocus) {
+      setSnap(result);
+      setBusy(true);
+      queueRef.current = queueRef.current
+        .then(() => session.toggleCodingFocus())
+        .catch((error: unknown) => {
+          bus.push(`error: ${(error as Error).message}`);
+        })
+        .finally(() => {
+          setBusy(false);
+          refreshLiveStatus(true);
+        });
+      return;
+    }
     if (result.wheelDelta !== 0) {
       setOffset((prev) => Math.max(0, prev + result.wheelDelta * WHEEL_SCROLL_LINES));
       return;
@@ -811,13 +826,48 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
 
   // Pinned header = compact context (project · mode · run · question).
   const ctxLines = (bus.header?.lines ?? [STARTING_LINE]).map((line) => truncateVisual(line, cols));
-  const modeLabel = ctxLines[0]?.includes('CODING')
-    ? 'Coding'
-    : ctxLines[0]?.includes('ANALYSIS')
-      ? 'Analysis'
-      : ctxLines[0]?.includes('GENERAL')
-        ? 'General'
-        : 'Research';
+  const headLine = ctxLines[0] ?? '';
+  const modeKind: 'general' | 'coding-analysis' | 'coding-research' | 'analysis' | 'research' =
+    headLine.includes('GENERAL')
+      ? 'general'
+      : headLine.includes('CODING · ANALYSIS')
+        ? 'coding-analysis'
+        : headLine.includes('CODING')
+          ? 'coding-research'
+          : headLine.includes('ANALYSIS')
+            ? 'analysis'
+            : 'research';
+  const modeLabel =
+    modeKind === 'general'
+      ? 'General'
+      : modeKind === 'coding-analysis'
+        ? cols < 72
+          ? 'Coding[A]'
+          : 'Coding · Analysis'
+        : modeKind === 'coding-research'
+          ? cols < 72
+            ? 'Coding[R]'
+            : 'Coding · Research'
+          : modeKind === 'analysis'
+            ? 'Analysis'
+            : 'Research';
+  const modeColor: 'cyan' | 'yellow' | 'magenta' =
+    modeKind === 'analysis' ? 'yellow' : modeKind === 'research' ? 'cyan' : 'magenta';
+  const composerRibbon =
+    modeKind === 'general'
+      ? 'General · /init · /open · /agent <task>'
+      : modeKind === 'coding-analysis'
+        ? 'Coding [Analysis] · DSH turn (science tier read-only)'
+        : modeKind === 'coding-research'
+          ? 'Coding [Research] · DSH turn (tool approval · drift checked)'
+          : modeKind === 'analysis'
+            ? 'Analysis · read-only prep (gaps & Q&A · /assessment · /drift)'
+            : 'Research · ask supervisor (changes → /pending)';
+  const ribbonPrefix = `─ ${composerRibbon} `;
+  const topComposerRule =
+    cols >= visualWidth(ribbonPrefix) + 12
+      ? `${ribbonPrefix}${'─'.repeat(cols - visualWidth(ribbonPrefix))}`
+      : '─'.repeat(cols);
   const tone = bus.header?.tone ?? 'dim';
   const headerRows = ctxLines.length;
 
@@ -1046,7 +1096,9 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         </Box>
       ) : (
         <Box flexDirection="column" flexShrink={0}>
-          <Text dimColor>{hairline}</Text>
+          <Text color={modeColor} dimColor={modeKind === 'research'}>
+            {topComposerRule}
+          </Text>
           {session.secretPrompt ? (
             <Text>
               <Text color="cyan" bold>
@@ -1103,17 +1155,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
       )}
       <Box flexShrink={0}>
         <Text>
-          <Text
-            color="black"
-            backgroundColor={
-              modeLabel === 'General' || modeLabel === 'Coding'
-                ? 'magenta'
-                : modeLabel === 'Analysis'
-                  ? 'yellow'
-                  : 'cyan'
-            }
-            bold
-          >
+          <Text color="black" backgroundColor={modeColor} bold>
             {badgeText}
           </Text>
           <Text color={activeApproval ? 'yellow' : undefined} dimColor={!activeApproval}>

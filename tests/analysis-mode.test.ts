@@ -190,4 +190,32 @@ describe('ask in analysis mode (deterministic assessment flow)', () => {
     const researchPayload = JSON.parse(researchAsk.stdout) as { source: string };
     expect(researchPayload.source).not.toBe('analysis-assessment');
   }, 180_000);
+
+  it('enforces read-only preparation across scaffold/experiment/repair/confirm while in analysis mode', async () => {
+    const dir = await makeProjectDir();
+    const cardPath = join(dir, 'card.json');
+    await writeFile(cardPath, JSON.stringify(makeCard('alpha')), 'utf8');
+    expect((await runCli(dir, ['idea', 'create', 'alpha', '--from-card', cardPath])).code).toBe(0);
+    expect((await runCli(dir, ['mode', 'analysis'])).code).toBe(0);
+
+    const scaffold = await runCli(dir, ['idea', 'scaffold', 'alpha']);
+    expect(scaffold.code).toBe(2);
+    expect(scaffold.stderr).toContain('analysis mode');
+
+    const experiment = await runCli(dir, ['idea', 'experiment', 'alpha']);
+    expect(experiment.code).toBe(2);
+    expect(experiment.stderr).toContain('analysis mode');
+
+    const repair = await runCli(dir, ['baseline', 'repair', '--method', 'fedavg']);
+    expect(repair.code).toBe(2);
+    expect(repair.stderr).toContain('analysis mode');
+
+    const confirm = await runCli(dir, ['confirm', 'protocol']);
+    expect(confirm.code).toBe(2);
+    expect(confirm.stderr).toContain('analysis mode');
+
+    // Read-only commands still work cleanly in analysis mode.
+    expect((await runCli(dir, ['status'])).code).toBe(0);
+    expect((await runCli(dir, ['assessment', '--json'])).code).toBe(2); // gaps exit 2, not error
+  }, 180_000);
 });

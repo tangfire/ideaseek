@@ -52,7 +52,7 @@ export function registerFullCommand(program: Command): void {
         await ensureDir(join(root, 'knowledge'));
 
         const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const { parseAutonomyMode, checkAutonomy, recordDecision } =
+        const { parseAutonomyMode, checkEffectiveAutonomy, recordDecision } =
           await import('../workflow/autonomy.js');
         const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
         try {
@@ -60,7 +60,7 @@ export function registerFullCommand(program: Command): void {
           // privilege as `full plan`, allowed in every mode. Only the
           // lock action itself is gated (cheapest refusal first).
           const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-          const check = checkAutonomy(mode, 'lock-fairness', {
+          const check = await checkEffectiveAutonomy(root, mode, 'lock-fairness', {
             confirmed: opts.confirm === true,
           });
           if (opts.confirm && !check.allowed) {
@@ -288,14 +288,16 @@ export function registerFullCommand(program: Command): void {
         }
 
         const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const { parseAutonomyMode, checkAutonomy, recordDecision } =
+        const { parseAutonomyMode, checkEffectiveAutonomy, recordDecision } =
           await import('../workflow/autonomy.js');
         const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
         try {
           // Mode gate first (cheapest refusal): guided needs --confirm,
-          // autonomous records, review-only refuses outright.
+          // autonomous records, analysis/review-only refuses outright.
           const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-          const check = checkAutonomy(mode, 'full-research', { confirmed: opts.confirm });
+          const check = await checkEffectiveAutonomy(root, mode, 'full-research', {
+            confirmed: opts.confirm,
+          });
           if (!check.allowed) {
             if (opts.json) {
               process.stdout.write(
@@ -388,7 +390,7 @@ export function registerFullCommand(program: Command): void {
           json?: boolean;
         }) => {
           const root = await openRoot();
-          const { parseAutonomyMode, checkAutonomy, recordDecision } =
+          const { parseAutonomyMode, checkEffectiveAutonomy, recordDecision } =
             await import('../workflow/autonomy.js');
           const shared = await import('./shared.js');
           const { ProjectRuntime } = await import('../workflow/runtime.js');
@@ -402,9 +404,9 @@ export function registerFullCommand(program: Command): void {
             shared.assertConfigUsable(runtime.configLoad);
 
             // Cheapest refusal first: launch is a protected full-research
-            // action (guided needs --confirm, review-only refuses).
+            // action (guided needs --confirm, analysis/review-only refuses).
             const mode = parseAutonomyMode(runtime.config.policy.autonomyMode);
-            const check = checkAutonomy(mode, 'full-research', {
+            const check = await checkEffectiveAutonomy(root, mode, 'full-research', {
               confirmed: opts.confirm === true,
             });
             if (!check.allowed) {

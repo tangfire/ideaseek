@@ -43,7 +43,7 @@ export function renderBanner(opts: BannerOptions = {}): string {
 
 export interface HeaderContext {
   project: string;
-  /** Research tier as displayed: RESEARCH | ANALYSIS. */
+  /** Research tier + optional focus as displayed: RESEARCH | ANALYSIS | CODING · RESEARCH | CODING · ANALYSIS. */
   sessionMode: string;
   question: string | null;
   runId: string | null;
