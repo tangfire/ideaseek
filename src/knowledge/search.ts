@@ -11,7 +11,7 @@ interface ParsedPaperPayload {
   source: string;
   sourceHash: string;
   pageCount: number;
-  pages: { page: number; text: string }[];
+  pages: { page: number; text: string; links?: string[]; warnings?: string[] }[];
   parser: string;
 }
 

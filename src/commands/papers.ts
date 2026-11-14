@@ -20,6 +20,12 @@ async function openRoot(): Promise<string> {
 interface PapersReport {
   indexed: number;
   pages: number;
+  /**
+   * Pages whose text needed a fallback parser or failed outright. A silently
+   * truncated paper corrupts every downstream artifact, so this is reported
+   * rather than left inside the parsed payload.
+   */
+  degradedPages: { source: string; page: number; warning: string }[];
   byParser: Record<string, number>;
   sources: string[];
   failures: { taskId: string; type: string; code: string; message: string }[];
@@ -54,9 +60,26 @@ export async function buildPapersReport(root: string): Promise<PapersReport> {
         });
       }
     }
+    const degradedPages: PapersReport['degradedPages'] = [];
+    for (const artifact of await runtime.db.listArtifactsByKind('parsed-paper')) {
+      try {
+        const payload = JSON.parse(await runtime.store.readFinalText(artifact.contentHash)) as {
+          source?: string;
+          pages?: { page: number; warnings?: string[] }[];
+        };
+        for (const page of payload.pages ?? []) {
+          for (const warning of page.warnings ?? []) {
+            degradedPages.push({ source: payload.source ?? '?', page: page.page, warning });
+          }
+        }
+      } catch {
+        // Unreadable artifact: the index generation already skipped it.
+      }
+    }
     return {
       indexed: papers.length,
       pages,
+      degradedPages: degradedPages.slice(0, 20),
       byParser,
       sources: papers.map((paper) => paper.source).slice(0, 8),
       failures: failures.slice(-5),
@@ -87,6 +110,16 @@ export function registerPapersCommand(program: Command): void {
         );
         if (report.sources.length > 0) {
           process.stdout.write(`sources: ${report.sources.join(', ')}\n`);
+        }
+        if (report.degradedPages.length > 0) {
+          process.stdout.write(
+            `degraded pages: ${report.degradedPages.length} (text needed a fallback parser or failed)\n`,
+          );
+          for (const degraded of report.degradedPages.slice(0, 5)) {
+            process.stdout.write(
+              `  ${degraded.source} p${degraded.page}: ${degraded.warning.slice(0, 120)}\n`,
+            );
+          }
         }
         if (report.failures.length === 0) {
           process.stdout.write('parse failures: none\n');

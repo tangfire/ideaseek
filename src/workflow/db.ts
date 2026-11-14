@@ -114,7 +114,7 @@ export interface PaperIndexEntry {
   source: string;
   parser: string;
   pageCount: number;
-  pages: { page: number; text: string }[];
+  pages: { page: number; text: string; warnings?: string[] }[];
   indexedAt: number;
 }
 

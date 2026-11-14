@@ -16,7 +16,18 @@
         "required": ["page", "text"],
         "properties": {
           "page": { "type": "integer", "minimum": 1 },
-          "text": { "type": "string" }
+          "text": { "type": "string" },
+          "links": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 40
+          },
+          "warnings": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 8
+          },
+          "parser": { "type": "string" }
         }
       }
     },
