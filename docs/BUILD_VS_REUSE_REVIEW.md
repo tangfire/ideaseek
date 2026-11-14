@@ -51,3 +51,4 @@
 一律通过 `ctx.runtime` / 参数拿到 port，从不自行构造）。domain 层现有 import
 面已审计为零违例（`grep commands` 于 domain 目录 = 0），本次硬化是把该现状
 变成 CI 可执行的不变量；后续新增文件若踩线，lint 直接失败。
+| 本地 embedding 检索层 | fastembed/onnxruntime | ✅ 已整体移除（2026-11-14） | 唯一消费面是 search 的可选融合，目标机从未可靠工作；FTS5+Agent grep/read 覆盖（DEPENDENCY_POLICY 评估记录）；见 src/retrieval/search.ts 头注 |

@@ -2,29 +2,21 @@ import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { refreshPaperIndex } from '../knowledge/search.js';
-import {
-  EVIDENCE_DISCLAIMER,
-  LocalFastEmbedProvider,
-  embeddingCacheDir,
-  hybridSearch,
-  probeEmbeddingEnvironment,
-  refreshEmbeddings,
-} from '../retrieval/embeddings.js';
+import { EVIDENCE_DISCLAIMER, hybridSearch } from '../retrieval/search.js';
 import { action, jsonLine } from './shared.js';
 
 /**
- * `ideaseek search` — retrieval over committed parsed papers. BM25/FTS is
- * the base layer (incremental index refresh, sanitized MATCH); when the
- * local embedding stack is installed, a vector pass is fused in via RRF and
- * every hit states its origin (`via`). Any embedding failure degrades to
- * FTS with an explicit note — search never fails because of the optional
- * vector layer. Output always reminds that similarity is recall-only:
- * conclusions must cite the source snippet and PaperCard evidence.
+ * `ideaseek search` — retrieval over committed parsed papers: BM25/FTS5
+ * only (incremental index refresh, sanitized MATCH). The embedding layer
+ * was removed by product decision; agent-style grep/read over the parsed
+ * corpus covers semantic lookup. Output always reminds that search is
+ * recall-only: conclusions must cite the source snippet and PaperCard
+ * evidence.
  */
 export function registerSearchCommand(program: Command): void {
   program
     .command('search')
-    .description('hybrid (FTS-first) search across parsed papers with page-level snippets')
+    .description('full-text (FTS5/BM25) search across parsed papers with page-level snippets')
     .argument('<query...>', 'search terms')
     .option('--limit <n>', 'maximum hits', (value) => Number(value))
     .option('--reindex', 'force a full FTS rebuild before searching')
@@ -48,46 +40,10 @@ export function registerSearchCommand(program: Command): void {
                 ? { indexed: 0, skipped: 0, removed: 0 }
                 : await refreshPaperIndex(runtime.db, runtime.store, { force: opts.reindex });
 
-            // Optional local-embedding layer: FTS ran first and always works;
-            // any embedding failure degrades to FTS with an explicit note.
-            let provider: LocalFastEmbedProvider | null = null;
-            let embeddingStats = { embedded: 0, skipped: 0, failed: 0 };
-            let embeddingNote: string | undefined;
-            if (runtime.config.runtime.useEmbeddings && opts.index !== false) {
-              const cacheDir = embeddingCacheDir();
-              try {
-                const probe = await probeEmbeddingEnvironment(
-                  cacheDir,
-                  runtime.config.runtime.embeddingModel,
-                );
-                if (probe.packageInstalled && probe.modelCached) {
-                  const local = new LocalFastEmbedProvider({
-                    cacheDir,
-                    modelId: runtime.config.runtime.embeddingModel,
-                  });
-                  embeddingStats = await refreshEmbeddings(runtime, local);
-                  if (embeddingStats.failed === 0) provider = local;
-                  else embeddingNote = 'embedding failed for pending pages: BM25/FTS only';
-                } else if (probe.packageInstalled) {
-                  // Search never triggers a model download implicitly — the
-                  // one-time fetch belongs to the explicit install step
-                  // (a silent multi-minute download made `search` hang).
-                  embeddingNote =
-                    'model not cached (one-time: ideaseek setup --install-embeddings): BM25/FTS only';
-                } else {
-                  embeddingNote =
-                    'fastembed not installed (ideaseek setup --install-embeddings): BM25/FTS only';
-                }
-              } catch (error) {
-                provider = null;
-                embeddingNote = `embedding unavailable (${(error as Error).message.slice(0, 100)}): BM25/FTS only`;
-              }
-            }
-
             let hits;
             let retrieval: Awaited<ReturnType<typeof hybridSearch>>;
             try {
-              retrieval = await hybridSearch(runtime, provider, {
+              retrieval = await hybridSearch(runtime, {
                 query,
                 limit: Number.isFinite(opts.limit) ? opts.limit : 20,
               });
@@ -99,7 +55,7 @@ export function registerSearchCommand(program: Command): void {
               );
             }
 
-            const note = retrieval.note ?? embeddingNote;
+            const note = retrieval.note;
             if (opts.json) {
               process.stdout.write(
                 jsonLine({
@@ -109,7 +65,6 @@ export function registerSearchCommand(program: Command): void {
                   retrieval: {
                     mode: retrieval.mode,
                     fusion: retrieval.fusion,
-                    embeddings: embeddingStats,
                     note,
                     disclaimer: EVIDENCE_DISCLAIMER,
                   },
@@ -123,7 +78,7 @@ export function registerSearchCommand(program: Command): void {
             );
             if (note) process.stdout.write(`  note: ${note}\n`);
             for (const hit of hits) {
-              const via = hit.via === 'vector' ? ' [vec]' : '';
+              const via = '';
               process.stdout.write(`  ${hit.source}:p${hit.page}${via}  ${hit.snippet}\n`);
             }
             if (hits.length === 0) {

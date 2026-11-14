@@ -65,27 +65,6 @@ export interface BlockResult {
   run: RunRecord;
 }
 
-export interface EmbeddingRowInput {
-  source: string;
-  sourceHash: string;
-  page: number;
-  preview: string;
-  provider: string;
-  modelId: string;
-  dim: number;
-  vector: number[];
-  createdAt: number;
-}
-
-export interface EmbeddingRow {
-  source: string;
-  sourceHash: string;
-  page: number;
-  preview: string;
-  vector: number[];
-  dim: number;
-}
-
 export interface ProtocolLockRecord {
   protocolId: string;
   protocolHash: string;
@@ -295,11 +274,6 @@ export interface WorkflowDb {
   lockProtocol(lock: ProtocolLockRecord): Promise<void>;
   getProtocolLock(protocolId: string): Promise<ProtocolLockRecord | null>;
   listProtocolLocks(): Promise<ProtocolLockRecord[]>;
-
-  // Local embedding index (migration v5)
-  upsertEmbedding(row: EmbeddingRowInput): Promise<void>;
-  listEmbeddings(provider: string, modelId: string): Promise<EmbeddingRow[]>;
-  countEmbeddings(provider: string, modelId: string): Promise<number>;
 
   // Workers
   registerWorker(input: {

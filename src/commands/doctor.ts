@@ -3,12 +3,6 @@ import { readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DSH_SDK_VERSION } from '../dsh/dsh-adapter.js';
-import {
-  DEFAULT_EMBEDDING_MODEL,
-  embeddingCacheDir,
-  installEmbeddingStack,
-  probeEmbeddingEnvironment,
-} from '../retrieval/embeddings.js';
 import { IdeaseekError } from '../core/errors.js';
 import { findProjectRoot, projectPaths } from '../config/paths.js';
 import { detectEnvironment, type EnvironmentReport } from '../runtime/detect.js';
@@ -42,9 +36,8 @@ export function registerDoctorCommand(program: Command): void {
     .command('doctor')
     .description('check configuration, project state and host environment (read-only)')
     .option('--json', 'machine-readable output')
-    .option('--install-embeddings', 'install the pinned local embedding stack (network)')
     .action(
-      action(async (opts: { json?: boolean; installEmbeddings?: boolean }) => {
+      action(async (opts: { json?: boolean }) => {
         const cwd = process.cwd();
         const root = await findProjectRoot(cwd);
         const checks: Check[] = [];
@@ -249,61 +242,7 @@ export function registerDoctorCommand(program: Command): void {
         } else {
           checks.push({ level: 'warn', name: 'disk', detail: 'could not stat filesystem' });
         }
-        if (opts.installEmbeddings) {
-          try {
-            const install = await installEmbeddingStack({
-              knowledgeDir: root ? join(root, 'knowledge') : join(cwd, 'knowledge'),
-              modelId: runtime?.config.runtime.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
-            });
-            checks.push({
-              level: 'ok',
-              name: 'embeddings-install',
-              detail: `installed ${install.manifest.model} (${install.manifest.license}, ${install.manifest.fingerprint.slice(0, 19)}…) at ${install.manifest.cacheDir}${install.createdVenv ? ' [venv created]' : ''}${install.pipInstalled ? ' [pip ok]' : ''}`,
-            });
-          } catch (error) {
-            checks.push({
-              level: 'error',
-              name: 'embeddings-install',
-              detail: `${(error as Error).message} — BM25/FTS fallback stays active`,
-            });
-          }
-        }
         const apiKeySet = Boolean(process.env.DEEPSEEK_API_KEY);
-        const embCache = embeddingCacheDir();
-        const embModel = runtime?.config.runtime.embeddingModel ?? DEFAULT_EMBEDDING_MODEL;
-        try {
-          const embProbe = await probeEmbeddingEnvironment(embCache, embModel);
-          let embDetail: string;
-          if (!embProbe.packageInstalled) {
-            embDetail =
-              'fastembed not installed — search uses BM25/FTS only (ideaseek setup --install-embeddings)';
-            checks.push({ level: 'warn', name: 'embeddings', detail: embDetail });
-          } else if (!embProbe.modelCached) {
-            embDetail = `fastembed ${embProbe.fastembedVersion} ok; model ${embProbe.model} not cached (ideaseek setup --install-embeddings)`;
-            checks.push({ level: 'warn', name: 'embeddings', detail: embDetail });
-          } else {
-            embDetail = `fastembed ${embProbe.fastembedVersion} · ${embProbe.model} cached (${embProbe.license}, ${(embProbe.fingerprint ?? '').slice(0, 19)}…) at ${embProbe.cacheDir}`;
-            checks.push({ level: 'ok', name: 'embeddings', detail: embDetail });
-          }
-        } catch (error) {
-          checks.push({
-            level: 'warn',
-            name: 'embeddings',
-            detail: `embedding probe failed (${(error as Error).message.slice(0, 80)}): BM25/FTS only`,
-          });
-        }
-        try {
-          const modelManifest = JSON.parse(
-            await readFile(join(root ?? cwd, 'knowledge', 'embedding-model.json'), 'utf8'),
-          ) as { model: string; license: string; fingerprint: string };
-          checks.push({
-            level: 'info',
-            name: 'embedding-model',
-            detail: `recorded ${modelManifest.model} · ${modelManifest.license} · ${modelManifest.fingerprint.slice(0, 19)}…`,
-          });
-        } catch {
-          // manifest written on first successful install/embed
-        }
         checks.push({
           level: apiKeySet ? 'ok' : 'info',
           name: 'credentials',

@@ -41,7 +41,7 @@ ideaseek doctor
 - DSH commit/provider/profile；
 - Docker/Apptainer；
 - CUDA、GPU、CPU、内存和磁盘；
-- Python Worker 和可选本地 embedding 模型；
+- Python Worker（pypdf/pdfplumber/OCR 等解析依赖；本地嵌入层已移除）；
 - 凭据引用的脱敏状态；
 - 当前用户是否有项目目录读写权限。
 

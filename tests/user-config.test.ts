@@ -87,13 +87,11 @@ describe('validateUserConfig (unit)', () => {
         defaultRoute: 'deep',
         credentialRef: 'env:DEEPSEEK_API_KEY',
       },
-      embeddings: { cacheDir: '/mnt/cache/ideaseek' },
       notifications: { enabled: true, webhook: 'https://hooks.example.com/notify' },
     });
     expect(result.errors).toEqual([]);
     expect(result.config.models.credentialRef).toBe('env:DEEPSEEK_API_KEY');
     expect(result.config.models.defaultRoute).toBe('deep');
-    expect(result.config.embeddings.cacheDir).toBe('/mnt/cache/ideaseek');
     expect(result.config.notifications.enabled).toBe(true);
     expect(result.sources['models.credentialRef']).toBe('user-file');
     expect(result.sources['models.defaultRoute']).toBe('user-file');

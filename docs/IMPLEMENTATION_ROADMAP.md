@@ -20,7 +20,7 @@
 
 ## Phase 2：论文知识与证据
 
-实现 PDF/LaTeX/OCR/表格解析、PaperCard、证据定位、去重、FTS/可选 embedding、增量处理、并行 map/reduce、Evidence Checker、主题综合、机制库和研究地图。
+实现 PDF/LaTeX/OCR/表格解析、PaperCard、证据定位、去重、FTS、增量处理、并行 map/reduce、Evidence Checker、主题综合、机制库和研究地图。
 
 验收：关键字段证据支持率、页码定位、失败文档识别和增量重跑通过 gold set。
 

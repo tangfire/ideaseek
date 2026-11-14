@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 /**
  * User-level configuration (PRODUCT_GAPS #3, CONFIG_SPEC): provider and
- * credential REFERENCES, default model route, embedding cache and
+ * credential REFERENCES, default model route, notification webhooks and
  * notification preferences live in ~/.ideaseek/config.yaml — never in a
  * project's research.yaml. A credential reference is a NAME
  * (`env:DEEPSEEK_API_KEY` or `dsh:<store-id>`); embedding an actual secret
@@ -18,10 +18,6 @@ export interface UserConfig {
     defaultRoute: string;
     /** e.g. env:DEEPSEEK_API_KEY or dsh:deepseek — never a raw value. */
     credentialRef: string | null;
-  };
-  embeddings: {
-    /** null → built-in default (~/.cache/ideaseek/embeddings). */
-    cacheDir: string | null;
   };
   notifications: {
     enabled: boolean;
@@ -52,7 +48,6 @@ export function defaultUserConfig(): UserConfig {
       defaultRoute: 'default',
       credentialRef: null,
     },
-    embeddings: { cacheDir: null },
     notifications: { enabled: false, webhook: null },
   };
 }
@@ -74,7 +69,6 @@ export function validateUserConfig(raw: unknown): {
     'models.provider': 'user-default',
     'models.defaultRoute': 'user-default',
     'models.credentialRef': 'user-default',
-    'embeddings.cacheDir': 'user-default',
     'notifications.enabled': 'user-default',
     'notifications.webhook': 'user-default',
   };
@@ -82,7 +76,7 @@ export function validateUserConfig(raw: unknown): {
   if (raw === null || raw === undefined) return { config, sources, errors };
   if (!isObject(raw)) return { config, sources, errors: ['user config must be a mapping'] };
 
-  const known = new Set(['version', 'models', 'embeddings', 'notifications']);
+  const known = new Set(['version', 'models', 'notifications']);
   for (const key of Object.keys(raw)) {
     if (!known.has(key)) errors.push(`unknown key: ${key}`);
   }
@@ -132,25 +126,6 @@ export function validateUserConfig(raw: unknown): {
         } else {
           config.models.credentialRef = models.credentialRef;
           sources['models.credentialRef'] = 'user-file';
-        }
-      }
-    }
-  }
-
-  if (raw.embeddings !== undefined) {
-    if (!isObject(raw.embeddings)) {
-      errors.push('embeddings must be a mapping');
-    } else {
-      for (const key of Object.keys(raw.embeddings)) {
-        if (key !== 'cacheDir') errors.push(`unknown key: embeddings.${key}`);
-      }
-      const cacheDir = (raw.embeddings as { cacheDir?: unknown }).cacheDir;
-      if (cacheDir !== undefined && cacheDir !== null) {
-        if (typeof cacheDir !== 'string' || !cacheDir.trim()) {
-          errors.push('embeddings.cacheDir must be a non-empty path string or null');
-        } else {
-          config.embeddings.cacheDir = cacheDir.trim();
-          sources['embeddings.cacheDir'] = 'user-file';
         }
       }
     }

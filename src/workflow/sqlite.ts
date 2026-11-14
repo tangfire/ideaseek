@@ -33,8 +33,6 @@ import type {
   ComparisonDoc,
   ExperimentDoc,
   DatasetSliceRecord,
-  EmbeddingRow,
-  EmbeddingRowInput,
   ProtocolLockRecord,
   PaperIndexEntry,
   PaperIndexMeta,
@@ -188,19 +186,8 @@ const MIGRATIONS: { version: number; sql: string }[] = [
   {
     version: 5,
     sql: `
-      CREATE TABLE IF NOT EXISTS paper_embedding (
-        source_hash TEXT NOT NULL,
-        source TEXT NOT NULL,
-        page INTEGER NOT NULL,
-        preview TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        model_id TEXT NOT NULL,
-        dim INTEGER NOT NULL,
-        vector BLOB NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (source_hash, provider, model_id, page)
-      );
-      CREATE INDEX IF NOT EXISTS idx_embedding_lookup ON paper_embedding(provider, model_id);
+      -- paper_embedding (local embedding index) was removed with the
+      -- embedding layer; existing DBs drop it in migration 9.
     `,
   },
   {
@@ -248,6 +235,12 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_research_node_run ON research_node(run_id, status);
       CREATE INDEX IF NOT EXISTS idx_research_node_kind ON research_node(run_id, kind);
+    `,
+  },
+  {
+    version: 9,
+    sql: `
+      DROP TABLE IF EXISTS paper_embedding;
     `,
   },
 ];
@@ -2524,60 +2517,6 @@ export class SqliteWorkflowDb implements WorkflowDb {
         return { settled };
       }),
     );
-  }
-
-  upsertEmbedding(row: EmbeddingRowInput): Promise<void> {
-    return Promise.resolve().then(() =>
-      this.tx(() => {
-        const blob = Buffer.from(new Float32Array(row.vector).buffer);
-        this.db
-          .prepare(
-            'INSERT INTO paper_embedding (source_hash, source, page, preview, provider, model_id, dim, vector, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-              'ON CONFLICT(source_hash, provider, model_id, page) DO UPDATE SET preview = excluded.preview, dim = excluded.dim, vector = excluded.vector, created_at = excluded.created_at',
-          )
-          .run(
-            row.sourceHash,
-            row.source,
-            row.page,
-            row.preview,
-            row.provider,
-            row.modelId,
-            row.dim,
-            blob,
-            row.createdAt,
-          );
-      }),
-    );
-  }
-
-  listEmbeddings(provider: string, modelId: string): Promise<EmbeddingRow[]> {
-    const rows = this.db
-      .prepare('SELECT * FROM paper_embedding WHERE provider = ? AND model_id = ?')
-      .all(provider, modelId) as unknown as {
-      source: string;
-      source_hash: string;
-      page: number;
-      preview: string;
-      vector: Uint8Array;
-      dim: number;
-    }[];
-    return Promise.resolve(
-      rows.map((row) => ({
-        source: row.source,
-        sourceHash: row.source_hash,
-        page: row.page,
-        preview: row.preview,
-        dim: row.dim,
-        vector: Array.from(new Float32Array(row.vector.buffer.slice(0), 0, row.dim)),
-      })),
-    );
-  }
-
-  countEmbeddings(provider: string, modelId: string): Promise<number> {
-    const row = this.db
-      .prepare('SELECT COUNT(*) AS n FROM paper_embedding WHERE provider = ? AND model_id = ?')
-      .get(provider, modelId) as { n: number };
-    return Promise.resolve(Number(row.n));
   }
 
   upsertComparison(method: ComparisonDoc): Promise<void> {

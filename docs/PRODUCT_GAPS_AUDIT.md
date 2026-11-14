@@ -30,7 +30,7 @@ ideaseek plan --run <run_id> --json
 
 ### 3. 用户级与项目级配置
 
-- 用户级：模型 provider、credential 引用、默认 route、embedding 缓存和通知偏好；
+- 用户级：模型 provider、credential 引用、默认 route 和通知偏好；
 - 项目级：研究问题、论文/数据路径、comparison、预算、自治模式和实验策略；
 - run 级：输入 snapshot、解析后的配置、模型 route、数据 slice 和协议版本。
 

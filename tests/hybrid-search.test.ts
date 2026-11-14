@@ -3,74 +3,34 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cosineSimilarity, rrfMerge, hybridSearch } from '../src/retrieval/embeddings.js';
+import { hybridSearch, EVIDENCE_DISCLAIMER } from '../src/retrieval/search.js';
 import { createDemoRun, makeProjectDir, openRuntime, CLI_BIN } from './helpers.js';
 
-describe('embedding math', () => {
-  it('cosine similarity is symmetric and bounded', () => {
-    const a = [1, 0, 0];
-    const b = [0, 1, 0];
-    expect(cosineSimilarity(a, a)).toBeCloseTo(1, 6);
-    expect(cosineSimilarity(a, b)).toBeCloseTo(0, 6);
-    expect(cosineSimilarity(a, [1, 1, 0])).toBeCloseTo(1 / Math.SQRT2, 6);
-    expect(cosineSimilarity([], [])).toBe(0);
-    expect(cosineSimilarity([0, 0], [1, 1])).toBe(0);
-  });
+/**
+ * FTS-only retrieval contract (embedding layer removed by product
+ * decision — Claude-Code-style agentic grep/read covers semantic lookup;
+ * the fastembed/ONNX supply chain cost more than it returned).
+ */
 
-  it('rrf merges ranked lists with shared items scoring higher', () => {
-    const fts = [
-      { source: 'p/a.pdf', page: 1, rank: 0 },
-      { source: 'p/b.pdf', page: 1, rank: 1 },
-    ];
-    const vec = [
-      { source: 'p/b.pdf', page: 1, rank: 0 },
-      { source: 'p/c.pdf', page: 1, rank: 1 },
-    ];
-    const fused = rrfMerge([fts, vec]);
-    // b.pdf appears in both lists → highest fused score, ranked first.
-    expect(fused[0]!.source).toBe('p/b.pdf');
-    expect(fused.map((hit) => hit.source).sort()).toEqual(['p/a.pdf', 'p/b.pdf', 'p/c.pdf']);
-  });
-});
-
-describe('hybridSearch fallback contract', () => {
-  it('returns FTS-only with a note when no provider is available', async () => {
-    const dir = await makeProjectDir();
-    const runtime = await openRuntime(dir, { recover: false });
-    try {
-      const run = await createDemoRun(runtime);
-      void run;
-      const result = await hybridSearch(runtime, null, { query: 'anything', limit: 5 });
-      expect(result.mode).toBe('fts');
-      expect(result.note).toContain('BM25/FTS only');
-      expect(result.fusion.vectorHits).toBe(0);
-      expect(result.hits.every((hit) => hit.via === 'fts')).toBe(true);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it('degrades to FTS with a note when the provider throws (offline/user refusal)', async () => {
+describe('hybridSearch (FTS-only)', () => {
+  it('returns FTS hits with the honest note and via=fts', async () => {
     const dir = await makeProjectDir();
     const runtime = await openRuntime(dir, { recover: false });
     try {
       await createDemoRun(runtime);
-      const brokenProvider = {
-        providerId: 'local-fastembed',
-        modelId: 'x',
-        cacheDir: '/nonexistent',
-        embed: async () => {
-          throw new Error('MODEL_UNAVAILABLE: network refused');
-        },
-        describe: async () => null,
-      } as never;
-      const result = await hybridSearch(runtime, brokenProvider, { query: 'q' });
+      const result = await hybridSearch(runtime, { query: 'anything', limit: 5 });
       expect(result.mode).toBe('fts');
-      expect(result.note).toContain('network refused');
-      expect(result.note).toContain('BM25/FTS only');
+      expect(result.fusion.vectorHits).toBe(0);
+      expect(result.hits.every((hit) => hit.via === 'fts')).toBe(true);
+      expect(result.note).toContain('FTS5/BM25 only');
+      expect(result.note).toContain('embedding layer was removed');
     } finally {
       await runtime.close();
     }
+  });
+
+  it('exposes the evidence disclaimer (search is recall-only)', () => {
+    expect(EVIDENCE_DISCLAIMER).toContain('source snippet');
   });
 });
 
@@ -101,14 +61,14 @@ function runCli(
 }
 
 describe('CLI: search retrieval metadata', () => {
-  it('reports retrieval mode, fusion counts and the evidence disclaimer', async () => {
+  it('reports FTS mode, fusion counts, the evidence disclaimer and no embedding stats', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-retrieval-'));
     expect((await runCli(dir, ['init'])).code).toBe(0);
     const { makeFixturePdf } = await import('../src/knowledge/pdf.js');
     try {
       await makeFixturePdf(join(dir, 'papers', 'alpha.pdf'), 'Alpha retrieval probe');
     } catch {
-      return;
+      return; // pdf toolchain unavailable in this environment
     }
     expect((await runCli(dir, ['scan'])).code).toBe(0);
     expect((await runCli(dir, ['ingest', '--json'])).code).toBe(0);
@@ -119,25 +79,22 @@ describe('CLI: search retrieval metadata', () => {
       retrieval: {
         mode: string;
         fusion: { ftsHits: number; vectorHits: number };
-        embeddings: { embedded: number; failed: number };
         disclaimer: string;
         note?: string | null;
       };
       hits: { via?: string }[];
     };
-    expect(['fts', 'hybrid']).toContain(payload.retrieval.mode);
+    expect(payload.retrieval.mode).toBe('fts');
     expect(payload.retrieval.disclaimer).toContain('source snippet');
-    expect(payload.retrieval.embeddings.failed).toBe(0);
-    if (payload.retrieval.mode === 'fts') {
-      expect(payload.retrieval.note).toBeTruthy();
-    } else {
-      expect(payload.retrieval.fusion.vectorHits).toBeGreaterThan(0);
-      expect(payload.hits.every((hit) => hit.via === 'fts' || hit.via === 'vector')).toBe(true);
-    }
+    expect(payload.retrieval.fusion.vectorHits).toBe(0);
+    expect(payload.retrieval.note).toBeTruthy();
+    expect(payload.hits.every((hit) => hit.via === 'fts')).toBe(true);
+    // The removed embedding layer leaves no stats in the payload.
+    expect(JSON.stringify(payload)).not.toContain('embeddings');
 
     const text = await runCli(dir, ['search', 'retrieval']);
     expect(text.code).toBe(0);
     expect(text.stdout).toContain('retrieval');
-    expect(text.stdout).toContain('always verify claims');
-  }, 300_000);
+    expect(text.stdout).not.toContain('[vec]');
+  }, 180_000);
 });

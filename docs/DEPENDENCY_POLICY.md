@@ -25,7 +25,7 @@
 | 子进程 | **tree-kill 1.2.2**（MIT，进程树回收）+ 本仓 `src/core/proc.ts` 薄 adapter | 租约、超时、取消、失败分类和恢复语义 |
 | GitHub | Git CLI + 可选 API adapter | 来源、commit、license、权限和审计记录 |
 | PDF/科学解析 | Python 生态成熟库 | 解析器版本、证据定位、哈希绑定和失败回退 |
-| 检索 | FTS/BM25 + 本地 embedding | 混合排序、缓存指纹和证据免责输出 |
+| 检索 | FTS/BM25（SQLite FTS5） | 本地嵌入层已按产品决策移除（2026-11-14：fastembed/ONNX 供应链成本高于收益，语义查找由 Agent grep/read 覆盖）；证据免责输出保留 |
 | 容器/GPU | Docker/Podman、系统探针 | 资源准入、排队、实验公平性和运行快照 |
 
 ## 新依赖门禁
@@ -63,7 +63,7 @@
 - **Windows/Linux 验证**：Windows 11 上 `tests/proc.test.ts` 7 条全绿（祖孙双进程树回收、超时、AbortSignal 取消、幂等、自身保护）；POSIX 分支由同一套测试在 Linux/WSL 执行（tree-kill 内部实现差异，adapter 语义不变）。
 - **adapter 边界**：`src/core/proc.ts` 只暴露 `killTree`/`killTreeSafe`/`runProcess`（超时、取消、退出码、失败标志）；租约、失败分类、恢复语义仍归 IdeaSeek。原 10 处 `child.kill('SIGKILL')` 调用点已迁移到该 adapter。
 - **替代方案**：execa（功能重叠更多、体积更大，当前只需要树杀+缓冲运行）、手写 taskkill/ps 分支（正是要避免的重复实现）。
-- **测试方式**：`tests/proc.test.ts`；runner/extract/repair/pdf/embeddings/importer 全量回归。
+- **测试方式**：`tests/proc.test.ts`；runner/extract/repair/pdf/importer 全量回归。
 
 ### jsonschema 4.23.0（Python 侧契约自校验）
 
@@ -92,3 +92,4 @@
 - 评估 GitHub API adapter，仅用于元数据、license、release 和限额，不替代 Git clone。
 - 仅在需求出现时评估文件扫描、watch、结构化诊断日志和扩展归档解析库。
 
+- **评估记录（2026-11-14 移除）**：本地 embedding 层（fastembed==0.9.1 + onnxruntime 模型下载 + 共享缓存 + paper_embedding 表）整体删除——唯一消费面是 search 的可选 RRF 融合，两台目标机上从未可靠工作（Windows venv 缺、WSL 首搜触发下载挂死），而 FTS5 全程承载；Claude-Code 式 agentic grep/read 覆盖语义查找，供应链（钉版 numpy/contourpy/opencv 之外再加 fastembed）不值。retrieval/embeddings.ts 删除、hybridSearch 退化为 FTS-only（src/retrieval/search.ts）、迁移9 DROP paper_embedding、requirements 去 fastembed、worker embed 子命令移除。学术索引（academic-index，网络 API）与本决策无关，保留。

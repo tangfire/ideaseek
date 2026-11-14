@@ -46,9 +46,6 @@ function printUserExplain(user: LoadedUserConfig): void {
     process.stdout.write(`  models.${key} = ${JSON.stringify(value)}  [${source}]\n`);
   }
   process.stdout.write(
-    `  embeddings.cacheDir = ${JSON.stringify(user.config.embeddings.cacheDir)}  [${user.sources['embeddings.cacheDir'] ?? 'user-default'}]\n`,
-  );
-  process.stdout.write(
     `  notifications.enabled = ${String(user.config.notifications.enabled)}  [${user.sources['notifications.enabled'] ?? 'user-default'}]\n`,
   );
   process.stdout.write(
