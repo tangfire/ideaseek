@@ -29,12 +29,20 @@ export interface EngineResult {
   wheelDelta: number;
   /** Line to dispatch (Enter); null when nothing should run. */
   submit: string | null;
-  /** Ctrl-C on an empty line → host prints the exit hint. */
+  /** Ctrl-C on an empty line → host interrupts running work or prints hint. */
   interrupt: boolean;
   /** Ctrl-D on an empty line → host closes (EOF semantics). */
   eof: boolean;
   /** Shift+Tab cycles the session mode through the shared mode command. */
   cycleMode: boolean;
+  /** Ctrl+O toggles compact/expanded tool & diagnostic details. */
+  toggleDetails: boolean;
+  /** Ctrl+L adds a visual fresh-view divider and jumps to tail. */
+  clearView: boolean;
+  /** Ctrl+Y copies the most recent reply/output block to the clipboard. */
+  copyLast: boolean;
+  /** `?` on an empty line toggles the keyboard shortcuts overlay. */
+  toggleHelp: boolean;
 }
 
 const EDIT_KEYS = new Set(['left', 'right', 'home', 'end', 'backspace', 'delete']);
@@ -67,6 +75,10 @@ export class ShellEngine {
       interrupt: false,
       eof: false,
       cycleMode: false,
+      toggleDetails: false,
+      clearView: false,
+      copyLast: false,
+      toggleHelp: false,
       ...partial,
     };
   }
@@ -304,12 +316,22 @@ export class ShellEngine {
           this.refreshPalette();
           return this.snapshot();
         }
+        case 'o':
+          return this.snapshot({ toggleDetails: true });
+        case 'l':
+          return this.snapshot({ clearView: true });
+        case 'y':
+          return this.snapshot({ copyLast: true });
         default:
           return this.snapshot();
       }
     }
 
     if (EDIT_KEYS.has(name ?? '')) return this.snapshot(); // handled above
+
+    if (sequence === '?' && this.line === '' && !this.paletteOpen) {
+      return this.snapshot({ toggleHelp: true });
+    }
 
     if (sequence && sequence.length > 0) {
       // Strip raw ASCII control characters (except nothing here — single-line

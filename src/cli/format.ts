@@ -25,7 +25,7 @@ export interface PaintOptions {
 export function paint(text: string, color: ColorName, opts: PaintOptions = {}): string {
   const enabled =
     !opts.plain &&
-    process.stdout.isTTY === true &&
+    (process.stdout.isTTY === true || process.env.IDEASEEK_FORCE_COLOR === '1') &&
     !process.env.NO_COLOR &&
     process.env.TERM !== 'dumb';
   if (!enabled) return text;

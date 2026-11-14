@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { paint } from '../src/cli/format.js';
+import { ActivityBus } from '../src/cli/shell/app.js';
 import { ShellEngine, toEngineKey } from '../src/cli/shell/engine.js';
 import {
   TranscriptWrapCache,
@@ -6,7 +8,7 @@ import {
   formatElapsed,
   styleTranscriptLine,
 } from '../src/cli/shell/transcript.js';
-import { visualWidth } from '../src/cli/text-width.js';
+import { stripAnsi, visualWidth } from '../src/cli/text-width.js';
 
 describe('TUI transcript styling and soft-wrap cache', () => {
   it('styles user prompts, tool calls, events and errors while stripping dangerous escapes', () => {
@@ -89,5 +91,67 @@ describe('ShellEngine raw control bytes and sanitization', () => {
     const engine = new ShellEngine();
     const snap = engine.handle({ sequence: 'hi\x15there\x07' });
     expect(snap.line).toBe('hithere');
+  });
+
+  it('triggers Ctrl+O/L/Y and ? only when appropriate', () => {
+    const engine = new ShellEngine();
+    expect(engine.handle({ name: 'o', ctrl: true }).toggleDetails).toBe(true);
+    expect(engine.handle({ name: 'l', ctrl: true }).clearView).toBe(true);
+    expect(engine.handle({ name: 'y', ctrl: true }).copyLast).toBe(true);
+    expect(engine.handle({ sequence: '?' }).toggleHelp).toBe(true);
+
+    // Mid-sentence question mark must insert literally instead of opening help.
+    engine.handle({ sequence: 'why' });
+    const mid = engine.handle({ sequence: '?' });
+    expect(mid.toggleHelp).toBe(false);
+    expect(mid.line).toBe('why?');
+  });
+});
+
+describe('ActivityBus block grouping, tool pairing and Markdown rendering', () => {
+  it('pairs tool/call and tool/result in-place and toggles diagnostic detail', () => {
+    const bus = new ActivityBus();
+    bus.push('❯ /agent check');
+    bus.push('  · dsh runtime started');
+    bus.push('  ⚙ pwsh {"command":"ls"}');
+    bus.push('  ⚙ ✓ pwsh');
+    bus.push('# Summary\n- item one');
+
+    const cache = new TranscriptWrapCache();
+    const styledText = cache
+      .renderBlocks(bus.blocks, 80, { plain: false, expanded: false })
+      .map((r) => stripAnsi(r.text))
+      .join('\n');
+    expect(styledText).toContain('⚙ ✓ pwsh');
+    expect(styledText).not.toContain('dsh runtime started');
+    expect(styledText).toContain('• item one');
+    expect(styledText).not.toContain('# Summary');
+
+    const plainCompact = cache
+      .renderBlocks(bus.blocks, 80, { plain: true, expanded: false })
+      .map((r) => r.text)
+      .join('\n');
+    expect(plainCompact).toContain('- item one');
+    // eslint-disable-next-line no-control-regex
+    expect(plainCompact).not.toMatch(/\x1b\[/);
+
+    const expandedText = cache
+      .renderBlocks(bus.blocks, 80, { plain: true, expanded: true })
+      .map((r) => stripAnsi(r.text))
+      .join('\n');
+    expect(expandedText).toContain('dsh runtime started');
+    expect(bus.getLastCopyableText()).toContain('Summary');
+  });
+
+  it('respects IDEASEEK_FORCE_COLOR only when plain is false', () => {
+    const prev = process.env.IDEASEEK_FORCE_COLOR;
+    process.env.IDEASEEK_FORCE_COLOR = '1';
+    try {
+      expect(paint('ok', 'success')).toContain('\x1b[32m');
+      expect(paint('ok', 'success', { plain: true })).toBe('ok');
+    } finally {
+      if (prev === undefined) delete process.env.IDEASEEK_FORCE_COLOR;
+      else process.env.IDEASEEK_FORCE_COLOR = prev;
+    }
   });
 });

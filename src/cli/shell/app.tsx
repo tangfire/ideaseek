@@ -1,14 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
+import { copyToClipboard } from './clipboard.js';
 import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
 import { InteractiveSession, type HeaderInfo, type SessionStartup } from './session.js';
-import { TranscriptWrapCache, computeViewportSlice, formatElapsed } from './transcript.js';
+import {
+  TOOL_CALL_RE,
+  TOOL_RESULT_RE,
+  TranscriptWrapCache,
+  classifyLineKind,
+  computeViewportSlice,
+  formatElapsed,
+  type TranscriptBlock,
+} from './transcript.js';
 import { renderBanner } from '../banner.js';
 import { SLASH_COMMANDS } from '../slash-menu.js';
 import {
   padVisualEnd,
   sanitizeAnsiForInk,
   sliceVisualTail,
+  stripAnsi,
   truncateVisual,
   visualWidth,
 } from '../text-width.js';
@@ -21,23 +31,34 @@ import {
  * the non-interactive CLI). Business state never lives here.
  */
 
-const FOOTER_HINTS = 'Shift+Tab mode · Tab menu · Ctrl-C stop · Ctrl-D quit';
+const FOOTER_HINTS = 'Shift+Tab mode · / menu · Ctrl+O details · ? shortcuts';
 /** Lines the wheel scrolls per notch (terminals already repeat events). */
 const WHEEL_SCROLL_LINES = 6;
 const INTERRUPT_HINT = 'Ctrl-C: use /quit to exit (background runs keep going)';
 const QUIT_LINE = 'bye — background runs keep going (reconnect with ideaseek)';
 const STARTING_LINE = 'starting…';
 /**
- * History buffer for the activity pane (logical lines kept in memory).
- * Soft-wrapped visual rows are cached per line and sliced to the visible
- * viewport so rendering stays O(visible rows).
+ * History buffer for the activity pane (logical lines and blocks kept in
+ * memory). Visual wrapping is cached per block so rendering stays O(visible).
  */
 const MAX_ACTIVITY = 5000;
+const MAX_BLOCKS = 2000;
+const MAX_MERGED_OUTPUT_LINES = 240;
 const PROMPT_TEXT = 'ideaseek › ';
 /** Coalescing window for rapid activity bursts (~60fps) to avoid frame storms. */
 const BUS_BATCH_MS = 16;
 /** Braille spinner cycled on the input line while a command runs. */
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+const SHORTCUT_ROWS: readonly { keys: string; desc: string }[] = [
+  { keys: 'Shift+Tab', desc: 'Cycle Research / Analysis tier' },
+  { keys: '/ · Tab', desc: 'Open slash palette & complete prefix' },
+  { keys: '↑ / ↓', desc: 'Select palette command or recall history' },
+  { keys: 'Ctrl+O', desc: 'Toggle compact / expanded tool & runtime trace' },
+  { keys: 'Ctrl+Y', desc: 'Copy latest response to clipboard' },
+  { keys: 'Ctrl+L', desc: 'Insert fresh divider & jump to bottom' },
+  { keys: 'PgUp / Wheel', desc: 'Scroll history · Ctrl-C stop · Ctrl-D /quit' },
+];
 
 /**
  * Activity/header store the session writes into before (and while) React is
@@ -47,8 +68,10 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 export class ActivityBus {
   version = 0;
   lines: string[] = [];
+  blocks: TranscriptBlock[] = [];
   header: HeaderInfo | null = null;
   startup: SessionStartup | null = null;
+  private nextBlockId = 1;
   private readonly listeners = new Set<() => void>();
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -68,13 +91,121 @@ export class ActivityBus {
     }, BUS_BATCH_MS);
   }
 
+  private appendBlock(block: Omit<TranscriptBlock, 'id' | 'rev'>): void {
+    const entry: TranscriptBlock = {
+      ...block,
+      id: this.nextBlockId++,
+      rev: 0,
+    };
+    this.blocks = [...this.blocks, entry].slice(-MAX_BLOCKS);
+  }
+
+  private pushStructuredLine(clean: string): void {
+    const plain = stripAnsi(clean);
+    const kind = classifyLineKind(clean);
+
+    if (kind === 'tool') {
+      const callMatch = TOOL_CALL_RE.exec(plain);
+      if (
+        callMatch &&
+        !plain.trimStart().startsWith('⚙ ✓') &&
+        !plain.trimStart().startsWith('⚙ ✗')
+      ) {
+        this.appendBlock({
+          kind: 'tool',
+          text: clean,
+          toolName: callMatch[1]!,
+          toolArgs: callMatch[2] ?? '',
+          toolStatus: 'running',
+          startedAt: Date.now(),
+        });
+        return;
+      }
+      const resMatch = TOOL_RESULT_RE.exec(plain);
+      if (resMatch) {
+        const [, symbol, name, errMsg] = resMatch;
+        for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+          const prev = this.blocks[i]!;
+          if (prev.kind === 'tool' && prev.toolName === name && prev.toolStatus === 'running') {
+            prev.toolStatus = symbol === '✓' ? 'ok' : 'error';
+            prev.toolError = errMsg;
+            prev.finishedAt = Date.now();
+            prev.text = clean;
+            prev.rev += 1;
+            return;
+          }
+          // Stop searching once we cross back past a user turn boundary.
+          if (prev.kind === 'user') break;
+        }
+        this.appendBlock({
+          kind: 'tool',
+          text: clean,
+          toolName: name!,
+          toolArgs: '',
+          toolStatus: symbol === '✓' ? 'ok' : 'error',
+          toolError: errMsg,
+          finishedAt: Date.now(),
+        });
+        return;
+      }
+    }
+
+    // Coalesce consecutive ordinary output lines into one Markdown-capable block
+    // so multi-line fenced code, lists and pipe tables render cohesively.
+    const last = this.blocks[this.blocks.length - 1];
+    if (
+      kind === 'output' &&
+      last?.kind === 'output' &&
+      last.text.split('\n').length < MAX_MERGED_OUTPUT_LINES
+    ) {
+      last.text = `${last.text}\n${clean}`;
+      last.rev += 1;
+      return;
+    }
+
+    this.appendBlock({ kind, text: clean });
+  }
+
+  pushBanner(text: string): void {
+    const safe = sanitizeAnsiForInk(text);
+    const split = safe.split('\n');
+    this.lines = [...this.lines, ...split].slice(-MAX_ACTIVITY);
+    for (const line of split) {
+      this.appendBlock({ kind: 'banner', text: line });
+    }
+    this.version += 1;
+    this.scheduleNotify();
+  }
+
+  pushDivider(label = ''): void {
+    this.appendBlock({ kind: 'divider', text: label });
+    this.version += 1;
+    this.notifyNow();
+  }
+
   push(line: string): void {
     // Preserve safe ANSI SGR color sequences while stripping cursor/screen
     // control codes so downstream CLI colors survive without corrupting Ink.
     const safe = sanitizeAnsiForInk(line);
-    this.lines = [...this.lines, ...safe.split('\n')].slice(-MAX_ACTIVITY);
+    const split = safe.split('\n');
+    this.lines = [...this.lines, ...split].slice(-MAX_ACTIVITY);
+    for (const entry of split) {
+      this.pushStructuredLine(entry);
+    }
     this.version += 1;
     this.scheduleNotify();
+  }
+
+  /** Returns the latest substantive output text (for Ctrl+Y clipboard copy). */
+  getLastCopyableText(): string | null {
+    for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+      const block = this.blocks[i]!;
+      if (block.kind === 'output' || block.kind === 'error') {
+        const plain = stripAnsi(block.text).trim();
+        if (plain) return plain;
+      }
+    }
+    return null;
   }
 
   setHeader(header: HeaderInfo): void {
@@ -86,8 +217,6 @@ export class ActivityBus {
   setStartup(startup: SessionStartup): void {
     this.startup = startup;
     this.header = startup.header;
-    // Recovery line + approval block land in the activity pane (they are
-    // event-shaped), the hint stays pinned under the header.
     if (startup.lastSession) this.push(startup.lastSession);
     for (const line of startup.pending) this.push(line);
     this.version += 1;
@@ -150,6 +279,10 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [busyStartedAt, setBusyStartedAt] = useState<number | null>(null);
+  const [expandedDetails, setExpandedDetails] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Masked secret entry (models setup): the buffer never leaves this
   // component except as the resolved answer — no echo, no transcript.
   const [secretBuf, setSecretBuf] = useState('');
@@ -162,6 +295,22 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     rows: Number(process.env.IDEASEEK_TTY_ROWS ?? '') || stdout.rows || 24,
     columns: Number(process.env.IDEASEEK_TTY_COLS ?? '') || stdout.columns || 80,
   }));
+
+  const showToast = (message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(message);
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, 2500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
   // Input-line liveness: idle = blinking cursor block, busy = spinner in
   // the same cell so "working" is visible exactly where the user looks.
   const [cursorOn, setCursorOn] = useState(true);
@@ -177,9 +326,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     return () => clearInterval(id);
   }, [busy]);
 
-  // Alternate screen + mouse-tracking restore on unmount (both are entered
-  // synchronously in startInkInteractive BEFORE the first frame — these
-  // are the only raw sequences this adapter owns; layout/diffing is Ink's).
+  // Alternate screen + mouse-tracking restore on unmount.
   useEffect(() => {
     return () => {
       try {
@@ -207,8 +354,12 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const rows = Math.max(8, size.rows);
   const paneCols = Math.max(16, cols - 2);
   const wrappedRows = useMemo(
-    () => wrapCache.wrapAll(bus.lines, paneCols, plain),
-    [wrapCache, bus.lines, bus.version, paneCols, plain],
+    () =>
+      wrapCache.renderBlocks(bus.blocks, paneCols, {
+        plain,
+        expanded: expandedDetails,
+      }),
+    [wrapCache, bus.blocks, bus.version, paneCols, plain, expandedDetails],
   );
 
   // While scrolled up, anchor the viewed window in wrapped-row units so new
@@ -220,7 +371,6 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   }, [wrappedRows.length, offset]);
 
   // Startup (header, session marker, pending approvals) + live event stream.
-  // stopStream on unmount only kills THIS child — background runs keep going.
   useEffect(() => {
     let cancelled = false;
     void session
@@ -240,10 +390,6 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   }, [session, bus]);
 
   useInput((input, key) => {
-    // Secret capture owns the input line (models setup): characters are
-    // masked as bullets in a local buffer — they are never inserted into
-    // the engine, echoed, or pushed to the transcript. Enter submits,
-    // Esc/Ctrl-C cancels, Backspace edits.
     if (session.secretPrompt) {
       if (key.return) {
         const answer = secretBuf;
@@ -265,15 +411,48 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
       }
       return;
     }
-    // Tool-approval prompt owns the input line while an agent turn waits:
-    // y allow once, n/Enter/Esc reject, everything else is ignored.
     if (session.pendingApproval) {
       if (input === 'y' || input === 'Y') session.respondApproval(true);
       else if (input === 'n' || input === 'N' || key.return || key.escape)
         session.respondApproval(false);
       return;
     }
+    if (shortcutsOpen && (key.escape || input === '?')) {
+      setShortcutsOpen(false);
+      return;
+    }
+
     const result = engine.handle(toEngineKey(input, key));
+    if (result.toggleHelp) {
+      setShortcutsOpen((prev) => !prev);
+      return;
+    }
+    if (shortcutsOpen) setShortcutsOpen(false);
+
+    if (result.toggleDetails) {
+      setExpandedDetails((prev) => {
+        const next = !prev;
+        showToast(next ? 'details: expanded' : 'details: compact');
+        return next;
+      });
+      return;
+    }
+    if (result.clearView) {
+      bus.pushDivider('view cleared (scroll up for earlier history)');
+      setOffset(0);
+      return;
+    }
+    if (result.copyLast) {
+      const payload = bus.getLastCopyableText();
+      if (!payload) {
+        showToast('nothing to copy yet');
+      } else {
+        void copyToClipboard(payload).then((res) => {
+          showToast(res.ok ? '✓ copied latest reply' : `copy failed: ${res.reason}`);
+        });
+      }
+      return;
+    }
     if (result.cycleMode) {
       setSnap(result);
       setBusy(true);
@@ -296,8 +475,6 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     }
     if (result.interrupt) {
       setSnap(result);
-      // Ctrl-C while a command is running stops it (Claude-Code style
-      // interrupt); with nothing running, keep the plain exit hint.
       void session
         .interrupt()
         .then((aborted) =>
@@ -307,17 +484,14 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
       return;
     }
     if (result.eof) {
-      exit(0); // restores the primary screen via the unmount effect
+      exit(0);
       return;
     }
     if (result.submit) {
       setSnap(result);
       const line = result.submit;
-      // Bare "/" — the engine already keeps the palette open; nothing to run.
       if (line === '/') return;
-      // Echo the utterance into the transcript (Claude-Code style).
       bus.push(`❯ ${line}`);
-      // Snap back to tail when submitting so the user sees their command output.
       setOffset(0);
       setBusy(true);
       queueRef.current = queueRef.current
@@ -325,7 +499,6 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
           const outcome = await session.submit(line);
           if (outcome === 'quit') {
             bus.push(QUIT_LINE);
-            // Give ink one frame to paint the farewell before unmounting.
             setTimeout(() => exit(0), 60);
           }
         })
@@ -342,24 +515,31 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
 
   // Pinned header = compact context (project · mode · run · question).
   const ctxLines = (bus.header?.lines ?? [STARTING_LINE]).map((line) => truncateVisual(line, cols));
-  const modeLabel = ctxLines[0]?.includes('ANALYSIS')
-    ? 'Analysis'
-    : ctxLines[0]?.includes('GENERAL')
-      ? 'General'
-      : 'Research';
+  const modeLabel = ctxLines[0]?.includes('CODING')
+    ? 'Coding'
+    : ctxLines[0]?.includes('ANALYSIS')
+      ? 'Analysis'
+      : ctxLines[0]?.includes('GENERAL')
+        ? 'General'
+        : 'Research';
   const tone = bus.header?.tone ?? 'dim';
   const headerRows = ctxLines.length;
 
-  // Hairline-framed composer takes 3 rows (top rule + active bar + bottom rule).
   const composerRows = 3;
   const footerRows = 1;
-  const maxPaletteRows = Math.max(3, rows - headerRows - composerRows - footerRows - 2);
-  const shownPalette = snap.paletteOpen ? snap.paletteItems.slice(0, maxPaletteRows) : [];
-  const paletteTruncated = snap.paletteOpen && snap.paletteItems.length > shownPalette.length;
-  const paletteRows =
-    shownPalette.length > 0 ? 1 + shownPalette.length + (paletteTruncated ? 1 : 0) : 0;
+  const maxOverlayRows = Math.max(3, rows - headerRows - composerRows - footerRows - 2);
+  const showShortcutsPanel = shortcutsOpen && maxOverlayRows >= SHORTCUT_ROWS.length + 1;
+  const shownPalette =
+    !showShortcutsPanel && snap.paletteOpen ? snap.paletteItems.slice(0, maxOverlayRows) : [];
+  const paletteTruncated =
+    !showShortcutsPanel && snap.paletteOpen && snap.paletteItems.length > shownPalette.length;
+  const overlayRows = showShortcutsPanel
+    ? 1 + SHORTCUT_ROWS.length
+    : shownPalette.length > 0
+      ? 1 + shownPalette.length + (paletteTruncated ? 1 : 0)
+      : 0;
 
-  stateRef.current.chromeRows = headerRows + paletteRows + composerRows + footerRows;
+  stateRef.current.chromeRows = headerRows + overlayRows + composerRows + footerRows;
   const visible = Math.max(1, rows - stateRef.current.chromeRows);
   const probeViewport = computeViewportSlice(wrappedRows.length, visible, offset);
   const contentRows = probeViewport.effOffset > 0 ? Math.max(1, visible - 1) : visible;
@@ -386,9 +566,11 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     : '';
 
   const elapsed = busy && busyStartedAt ? ` ${formatElapsed(Date.now() - busyStartedAt)}` : '';
+  const detailBadge = expandedDetails ? 'expanded · ' : '';
+  const toastPart = toast ? `${toast} · ` : '';
   const statusSegment = busy
     ? ` ${SPINNER[spin % SPINNER.length]} ${session.pendingApproval ? 'waiting for approval…' : `running…${elapsed}`} · `
-    : ' ';
+    : ` ${toastPart}${detailBadge}`;
   const badgeText = ` ${modeLabel.toUpperCase()} `;
   const footerTail = truncateVisual(
     `${statusSegment}${FOOTER_HINTS}`,
@@ -422,7 +604,21 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
           </Text>
         ) : null}
       </Box>
-      {shownPalette.length > 0 ? (
+      {showShortcutsPanel ? (
+        <Box flexDirection="column" flexShrink={0}>
+          <Text dimColor>
+            {truncateVisual(`─── Shortcuts (Esc / ? to close) ${hairline}`, cols)}
+          </Text>
+          {SHORTCUT_ROWS.map((row) => (
+            <Box key={row.keys} flexDirection="row">
+              <Text color="cyan" bold>
+                {padVisualEnd(`  ${row.keys}`, 16)}
+              </Text>
+              <Text dimColor>{truncateVisual(row.desc, Math.max(8, cols - 16))}</Text>
+            </Box>
+          ))}
+        </Box>
+      ) : shownPalette.length > 0 ? (
         <Box flexDirection="column" flexShrink={0}>
           <Text dimColor>{hairline}</Text>
           {shownPalette.map((name, index) => {
@@ -483,7 +679,11 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
           <Text
             color="black"
             backgroundColor={
-              modeLabel === 'General' ? 'magenta' : modeLabel === 'Analysis' ? 'yellow' : 'cyan'
+              modeLabel === 'General' || modeLabel === 'Coding'
+                ? 'magenta'
+                : modeLabel === 'Analysis'
+                  ? 'yellow'
+                  : 'cyan'
             }
             bold
           >
@@ -510,8 +710,7 @@ export interface InkInteractiveOptions {
 /**
  * Wraps real-TTY stdout writes in DEC Synchronized Update brackets
  * (`\x1b[?2026h ... \x1b[?2026l`) so Ink multi-line diff rewrites render
- * atomically without frame tearing in modern terminals. Returns an unwrap
- * callback to restore the original `write` method cleanly on teardown.
+ * atomically without frame tearing in modern terminals.
  */
 function installSynchronizedOutput(stream: NodeJS.WriteStream): () => void {
   const originalWrite = stream.write.bind(stream) as typeof stream.write;
@@ -525,7 +724,6 @@ function installSynchronizedOutput(stream: NodeJS.WriteStream): () => void {
       return originalWrite(chunk, encodingOrCb as BufferEncoding, cb);
     }
     const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
-    // Skip tiny control-only packets (e.g. initial ?1049h / teardown ?1049l).
     if (!text.includes('\n')) {
       return originalWrite(chunk, encodingOrCb as BufferEncoding, cb);
     }
@@ -545,8 +743,6 @@ function installSynchronizedOutput(stream: NodeJS.WriteStream): () => void {
  */
 export async function startInkInteractive(opts: InkInteractiveOptions = {}): Promise<number> {
   const plain = opts.plain === true;
-  // FORCE_INK over piped stdio (tests/driver): shim the raw-mode surface so
-  // ink's real input parser runs without allocating a PTY.
   if (!opts.streams && process.env.IDEASEEK_FORCE_INK === '1') {
     const stdin = process.stdin as unknown as {
       isTTY?: boolean;
@@ -563,9 +759,8 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
   const bus = new ActivityBus();
   const greetingColumns =
     Number(process.env.IDEASEEK_TTY_COLS ?? '') || process.stdout.columns || 80;
-  for (const line of renderBanner({ columns: greetingColumns, plain }).split('\n')) {
-    bus.push(line);
-  }
+  bus.pushBanner(renderBanner({ columns: greetingColumns, plain }));
+
   const session = new InteractiveSession({
     plain,
     sink: {
@@ -575,8 +770,15 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
   });
   session.enableSecretCapture();
 
-  // Enter the alternate screen BEFORE the first frame so no startup output
-  // ever lands on the primary screen (restore lives in ShellApp unmount).
+  const prevForceColor = process.env.IDEASEEK_FORCE_COLOR;
+  const restoreForceColor = () => {
+    if (prevForceColor === undefined) delete process.env.IDEASEEK_FORCE_COLOR;
+    else process.env.IDEASEEK_FORCE_COLOR = prevForceColor;
+  };
+  if (!plain && !process.env.NO_COLOR && process.env.TERM !== 'dumb') {
+    process.env.IDEASEEK_FORCE_COLOR = '1';
+  }
+
   const out = opts.streams?.stdout ?? process.stdout;
   out.write('\x1b[?1049h\x1b[H');
   out.write('\x1b[?1000;1006h');
@@ -594,6 +796,7 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
     });
   } catch (error) {
     uninstallSync?.();
+    restoreForceColor();
     try {
       out.write('\x1b[?1006l\x1b[?1000l\x1b[?1049l');
     } catch {
@@ -606,6 +809,7 @@ export async function startInkInteractive(opts: InkInteractiveOptions = {}): Pro
     await app.waitUntilExit();
   } finally {
     uninstallSync?.();
+    restoreForceColor();
   }
   await session.end();
   return 0;
