@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildImplementationContext,
   authorImplementation,
+  parseImplementationOutput,
 } from '../src/comparison/implement-author.js';
 import type { ReproductionBlueprint } from '../src/comparison/types.js';
 import type { HarnessAdapter } from '../src/dsh/adapter.js';
@@ -54,6 +55,27 @@ function harnessReturning(output: string): HarnessAdapter {
 
 const PROGRAM = Array.from({ length: 40 }, (_, i) => `# line ${i}`).join('\n');
 
+describe('parseImplementationOutput', () => {
+  it('takes the program from the JSON envelope the harness requires', () => {
+    const parsed = parseImplementationOutput(
+      JSON.stringify({ program: PROGRAM, notes: 'rounds not grounded' }),
+    );
+    expect(parsed.program).toBe(PROGRAM);
+    expect(parsed.notes).toBe('rounds not grounded');
+  });
+
+  it('still accepts a bare program rather than discarding a usable answer', () => {
+    const parsed = parseImplementationOutput('```python\n' + PROGRAM + '\n```');
+    expect(parsed.program).toContain('# line 39');
+    expect(parsed.notes).toContain('not a JSON object');
+  });
+
+  it('reports the model notes when the envelope carries no program', () => {
+    const parsed = parseImplementationOutput(JSON.stringify({ notes: 'I need more detail' }));
+    expect(parsed.program).toBe('');
+  });
+});
+
 describe('buildImplementationContext', () => {
   it('carries the plan, the metric names and the honesty constraints', () => {
     const context = buildImplementationContext(blueprint(), 'datasets-derived/pacs-smoke');
@@ -72,9 +94,9 @@ describe('buildImplementationContext', () => {
 });
 
 describe('authorImplementation', () => {
-  it('accepts a program, strips fences and reports its size', async () => {
+  it('accepts a program inside the JSON envelope the harness requires', async () => {
     const result = await authorImplementation({
-      harness: harnessReturning('```python\n' + PROGRAM + '\n```'),
+      harness: harnessReturning(JSON.stringify({ program: PROGRAM, notes: 'rounds assumed' })),
       blueprint: blueprint(),
       dataPath: null,
       runId: 'run-1',
@@ -82,24 +104,25 @@ describe('authorImplementation', () => {
     });
     expect(result.origin).toBe('agent');
     expect(result.lines).toBe(40);
+    expect(result.notes).toBe('rounds assumed');
     expect(result.source).not.toContain('```');
     expect(result.contextHash).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
-  it('refuses a stub too small to be a real implementation', async () => {
+  it('refuses a stub too small to be a real implementation, quoting the model', async () => {
     await expect(
       authorImplementation({
-        harness: harnessReturning('print("hi")'),
+        harness: harnessReturning(JSON.stringify({ program: 'print("hi")', notes: 'too vague' })),
         blueprint: blueprint(),
         dataPath: null,
         runId: 'run-1',
         now: 1000,
       }),
-    ).rejects.toThrow(/only \d+ line/);
+    ).rejects.toThrow(/too vague/);
   });
 
   it('refuses an unreviewable blob instead of writing it', async () => {
-    const huge = Array.from({ length: 900 }, (_, i) => `x${i} = ${i}`).join('\n');
+    const huge = Array.from({ length: 1200 }, (_, i) => `x${i} = ${i}`).join('\n');
     await expect(
       authorImplementation({
         harness: harnessReturning(huge),
@@ -108,6 +131,6 @@ describe('authorImplementation', () => {
         runId: 'run-1',
         now: 1000,
       }),
-    ).rejects.toThrow(/limit 400/);
+    ).rejects.toThrow(/limit 800/);
   });
 });

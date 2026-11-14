@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/implementation-program-v1.json",
+  "title": "IdeaSeek reproduction implementation (implementation-program-v1)",
+  "description": "Response contract for the reproduction implementer: the generated program travels inside a JSON field because the DSH harness frames every request as 'return ONLY a JSON object matching schema <name>'. Asking for a bare program contradicted that framing and produced near-empty responses. The platform compiles the program before writing it, so this schema only constrains the envelope.",
+  "type": "object",
+  "required": ["program"],
+  "properties": {
+    "program": { "type": "string", "minLength": 40 },
+    "notes": { "type": "string", "maxLength": 600 }
+  },
+  "additionalProperties": false
+}
