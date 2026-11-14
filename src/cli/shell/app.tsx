@@ -179,6 +179,14 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
   }, [session, bus]);
 
   useInput((input, key) => {
+    // Tool-approval prompt owns the input line while an agent turn waits:
+    // y allow once, n/Enter/Esc reject, everything else is ignored.
+    if (session.pendingApproval) {
+      if (input === 'y' || input === 'Y') session.respondApproval(true);
+      else if (input === 'n' || input === 'N' || key.return || key.escape)
+        session.respondApproval(false);
+      return;
+    }
     const result = engine.handle(toEngineKey(input, key));
     if (result.cycleMode) {
       setSnap(result);
@@ -342,24 +350,48 @@ function ShellApp({ session, bus }: ShellAppProps): React.ReactElement {
           ) : null}
         </Box>
       ) : null}
-      <Box flexShrink={0}>
-        {/* Styled composer: full-width tinted bar, bold brand prompt, and a
-            live cursor cell (blink when idle, spinner while busy) — the
-            input line reads as an input, not as another content row. */}
-        <Text wrap="truncate" backgroundColor={INPUT_BG}>
-          <Text color="cyan" bold>
-            {PROMPT_TEXT}
+      {session.pendingApproval ? (
+        <Box flexShrink={0}>
+          {/* Approval owns the line (Claude-Code style): the agent turn
+              is blocked on this answer, so nothing else is typeable. */}
+          <Text wrap="truncate" backgroundColor="#3d3413">
+            <Text color="yellow" bold>{` ⏸ allow ${session.pendingApproval.toolName}? `}</Text>
+            <Text>y allow once · n reject</Text>
+            {session.pendingApproval.reason ? (
+              <Text dimColor>{`  — ${session.pendingApproval.reason}`}</Text>
+            ) : null}
+            {'⠀'.repeat(
+              Math.max(
+                0,
+                size.columns -
+                  (
+                    `⏸ allow ${session.pendingApproval.toolName}? y allow once · n reject` +
+                    (session.pendingApproval.reason ? `  — ${session.pendingApproval.reason}` : '')
+                  ).length,
+              ),
+            )}
           </Text>
-          {snap.line.slice(0, snap.cursor)}
-          <Text color="cyan">{busy ? SPINNER[spin % SPINNER.length] : cursorOn ? '▏' : ' '}</Text>
-          {snap.line.slice(snap.cursor)}
-          {/* Pad with Braille blanks (U+2800): Ink trimEnds trailing
-              ASCII spaces on every line, but U+2800 is not whitespace —
-              it keeps its cell (and the bar's background) to the right
-              edge while rendering as an empty glyph. */}
-          {'⠀'.repeat(Math.max(0, size.columns - (PROMPT_TEXT.length + snap.line.length + 1)))}
-        </Text>
-      </Box>
+        </Box>
+      ) : (
+        <Box flexShrink={0}>
+          {/* Styled composer: full-width tinted bar, bold brand prompt, and a
+              live cursor cell (blink when idle, spinner while busy) — the
+              input line reads as an input, not as another content row. */}
+          <Text wrap="truncate" backgroundColor={INPUT_BG}>
+            <Text color="cyan" bold>
+              {PROMPT_TEXT}
+            </Text>
+            {snap.line.slice(0, snap.cursor)}
+            <Text color="cyan">{busy ? SPINNER[spin % SPINNER.length] : cursorOn ? '▏' : ' '}</Text>
+            {snap.line.slice(snap.cursor)}
+            {/* Pad with Braille blanks (U+2800): Ink trimEnds trailing
+                ASCII spaces on every line, but U+2800 is not whitespace —
+                it keeps its cell (and the bar's background) to the right
+                edge while rendering as an empty glyph. */}
+            {'⠀'.repeat(Math.max(0, size.columns - (PROMPT_TEXT.length + snap.line.length + 1)))}
+          </Text>
+        </Box>
+      )}
       <Box flexShrink={0}>
         <Text wrap="truncate">
           <Text color="black" backgroundColor={modeLabel === 'Agent' ? 'magenta' : 'cyan'} bold>

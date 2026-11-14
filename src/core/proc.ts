@@ -41,6 +41,10 @@ export interface RunProcessOptions {
   signal?: AbortSignal;
   /** Written to the child's stdin, then stdin is closed. */
   input?: string;
+  /** Leave stdin open (interactive protocols); the stream is on the result. */
+  keepStdinOpen?: boolean;
+  /** Handshake for the kept-open stdin right after spawn (answer protocols). */
+  onStdin?: (stdin: NodeJS.WritableStream) => void;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
 }
@@ -52,6 +56,8 @@ export interface RunProcessResult {
   stderr: string;
   timedOut: boolean;
   canceled: boolean;
+  /** Child stdin when `keepStdinOpen` was set (writes answer protocol lines). */
+  stdin?: NodeJS.WritableStream;
 }
 
 /**
@@ -115,8 +121,13 @@ export function runProcess(
         // child may exit before reading stdin (EPIPE) — not a spawn failure
       });
       child.stdin?.end(opts.input);
-    } else {
+    } else if (!opts.keepStdinOpen) {
       child.stdin?.end();
+    } else {
+      // Parent answers protocol lines later (approval channel); EPIPE on a
+      // dead child must never surface as an unhandled error.
+      child.stdin?.on('error', () => undefined);
+      if (child.stdin) opts.onStdin?.(child.stdin);
     }
 
     child.on('error', (error) => {
@@ -136,6 +147,7 @@ export function runProcess(
         stderr,
         timedOut,
         canceled,
+        ...(opts.keepStdinOpen && child.stdin ? { stdin: child.stdin } : {}),
       });
     });
   });

@@ -115,7 +115,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     // Client must be started before onRequest can install (SDK contract);
     // harness.start() re-starts idempotently and performs the handshake.
     harness.client.start();
-    const isTTY = process.stdin.isTTY === true;
+    // The interactive shell opts into the stdio approval channel
+    // (IDEASEEK_AGENT_APPROVAL=stdio): promptFn answers over stdin, so
+    // treat that pipe as an interactive surface. Plain script pipes
+    // without the opt-in still deny (resolveApproval stays pure).
+    const isTTY = process.stdin.isTTY === true || process.env.IDEASEEK_AGENT_APPROVAL === 'stdio';
     harness.client.onRequest(async (method, params) => {
       if (method !== 'approval/request') {
         throw new Error(`unexpected runtime request ${method}`);

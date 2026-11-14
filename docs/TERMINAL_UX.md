@@ -143,6 +143,8 @@ ideaseek ›
 
 批准动作写入 Decision/Event，并绑定协议、输入 snapshot 和 run。
 
+agent 回合的**工具审批**走 stdio 通道（子进程 env `IDEASEEK_AGENT_APPROVAL=stdio`）：子进程在 stdout 发一行 `__ideaseek_approval__{json}` 请求并阻塞在 stdin 应答上；TUI 把输入行整体切换为琥珀色提示 `⏸ allow <tool>? y allow once · n reject — <reason>`（此时不可输入其他内容），y/n 应答回传，活动区同步留下 `⏸ approval required` 与 `→ approval allowed once|rejected` 两行审计痕迹。行式路径用裸 `y`/`n` 行应答——应答**绕过命令队列**（回合正阻塞在应答上，入队即死锁）。未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve）；TTY 下仍走原生 y/N 问询。
+
 ## 三种显示模式
 
 - **Interactive**：默认，备用屏幕/TUI、banner、固定输入区、事件流和审批；

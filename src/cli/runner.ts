@@ -11,6 +11,8 @@ export interface CliRunResult {
   code: number;
   stdout: string;
   stderr: string;
+  /** Present when `keepStdinOpen` was set — write protocol answers here. */
+  stdin?: NodeJS.WritableStream;
 }
 
 // Resolved once at module load (original cwd): the REPL may chdir when the
@@ -33,6 +35,12 @@ export async function runCli(
     onStderr?: (chunk: string) => void;
     /** Abort kills the whole tree; the promise still resolves with what ran. */
     signal?: AbortSignal;
+    /** Extra child env (test hooks / interactive channel opt-ins). */
+    extraEnv?: Record<string, string>;
+    /** Leave stdin open for answer protocols; the stream is on the result. */
+    keepStdinOpen?: boolean;
+    /** Handshake for the kept-open stdin right after spawn. */
+    onStdin?: (stdin: NodeJS.WritableStream) => void;
   } = {},
 ): Promise<CliRunResult> {
   // Shared subprocess adapter: timeout kills the WHOLE tree (a relay child
@@ -42,16 +50,23 @@ export async function runCli(
   // rejects only when the process could not be started).
   const result = await runProcess(process.execPath, [cliEntryPath(), ...args], {
     cwd: opts.cwd ?? process.cwd(),
-    env: { ...process.env, IDEASEEK_CLI: '1' },
+    env: { ...process.env, IDEASEEK_CLI: '1', ...opts.extraEnv },
     timeoutMs,
     ...(opts.onStdout ? { onStdout: opts.onStdout } : {}),
     ...(opts.onStderr ? { onStderr: opts.onStderr } : {}),
     ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.keepStdinOpen ? { keepStdinOpen: true } : {}),
+    ...(opts.onStdin ? { onStdin: opts.onStdin } : {}),
   });
   if (result.timedOut) {
     throw new Error(`ideaseek ${args.join(' ')} timed out`);
   }
-  return { code: result.code ?? -1, stdout: result.stdout, stderr: result.stderr };
+  return {
+    code: result.code ?? -1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    ...(result.stdin ? { stdin: result.stdin } : {}),
+  };
 }
 
 /** Runs a CLI command and parses its single JSON-line payload. */

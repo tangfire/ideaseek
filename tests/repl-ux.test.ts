@@ -255,6 +255,20 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     expect(done.stdout).toContain('bye');
   }, 60_000);
 
+  it('classic path answers agent tool approvals with a bare y/n line', async () => {
+    const dir = await makeProjectDir();
+    const repl = startTtyRepl(dir, ['--mode', 'agent'], { IDEASEEK_FAKE_AGENT_TURN: '1' });
+    await repl.waitFor(/ideaseek ›/);
+    repl.write('check the workspace\r');
+    await repl.waitFor(/approval required: pwsh/);
+    // The answer bypasses the command queue — the turn is blocked on it.
+    repl.write('y\r');
+    await repl.waitFor(/approval allowed once: pwsh/);
+    await repl.waitFor(/Fake turn complete/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+  }, 60_000);
+
   it('Ctrl-C interrupts the command that is currently running', async () => {
     const dir = await makeProjectDir();
     // Stretch the relay's abortable window (env test seam) so the

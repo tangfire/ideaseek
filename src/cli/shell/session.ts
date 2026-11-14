@@ -9,6 +9,12 @@ import { resolveSlash, helpText } from '../slash-menu.js';
 import { findProjectRoot } from '../../config/paths.js';
 import { readLastSession, writeSessionEnd, writeSessionStart } from '../../session/context.js';
 import { readSessionMode, renderSessionSummary } from '../../session/mode.js';
+import {
+  APPROVAL_ALLOW,
+  APPROVAL_REJECT,
+  parseApprovalRequest,
+  type ApprovalRequest,
+} from '../../dsh/approval-channel.js';
 
 /**
  * Shared interactive session (ADR-006/ADR-010): owns command dispatch, the
@@ -163,6 +169,66 @@ export class InteractiveSession {
   private agentSessionId: string | null = null;
   /** Abort handle for the in-flight relay/agent turn (Ctrl-C interrupts). */
   private relayAbort: AbortController | null = null;
+  /** Tool approval waiting for the operator (stdio channel, agent turns). */
+  private approvalWaiting: ApprovalRequest | null = null;
+  /** Kept-open stdin of the agent child — where answers are written. */
+  private agentStdin: NodeJS.WritableStream | null = null;
+
+  /** Pending tool-approval request (renderers draw an input prompt for it). */
+  get pendingApproval(): ApprovalRequest | null {
+    return this.approvalWaiting;
+  }
+
+  /** Answers the pending tool approval; false when none is waiting. */
+  respondApproval(allow: boolean): boolean {
+    const request = this.approvalWaiting;
+    if (!request) return false;
+    this.approvalWaiting = null;
+    try {
+      this.agentStdin?.write(allow ? `${APPROVAL_ALLOW}\n` : `${APPROVAL_REJECT}\n`);
+    } catch {
+      // child already gone — its exit error surfaces the turn outcome
+    }
+    this.println(
+      paint(
+        `→ approval ${allow ? 'allowed once' : 'rejected'}: ${request.toolName}`,
+        allow ? 'success' : 'warn',
+        { plain: this.plain },
+      ),
+    );
+    return true;
+  }
+
+  /**
+   * Classic line-mode approval answers: while a turn waits, y/n (or any
+   * other line) must NOT queue behind it — the turn is blocked on the
+   * answer, so queueing would deadlock. Returns true when consumed.
+   */
+  consumeApprovalLine(raw: string): boolean {
+    if (!this.approvalWaiting) return false;
+    const answer = raw.trim().toLowerCase();
+    if (answer === 'y' || answer === 'yes') return this.respondApproval(true);
+    if (answer === 'n' || answer === 'no') return this.respondApproval(false);
+    this.println(
+      paint(
+        `approval pending: ${this.approvalWaiting.toolName} — answer y (allow) or n (reject)`,
+        'warn',
+        { plain: this.plain },
+      ),
+    );
+    return true;
+  }
+
+  private beginApproval(request: ApprovalRequest): void {
+    this.approvalWaiting = request;
+    this.println(
+      paint(
+        `⏸ approval required: ${request.toolName}${request.reason ? ` — ${request.reason}` : ''}`,
+        'warn',
+        { plain: this.plain },
+      ),
+    );
+  }
 
   /**
    * Stops the command currently running through this session, if any —
@@ -290,9 +356,17 @@ export class InteractiveSession {
     if (provider) args.push('--provider', provider);
     const model = process.env.IDEASEEK_AGENT_MODEL;
     if (model) args.push('--model', model);
-    // Stream: DSH progress logs (` · dsh runtime started`, approvals)
-    // land live while the turn runs instead of after it finishes.
-    const out = createLineStream((line) => this.println(line));
+    // Stream: DSH progress logs land live; magic approval-request lines
+    // open the operator prompt instead of printing (docs/TERMINAL_UX
+    // 审批界面 — y/n answers flow back over the kept-open stdin).
+    const out = createLineStream((line) => {
+      const request = parseApprovalRequest(line);
+      if (request) {
+        this.beginApproval(request);
+        return;
+      }
+      this.println(line);
+    });
     const err = createLineStream((line) => {
       if (!line.trim()) return;
       const tone = /^error:/.test(line.trim()) ? ('error' as const) : ('dim' as const);
@@ -304,6 +378,11 @@ export class InteractiveSession {
       const result = await runCli(args, {
         timeoutMs: 300_000,
         signal: abort.signal,
+        extraEnv: { IDEASEEK_AGENT_APPROVAL: 'stdio' },
+        keepStdinOpen: true,
+        onStdin: (stdin) => {
+          this.agentStdin = stdin;
+        },
         onStdout: (chunk) => out.push(chunk),
         onStderr: (chunk) => err.push(chunk),
       });
@@ -317,6 +396,13 @@ export class InteractiveSession {
     } finally {
       out.flush();
       err.flush();
+      this.approvalWaiting = null;
+      try {
+        this.agentStdin?.end();
+      } catch {
+        // dead pipe — nothing to close
+      }
+      this.agentStdin = null;
       if (this.relayAbort === abort) this.relayAbort = null;
     }
   }

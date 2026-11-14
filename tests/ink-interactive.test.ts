@@ -53,8 +53,12 @@ interface InkRepl {
   done: Promise<number>;
 }
 
-function startInk(cwd: string): InkRepl {
-  const child = spawn(process.execPath, [CLI_BIN, 'interactive'], {
+function startInk(
+  cwd: string,
+  extraArgs: string[] = [],
+  extraEnv: Record<string, string> = {},
+): InkRepl {
+  const child = spawn(process.execPath, [CLI_BIN, 'interactive', ...extraArgs], {
     cwd,
     env: {
       ...process.env,
@@ -62,6 +66,7 @@ function startInk(cwd: string): InkRepl {
       IDEASEEK_FORCE_INK: '1',
       IDEASEEK_TTY_ROWS: '40',
       IDEASEEK_TTY_COLS: '100',
+      ...extraEnv,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
@@ -276,6 +281,49 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await cleanup(dir, repl.child);
     }
   }, 180_000);
+
+  it('agent tool approvals surface in the TUI and answer with y/n', async () => {
+    const dir = await makeProjectDir('ink-approve');
+    // Canned turn (no model, no spend): asks to run pwsh once per turn and
+    // completes with the operator's answer over the stdio channel.
+    const repl = startInk(dir, ['--mode', 'agent'], { IDEASEEK_FAKE_AGENT_TURN: '1' });
+    try {
+      await repl.waitFor(/ideaseek ›/, 60_000);
+      await repl.waitFor(/ink-approve · AGENT/, 60_000);
+
+      // Submit → approval request: transcript audit line + input line
+      // flips to the `y allow once · n reject` prompt.
+      await repl.write('check the workspace');
+      await repl.write('\r');
+      await repl.waitFor(/approval required: pwsh/);
+      await repl.waitFor(/allow pwsh\? y allow once/);
+
+      // y → allowed once; the canned turn completes.
+      await repl.write('y');
+      await repl.waitFor(/approval allowed once: pwsh/);
+      await repl.waitFor(/Fake turn complete/);
+
+      // Second turn → n → rejected with the model-visible standing-by reply.
+      // Wait on the TURN-SPECIFIC reason: both turns ask for pwsh, and a
+      // generic pattern would match the first turn's still-buffered line
+      // instantly — the 'n' would then type into the composer instead of
+      // answering the live approval.
+      await repl.write('again please');
+      await repl.write('\r');
+      await repl.waitFor(/approval required: pwsh — workspace probe for: again please/);
+      await repl.write('n');
+      await repl.waitFor(/approval rejected: pwsh/);
+      await repl.waitFor(/standing by without the tool/);
+
+      // The composer is free again after the approval resolves.
+      await repl.write('/');
+      await repl.write('quit');
+      await repl.write('\r');
+      expect(await repl.done).toBe(0);
+    } finally {
+      await cleanup(dir, repl.child);
+    }
+  }, 120_000);
 
   it('Ctrl-D exits without cancelling anything and restores the screen', async () => {
     const dir = await makeProjectDir('ink-interactive-eof');

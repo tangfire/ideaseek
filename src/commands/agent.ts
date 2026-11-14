@@ -1,14 +1,88 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
+import { APPROVAL_ALLOW, encodeApprovalRequest } from '../dsh/approval-channel.js';
 import { action, jsonLine } from './shared.js';
+
+/** Reads one answer line from stdin (stdio approval channel). */
+function readStdinAnswer(): Promise<string | null> {
+  return import('node:readline').then(
+    (readline) =>
+      new Promise<string | null>((resolve) => {
+        const rl = readline.createInterface({ input: process.stdin });
+        // Settled guard: rl.close() emits 'close' SYNCHRONOUSLY, so a bare
+        // resolve-after-close ordering lets the EOF handler win the race
+        // and every 'allow' answer got judged as a rejection.
+        let settled = false;
+        rl.once('line', (line) => {
+          if (settled) return;
+          settled = true;
+          resolve(line.trim().toLowerCase());
+          rl.close();
+        });
+        // TUI quit / closed pipe: deny rather than hang the turn.
+        rl.once('close', () => {
+          if (settled) return;
+          settled = true;
+          resolve(null);
+        });
+      }),
+  );
+}
+
+/** Canned agent turn for tests (IDEASEEK_FAKE_AGENT_TURN=1). */
+async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> {
+  process.stderr.write('  · dsh runtime started\n');
+  process.stderr.write('  · new session session-fake-e2e\n');
+  let allowed = false;
+  let approval: { toolName: string; reason: string } | null = null;
+  if (process.env.IDEASEEK_AGENT_APPROVAL === 'stdio') {
+    approval = { toolName: 'pwsh', reason: `workspace probe for: ${prompt.slice(0, 60)}` };
+    process.stdout.write(encodeApprovalRequest(approval));
+    allowed = (await readStdinAnswer()) === APPROVAL_ALLOW;
+    process.stderr.write(
+      `  · approval ${allowed ? 'allowed-once' : 'rejected'}: ${approval.toolName}\n`,
+    );
+  }
+  const response = allowed
+    ? 'Fake turn complete — the tool ran and the answer is grounded.'
+    : 'Understood — the approval was rejected; standing by without the tool.';
+  if (json) {
+    process.stdout.write(
+      jsonLine({
+        sessionId: 'session-fake-e2e',
+        resumed: false,
+        finishReason: 'completed',
+        eventCount: 3,
+        approvals: approval
+          ? [{ outcome: allowed ? 'allowed-once' : 'rejected', toolName: approval.toolName }]
+          : [],
+        response,
+        eventSeq: null,
+      }),
+    );
+    return 0;
+  }
+  process.stdout.write(
+    'agent turn → session session-fake-e2e (new, finish=completed, 3 event(s))\n',
+  );
+  if (approval) {
+    process.stdout.write(
+      `  approval ${allowed ? 'allowed-once' : 'rejected'}: ${approval.toolName}\n`,
+    );
+  }
+  process.stdout.write(`  ${response}\n`);
+  process.stdout.write('next: ideaseek agent "<prompt>" --resume session-fake-e2e\n');
+  return 0;
+}
 
 /**
  * `ideaseek agent` — Agent mode against a REAL DSH coding session
  * (docs/ARCHITECTURE research-cli; no fixed greetings, no ask-supervisor
  * stand-in): one prompt → pinned DSH runtime → named/resumable session
- * with the project as cwd; tool approvals are operator-driven on a TTY
- * and default to rejected everywhere else. Each turn records an audited
- * Decision/Event (truncated, redacted) and the session id for --resume.
+ * with the project as cwd; tool approvals are operator-driven on a TTY,
+ * via the parent shell's stdio channel, and default to rejected
+ * everywhere else. Each turn records an audited Decision/Event
+ * (truncated, redacted) and the session id for --resume.
  */
 export function registerAgentCommand(program: Command): void {
   program
@@ -88,6 +162,14 @@ export function registerAgentCommand(program: Command): void {
             );
           }
 
+          // Test hook: a canned turn that exercises the approval channel
+          // without DSH or a model (never spends credentials; human and
+          // --json shapes mirror the real summary). TUI e2e drives y/n
+          // through it via IDEASEEK_AGENT_APPROVAL=stdio.
+          if (process.env.IDEASEEK_FAKE_AGENT_TURN === '1') {
+            return await runFakeAgentTurn(prompt, opts.json === true);
+          }
+
           const { runAgentTurn, redactAgentText } = await import('../dsh/session.js');
           const result = await runAgentTurn({
             cwd: root,
@@ -98,9 +180,14 @@ export function registerAgentCommand(program: Command): void {
             ...(opts.model ? { model: opts.model } : {}),
             ...(Number.isFinite(opts.timeout) ? { requestTimeoutMs: opts.timeout as number } : {}),
             onLog: (message) => process.stderr.write(`  · ${message}\n`),
-            // Interactive approval on a real TTY; resolveApproval denies
-            // everywhere else (never auto-approve, never fake-allow).
+            // Interactive approval on a real TTY, or the parent shell's
+            // stdio channel (magic request line + stdin answer); every
+            // other pipe context denies (never auto-approve).
             promptFn: async ({ toolName, reason }) => {
+              if (process.env.IDEASEEK_AGENT_APPROVAL === 'stdio') {
+                process.stdout.write(encodeApprovalRequest({ toolName, reason: reason ?? '' }));
+                return (await readStdinAnswer()) === APPROVAL_ALLOW;
+              }
               if (!process.stdin.isTTY) return false;
               process.stdout.write(
                 `agent requests tool approval: ${toolName}${reason ? ` — ${reason}` : ''}\n`,

@@ -341,6 +341,10 @@ export async function startInteractive(opts: InteractiveOptions = {}): Promise<n
     };
 
     rl.on('line', (raw) => {
+      // Approval answers bypass the queue: the in-flight agent turn is
+      // blocked on them, so queueing would deadlock (docs/TERMINAL_UX
+      // 审批界面).
+      if (session.consumeApprovalLine(raw)) return;
       queue = queue.then(() => processLine(raw));
     });
 
