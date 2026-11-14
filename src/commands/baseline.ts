@@ -10,6 +10,7 @@ import {
 } from '../comparison/repair.js';
 import { inferDependencies } from '../comparison/dep-inference.js';
 import {
+  checkMetricFeasibility,
   computeAlgorithmFingerprint,
   defaultEntry,
   resolveSource,
@@ -27,7 +28,7 @@ import type {
   ReproductionSummary,
 } from '../comparison/types.js';
 import { exportMethodYaml } from './comparison.js';
-import { assertAutonomy, parseAutonomyMode } from '../workflow/autonomy.js';
+import { assertEffectiveAutonomy } from '../workflow/autonomy.js';
 import { buildHarness, resolveHarnessKind } from './shared.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import { action, jsonLine } from './shared.js';
@@ -119,7 +120,7 @@ export function registerBaselineCommand(program: Command): void {
           // loop silently falls back to "no fix", which reads as a dead end.
           const runtime = await openRuntime(root, buildHarness(resolveHarnessKind(opts.harness)));
           try {
-            assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'write-code');
+            await assertEffectiveAutonomy(root, runtime.config.policy.autonomyMode, 'write-code');
             const doc = await runtime.db.getComparison(opts.method);
             if (!doc) {
               throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${opts.method} not found`);
@@ -404,7 +405,7 @@ export function registerBaselineCommand(program: Command): void {
           }
           const runtime = await openRuntime(root);
           try {
-            assertAutonomy(parseAutonomyMode(runtime.config.policy.autonomyMode), 'write-code');
+            await assertEffectiveAutonomy(root, runtime.config.policy.autonomyMode, 'write-code');
             const prepared = await prepareReproduction(root, runtime, opts);
             return await executeReproduction(root, runtime, opts, prepared);
           } finally {
@@ -561,19 +562,50 @@ async function prepareReproduction(
     )
     .map((loaded) => loaded.source);
 
-  // Latest protocol proposal linkage (recorded when present).
+  // Protocol linkage plus a feasibility check: the locked protocol names the
+  // metrics a conclusion must be measured in, and an implementation that
+  // produces none of them can still emit a confident-looking number that means
+  // nothing. Comparing name sets keeps this domain-neutral — the platform never
+  // decides what a metric should be.
   let protocolId: string | null = null;
+  let protocolMetrics: string[] = [];
   try {
     const artifacts = await runtime.db.listArtifactsByKind('protocol-proposal');
     const chosen = artifacts[artifacts.length - 1];
     if (chosen) {
       const proposal = JSON.parse(await runtime.store.readFinalText(chosen.contentHash)) as {
         protocolId?: unknown;
+        primaryMetrics?: { name?: unknown }[];
       };
       if (typeof proposal.protocolId === 'string') protocolId = proposal.protocolId;
+      protocolMetrics = (proposal.primaryMetrics ?? [])
+        .map((metric) => (typeof metric?.name === 'string' ? metric.name : null))
+        .filter((name): name is string => !!name?.trim());
     }
   } catch {
     // no protocol yet — linkage stays null
+  }
+
+  const implementationMetrics = (blueprint.algorithm?.metrics ?? [])
+    .map((metric) => metric.name)
+    .filter((name) => typeof name === 'string' && name.trim());
+  const feasibility = checkMetricFeasibility(protocolMetrics, implementationMetrics);
+  if (feasibility.status === 'blocked') {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      `the locked protocol measures [${protocolMetrics.join(', ')}] but this implementation reports ` +
+        `[${implementationMetrics.join(', ')}] — none of the protocol's metrics can come from it. ` +
+        'Reproduce would produce numbers that cannot answer the protocol, so it is blocked: ' +
+        'widen the implementation, or revise the protocol metrics with a new confirmed version.',
+      { protocolMetrics, implementationMetrics },
+    );
+  }
+  if (feasibility.status === 'partial') {
+    process.stderr.write(
+      `feasibility: implementation covers ${feasibility.covered.length}/${protocolMetrics.length} ` +
+        `protocol metrics — missing [${feasibility.uncovered.join(', ')}]; ` +
+        'results will be partial against the protocol\n',
+    );
   }
 
   return {

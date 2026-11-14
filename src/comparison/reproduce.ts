@@ -399,6 +399,39 @@ export async function generateWorktree(
   return { written, worktreeDir };
 }
 
+/**
+ * Feasibility between a locked protocol and an implementation's reported
+ * metrics, by name only. The platform never decides what a metric should be —
+ * it only checks that what the protocol measures can come from what the
+ * implementation produces. Zero overlap is blocking: the run would emit a
+ * reproducible number that cannot answer the question.
+ */
+export function checkMetricFeasibility(
+  protocolMetrics: string[],
+  implementationMetrics: string[],
+): {
+  status: 'no-protocol' | 'no-implementation-metrics' | 'blocked' | 'partial' | 'covered';
+  covered: string[];
+  uncovered: string[];
+} {
+  const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (protocolMetrics.length === 0) {
+    return { status: 'no-protocol', covered: [], uncovered: [] };
+  }
+  if (implementationMetrics.length === 0) {
+    return { status: 'no-implementation-metrics', covered: [], uncovered: [...protocolMetrics] };
+  }
+  const implemented = new Set(implementationMetrics.map(normalize));
+  const covered = protocolMetrics.filter((name) => implemented.has(normalize(name)));
+  const uncovered = protocolMetrics.filter((name) => !implemented.has(normalize(name)));
+  if (covered.length === 0) return { status: 'blocked', covered, uncovered };
+  return {
+    status: uncovered.length > 0 ? 'partial' : 'covered',
+    covered,
+    uncovered,
+  };
+}
+
 export interface CheckOptions {
   projectRoot: string;
   methodId: string;

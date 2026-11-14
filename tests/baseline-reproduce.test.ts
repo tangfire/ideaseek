@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  checkMetricFeasibility,
   computeAlgorithmFingerprint,
   defaultEntry,
   validateReproductionBlueprint,
@@ -97,6 +98,40 @@ async function exists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+describe('checkMetricFeasibility (protocol vs implementation)', () => {
+  it('blocks when none of the protocol metrics can come from the implementation', () => {
+    const result = checkMetricFeasibility(
+      ['Unseen-domain top-1 accuracy (target domain, LODO)', 'AVG'],
+      ['wallclock_seconds'],
+    );
+    expect(result.status).toBe('blocked');
+    expect(result.covered).toEqual([]);
+    expect(result.uncovered).toHaveLength(2);
+  });
+
+  it('matches across case and punctuation without knowing any field vocabulary', () => {
+    expect(
+      checkMetricFeasibility(['Unseen-Domain Top-1 Accuracy'], ['unseen_domain_top1_accuracy'])
+        .status,
+    ).toBe('covered');
+  });
+
+  it('is partial, not blocked, when some protocol metrics are reachable', () => {
+    const result = checkMetricFeasibility(
+      ['unseen_domain_accuracy', 'avg_accuracy'],
+      ['unseen_domain_accuracy', 'wallclock'],
+    );
+    expect(result.status).toBe('partial');
+    expect(result.covered).toEqual(['unseen_domain_accuracy']);
+    expect(result.uncovered).toEqual(['avg_accuracy']);
+  });
+
+  it('does not invent a requirement when either side is empty', () => {
+    expect(checkMetricFeasibility([], ['accuracy']).status).toBe('no-protocol');
+    expect(checkMetricFeasibility(['accuracy'], []).status).toBe('no-implementation-metrics');
+  });
+});
 
 describe('validateReproductionBlueprint (unit)', () => {
   const base = blueprint('fedavg', GOOD_SOURCE);
