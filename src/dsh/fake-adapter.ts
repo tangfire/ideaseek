@@ -1052,6 +1052,13 @@ export class FakeHarnessAdapter implements HarnessAdapter {
 
     if (this.opts.latencyMs) {
       await new Promise<void>((resolve, reject) => {
+        // An abort that fired BEFORE the latency window started (e.g. slow
+        // fixture parsing) must still reject — listeners on an already-
+        // aborted signal never fire.
+        if (signal?.aborted) {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          return;
+        }
         const timer = setTimeout(resolve, this.opts.latencyMs);
         signal?.addEventListener(
           'abort',
