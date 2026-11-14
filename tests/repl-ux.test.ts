@@ -260,9 +260,12 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     const repl = startTtyRepl(dir, ['--mode', 'agent'], { IDEASEEK_FAKE_AGENT_TURN: '1' });
     await repl.waitFor(/ideaseek ›/);
     repl.write('check the workspace\r');
+    // Step-level tool request streams before the approval prompt.
+    await repl.waitFor(/⚙ pwsh \{"command":"ls"\}/);
     await repl.waitFor(/approval required: pwsh/);
     // The answer bypasses the command queue — the turn is blocked on it.
     repl.write('y\r');
+    await repl.waitFor(/⚙ ✓ pwsh/);
     await repl.waitFor(/approval allowed once: pwsh/);
     await repl.waitFor(/Fake turn complete/);
     const done = await repl.quit();

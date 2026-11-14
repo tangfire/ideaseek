@@ -35,6 +35,8 @@ async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> 
   process.stderr.write('  · new session session-fake-e2e\n');
   let allowed = false;
   let approval: { toolName: string; reason: string } | null = null;
+  // Mirror the real step stream: tool/call → approval → tool/result.
+  process.stderr.write('  ⚙ pwsh {"command":"ls"}\n');
   if (process.env.IDEASEEK_AGENT_APPROVAL === 'stdio') {
     approval = { toolName: 'pwsh', reason: `workspace probe for: ${prompt.slice(0, 60)}` };
     process.stdout.write(encodeApprovalRequest(approval));
@@ -43,6 +45,7 @@ async function runFakeAgentTurn(prompt: string, json: boolean): Promise<number> 
       `  · approval ${allowed ? 'allowed-once' : 'rejected'}: ${approval.toolName}\n`,
     );
   }
+  process.stderr.write(allowed ? '  ⚙ ✓ pwsh\n' : '  ⚙ ✗ pwsh — approval denied\n');
   const response = allowed
     ? 'Fake turn complete — the tool ran and the answer is grounded.'
     : 'Understood — the approval was rejected; standing by without the tool.';
@@ -180,6 +183,9 @@ export function registerAgentCommand(program: Command): void {
             ...(opts.model ? { model: opts.model } : {}),
             ...(Number.isFinite(opts.timeout) ? { requestTimeoutMs: opts.timeout as number } : {}),
             onLog: (message) => process.stderr.write(`  · ${message}\n`),
+            // Step-level transcript lines (tool/call, tool/result, usage) —
+            // stderr rides the TUI's dim streamer, not the red error path.
+            onStep: (line) => process.stderr.write(`${line}\n`),
             // Interactive approval on a real TTY, or the parent shell's
             // stdio channel (magic request line + stdin answer); every
             // other pipe context denies (never auto-approve).

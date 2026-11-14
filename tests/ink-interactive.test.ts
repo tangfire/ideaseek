@@ -291,15 +291,18 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.waitFor(/ideaseek ›/, 60_000);
       await repl.waitFor(/ink-approve · AGENT/, 60_000);
 
-      // Submit → approval request: transcript audit line + input line
-      // flips to the `y allow once · n reject` prompt.
+      // Submit → step-level tool request streams first, then the approval
+      // request: transcript audit line + input line flips to the
+      // `y allow once · n reject` prompt.
       await repl.write('check the workspace');
       await repl.write('\r');
+      await repl.waitFor(/⚙ pwsh \{"command":"ls"\}/);
       await repl.waitFor(/approval required: pwsh/);
       await repl.waitFor(/allow pwsh\? y allow once/);
 
-      // y → allowed once; the canned turn completes.
+      // y → allowed once; the tool result streams, the canned turn completes.
       await repl.write('y');
+      await repl.waitFor(/⚙ ✓ pwsh/);
       await repl.waitFor(/approval allowed once: pwsh/);
       await repl.waitFor(/Fake turn complete/);
 
@@ -312,6 +315,7 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       await repl.write('\r');
       await repl.waitFor(/approval required: pwsh — workspace probe for: again please/);
       await repl.write('n');
+      await repl.waitFor(/⚙ ✗ pwsh/);
       await repl.waitFor(/approval rejected: pwsh/);
       await repl.waitFor(/standing by without the tool/);
 

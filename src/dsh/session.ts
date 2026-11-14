@@ -72,6 +72,12 @@ export interface AgentTurnOptions {
   requestTimeoutMs?: number;
   promptFn?: ApprovalPrompt;
   onLog?: (message: string) => void;
+  /**
+   * Live step-level lines for the transcript: tool/call, tool/result and
+   * the turn's token usage (docs/TERMINAL_UX 实时事件 — display-only;
+   * persistence into RunEvent stays the registered gap).
+   */
+  onStep?: (line: string) => void;
 }
 
 export interface AgentTurnResult {
@@ -89,6 +95,41 @@ export function redactAgentText(text: string): string {
     .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
     .replace(/sk-[A-Za-z0-9_-]{6,}/g, '[redacted]')
     .slice(0, 2000);
+}
+
+/**
+ * Formats one live DSH session event for the activity pane, or null for
+ * types the transcript does not show. `callNames` pairs tool/result lines
+ * back to the tool name announced by their tool/call. Exported for tests.
+ */
+export function formatStepLine(
+  type: string,
+  data: unknown,
+  callNames: Map<string, string>,
+): string | null {
+  if (type !== 'tool/call' && type !== 'tool/result') return null;
+  const d = (data ?? {}) as {
+    callId?: unknown;
+    name?: unknown;
+    arguments?: unknown;
+    message?: { callId?: unknown; isError?: unknown };
+    error?: { name?: unknown };
+  };
+  if (type === 'tool/call') {
+    const callId = typeof d.callId === 'string' ? d.callId : '';
+    const name = typeof d.name === 'string' && d.name ? d.name : 'tool';
+    if (callId) callNames.set(callId, name);
+    const raw = typeof d.arguments === 'string' ? d.arguments : '';
+    const oneLine = raw.replace(/\s+/g, ' ').trim();
+    const clipped = oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
+    return `⚙ ${name}${clipped ? ` ${clipped}` : ''}`;
+  }
+  const callId = typeof d.message?.callId === 'string' ? d.message.callId : '';
+  const name = (callId && callNames.get(callId)) || 'tool';
+  if (callId) callNames.delete(callId);
+  if (d.message?.isError !== true) return `⚙ ✓ ${name}`;
+  const errName = typeof d.error?.name === 'string' && d.error.name ? d.error.name : 'failed';
+  return `⚙ ✗ ${name} — ${errName}`;
 }
 
 /**
@@ -156,13 +197,38 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
       log(`new session ${session.id}`);
     }
 
-    const result = await session.run(opts.prompt);
+    // Live step-level lines: tool/call + tool/result stream into the
+    // transcript as the model works (pairing names via callId), instead
+    // of the whole turn being a black box until the final reply.
+    const callNames = new Map<string, string>();
+    const result = await session.run(opts.prompt, {
+      onNotification: (notification) => {
+        if (notification.method !== 'session.event') return;
+        const event = (notification.params as { event?: { type?: unknown; data?: unknown } }).event;
+        if (!event || typeof event.type !== 'string') return;
+        const line = formatStepLine(event.type, event.data, callNames);
+        if (line) opts.onStep?.(line);
+      },
+    });
     if (result.finishReason === 'error') {
       throw new IdeaseekError(
         'MODEL_UNAVAILABLE',
         `agent turn failed: ${redactAgentText(result.finalResponse || 'runtime error')} — ` +
           'check provider/key (ideaseek models setup --test) and retry',
       );
+    }
+    // Turn total across steps — cost visibility for a research platform.
+    let inputTokens = 0;
+    let outputTokens = 0;
+    for (const event of result.events) {
+      if (event.type !== 'assistant/message') continue;
+      const usage = (event.data as { usage?: { inputTokens?: number; outputTokens?: number } })
+        .usage;
+      inputTokens += usage?.inputTokens ?? 0;
+      outputTokens += usage?.outputTokens ?? 0;
+    }
+    if (inputTokens > 0 || outputTokens > 0) {
+      opts.onStep?.(`usage: ${inputTokens} in / ${outputTokens} out tokens`);
     }
     return {
       sessionId: result.sessionId,
