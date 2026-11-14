@@ -174,6 +174,7 @@ export async function collectMonitor(
         usageEvents,
         runtime.config.resources.modelRates,
         runtime.config.resources.maxModelCost,
+        runtime.config.resources.maxModelTokens,
       );
     }
 

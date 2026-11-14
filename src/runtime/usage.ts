@@ -39,6 +39,12 @@ export interface UsageSummary {
   ceilingUsd: number;
   /** Remaining dollars under the ceiling (null without rates). */
   remainingUsd: number | null;
+  /**
+   * Token ceiling from resources.max_model_tokens. This is what still bounds a
+   * runaway loop when rates are unknown and the dollar ceiling cannot be
+   * measured; null means no token gate is configured.
+   */
+  tokenCeiling: number | null;
   /** Fraction of the ceiling at which new model calls pause (0–1). */
   pauseRatio: number;
   byModel: Record<
@@ -103,6 +109,7 @@ export function summarizeUsage(
   events: UsageEventLike[],
   rates: ModelRates | null,
   ceilingUsd: number,
+  tokenCeiling: number | null = null,
 ): UsageSummary {
   let calls = 0;
   let inputTokens = 0;
@@ -155,6 +162,7 @@ export function summarizeUsage(
         ? Math.max(0, Math.round((ceilingUsd - aggregatedCost) * 1e6) / 1e6)
         : null,
     pauseRatio: COST_PAUSE_RATIO,
+    tokenCeiling,
     byModel,
   };
 }
@@ -166,6 +174,16 @@ export function summarizeUsage(
  * nothing dollar-denominated to gate — callers surface that honestly.
  */
 export function assertCostWithinBudget(summary: UsageSummary): void {
+  // The token ceiling is the guard that works without prices: a runaway
+  // loop still stops when nobody has configured rates yet.
+  const tokens = summary.inputTokens + summary.outputTokens;
+  if (summary.tokenCeiling !== null && tokens >= summary.tokenCeiling) {
+    throw new IdeaseekError(
+      'QUOTA_EXHAUSTED',
+      `${tokens} tokens reached the resources.max_model_tokens ceiling ${summary.tokenCeiling} — new model calls paused (dollar budget${summary.rateConfigured ? '' : ' is not measurable without resources.model_rates'}); raise it in research.yaml then ideaseek continue`,
+      { tokens, tokenCeiling: summary.tokenCeiling },
+    );
+  }
   if (summary.costUsd === null) return; // no rates → tokens-only mode
   const pauseAt = summary.ceilingUsd * summary.pauseRatio;
   if (summary.costUsd >= pauseAt) {
@@ -179,14 +197,22 @@ export function assertCostWithinBudget(summary: UsageSummary): void {
 
 /** One human line for status/monitor. */
 export function formatUsageLine(summary: UsageSummary): string {
+  const spent = summary.inputTokens + summary.outputTokens;
   const tokens = `${summary.inputTokens} in / ${summary.outputTokens} out tokens · ${summary.calls} call(s)`;
+  const tokenGate =
+    summary.tokenCeiling === null
+      ? 'no token gate (resources.max_model_tokens unset)'
+      : `token ceiling ${summary.tokenCeiling} (${summary.tokenCeiling > 0 ? Math.round((spent / summary.tokenCeiling) * 100) : 100}%)`;
   if (!summary.rateConfigured) {
-    return `usage: ${tokens} · rates not configured (resources.model_rates) — $${summary.ceilingUsd} ceiling NOT enforced`;
+    return (
+      `usage: ${tokens} · rates not configured (resources.model_rates) — ` +
+      `$${summary.ceilingUsd} ceiling NOT enforced · guard: ${tokenGate}`
+    );
   }
   const used = summary.costUsd ?? 0;
   const pct = summary.ceilingUsd > 0 ? Math.round((used / summary.ceilingUsd) * 100) : 0;
   return (
     `usage: ${tokens} · $${used.toFixed(4)} / $${summary.ceilingUsd} max_model_cost (${pct}%, ` +
-    `pause at ${Math.round(summary.pauseRatio * 100)}%)`
+    `pause at ${Math.round(summary.pauseRatio * 100)}%) · guard: ${tokenGate}`
   );
 }

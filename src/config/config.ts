@@ -42,6 +42,11 @@ export interface ResolvedConfig {
     maxModelCost: number;
     /** USD per million tokens (input/output). null = dollar ceiling not enforced. */
     modelRates: { inputPerMtok: number; outputPerMtok: number } | null;
+    /**
+     * Token ceiling. Without rates the dollar ceiling cannot be measured, so
+     * this is the guard that still stops a runaway loop. null = no token gate.
+     */
+    maxModelTokens: number | null;
     maxIterationRounds: number;
   };
   policy: {
@@ -101,6 +106,7 @@ export function defaultConfig(projectName: string): ResolvedConfig {
       maxGpuHours: 20,
       maxModelCost: 50,
       modelRates: null,
+      maxModelTokens: null,
       maxIterationRounds: 3,
     },
     policy: {
@@ -134,6 +140,7 @@ const SHAPE: Record<string, readonly string[]> = {
     'max_parallel_ideas',
     'max_gpu_hours',
     'max_model_cost',
+    'max_model_tokens',
     'model_rates',
     'max_iteration_rounds',
   ],
@@ -488,6 +495,18 @@ export async function loadConfig(
     resolved.resources.maxModelCost,
     coercePositiveNumber,
   );
+  const tokensRaw = sections.resources.max_model_tokens;
+  if (tokensRaw === undefined || tokensRaw === null) {
+    resolved.resources.maxModelTokens = null;
+    sources['resources.max_model_tokens'] = 'default';
+  } else if (typeof tokensRaw === 'number' && Number.isFinite(tokensRaw) && tokensRaw >= 0) {
+    resolved.resources.maxModelTokens = Math.floor(tokensRaw);
+    sources['resources.max_model_tokens'] = 'file';
+  } else {
+    resolved.resources.maxModelTokens = null;
+    sources['resources.max_model_tokens'] = 'file';
+    errors.push('resources.max_model_tokens must be a non-negative token count');
+  }
   const ratesRaw = sections.resources.model_rates;
   if (ratesRaw === undefined || ratesRaw === null) {
     resolved.resources.modelRates = null;

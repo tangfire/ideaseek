@@ -235,6 +235,7 @@ function wrapWithUsageRecording(inner: HarnessAdapter): HarnessAdapter {
       cached = usageRecorderDeps({
         maxModelCost: rt.config.resources.maxModelCost,
         rates: rt.config.resources.modelRates,
+        maxModelTokens: rt.config.resources.maxModelTokens,
         projectId: rt.project.id,
         db: rt.db,
       });

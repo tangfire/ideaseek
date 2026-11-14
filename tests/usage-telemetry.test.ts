@@ -7,6 +7,7 @@ import {
   computeCostUsd,
   summarizeUsage,
   assertCostWithinBudget,
+  formatUsageLine,
   parseUsageSummary,
   COST_PAUSE_RATIO,
 } from '../src/runtime/usage.js';
@@ -97,6 +98,47 @@ describe('usage aggregation (pure)', () => {
     expect(summary.remainingUsd).toBeNull();
     expect(summary.rateConfigured).toBe(false);
     expect(() => assertCostWithinBudget(summary)).not.toThrow();
+  });
+
+  it('the token ceiling still guards when rates are unknown', () => {
+    // Without this, a run with no prices configured had nothing stopping a
+    // runaway loop: max_model_cost is unmeasurable, so it silently passed.
+    const summary = summarizeUsage(
+      'run-3t',
+      [event('model_usage', JSON.stringify({ in: 600, out: 400, model: 'm' }))],
+      null,
+      50,
+      1000,
+    );
+    expect(summary.tokenCeiling).toBe(1000);
+    expect(summary.rateConfigured).toBe(false);
+    expect(() => assertCostWithinBudget(summary)).toThrow(/max_model_tokens/);
+    try {
+      assertCostWithinBudget(summary);
+      expect.unreachable('should throw');
+    } catch (error) {
+      expect((error as { code: string }).code).toBe('QUOTA_EXHAUSTED');
+      // The message says the dollar budget cannot be measured, so the user is
+      // not left thinking $50 was what stopped them.
+      expect((error as { message: string }).message).toContain('not measurable');
+    }
+    // One token below the ceiling is not a pause.
+    expect(() =>
+      assertCostWithinBudget({ ...summary, inputTokens: 599, outputTokens: 400 }),
+    ).not.toThrow();
+  });
+
+  it('the usage line names whichever guard is actually armed', () => {
+    const summary = summarizeUsage('run-3u', [], null, 50, null);
+    expect(formatUsageLine(summary)).toContain('no token gate');
+    const armed = summarizeUsage(
+      'run-3v',
+      [event('model_usage', JSON.stringify({ in: 500, out: 500, model: 'm' }))],
+      null,
+      50,
+      2000,
+    );
+    expect(formatUsageLine(armed)).toContain('token ceiling 2000 (50%)');
   });
 
   it('pauses at the configured ratio of max_model_cost', () => {

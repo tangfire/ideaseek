@@ -161,6 +161,8 @@ export class UsageRecordingHarness implements HarnessAdapter {
 export function usageRecorderDeps(opts: {
   maxModelCost: number;
   rates: ModelRates | null;
+  /** Token gate — the budget guard that still works without prices. */
+  maxModelTokens?: number | null;
   projectId: string;
   db: {
     getRun(runId: string): Promise<{ runId: string } | null>;
@@ -210,7 +212,13 @@ export function usageRecorderDeps(opts: {
     },
     async load(runId) {
       const events = await opts.db.listEvents(runId, { limit: 100_000 });
-      return summarizeUsage(runId, events, opts.rates, opts.maxModelCost);
+      return summarizeUsage(
+        runId,
+        events,
+        opts.rates,
+        opts.maxModelCost,
+        opts.maxModelTokens ?? null,
+      );
     },
     async resolveRunId(requestRunId) {
       try {

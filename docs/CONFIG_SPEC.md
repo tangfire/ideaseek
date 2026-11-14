@@ -34,6 +34,7 @@ resources:
   max_parallel_ideas: 2
   max_gpu_hours: 20
   max_model_cost: 50
+  max_model_tokens: null
   max_iteration_rounds: 3
 policy:
   require_all_comparisons: true
@@ -41,6 +42,8 @@ policy:
   allow_paper_reimplementation: true
   auto_accept_discovered_comparisons: false
 ```
+
+模型预算有两道闸：`max_model_cost` 只有在配置了 `resources.model_rates`（`input_per_mtok`/`output_per_mtok`）时才可度量，IdeaSeek 不猜价格；费率未知时美元上限不会生效。`max_model_tokens` 是不依赖价格的兜底闸门——累计 in+out token 达到上限即以 `QUOTA_EXHAUSTED` 暂停新调用，因此**未配费率时也应该设置它**，否则自动流程没有任何东西拦得住失控循环。`status`/`monitor` 的 usage 行会明说当前是哪道闸在生效（`guard: token ceiling …` 或 `no token gate`）。
 
 ## 配置规则
 

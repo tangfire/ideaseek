@@ -69,6 +69,8 @@ describe('config schema and migration', () => {
         '  mode: banana',
         'runtime:',
         '  lease_ttl_seconds: -3',
+        'resources:',
+        '  max_model_tokens: -5',
         'policy:',
         '  require_all_comparisons: yes-please',
         '',
@@ -80,8 +82,10 @@ describe('config schema and migration', () => {
     expect(text).toContain('research.mode must be one of');
     expect(text).toContain('runtime.lease_ttl_seconds must be a positive number');
     expect(text).toContain('policy.require_all_comparisons must be true or false');
+    expect(text).toContain('resources.max_model_tokens must be a non-negative token count');
     // Bad values fall back so display commands still work.
     expect(loaded.resolved.runtime.leaseTtlSeconds).toBe(30);
+    expect(loaded.resolved.resources.maxModelTokens).toBeNull();
   });
 
   it('migrates a pre-versioned file in memory and records a note', async () => {

@@ -119,6 +119,7 @@ export function registerStatusCommand(program: Command): void {
               all,
               runtime.config.resources.modelRates,
               runtime.config.resources.maxModelCost,
+              runtime.config.resources.maxModelTokens,
             );
           };
           const failed = tasks.filter((task) => task.status === 'failed');
