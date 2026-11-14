@@ -28,6 +28,12 @@ export interface RepairFailure {
   kind: RepairFailureKind;
   /** First matching log line (redacted, truncated). */
   summary: string;
+  /**
+   * Missing module name when the failure names one. Whether it is an external
+   * package or the repository's own module can only be decided against the
+   * worktree, so classification stays pure and carries the name out.
+   */
+  module?: string;
 }
 
 /** Strips common credential shapes from logs before they are persisted. */
@@ -118,7 +124,17 @@ export function classifyRepairFailure(
   ];
   for (const check of checks) {
     const summary = firstMatchingLine(log, check.patterns);
-    if (summary) return { kind: check.kind, summary };
+    if (summary) {
+      if (check.kind !== 'missing-dependency') return { kind: check.kind, summary };
+      // `No module named 'models'` and `No module named 'torch'` look
+      // identical here but need opposite fixes, so carry the name out.
+      const named = /no module named ['"]?([\w.]+)/i.exec(summary);
+      return {
+        kind: check.kind,
+        summary,
+        ...(named?.[1] ? { module: named[1] } : {}),
+      };
+    }
   }
   const anyLine = log
     .split(/\r?\n/)
@@ -284,10 +300,41 @@ async function findRequirementsFile(worktreeDir: string): Promise<string | null>
 }
 
 export interface FixPlan {
-  kind: 'none' | 'venv-install' | 'venv-install-inferred';
+  kind: 'none' | 'venv-install' | 'venv-install-inferred' | 'pythonpath-root';
   detail: string;
   /** Validated requirement specs for 'venv-install-inferred'. */
   packages?: string[];
+  /** Extra environment for later rounds (pythonpath-root). Never a code edit. */
+  env?: Record<string, string>;
+}
+
+/**
+ * True when the missing name resolves inside the worktree — a top-level
+ * package directory, a module file, or a directory alongside the failing
+ * script. Conference code is written to run from the repository root, so
+ * `python utils/training.py` puts `utils/` on sys.path and the repo's own
+ * `models` package becomes unimportable. pip cannot fix that; the root needs
+ * to be on the search path.
+ */
+async function moduleLivesInWorktree(worktreeDir: string, module: string): Promise<boolean> {
+  const { stat } = await import('node:fs/promises');
+  const parts = module.split('.');
+  const candidates = [
+    join(worktreeDir, ...parts),
+    join(worktreeDir, `${parts.join('/')}.py`),
+    join(worktreeDir, ...parts.slice(0, 1), ...parts.slice(1)),
+  ];
+  for (const path of candidates) {
+    if (await pathExists(path)) return true;
+    if (
+      await stat(`${path}.py`).then(
+        () => true,
+        () => false,
+      )
+    )
+      return true;
+  }
+  return false;
 }
 
 /**
@@ -311,6 +358,23 @@ export async function planFix(
 ): Promise<FixPlan> {
   if (failure.kind !== 'missing-dependency') {
     return { kind: 'none', detail: `no automated fix for ${failure.kind}` };
+  }
+  // First, because it is a different kind of problem: a name that resolves
+  // inside the repository needs the root on the search path, and an existing
+  // venv says nothing about that. Checking the venv first made this fix
+  // unreachable for any method that had already had dependencies installed.
+  if (failure.module && (await moduleLivesInWorktree(worktreeDir, failure.module))) {
+    const pathKey =
+      Object.keys(process.env).find((key) => key.toUpperCase() === 'PYTHONPATH') ?? 'PYTHONPATH';
+    return {
+      kind: 'pythonpath-root',
+      env: {
+        [pathKey]: [worktreeDir, process.env[pathKey] ?? '']
+          .filter(Boolean)
+          .join(process.platform === 'win32' ? ';' : ':'),
+      },
+      detail: `module ${failure.module} exists inside the worktree — run from the repository root by adding it to PYTHONPATH (no dependency install)`,
+    };
   }
   if (await pathExists(join(worktreeDir, '.venv'))) {
     return { kind: 'none', detail: 'venv already present; failure persists' };
@@ -492,6 +556,8 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
 
   let lastFailure: RepairFailure | null = null;
   let roundsRun = 0;
+  /** Environment changes applied by earlier rounds (PYTHONPATH etc.). */
+  const accumulatedEnv: Record<string, string> = { ...(record.env ?? {}) };
 
   while (true) {
     const round = record.attempts.length + 1;
@@ -505,7 +571,12 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
       input.entry,
       input.worktreeDir,
       record.budget.timeoutMs,
-      await mergeRunEnv(input.projectRoot, venvReady ? venvEnv(input.worktreeDir) : undefined),
+      await mergeRunEnv(input.projectRoot, {
+        ...(venvReady ? venvEnv(input.worktreeDir) : {}),
+        // Fixes that only change the environment (PYTHONPATH) accumulate here;
+        // without this the next round would repeat the identical failure.
+        ...accumulatedEnv,
+      }),
     );
     roundsRun += 1;
     const logName = `repair-${input.methodId}-r${round}.log`;
@@ -564,6 +635,10 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
     if (!applied.ok) {
       record.outcome = 'blocked-fix-failed';
       break;
+    }
+    if (plan.env) {
+      Object.assign(accumulatedEnv, plan.env);
+      record.env = { ...accumulatedEnv };
     }
     // Loop continues: next round re-runs the entry with the fix in place.
   }

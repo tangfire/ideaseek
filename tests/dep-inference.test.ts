@@ -143,6 +143,67 @@ describe('planFix with inference', () => {
     expect(plan.detail).toContain('no harness configured');
   });
 
+  it('classifies an internal package as a search-path problem, not a dependency', async () => {
+    // `python utils/training.py` puts utils/ on sys.path, so the repo's own
+    // `models` package looks like a missing module. pip would be wrong in kind.
+    const dir = await repo(false);
+    await mkdir(join(dir, 'models'), { recursive: true });
+    await writeFile(join(dir, 'models', '__init__.py'), '', 'utf8');
+    const plan = await planFix(
+      { kind: 'missing-dependency', summary: "No module named 'models'", module: 'models' },
+      dir,
+      { infer: async () => ({ packages: ['models'], notes: 'should not be used' }) },
+    );
+    expect(plan.kind).toBe('pythonpath-root');
+    expect(plan.packages).toBeUndefined();
+    expect(plan.detail).toContain('exists inside the worktree');
+    const keys = Object.keys(plan.env ?? {});
+    expect(keys).toHaveLength(1);
+    expect(keys[0].toUpperCase()).toBe('PYTHONPATH');
+    expect(plan.env?.[keys[0]!]).toContain(dir);
+  });
+
+  it('still fixes an internal module when a venv already exists', async () => {
+    // The ordering bug this guards: the venv check used to come first, so any
+    // method that had already had dependencies installed could never reach the
+    // PYTHONPATH fix — even though the two have nothing to do with each other.
+    const dir = await repo(false);
+    await mkdir(join(dir, '.venv'), { recursive: true });
+    await mkdir(join(dir, 'models'), { recursive: true });
+    await writeFile(join(dir, 'models', '__init__.py'), '', 'utf8');
+    const plan = await planFix(
+      { kind: 'missing-dependency', summary: "No module named 'models'", module: 'models' },
+      dir,
+      { infer: async () => ({ packages: ['x'], notes: '' }) },
+    );
+    expect(plan.kind).toBe('pythonpath-root');
+  });
+
+  it('keeps an external package on the pip path', async () => {
+    const plan = await planFix(
+      { kind: 'missing-dependency', summary: "No module named 'torch'", module: 'torch' },
+      await repo(false),
+      { infer: async () => ({ packages: ['torch'], notes: 'from imports' }) },
+    );
+    expect(plan.kind).toBe('venv-install-inferred');
+  });
+
+  it('resolves dotted internal modules by their package path', async () => {
+    const dir = await repo(false);
+    await mkdir(join(dir, 'models', 'net'), { recursive: true });
+    await writeFile(join(dir, 'models', 'net', 'resnet.py'), '', 'utf8');
+    const plan = await planFix(
+      {
+        kind: 'missing-dependency',
+        summary: "No module named 'models.net.resnet'",
+        module: 'models.net.resnet',
+      },
+      dir,
+      { infer: async () => ({ packages: ['x'], notes: '' }) },
+    );
+    expect(plan.kind).toBe('pythonpath-root');
+  });
+
   it('still blocks non-dependency failures without consulting the model', async () => {
     let called = 0;
     const plan = await planFix(

@@ -70,7 +70,7 @@ export interface RepairAttempt {
   failureKind?: RepairFailureKind;
   /** First matching log line, redacted and truncated. */
   failureSummary?: string;
-  fixApplied: 'none' | 'venv-install' | 'venv-install-inferred';
+  fixApplied: 'none' | 'venv-install' | 'venv-install-inferred' | 'pythonpath-root';
   /** Result of applying the planned fix (absent when none was planned). */
   fixOk?: boolean;
   fixDetail?: string;
@@ -89,6 +89,12 @@ export interface RepairRecord {
   updatedAt: number;
   attempts: RepairAttempt[];
   outcome: RepairRoundOutcome;
+  /**
+   * Environment changes earlier rounds applied (PYTHONPATH for an internal
+   * module, for instance). Persisted so a resumed session does not repeat a
+   * failure it had already worked around.
+   */
+  env?: Record<string, string>;
 }
 
 /** How the worktree diff relates to baseline trust (plan §C.7). */
