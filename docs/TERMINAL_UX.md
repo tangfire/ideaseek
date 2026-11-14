@@ -121,6 +121,8 @@ ideaseek ›
 
 备用屏幕没有终端原生回滚，因此 TUI 开启鼠标上报（1000+1006）接管滚轮：上滑按 6 行/格回看历史，PgUp/PgDn 仍可整页翻动；滚动时视图锚定（新到达的事件不会把正在读的内容推走），下滑到底恢复实时跟随，滚到顶自动钳制不越界。点击/拖拽上报被吞掉，绝不落进输入行。代价是终端原生拖选被接管（多数终端 Shift+拖拽仍可选中复制）。
 
+**架构评估（2026-11-14，对照 Claude Code 源码快照的 `VirtualMessageList`/`ScrollKeybindingHandler`/自研 Ink fork）**：CC 的 transcript 同样是**应用自管的虚拟化滚动**（ScrollBox + scrollTop + 高度缓存 + 滚轮/键位绑定），并不依赖终端原生 scrollback——"放弃备用屏幕改追加式渲染"的重写方案**评估后不做**。本 TUI 的分片窗口渲染（每帧只切一屏）在复杂度上等价于其虚拟列表的性能目标（O(可见行)），滚轮/锚定/钳制已对齐；CC 有而我们没有的属后续打磨项：transcript 内搜索（n/N 跳转）、滚动时收起 header 换取行数（sticky chrome）、点击消息展开详情。
+
 活动区 transcript 有三类可区分的行：**用户输入**以 `❯ ` 前缀回显（青色加粗——输入行提交后即清空，不回显就只剩响应，用户无法对照自己问了什么）；**响应**为普通行，紧跟在 `❯` 行之后；**事件**带 `[HH:MM:SS]` 时间戳与阶段标签。错误行红色。行式 `--plain` 路径由 readline 原生回显输入，无需此机制。
 
 命令输出按行**流式**进入活动区：子进程每产生一行立即显示，长任务（extract/report/agent 回合的 DSH 进度日志）的进度不再等到退出才整体出现。Research 模式的自然语言进入 supervisor 前先打一行 `supervisor (<harness>): classifying…`——真模型分类的几十秒不再是死寂的 spinner。运行中按 `Ctrl-C` 立即中止当前命令（整棵子进程树 kill，活动区回一行 `interrupted — the running command was stopped`）；空闲时 `Ctrl-C` 仍只提示 `/quit`。
