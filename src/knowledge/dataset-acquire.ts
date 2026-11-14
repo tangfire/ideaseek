@@ -221,7 +221,10 @@ export async function acquireDataset(input: AcquireInput): Promise<AcquiredFile>
     );
   }
 
-  const filename = safeFilename(current);
+  // Name the file from what was requested, not from the redirect target:
+  // HuggingFace resolve URLs 302 to a signed CDN link whose path is a content
+  // hash, which would stage a 191 MiB parquet as an unextensioned hex blob.
+  const filename = safeFilename(input.url);
   const destDir = resolve(input.destDir);
   const finalPath = join(destDir, filename);
   await mkdir(destDir, { recursive: true });

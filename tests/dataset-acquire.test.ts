@@ -210,23 +210,28 @@ describe('staging a file', () => {
 });
 
 describe('redirect handling', () => {
-  it('follows an https hop and stages under the final url name', async () => {
+  it('follows an https hop but names the file from what was requested', async () => {
     const dir = await dest();
     const seen: string[] = [];
     const result = await acquireDataset({
-      url: 'https://x.test/start.zip',
+      url: 'https://x.test/d/PACS.zip?sig=TOKEN',
       destDir: dir,
       maxBytes: 1024,
       timeoutMs: 1000,
       fetchImpl: async (url) => {
         seen.push(url);
-        if (url.includes('start.zip'))
-          return response(302, [], { location: 'https://cdn.test/pacs.zip' });
+        // A CDN redirect carries a content-hash path and a signed query, the
+        // way HuggingFace resolve links do.
+        if (url.includes('PACS.zip'))
+          return response(302, [], {
+            location: 'https://cdn.test/xet/0a333c43a051d4?Policy=abc&Signature=xyz',
+          });
         return response(200, [bytes('x')]);
       },
     });
     expect(seen).toHaveLength(2);
-    expect(result.path).toBe(join(dir, 'pacs.zip'));
+    expect(result.path).toBe(join(dir, 'PACS.zip'));
+    expect(result.sourceUrl).toBe('https://x.test/d/PACS.zip');
   });
 
   it('refuses a redirect that downgrades to http', async () => {

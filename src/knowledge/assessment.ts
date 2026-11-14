@@ -317,7 +317,10 @@ export async function buildResearchMaterialAssessment(
               `slices: ${slices.length}`,
             ],
             confidence: 'high',
-            fillIn: 'put data into datasets/ then: ideaseek scan && ideaseek data describe',
+            fillIn:
+              'ideaseek datasets discover → datasets authorize <id> --grant → datasets acquire <id> ' +
+              '→ datasets link <id> --path <file>; or put data into datasets/ yourself then ' +
+              'ideaseek scan && ideaseek data describe',
             cost: 'minutes (local profiling, no GPU)',
             blocks: ['protocolDesign', 'smokeQuick'],
           }),

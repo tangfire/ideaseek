@@ -7,6 +7,11 @@ import { stableJson } from '../experiment/spec.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import { readManifest } from './organize.js';
 import { createAcademicIndexClient, type AcademicIndexClient } from './academic-index.js';
+import {
+  createDatasetIndexClient,
+  type DatasetIndexClient,
+  type DatasetIndexHit,
+} from './dataset-index.js';
 import { formatBytes } from './dataset-acquire.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
 
@@ -56,7 +61,13 @@ export const CANDIDATES_SCHEMA = 'dataset-candidates-v1';
 export const DISCOVERY_PROMPT_VERSION = 'dataset-discovery-prompt.1';
 
 export type DiscoverySourceKind =
-  'papers' | 'local-inputs' | 'comparisons' | 'tables' | 'research-map' | 'academic-index';
+  | 'papers'
+  | 'local-inputs'
+  | 'comparisons'
+  | 'tables'
+  | 'research-map'
+  | 'academic-index'
+  | 'dataset-index';
 
 /** Sources tried when the user does not pass --sources (index is policy-gated). */
 export const DEFAULT_DISCOVERY_SOURCES: readonly DiscoverySourceKind[] = [
@@ -65,6 +76,9 @@ export const DEFAULT_DISCOVERY_SOURCES: readonly DiscoverySourceKind[] = [
   'comparisons',
   'tables',
   'research-map',
+  // Papers name datasets but never state where to get them; this is the only
+  // source that can produce a fetchable URL, so acquire depends on it.
+  'dataset-index',
 ];
 
 export const ALL_DISCOVERY_SOURCES: readonly DiscoverySourceKind[] = [
@@ -79,7 +93,8 @@ export type EvidenceKind =
   | 'comparison-readme'
   | 'experiment-table'
   | 'research-map'
-  | 'academic-index';
+  | 'academic-index'
+  | 'dataset-index';
 
 export type SourceStatus = 'ok' | 'empty' | 'missing' | 'refused' | 'failed';
 
@@ -232,10 +247,23 @@ export interface DiscoveryContext {
  * collapse to one candidate. Unicode letters stay (dataset names may be CJK).
  */
 export function normalizeDatasetName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '');
+  return (
+    name
+      .trim()
+      // `PACS (P, A, C, S)` and `PACS` are one benchmark, not two candidates;
+      // the domain enumeration is display detail, so it never enters the key.
+      .replace(/\s*\([^)]*\)\s*$/, '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '')
+  );
+}
+
+/** Placeholder names that must never become candidates. */
+const NON_NAME_TOKENS = new Set(['unknown', 'none', 'null', 'na', 'n/a', 'unspecified', 'other']);
+
+export function isPlaceholderDatasetName(name: string): boolean {
+  const norm = normalizeDatasetName(name);
+  return norm.length < 3 || NON_NAME_TOKENS.has(norm);
 }
 
 export function candidateIdFor(name: string): string {
@@ -487,6 +515,8 @@ export interface CollectOptions {
   now: number;
   /** Test injection; production creates the HTTP client internally. */
   indexClient?: AcademicIndexClient;
+  /** Test injection for the dataset (download-URL) index. */
+  datasetClient?: DatasetIndexClient;
 }
 
 export interface CollectResult {
@@ -1210,10 +1240,149 @@ export async function collectDiscoverySources(
       case 'academic-index':
         await collectAcademicIndex(runtime, out, opts);
         break;
+      case 'dataset-index':
+        await collectDatasetIndex(runtime, out, opts);
+        break;
     }
     noteKnown();
   }
   return out;
+}
+
+/**
+ * Looks up a fetchable file for the dataset names the papers already named.
+ * Querying by name (not by research question) is what makes the match
+ * trustworthy: PACS in a paper and `flwrlabs/pacs` on the hub are the same
+ * corpus, while a question search returns whatever is popular.
+ */
+async function collectDatasetIndex(
+  runtime: ProjectRuntime,
+  out: CollectResult,
+  opts: CollectOptions,
+): Promise<void> {
+  const { now } = opts;
+  const refuse = (reason: string): void => {
+    pushSource(
+      out,
+      {
+        kind: 'dataset-index',
+        ref: 'huggingface dataset lookup',
+        status: 'refused',
+        reason,
+        retrievedAt: now,
+        contentHash: null,
+      },
+      [],
+      [],
+    );
+  };
+  if (!runtime.config.research.externalSearch) {
+    refuse(
+      'research.external_search is false — dataset download lookups are disabled (set external_search: true in research.yaml)',
+    );
+    return;
+  }
+  if (!runtime.config.runtime.allowNetwork) {
+    refuse(
+      'runtime.allow_network is false — set allow_network: true in research.yaml to let IdeaSeek look up download endpoints',
+    );
+    return;
+  }
+  const names = out.knownNames.filter((name) => name.trim()).slice(0, 12);
+  if (names.length === 0) {
+    pushSource(
+      out,
+      {
+        kind: 'dataset-index',
+        ref: 'huggingface dataset lookup',
+        status: 'empty',
+        reason: 'no dataset names discovered yet — run: ideaseek ingest && ideaseek extract first',
+        retrievedAt: now,
+        contentHash: null,
+      },
+      [],
+      [],
+    );
+    return;
+  }
+
+  const client = opts.datasetClient ?? createDatasetIndexClient();
+  const store = newEvidenceStore();
+  const seen = new Set<string>();
+  let added = 0;
+  let servedBy: string | null = null;
+  let lastError: string | null = null;
+
+  for (const name of names) {
+    if (added >= MAX_MENTIONS_PER_SOURCE) break;
+    const norm = normalizeDatasetName(name);
+    if (!norm || seen.has(norm)) continue;
+    const result = await client.search(norm.slice(0, 60), { limit: 5 });
+    if (result.error) lastError = result.error;
+    if (result.endpoint) servedBy = result.endpoint;
+    const hit = result.hits.find((candidate) => matchesDatasetName(name, candidate));
+    if (!hit) continue;
+    seen.add(norm);
+    added += 1;
+    const quote = hit.fileUrl
+      ? `HuggingFace dataset ${hit.id} — fetchable file ${hit.fileName}, ${
+          hit.bytes !== null ? `${(hit.bytes / 1024 / 1024).toFixed(1)} MiB` : 'size unknown'
+        }${hit.licenseTag ? `, license tag ${hit.licenseTag}` : ', license not stated'}`
+      : `HuggingFace dataset ${hit.id} — no single fetchable file found`;
+    addEvidence(store, {
+      kind: 'dataset-index',
+      sourceKind: 'dataset-index',
+      ref: hit.url,
+      name,
+      quote,
+      retrievedAt: now,
+      contentHash: sha256Of(`${hit.id}:${hit.fileUrl ?? hit.url}`),
+      hashBasis: 'record',
+      paperKey: null,
+      url: hit.fileUrl,
+      indexId: hit.id,
+    });
+  }
+
+  const status = added > 0 ? 'ok' : lastError && servedBy === null ? 'failed' : 'empty';
+  pushSource(
+    out,
+    {
+      kind: 'dataset-index',
+      ref: `huggingface lookup for ${names.length} name(s)${servedBy ? ` via ${servedBy}` : ''}`,
+      status,
+      reason:
+        status === 'ok'
+          ? null
+          : status === 'failed'
+            ? `dataset index unreachable — ${lastError ?? 'unknown error'}`
+            : 'no dataset name matched a hub repository with a fetchable file',
+      retrievedAt: now,
+      contentHash: null,
+    },
+    [...store.values()],
+    [],
+  );
+}
+
+/**
+ * Hub repositories that carry model artifacts rather than corpora. Left
+ * unfiltered, `VLCS` resolved to `vlcs-vitb32-activations` — a real repo with
+ * real files and the wrong contents.
+ */
+const NON_DATASET_SLUG =
+  /(activation|weight|checkpoint|tokenizer|lora|finetune|embeddings|proxydata|features)/;
+
+/**
+ * Exact normalized name ↔ repo-slug equality, and nothing looser. A prefix
+ * match looks harmless until it hands the researcher a download of someone
+ * else's data; no URL is a honest gap, a wrong URL is a corrupted run.
+ */
+export function matchesDatasetName(name: string, hit: DatasetIndexHit): boolean {
+  if (!hit.fileUrl) return false;
+  const slug = normalizeDatasetName(hit.id.split('/').pop() ?? '');
+  if (slug.length < 4 || NON_DATASET_SLUG.test(slug)) return false;
+  return normalizeDatasetName(name) === slug;
 }
 
 // ---------------------------------------------------------------------------
@@ -1239,7 +1408,8 @@ const EVIDENCE_PRIORITY: Record<DiscoverySourceKind, number> = {
   tables: 2,
   'research-map': 3,
   'academic-index': 4,
-  'local-inputs': 5,
+  'dataset-index': 5,
+  'local-inputs': 6,
 };
 
 function sortEvidence(evidence: DiscoveryEvidence[]): DiscoveryEvidence[] {
@@ -1469,6 +1639,10 @@ export function validateDatasetCandidatesOutput(
     }
     if (typeof item.name !== 'string' || !item.name.trim() || item.name.length > 120) {
       errors.push(`${where}.name must be a non-empty string (≤120 chars)`);
+    } else if (isPlaceholderDatasetName(item.name)) {
+      // A candidate named "unknown" is the model filling a slot, not a
+      // dataset; it would otherwise reach the user as a recommendation.
+      errors.push(`${where}.name must be a real dataset name, not a placeholder`);
     }
     if (typeof item.task !== 'string' || !item.task.trim()) {
       errors.push(`${where}.task must be a non-empty string (use "unknown")`);
@@ -1624,6 +1798,7 @@ const KIND_CONFIDENCE: Record<EvidenceKind, number> = {
   'research-map': 0.4,
   'local-manifest': 0.4,
   'academic-index': 0.35,
+  'dataset-index': 0.4,
 };
 
 function kindBasis(evidence: DiscoveryEvidence): string {
@@ -1642,6 +1817,8 @@ function kindBasis(evidence: DiscoveryEvidence): string {
       return `local input manifest entry: ${evidence.ref}`;
     case 'academic-index':
       return `academic index record ${evidence.ref}`;
+    case 'dataset-index':
+      return `dataset hub record ${evidence.indexId ?? evidence.ref}`;
   }
 }
 
@@ -1721,13 +1898,24 @@ function assembleCandidate(args: AssembleArgs): DatasetCandidate {
         'already present in this project — discovery does not copy, move or re-download it',
     };
   } else if (model) {
+    // The model reports what the papers state, so it leaves url null for a
+    // benchmark whose download endpoint appears nowhere in the literature.
+    // Evidence from the dataset hub is still evidence: fall back to it rather
+    // than discarding a URL we actually fetched.
+    const evidenceUrl = ordered.map((item) => item.url).find((value) => value) ?? null;
     access = {
-      acquisition: model.acquisition,
+      acquisition:
+        model.acquisition === 'unknown' && evidenceUrl ? 'public-download' : model.acquisition,
       restricted: model.restricted,
       size: model.size,
-      url: model.url,
-      indexId: model.indexId,
-      instructions: model.instructions,
+      url: model.url ?? evidenceUrl,
+      indexId: model.indexId ?? ordered.find((item) => item.indexId)?.indexId ?? null,
+      instructions:
+        model.instructions ||
+        (evidenceUrl
+          ? `proposed download: ${evidenceUrl} — confirm size and license before use`
+          : undefined) ||
+        'no obtain method stated in the provided sources',
     };
   } else {
     const url = ordered.map((item) => item.url).find((value) => value) ?? null;
@@ -1736,7 +1924,10 @@ function assembleCandidate(args: AssembleArgs): DatasetCandidate {
       restricted: false,
       size: 'unknown',
       url,
-      indexId: ordered.find((item) => item.sourceKind === 'academic-index')?.indexId ?? null,
+      indexId:
+        ordered.find((item) => item.indexId)?.indexId ??
+        ordered.find((item) => item.sourceKind === 'academic-index')?.indexId ??
+        null,
       instructions: url
         ? `proposed download: ${url} — confirm size and license before use`
         : 'no obtain method stated in the provided sources — check the related papers or ask the researcher',
@@ -1851,7 +2042,7 @@ export function buildDeterministicCandidates(
   const groups = new Map<string, DiscoveryEvidence[]>();
   for (const evidence of sortEvidence(ctx.evidence)) {
     const norm = normalizeDatasetName(evidence.name);
-    if (!norm) continue;
+    if (!norm || isPlaceholderDatasetName(evidence.name)) continue;
     const bucket = groups.get(norm) ?? [];
     bucket.push(evidence);
     groups.set(norm, bucket);
@@ -2011,8 +2202,18 @@ export function mergeWithPrevious(
       notes: [...new Set(notes)].slice(0, 8),
     };
   });
+  const freshNames = new Set(
+    fresh.map((candidate) => normalizeDatasetName(candidate.name)).filter(Boolean),
+  );
   for (const prev of previous) {
     if (freshIds.has(prev.candidateId)) continue;
+    // Stale entries must not accumulate across runs. A candidate whose
+    // normalized name is already represented by this run is the same
+    // benchmark under an older id (PACS vs PACS (P, A, C, S)), and a
+    // placeholder name is not a benchmark at all.
+    const norm = normalizeDatasetName(prev.name);
+    if (isPlaceholderDatasetName(prev.name)) continue;
+    if (norm && freshNames.has(norm)) continue;
     merged.push({
       ...prev,
       notes: [

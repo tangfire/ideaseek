@@ -19,7 +19,9 @@ import {
   discoveryArtifactPath,
   discoveryCandidatesNote,
   extractDatasetMentions,
+  isPlaceholderDatasetName,
   linkCandidateLocal,
+  matchesDatasetName,
   mergeModelIntoDeterministic,
   mergeWithPrevious,
   normalizeDatasetName,
@@ -39,6 +41,7 @@ import {
 } from '../src/knowledge/dataset-discovery.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
 import type { ProjectRuntime } from '../src/workflow/runtime.js';
+import type { DatasetIndexHit } from '../src/knowledge/dataset-index.js';
 
 /**
  * Phase 4.5B Dataset Discovery conformance (docs/DATA_CONTRACTS.md
@@ -351,6 +354,38 @@ describe('dataset discovery: deterministic candidates, dedup and enrichment', ()
     expect(candidate!.relevance.question).toBe('question');
   });
 
+  it('a dataset-hub URL in evidence turns the candidate into a fetchable download', () => {
+    // Papers name benchmarks but never state where to get them, so without
+    // this the acquire step would have nothing to fetch.
+    const evidence = makeEvidence({
+      evidenceId: 'ev-hub0000001',
+      kind: 'dataset-index',
+      sourceKind: 'dataset-index',
+      ref: 'https://huggingface.co/datasets/flwrlabs/pacs',
+      name: 'PACS',
+      quote:
+        'HuggingFace dataset flwrlabs/pacs — fetchable file PACS.zip, 167.9 MiB, license tag mit',
+      url: 'https://huggingface.co/datasets/flwrlabs/pacs/resolve/main/PACS.zip',
+      indexId: 'flwrlabs/pacs',
+      hashBasis: 'record',
+      paperKey: null,
+    });
+    const ctx = buildDiscoveryContext(
+      { sources: [], evidence: [evidence], facts: [], knownNames: ['PACS'] },
+      'federated domain generalization',
+    );
+    const [candidate] = buildDeterministicCandidates(ctx, 5_000);
+    expect(candidate!.access.acquisition).toBe('public-download');
+    expect(candidate!.access.url).toBe(
+      'https://huggingface.co/datasets/flwrlabs/pacs/resolve/main/PACS.zip',
+    );
+    expect(candidate!.access.instructions).toContain('proposed download');
+    expect(candidate!.access.indexId).toBe('flwrlabs/pacs');
+    // A URL is a proposal, not a grant: confirmation is still required.
+    expect(candidate!.downloadStatus).toBe('proposed');
+    expect(requiresUserConfirmation(candidate!)).toBe(true);
+  });
+
   it('applies local facts: user-provided status, local-mount, local-present', () => {
     const evidence = makeEvidence({
       evidenceId: 'ev-local000001',
@@ -519,6 +554,21 @@ describe('dataset discovery: deterministic candidates, dedup and enrichment', ()
     expect(mergedRejected.status).toBe('rejected');
     const mergedOrphan = merged.find((candidate) => candidate.candidateId === 'ds-orphan')!;
     expect(mergedOrphan.notes.join(' ')).toMatch(/not reconfirmed/);
+  });
+
+  it('converges: stale duplicates and placeholder names do not accumulate', () => {
+    const previous = [
+      makeCandidate({ candidateId: 'ds-pacspacs', name: 'PACS (P, A, C, S)' }),
+      makeCandidate({ candidateId: 'ds-unknown', name: 'unknown' }),
+      makeCandidate({ candidateId: 'ds-orphan', name: 'Orphan' }),
+    ];
+    const fresh = [makeCandidate({ candidateId: 'ds-pacs', name: 'PACS' })];
+    const ids = mergeWithPrevious(fresh, previous, { localSourcesChecked: true }).map(
+      (candidate) => candidate.candidateId,
+    );
+    // Same benchmark under an older id is dropped; a placeholder never
+    // survives; a genuinely absent one still carries forward.
+    expect(ids.sort()).toEqual(['ds-orphan', 'ds-pacs']);
   });
 
   it('keeps linked local data when this run could not re-check the manifest', () => {
@@ -861,6 +911,49 @@ describe('academic index port (no real network in tests)', () => {
     expect(
       partial.endpoints.find((endpoint) => endpoint.endpoint === 'semantic-scholar')?.error,
     ).toMatch(/429/);
+  });
+});
+
+describe('hub name matching and placeholder rejection', () => {
+  const hit = (id: string, file: string | null): DatasetIndexHit => ({
+    id,
+    url: `https://hf.co/datasets/${id}`,
+    fileUrl: file ? `https://hf.co/datasets/${id}/resolve/main/${file}` : null,
+    fileName: file,
+    bytes: 1000,
+    tags: [],
+    licenseTag: null,
+    downloads: null,
+    endpoint: 'https://hf.co',
+  });
+
+  it('accepts exact benchmark names and refuses model-artifact repos', () => {
+    expect(matchesDatasetName('PACS', hit('flwrlabs/pacs', 'PACS.zip'))).toBe(true);
+    expect(matchesDatasetName('DomainNet', hit('wltjr1007/DomainNet', 'a.parquet'))).toBe(true);
+    expect(matchesDatasetName('Office-Home', hit('Xinxi-Zhang/Office-Home', 'x.mp'))).toBe(true);
+    // Live-run failures: a prefix match landed on activations and on "Unknown".
+    expect(matchesDatasetName('VLCS', hit('Yooniel/vlcs-vitb32-activations', 'f.parquet'))).toBe(
+      false,
+    );
+    expect(matchesDatasetName('PACS', hit('someone/pacs-plus-extra', 'f.zip'))).toBe(false);
+    expect(matchesDatasetName('PACS', hit('flwrlabs/pacs', null))).toBe(false);
+  });
+
+  it('a parenthetical domain list is one benchmark, not a second candidate', () => {
+    expect(normalizeDatasetName('PACS (P, A, C, S)')).toBe(normalizeDatasetName('PACS'));
+    expect(candidateIdFor('Office-10 (C, A, W, D)')).toBe(candidateIdFor('Office-10'));
+  });
+
+  it('placeholder names never become candidates', () => {
+    expect(isPlaceholderDatasetName('unknown')).toBe(true);
+    expect(isPlaceholderDatasetName('N/A')).toBe(true);
+    expect(isPlaceholderDatasetName('PACS')).toBe(false);
+    const evidence = makeEvidence({ name: 'unknown', evidenceId: 'ev-unknown00001' });
+    const ctx = buildDiscoveryContext(
+      { sources: [], evidence: [evidence], facts: [], knownNames: ['unknown'] },
+      'q',
+    );
+    expect(buildDeterministicCandidates(ctx, 5_000)).toEqual([]);
   });
 });
 
