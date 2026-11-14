@@ -155,6 +155,31 @@ async function openDocument(
   return 0;
 }
 
+/**
+ * Bare `open` with no current project: list what is registered and say how to
+ * enter it. The door back into research work has to be findable from inside a
+ * general coding session, otherwise "switch back" has no discoverable answer.
+ */
+async function showRegistryOnly(opts: { json?: boolean }): Promise<number> {
+  const { listRegisteredProjects } = await import('../runtime/registry.js');
+  const registered = await listRegisteredProjects();
+  if (opts.json) {
+    process.stdout.write(jsonLine({ kind: 'projects', current: null, projects: registered }));
+    return 0;
+  }
+  if (registered.length === 0) {
+    process.stdout.write('no registered projects — ideaseek init here, or: ideaseek open <path>\n');
+    return 0;
+  }
+  process.stdout.write(`${registered.length} registered project(s):\n`);
+  for (const project of registered) {
+    process.stdout.write(`  ${project.name.padEnd(22)}${project.root}\n`);
+  }
+  process.stdout.write('enter one: /open <name|path> --confirm   (or: cd <path> && ideaseek)\n');
+  process.stdout.write('until then this directory stays a general coding session\n');
+  return 0;
+}
+
 async function showOverview(root: string, opts: { json?: boolean }): Promise<number> {
   const { buildSessionSummary, renderSessionSummary } = await import('../session/mode.js');
   const { listRegisteredProjects } = await import('../runtime/registry.js');
@@ -210,7 +235,16 @@ export function registerOpenCommand(program: Command): void {
           // A project target resolves from anywhere (docs: open an existing
           // project from an arbitrary directory); overview/documents need a
           // current project.
-          if (!target) return showOverview(await requireRoot(), opts);
+          if (!target) {
+            const { findProjectRoot } = await import('../config/paths.js');
+            const root = await findProjectRoot(process.cwd());
+            if (root) return showOverview(root, opts);
+            // From a general coding session there is no project to summarize
+            // and no project docs to browse — but "which research projects can
+            // I go back to" is exactly the question being asked here, and it
+            // used to fail with NOT_INITIALIZED.
+            return showRegistryOnly(opts);
+          }
 
           const project = await resolveProjectTarget(target);
 

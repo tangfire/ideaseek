@@ -159,6 +159,37 @@ describe('ideaseek open (project selection)', () => {
     expect(JSON.parse(result.stdout) as OpenPayload).toMatchObject({ kind: 'project' });
   });
 
+  it('bare open from a non-project directory lists the registry instead of failing', async () => {
+    // The door back into research work has to be findable from a general
+    // coding session; this used to answer NOT_INITIALIZED, which left the user
+    // with no way to discover their own projects.
+    const elsewhere = await mkdtemp(join(tmpdir(), 'ideaseek-noproj-overview-'));
+    const beta = await makeProjectDir('beta');
+    const registry = await registerIsolated(beta, 'beta');
+
+    const shown = await runCli(elsewhere, ['open'], { IDEASEEK_REGISTRY_PATH: registry });
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).not.toContain('NOT_INITIALIZED');
+    expect(shown.stdout).toContain('registered project(s)');
+    expect(shown.stdout).toContain('beta');
+    expect(shown.stdout).toContain('/open <name|path> --confirm');
+
+    const json = await runCli(elsewhere, ['open', '--json'], {
+      IDEASEEK_REGISTRY_PATH: registry,
+    });
+    expect(json.code).toBe(0);
+    const payload = JSON.parse(json.stdout) as OpenPayload & { current: unknown };
+    expect(payload.kind).toBe('projects');
+    expect(payload.current).toBeNull();
+
+    // An empty registry is a hint, not a wall.
+    const empty = await runCli(elsewhere, ['open'], {
+      IDEASEEK_REGISTRY_PATH: join(elsewhere, 'no-registry.json'),
+    });
+    expect(empty.code).toBe(0);
+    expect(empty.stdout).toContain('ideaseek init');
+  });
+
   it('--project overrides the working directory for any command', async () => {
     const alpha = await makeProjectDir('alpha');
     const elsewhere = await mkdtemp(join(tmpdir(), 'ideaseek-noproj-'));

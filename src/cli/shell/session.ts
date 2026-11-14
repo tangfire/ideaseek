@@ -128,6 +128,7 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
         // directory, and the footer badge must not imply one.
         'GENERAL — not an IdeaSeek project · /init creates one here, or cd into an existing one',
         'this directory still works as a general coding session: /agent <指令>，或者直接说人话',
+        'back to research work: /open lists your registered projects · /open <name|path> --confirm enters one',
       ],
       tone: 'warn',
     };

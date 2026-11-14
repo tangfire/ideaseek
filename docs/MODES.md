@@ -73,6 +73,7 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 /mode analysis
 /mode
 /agent <指令>：起一轮通用 DSH coding 会话（不参与 Shift+Tab 轮换）
+/open         在没有项目的目录里列出已注册项目；/open <名称|路径> --confirm 进入其中一个（通用会话回到科研工作的门）
 Shift+Tab：在 Research 和 Analysis 两个权限档位之间循环（终端支持时）
 ```
 
