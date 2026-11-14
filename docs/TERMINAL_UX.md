@@ -83,7 +83,10 @@ ideaseek ›
 ```text
 /status       当前阶段、任务、资源和预算
 /models       查看和配置模型 route/provider
-/mode         查看/切换 Research 和 Analysis 权限档位
+/mode         查看/切换 Research 和 Analysis 权限档位（或 coding/ask 焦点）
+/prepare      运行 Analysis 只读材料准备流水线（scan → ingest → data → extract → assess）
+/assessment   查看研究材料就绪度与缺口报告
+/drift        预览原始输入漂移与下游失效产物（对应 CLI `ideaseek stale`）
 /agent        起一轮通用 DSH coding 会话（`/agent <指令>`；无参列出可续的 session）
 /next         下一步和阻塞解释
 /papers       论文进度和失败解析
@@ -106,7 +109,7 @@ ideaseek ›
 
 每个斜杠命令都有等价的非交互 CLI 命令，方便脚本和 SSH 使用。
 
-提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。在项目里默认走 `ideaseek ask`（supervisor 分类为查询、建议或待审批 Decision；问候/能力问题确定性即时应答），Research 与 Analysis 档位的区别只在于科研管线允许写什么。工程改动有两条显式路径：单次的 `/agent <指令>`，或 `Shift+Tab` 第三档 **Coding 焦点**（焦点下每行输入都是一次真实 DSH coding-session turn，与 `/agent` 同一 use-case，TUI 内自动续会话）。焦点是对话路由，不是权限档位：底层档位不变，footer 徽标显示 `CODING`，`/mode` 仍报档位。工具审批把输入行切成 `y allow once · n reject`，回合末报告原始输入漂移。在**没有项目的目录**里，界面不冒充通用 agent：任何输入都先说明这里是 `GENERAL` 状态，并给出 `/init`、`/open`、`/agent` 三条门——想在这里写代码要显式按 `/agent`。高影响操作必须显示摘要并确认。
+提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。在项目里默认走 `ideaseek ask`（高影响变更请求一律转为待审批 Decision；问候/能力问题确定性即时应答；Research 档位支持携带项目上下文与历史问答直接以证据作答，Analysis 档位对缺口问句走确定性评估、其余分析问句由只读 Material Analyst 作答），Research 与 Analysis 档位的区别在于科研管线允许写什么。工程改动有三条显式路径：单次的 `/agent <指令>`、`Alt+C` 正交开关 **Coding 焦点**，或 `Shift+Tab` 循环的第三档（焦点下每行输入都是一次真实 DSH coding-session turn，与 `/agent` 同一 use-case，TUI 内自动续会话）。焦点是对话路由，不是权限档位：底层档位不变，顶部与底栏始终显式呈现双态徽标（`CODING · RESEARCH` / `CODING · ANALYSIS`），输入框上缘并按模式着色显示当前路由说明，`/mode` 仍报档位。工具审批把输入行切成 `y allow once · n reject`，回合末报告原始输入漂移（含 `comparisons/*/upstream/`）。在**没有项目的目录**里，界面不冒充通用 agent：任何输入都先说明这里是 `GENERAL` 状态，并给出 `/init`、`/open`、`/agent` 三条门——想在这里写代码要显式按 `/agent`。高影响操作必须显示摘要并确认。
 
 交互提示符始终显示当前项目名和路径。切换项目后要求二次确认，避免用户把控制命令发到错误的研究目录。
 

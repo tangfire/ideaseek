@@ -7,16 +7,17 @@ IdeaSeek 的核心是科研探索。科研会话有两个权限档位（Research
 Research 和 Analysis 是同一个科研会话的两个权限档位；Agent 是项目内的通用 DSH 工程入口。它们不是三套互相独立的产品，也不各自创建 PaperCard、研究地图、DatasetCard、comparison 或任务数据库。它们共享同一个项目的输入 manifest、内容 hash、知识 artifact、IdeaSeek workflow DB、RunEvent 和 checkpoint；档位之间的区别在于入口、可用工具和允许的写操作，Agent 与档位的区别在于它不受写面限制、但每次写入都会被审计和侦测。
 
 - Research 已经生成的 PaperCard、证据索引、研究地图、机制库、DatasetCard、comparison 摘要和实验 artifact，Analysis 必须按内容 hash、parser/schema 版本和输入 snapshot 复用，不得重新解析或生成重复版本。
-- Analysis 新增论文、数据画像、候选 comparison 或材料缺口评估后，Research 直接读取这些 artifact；只有输入 hash、解析器/schema、模型路由或研究问题变化时，依赖图上的下游节点才失效。
-- Agent 修改项目代码、配置或测试后，只使依赖该代码/配置的 comparison、idea check、experiment plan 或 run 失效；原始论文、PaperCard 和已提交实验结果保持可读。它若改动了 `papers/`、`datasets/` 或 `comparisons/upstream/`，不会被拦住，但会话结束后的漂移侦测会把该输入标注 dirty 并要求重新 `scan`，受影响节点随之失效。
+- Analysis 新增论文、数据画像、候选 comparison 或材料缺口评估后，Research 直接读取这些 artifact；只有输入 hash、解析器/schema、模型路由或研究问题变化时，依赖图上的下游节点才失效；`assessment` 同时追踪未解析新论文与 `dataset-card.json`/`research-map.md` 内容哈希。
+- Agent 修改项目代码、配置或测试后，只使依赖该代码/配置的 comparison worktree smoke stamp、idea check/analysis/novelty/review/claim-audit 失效；原始论文、PaperCard 和已提交实验结果保持可读。它若改动了 `papers/`、`datasets/` 或 `comparisons/*/upstream/`（及 `comparisons/upstream/`），不会被拦住，但会话结束后的漂移侦测会把该输入标注 dirty 并要求重新 `scan`，受影响节点随之失效。
+- Coding 回合在项目内同样计入 `model_usage` 与 `max_model_cost`/`max_model_tokens` 预算门禁；当活动 run 存在时落入 run 事件流，无活动 run 或最新 run 已终结时落盘独立 `.research/project-agent-audit.jsonl`（不污染已完成历史 run），并通过状态同步 delta 回流给热会话与 `ask`。
 - 档位切换只改变会话权限和任务入口，不重置项目上下文、不创建第二个后台 run，也不复制已有知识。
 - 同一个输入在两个档位和 agent 会话里都使用同一份 provenance/hash 和 artifact 引用；用户可以从任一处查看来源、状态、缺口和下一步。
 
-档位切换是一个增量协作流程：通常先 Analysis 判断材料是否够，再 Research 做科研执行；中途可回 Analysis 补材料，再回 Research 继续；需要修代码、修数据或修环境时用 `/agent` 起一轮通用 coding 会话，修复后由受影响节点重新检查。
+档位切换是一个增量协作流程：通常先 Analysis（`ideaseek prepare` / `/prepare`）把材料加工并判断缺口，再 Research 做科研执行；中途可回 Analysis 补材料，再回 Research 继续；需要修代码、修数据或修环境时用 `/agent` 或 `Alt+C` 切到 Coding 焦点起一轮通用 coding 会话，修复后由 `ideaseek stale`（`/drift`）与受影响节点重新检查。
 
 ## Analysis 档位（材料分析与研究准备）
 
-Analysis 是用户准备研究材料时使用的只读准备模式。它不是只问模型“还缺什么”，而是先把已有材料加工成可推理的研究中间层：
+Analysis 是用户准备研究材料时使用的只读准备模式（通过 `assertEffectiveAutonomy` 在所有科研写/锁/实验命令真正执法）。它不是只问模型“还缺什么”，而是先把已有材料加工成可推理的研究中间层：
 
 1. 扫描和解析论文、图表、LaTeX 与附件，生成 `PaperCard`、证据定位、全文/混合检索索引；
 2. 对 PaperCard 做主题综合、研究地图、方法谱系、机制库和证据冲突整理；
@@ -24,7 +25,7 @@ Analysis 是用户准备研究材料时使用的只读准备模式。它不是�
 4. 整理已有 comparison、代码入口、许可证、环境和可复现性状态；
 5. 在这些结构化结果之上生成 `ResearchMaterialAssessment`：告诉用户哪些论文、数据集/场景、comparison、指标、split、标签语义、消融或资源信息还缺。
 
-Analysis 可以继续处理本地材料、发现候选数据集/论文/仓库、更新知识 artifact 和重新评估缺口，也可以生成尚未锁定的切片/协议建议，但不能写科研代码、锁定正式协议、启动实验、改变 comparison 清单或生成未经确认的科学结论。用户补充材料后重新 `scan`/`intake`，它只重做受影响的节点；当材料和协议足够时，用户切到 Research。
+上述 1–5 步由 `ideaseek prepare`（TUI `/prepare`）按内容哈希增量编排执行。Analysis 可以继续处理本地材料、发现候选数据集/论文/仓库、更新知识 artifact 和重新评估缺口，但**严格禁止**写科研代码、锁定正式协议/公平性锁、启动实验、改变 comparison 清单或生成 handoff（无论 `policy.autonomy_mode` 是否为 `autonomous`）。用户补充材料后重新 `scan`/`prepare`，它只重做受影响的节点；当材料和协议足够时，用户切到 Research。
 
 ## Research 档位（科研执行）
 
@@ -32,10 +33,10 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 
 ## Agent 入口：项目内的通用 DSH coding agent
 
-科研会话的自然语言按权限档位分流：
+科研会话的自然语言按权限档位分流（高影响变更请求优先转为待审批 Decision，绝不被档位分流吞掉）：
 
-- **Research 档位**：`ideaseek ask` 的 supervisor 分类与现有 CLI use-case 执行——只读查询即时回答，高影响请求生成待审批 Decision，绝不静默执行；问候与能力问题由确定性拦截即时回答（不烧模型）。
-- **Analysis 档位**：自然语言进入材料评估与研究准备流程；只写知识和缺口 artifact，缺 required 材料时给出阻塞和下一步，不启动正式实验。
+- **Research 档位**：`ideaseek ask` 携带精简项目上下文与多轮问答历史（`.research/ask-history.json`）进入只读 Supervisor——快捷状态问题即时跑 CLI、科学/证据问答可直接以证据作答（`kind: "answer"`）、高影响请求生成待审批 Decision；问候与能力问题由确定性拦截即时回答（不烧模型）。
+- **Analysis 档位**：自然语言先识别高影响变更请求（仍转 pending Decision）与材料准备度/缺口问句（确定性直达 `ResearchMaterialAssessment`）；其余关于论文、数据与对比方法的分析性问句交给只读 Material Analyst 基于上下文与知识库作答（无模型密钥时回退展示材料就绪报告）。
 
 `ideaseek agent`（以及 TUI 里的 `/agent`）**不是第三个权限档位**，而是一个通用 coding agent，只是它的 cwd 落在项目里、每一回合被审计：
 
@@ -43,8 +44,8 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 - **它不要求当前目录是 IdeaSeek 项目。** 在任意仓库里 `ideaseek agent "<指令>"`（TUI 里 `/agent <指令>`）就是一轮通用 coding 会话：运行时、审批、`--resume` 全都照常。此时没有科研侧保证——不记 RunEvent、不做原始输入漂移侦测、不注入项目摘要——CLI 会把这一条明说出来，而不是假装保证仍在。进了 IdeaSeek 项目，三项自动生效。
 - **通用回合也留一份可回看的流水**：`~/.ideaseek/agent-sessions.json`（跟随 `IDEASEEK_USER_CONFIG`）记录每个会话的首轮指令作标题、最近一轮、累计回合数、所在目录和 `general`/`project` 归属；`ideaseek agent --list` 或 TUI `/agent`（不带指令）就是那个列表，`--resume <id>` 直接续上。完整的对话逐句正文仍然只在 DSH 自己的 session 历史里，IdeaSeek 不复制第二份事实源；列表上限 50 条，旧的自动淘汰。
 - **通用能力随处可用,但它不是这个界面的默认身份。** 在没有项目的目录里裸 `ideaseek` 打开的是"门口"状态:footer 显示 `GENERAL`(不伪造研究档位),你说的每一句话既不是 coding 回合也不是科研查询,而是列出三条门——`/init` 在这里建项目、`/open` 进入已注册项目、`/agent <指令>` 起一轮通用 coding 会话。通用活照干,只是要**显式按名字要**:`ideaseek agent "<指令>"` 在任意目录可用、可 `--resume`、可 `--list` 回看。让随机目录默认变成 agent,会让同一个命令在两个目录下是两种产品——那正是你不该猜的东西。
-- **`Shift+Tab` 是三档:Research → Analysis → Coding → Research。** 第三档是**对话焦点**而不是权限档位:它只决定下一句话送去哪儿(coding 焦点下每行都是一轮 DSH 回合,与 `/agent` 同一 use-case),底层档位保持不变,`/mode` 报的还是档位。焦点不记进 Decision——它不授予任何权限,而它产生的回合本来就有 `agent_turn` 事件和漂移检查兜底。
-- 每条自然语言是一次**真实 DSH coding-session turn**（项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，**跨 TUI 重启**也从 `knowledge/agent-sessions.json`（最新在前）自动续接上一段对话——id 在 DSH 侧失效时记日志回退新建，绝不卡死后续消息（想新开对话：删除该注册表条目）。首轮注入项目上下文摘要，使通用 agent 看得到研究问题与知识 artifact 的位置。无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。**TUI 内工具审批已透传**（输入行切换为 `y allow once · n reject` 提示，应答回传子进程；行式路径用裸 y/n 行，见 TERMINAL_UX 审批界面）；未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve），TTY 下仍走原生问询。
+- **`Shift+Tab` 循环与 `Alt+C` 正交开关**：`Shift+Tab` 顺序循环 `RESEARCH → ANALYSIS → CODING · ANALYSIS → RESEARCH`（若存在阻塞性材料缺口则温和提示留在 `ANALYSIS`，不会破坏会话状态；若由 `RESEARCH` 经 `Alt+C` 进入 `CODING · RESEARCH`，按 `Shift+Tab` 直接回到 `RESEARCH`）。**`Alt+C`** 可随时正交开关 `Coding` 对话焦点而不改动底层科研档位、不触发材料门禁。`Coding` 焦点下 UI 顶栏与底栏始终显式保留双态（`CODING · RESEARCH` / `CODING · ANALYSIS`），让底层约束永远透明；焦点不记进 Decision——它不授予任何权限,而它产生的回合本来就有 `agent_turn` 事件、预算计费与漂移检查兜底。
+- 每条自然语言是一次**真实 DSH coding-session turn**（项目为 cwd、逐回合记审计事件）；TUI 内跨消息自动 `--resume` 续同一 session，**跨 TUI 重启**也从 `knowledge/agent-sessions.json`（最新在前）自动续接上一段对话——id 在 DSH 侧失效时记日志回退新建且重新注入项目简报（绝不丢上下文），若中途切换了科研档位/run/漂移状态则自动附带状态同步 delta。无凭据/运行时不可用时诚实失败并给出 `ideaseek doctor` 指引。**TUI 内工具审批已透传**（输入行切换为 `y allow once · n reject` 提示，触及 `papers/`/`datasets/`/`comparisons/*/upstream/` 时标红警示，应答回传子进程；行式路径用裸 y/n 行，见 TERMINAL_UX 审批界面）；未 opt-in 的普通管道脚本仍默认拒绝（never auto-approve），TTY 下仍走原生问询。
 
 ### 不禁止写入，但侦测写入
 
@@ -76,7 +77,8 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 /mode
 /agent <指令>：起一轮通用 DSH coding 会话；不带指令时列出可回看、可续的会话
 /open         列出已注册项目（失效记录只计数不显示）；/open <名称|路径> --confirm 进入其中一个
-Shift+Tab：Research → Analysis → Coding（对话焦点，不是权限档位）→ Research（终端支持时）
+Shift+Tab：Research → Analysis → Coding（对话焦点）→ Research（终端支持时；若由 `Alt+C` 从 Research 进入 Coding，按 `Shift+Tab` 直接回 Research）
+Alt+C：正交开关 Coding 焦点（保持当前 Research 或 Analysis 权限档位不变）
 ```
 
 命令行：

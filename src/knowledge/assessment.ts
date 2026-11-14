@@ -622,9 +622,16 @@ export async function buildResearchMaterialAssessment(
       fileHashOrAbsent(join(root, 'knowledge', 'mechanism-graph.json')),
       fileHashOrAbsent(join(root, 'knowledge', 'input-manifest.json')),
     ]);
+    // Bucket volatile free-disk telemetry to the 5 GiB floor predicate so
+    // background OS disk activity does not falsely bust the reuse cache.
+    const stableStats = {
+      ...stats,
+      diskFreeGiB:
+        stats.diskFreeGiB === null ? null : stats.diskFreeGiB >= 5 ? 'above-floor' : 'below-floor',
+    };
     contextHashParts = [
       question,
-      JSON.stringify(stats),
+      JSON.stringify(stableStats),
       ...knowledgeFileHashes,
       ...cards.map((card) => card.contentHash).sort(),
       ...parsed.map((paper) => paper.contentHash).sort(),

@@ -21,9 +21,10 @@ IdeaSeek 的目标是把科研探索自动化，而不是让模型静默替研�
 
 用户在配置中显式允许无人值守。平台可以自动通过上述门槛，但仍受硬预算、权限、数据快照、required comparison 和安全规则限制。每次自动决定都写 Decision/Event，最终报告列出自动决定、依据和未确认风险。
 
-### Review-only
+### Review-only（项目配置级）与 Analysis（会话档位级）
 
-只做论文、数据、comparison 和实验协议分析，不写代码或启动实验；适合用户先检查研究地图和候选协议。
+- **`Review-only`**（`research.yaml: policy.autonomy_mode`）：项目级的只读配置——只做论文、数据、comparison 和实验协议分析，不写代码、不锁协议/公平性锁、不启动实验或交付 handoff。
+- **`Analysis`**（`.research/session.json` 会话档位）：交互与 CLI 准备期的临时只读锁——通过 `assertEffectiveAutonomy` 与 `Review-only` 共享同一套写操作/科学锁定拦截，即便项目配置是 `guided` 或 `autonomous`，只要当前处于 `Analysis` 档位就一律拒绝写科研代码、锁协议、改 comparison 必选集或启动实验；准备完成后切回 `Research` 即恢复 `guided`/`autonomous` 策略。
 
 ## 不应静默决定的事项
 

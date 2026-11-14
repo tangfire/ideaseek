@@ -22,9 +22,9 @@
     },
     {
       "id": "modes",
-      "title": "Research 和 Agent 模式",
-      "search": "Research Agent mode Shift Tab 研究 编程权限",
-      "excerpt": "03 · Modes Research 和 Agent 模式 模式 适合做什么 边界 RESEARCH 论文分析、协议、comparison、idea 和实验流程。 遵守证据、数据、实验和审批门禁。 AGENT 复用 DSH 的通用 coding agent：理解项目、编辑授权范围内文件、运行受限命令和测试、修复工程问题。 受项目根路径、工具权限、网络/凭据策略与科研数据保护约束；不会绕过 Research 的科学门禁。 交互界面底部显示当前模式；按 Shift + Tab 在 Analysis、Research、Agent 之间循环，或输入 /mode analysis 、 /mode research 、 /mode agent 。切换后顶部状态与审计输出会更新。 Agent 模式的命令行入口是 ideaseek agent \"&lt;任务&gt;\" ：在项目目录里启动 真实的 DSH"
+      "title": "Research、Analysis 与 Coding 协同模式",
+      "search": "Research Analysis Coding Agent mode Shift Tab Alt C 研究 编程权限",
+      "excerpt": "03 · Modes Research、Analysis 与 Coding 协同模式 状态 / 入口 适合做什么 边界 RESEARCH 论文分析、协议、comparison、idea 和实验流程；自由文本由带上下文的 Supervisor 解答或转待审批决策。 遵守证据、数据、实验和审批门禁。 ANALYSIS 只读材料准备：运行 ideaseek prepare 、 ideaseek assessment 与只读材料问答，补齐论文/数据/comparison 缺口。 强制只读准备：拒绝写科研代码、锁协议、改 comparison 或启动实验。 CODING / /agent 复用 DSH 的通用 coding 会话（ Alt+C 切换焦点，或 ideaseek agent / /agent ）：理解项目、编辑代码、运行测试、修复工程问题。 不设目录写禁令，靠工具逐次审批、项目预算计费与"
     },
     {
       "id": "models",
@@ -54,7 +54,7 @@
       "id": "observe",
       "title": "交互、命令与监控",
       "search": "TUI slash command palette status next events pause resume attach",
-      "excerpt": "07 · Interactive 交互、命令与监控 真实 TTY 启动 Ink 交互界面。按 `/` 打开带说明的命令菜单，继续输入过滤；方向键选择，Tab 补全，Enter 执行，Esc 关闭。Shift+Tab 切换 Research/Agent 会话模式。 输入 用途 /status 看项目、run、任务和阶段 /next 解释阻塞并给下一步 /models 看模型 route/凭据状态 /pause / /resume 安全暂停和恢复 /quit 退出界面，不取消后台任务 自然语言可用于询问状态或提出建议。高影响动作必须先预览并确认；Agent 不得静默改指标、测试集或 comparison 清单。"
+      "excerpt": "07 · Interactive 交互、命令与监控 真实 TTY 启动 Ink 交互界面。按 `/` 打开带说明的命令菜单，继续输入过滤；方向键选择，Tab 补全，Enter 执行，Esc 关闭。 Shift + Tab 循环 Research / Analysis / Coding， Alt + C 随时正交开关 Coding 焦点（保留底层科研档位）。 输入 用途 /status 看项目、run、任务和阶段 /next 解释阻塞并给下一步 /prepare / /assessment 运行只读材料准备流或查看缺口报告 /drift 检查输入漂移与下游失效产物 /models 看模型 route/凭据状态 /pause / /resume 安全暂停和恢复 /quit 退出界面，不取消后台任务 自然语言可用于询问状态或提出建议。高影响动作必须先预览并确认；Agent 不得静默改指标、测试集"
     },
     {
       "id": "results",

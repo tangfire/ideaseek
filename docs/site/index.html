@@ -1126,14 +1126,17 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
             放在同一研究项目的对应输入区，IdeaSeek 会扫描并给出归类预览。
           </div>
         </section>
-        <section id="modes" data-search="Research Agent mode Shift Tab 研究 编程权限">
+        <section
+          id="modes"
+          data-search="Research Analysis Coding Agent mode Shift Tab Alt C 研究 编程权限"
+        >
           <div class="eyebrow">03 · Modes</div>
-          <h2>Research 和 Agent 模式</h2>
+          <h2>Research、Analysis 与 Coding 协同模式</h2>
           <div class="tablewrap">
             <table>
               <thead>
                 <tr>
-                  <th>模式</th>
+                  <th>状态 / 入口</th>
                   <th>适合做什么</th>
                   <th>边界</th>
                 </tr>
@@ -1141,36 +1144,57 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
               <tbody>
                 <tr>
                   <td><span class="pill">RESEARCH</span></td>
-                  <td>论文分析、协议、comparison、idea 和实验流程。</td>
+                  <td>
+                    论文分析、协议、comparison、idea 和实验流程；自由文本由带上下文的 Supervisor
+                    解答或转待审批决策。
+                  </td>
                   <td>遵守证据、数据、实验和审批门禁。</td>
                 </tr>
                 <tr>
-                  <td><span class="pill warn">AGENT</span></td>
+                  <td><span class="pill">ANALYSIS</span></td>
                   <td>
-                    复用 DSH 的通用 coding
-                    agent：理解项目、编辑授权范围内文件、运行受限命令和测试、修复工程问题。
+                    只读材料准备：运行 <code>ideaseek prepare</code>、<code
+                      >ideaseek assessment</code
+                    >
+                    与只读材料问答，补齐论文/数据/comparison 缺口。
+                  </td>
+                  <td>强制只读准备：拒绝写科研代码、锁协议、改 comparison 或启动实验。</td>
+                </tr>
+                <tr>
+                  <td><span class="pill warn">CODING / /agent</span></td>
+                  <td>
+                    复用 DSH 的通用 coding 会话（<code>Alt+C</code> 切换焦点，或
+                    <code>ideaseek agent</code> /
+                    <code>/agent</code>）：理解项目、编辑代码、运行测试、修复工程问题。
                   </td>
                   <td>
-                    受项目根路径、工具权限、网络/凭据策略与科研数据保护约束；不会绕过 Research
-                    的科学门禁。
+                    不设目录写禁令，靠工具逐次审批、项目预算计费与回合末漂移侦测（<code
+                      >ideaseek stale</code
+                    >
+                    / <code>/drift</code>）保护科研完整性；保留底层档位显示（<code
+                      >CODING · RESEARCH</code
+                    >
+                    / <code>CODING · ANALYSIS</code>）。
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
           <p>
-            交互界面底部显示当前模式；按 <kbd>Shift</kbd>+<kbd>Tab</kbd> 在
-            Analysis、Research、Agent 之间循环，或输入 <code>/mode analysis</code>、<code
-              >/mode research</code
-            >、<code>/mode agent</code>。切换后顶部状态与审计输出会更新。
+            交互界面底部与输入框顶栏显示当前状态；按 <kbd>Shift</kbd>+<kbd>Tab</kbd> 循环 Research /
+            Analysis / Coding，按 <kbd>Alt</kbd>+<kbd>C</kbd> 随时正交开关 Coding
+            焦点（不改底层科研档位），或输入 <code>/mode analysis</code>、<code>/mode research</code
+            >、<code>/mode coding</code>。
           </p>
           <p>
-            Agent 模式的命令行入口是
-            <code>ideaseek agent "&lt;任务&gt;"</code>：在项目目录里启动<strong
+            通用工程入口为
+            <code>ideaseek agent "&lt;任务&gt;"</code>：在任意目录启动<strong
               >真实的 DSH coding session</strong
-            >（项目内读写、受限 shell、测试工具由 DSH 运行时提供），每回合记录审计事件，
-            <code>--resume &lt;sessionId&gt;</code> 续跑多步任务。工具审批默认安全拒绝：只有交互 TTY
-            会逐次询问 <kbd>y</kbd>/N（一次性授权），脚本环境用
+            >（在 IdeaSeek 项目内自动记入审计与 <code>max_model_cost</code> 预算，并在回合末检查
+            <code>papers/</code>、<code>datasets/</code>、<code>comparisons/*/upstream/</code>
+            漂移），<code>--resume &lt;sessionId&gt;</code>
+            续跑多步任务。工具审批默认安全拒绝：只有交互 TTY 会逐次询问
+            <kbd>y</kbd>/N（一次性授权），脚本环境用
             <code>--deny-tools</code> 显式全拒。需要模型凭据（<code
               >ideaseek models setup --test</code
             >）。
@@ -1179,7 +1203,9 @@ node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js doctor</code></pre>
             <div class="codehead">
               <span class="lang">bash</span><button class="copy">复制</button>
             </div>
-            <pre><code>ideaseek agent "run the test suite and fix the failing unit"
+            <pre><code>ideaseek prepare --skip-model
+ideaseek stale
+ideaseek agent "run the test suite and fix the failing unit"
 ideaseek agent --list
 ideaseek agent "continue where you stopped" --resume &lt;sessionId&gt;</code></pre>
           </div>
@@ -1307,7 +1333,8 @@ ideaseek plan --question "你的研究问题"</code></pre>
           <h2>交互、命令与监控</h2>
           <p>
             真实 TTY 启动 Ink 交互界面。按 `/` 打开带说明的命令菜单，继续输入过滤；方向键选择，Tab
-            补全，Enter 执行，Esc 关闭。Shift+Tab 切换 Research/Agent 会话模式。
+            补全，Enter 执行，Esc 关闭。<kbd>Shift</kbd>+<kbd>Tab</kbd> 循环 Research / Analysis /
+            Coding， <kbd>Alt</kbd>+<kbd>C</kbd> 随时正交开关 Coding 焦点（保留底层科研档位）。
           </p>
           <div class="tablewrap">
             <table>
@@ -1325,6 +1352,14 @@ ideaseek plan --question "你的研究问题"</code></pre>
                 <tr>
                   <td><code>/next</code></td>
                   <td>解释阻塞并给下一步</td>
+                </tr>
+                <tr>
+                  <td><code>/prepare</code> / <code>/assessment</code></td>
+                  <td>运行只读材料准备流或查看缺口报告</td>
+                </tr>
+                <tr>
+                  <td><code>/drift</code></td>
+                  <td>检查输入漂移与下游失效产物</td>
                 </tr>
                 <tr>
                   <td><code>/models</code></td>
