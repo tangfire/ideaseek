@@ -218,4 +218,62 @@ describe('ask in analysis mode (deterministic assessment flow)', () => {
     expect((await runCli(dir, ['status'])).code).toBe(0);
     expect((await runCli(dir, ['assessment', '--json'])).code).toBe(2); // gaps exit 2, not error
   }, 180_000);
+
+  it('preserves pending-action Decisions, answers analytical Q&A, and runs prepare pipeline in analysis mode', async () => {
+    const dir = await makeProjectDir();
+    const { mkdir } = await import('node:fs/promises');
+    expect((await runCli(dir, ['run', '--question', 'prep test', '--enqueue-only'])).code).toBe(0);
+    expect((await runCli(dir, ['mode', 'analysis'])).code).toBe(0);
+
+    // High-impact request in analysis mode still becomes a pending-approval Decision.
+    const budget = await runCli(dir, ['ask', '把本轮预算限制在 5 个 GPU 小时']);
+    expect(budget.code, budget.stdout + budget.stderr).toBe(0);
+    expect(budget.stdout).toContain('pending-approval');
+
+    // Open-ended analytical question with harness override gets a grounded answer (not gap dump).
+    const override = JSON.stringify({
+      kind: 'answer',
+      answer: 'Paper A compares FedAvg and FedProx on CIFAR-10.',
+      cliArgs: null,
+    });
+    const qa = await new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          [CLI_BIN, 'ask', 'which baselines appear in Paper A?', '--harness', 'fake', '--json'],
+          {
+            cwd: dir,
+            env: {
+              ...process.env,
+              IDEASEEK_CLI: '1',
+              IDEASEEK_FAKE_SUPERVISOR_OUTPUT: override,
+            },
+          },
+        );
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (c) => (stdout += String(c)));
+        child.stderr.on('data', (c) => (stderr += String(c)));
+        child.on('error', reject);
+        child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }));
+      },
+    );
+    expect(qa.code, qa.stderr).toBe(0);
+    const qaPayload = JSON.parse(qa.stdout) as { source: string; answer: string };
+    expect(qaPayload.source).toBe('analysis-qa');
+    expect(qaPayload.answer).toContain('FedProx');
+
+    // `ideaseek prepare --skip-model` runs scan → ingest → data describe → assessment cleanly.
+    await mkdir(join(dir, 'datasets'), { recursive: true });
+    await writeFile(join(dir, 'datasets', 'toy.csv'), 'feat,label\n1,0\n2,1\n3,0\n4,1\n', 'utf8');
+    const prep = await runCli(dir, ['prepare', '--skip-model', '--json']);
+    expect(prep.code, prep.stdout + prep.stderr).toBe(2); // still missing papers
+    const prepPayload = JSON.parse(prep.stdout) as {
+      steps: { step: string; status: string }[];
+      assessment: { stats: { datasetCard: boolean } };
+    };
+    expect(prepPayload.steps.find((s) => s.step === 'scan')?.status).toBe('ran');
+    expect(prepPayload.steps.find((s) => s.step === 'data-describe')?.status).toBe('ran');
+    expect(prepPayload.assessment.stats.datasetCard).toBe(true);
+  }, 180_000);
 });

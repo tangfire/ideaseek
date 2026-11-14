@@ -36,6 +36,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'material readiness & gap report (Analysis prep check)',
   },
   {
+    name: '/prepare',
+    usage: '/prepare [--skip-model]',
+    description: 'run read-only Analysis prep pipeline (scan → ingest → data → extract → assess)',
+  },
+  {
     name: '/drift',
     usage: '/drift [--idea <id>]',
     description: 'preview input drift & invalidated downstream artifacts',
@@ -136,7 +141,10 @@ export function resolveSlash(input: string): SlashResolution {
 
 /** Help sections: how a researcher actually walks through a session. */
 const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
-  { title: 'overview', names: ['/help', '/init', '/status', '/next', '/assessment', '/drift'] },
+  {
+    title: 'overview',
+    names: ['/help', '/init', '/status', '/next', '/prepare', '/assessment', '/drift'],
+  },
   { title: 'approvals', names: ['/pending', '/approve', '/reject'] },
   { title: 'research', names: ['/papers', '/comparisons', '/ideas', '/experiments', '/logs'] },
   { title: 'ideation', names: ['/rounds', '/ideate', '/feedback'] },

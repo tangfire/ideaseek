@@ -153,4 +153,40 @@ describe('ask free-text quality (CLI)', () => {
     expect(unclear.stdout).toContain('not sure how to help');
     expect(unclear.stdout).not.toContain('rephrase');
   }, 60_000);
+
+  it('supports direct supervisor answers and builds redacted multi-turn project context', async () => {
+    const dir = await makeProjectDir();
+    await runCli(dir, ['run', '--question', 'Why does non-IID degrade FedAvg?', '--enqueue-only']);
+    const override = JSON.stringify({
+      kind: 'answer',
+      answer: 'Non-IID label skew causes client drift across local epochs (papers/a.pdf p.3).',
+      cliArgs: null,
+    });
+    const res = await runCli(
+      dir,
+      [
+        'ask',
+        '--harness',
+        'fake',
+        '--json',
+        '--',
+        'summarize why --json flags do not break ask and explain client drift',
+      ],
+      { IDEASEEK_FAKE_SUPERVISOR_OUTPUT: override },
+    );
+    expect(res.code, res.stderr).toBe(0);
+    const payload = JSON.parse(res.stdout) as { source: string; kind: string; answer: string };
+    expect(payload.source).toBe('supervisor-answer');
+    expect(payload.kind).toBe('answer');
+    expect(payload.answer).toContain('client drift');
+
+    const { buildAskContext, readAskHistory } = await import('../src/session/ask-context.js');
+    const history = await readAskHistory(dir);
+    expect(history).toHaveLength(1);
+    expect(history[0]!.answer).toContain('client drift');
+
+    const ctx = await buildAskContext(dir, 'research');
+    expect(ctx).toContain('Why does non-IID degrade FedAvg?');
+    expect(ctx).toContain('recentAskTurns');
+  }, 60_000);
 });

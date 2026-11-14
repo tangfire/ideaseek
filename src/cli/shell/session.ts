@@ -996,6 +996,9 @@ export class InteractiveSession {
       case '/assessment':
         await this.relay(['assessment', ...restArgs]);
         return 'continue';
+      case '/prepare':
+        await this.relay(['prepare', ...restArgs]);
+        return 'continue';
       case '/drift':
         await this.relay(['stale', ...restArgs]);
         return 'continue';

@@ -9,16 +9,36 @@ import { action, jsonLine } from './shared.js';
 /**
  * `ideaseek ask "<text>"` — the single entry for free-text REPL input
  * (ADR-006: the REPL relays here instead of interpreting itself):
- * 1. known queries → answered by the SAME non-interactive CLI use-cases;
- * 2. high-impact requests (budget/priority/protocol/idea/experiments) →
- *    pending-approval Decision, never executed;
- * 3. everything else → routed to the current mode's supervisor (DSH Agent)
- *    which classifies it into one of the two above — "unknown input" never
- *    reaches the user.
+ * 1. greetings/capability → instant orientation (no model);
+ * 2. known queries → answered by the SAME non-interactive CLI use-cases;
+ * 3. high-impact requests (budget/priority/protocol/idea/experiments) →
+ *    pending-approval Decision, never executed (even in Analysis mode);
+ * 4. Analysis mode material-readiness queries → deterministic assessment;
+ * 5. everything else → routed to the mode's read-only DSH agent seeded with
+ *    compact project context + recent Q&A history, returning grounded answers,
+ *    read-only CLI queries, or pending-approval Decisions.
  */
-const SUPERVISOR_INSTRUCTION = `You are the IdeaSeek research supervisor. Classify the user's message and answer with ONE JSON object only:
-{"kind":"query"|"pending-action"|"unclear","answer":"short direct answer or empty string","cliArgs":["command","args"] or null,"reason":"budget|priority|protocol|idea|experiment|other","summary":"the request restated for an audit log"}
-Rules: kind=query means a read-only question about status/next/papers/comparisons/ideas/experiments/models — put the equivalent CLI argv in cliArgs and a one-line answer in answer. kind=pending-action means the user wants to CHANGE budget, priority, protocol, ideas or experiments — restate it in summary with a reason. kind=unclear is only for genuinely uninterpretable text. Never claim you executed anything; never include secrets.`;
+const SUPERVISOR_INSTRUCTION = `You are the IdeaSeek research supervisor (read-only research tools: project_read, knowledge_search).
+Given the project context and user message, respond with ONE JSON object only:
+{"kind":"query"|"answer"|"pending-action"|"unclear","answer":"direct grounded answer or short summary","cliArgs":["command","args"] or null,"reason":"budget|priority|protocol|idea|experiment|other","summary":"the request restated for an audit log"}
+Rules:
+- kind="query": the user wants live workflow/project status that a read-only CLI command prints — put argv in cliArgs (e.g. ["status"], ["next"], ["papers"], ["comparison","list"], ["idea","list"], ["experiment","list"], ["assessment"]) and optionally a one-line summary in answer.
+- kind="answer": the user is asking a scientific, paper, dataset, comparison, or reasoning question about the project — use project_context, knowledge_search, or project_read if helpful and write a concise, evidence-grounded answer in "answer" with cliArgs=null. Never invent numbers or citations.
+- kind="pending-action": the user wants to CHANGE budget, priority, protocol, comparisons, hypotheses, or experiments — restate the request in "summary" with "reason", cliArgs=null. Never claim you executed anything.
+- kind="unclear": only for genuinely uninterpretable text. Never include secrets.`;
+
+const ANALYSIS_ANALYST_INSTRUCTION = `You are the IdeaSeek Analysis Mode Material Analyst (read-only preparation tier; tools: project_read, knowledge_search).
+You CANNOT write research code, lock protocols, start experiments, or alter comparisons.
+Given the project context (assessment, dataset-card, research-map, comparisons, history) and user message, respond with ONE JSON object only:
+{"kind":"answer"|"query"|"pending-action"|"unclear","answer":"direct grounded answer about papers, datasets, comparisons, or material gaps","cliArgs":["command","args"] or null,"reason":"budget|priority|protocol|idea|experiment|other","summary":"the request restated for an audit log"}
+Rules:
+- Answer questions about existing papers, PaperCards, dataset structure, comparisons, and what materials/preparation steps remain, grounded strictly in observed artifacts (or use knowledge_search / project_read).
+- If the user asks for a read-only status view (status, papers, assessment, stale, comparison list), use kind="query" with cliArgs.
+- If the user asks to modify budget, priority, protocol, or comparisons, use kind="pending-action".
+- Never fabricate results or citations; never include secrets.`;
+
+const MATERIAL_READINESS_RE =
+  /\b(missing|gaps?|ready|sufficient|material|materials|prepare|assessment)\b|(缺什么|缺少|还缺|材料|准备好了|够不够|评估)/i;
 
 /**
  * Greetings and capability questions are answered deterministically —
@@ -29,11 +49,11 @@ const GREETING =
   /^(hi+|hello+|hey+|yo|hi there|howdy|你好+|您好|在吗|在不在|哈喽|嗨+)[!！.。~～\s]*$/i;
 const CAPABILITY = /(你能做什么|你会什么|你能帮我做什么|what can you do)/i;
 const ORIENTATION_LINES = [
-  'IdeaSeek supervisor ready — /status state · /next next step · /papers progress · /help commands',
-  'ask a question like "为什么 method-x 还没通过"; changes become pending-approval Decisions',
+  'IdeaSeek supervisor ready — /status state · /next next step · /prepare prep · /assessment gaps · /help commands',
+  'ask any scientific/status question, or request changes (which become pending-approval Decisions); Alt+C switches to Coding',
 ];
 const UNCLEAR_FALLBACK =
-  'not sure how to help — /status · /next · /papers · /help; changes become pending-approval Decisions';
+  'not sure how to help — /status · /next · /assessment · /prepare · /help; changes become pending-approval Decisions';
 
 /**
  * Supervisor-supplied argv is NOT trusted verbatim: models often prepend
@@ -66,6 +86,8 @@ const READONLY_QUERY_CLI = new Set([
   'plan',
   'data',
   'datasets',
+  'assessment',
+  'stale',
 ]);
 
 export function sanitizeSupervisorCliArgs(argv: readonly string[]): string[] | null {
@@ -80,7 +102,7 @@ export function sanitizeSupervisorCliArgs(argv: readonly string[]): string[] | n
 function parseSupervisorOutput(output: string): {
   kind: string;
   answer?: string;
-  cliArgs?: string[];
+  cliArgs?: string[] | null;
   reason?: string;
   summary?: string;
 } | null {
@@ -88,7 +110,7 @@ function parseSupervisorOutput(output: string): {
     const parsed = JSON.parse(output) as {
       kind?: string;
       answer?: string;
-      cliArgs?: string[];
+      cliArgs?: string[] | null;
       reason?: string;
       summary?: string;
     };
@@ -105,11 +127,50 @@ function parseSupervisorOutput(output: string): {
   }
 }
 
+async function emitAnalysisAssessment(opts: { json?: boolean; note?: string }): Promise<number> {
+  const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
+  const { assessment, reused } = await loadOrBuildAssessment(process.cwd());
+  const blocking = assessment.gaps.filter((g) => g.priority === 'blocking');
+  if (opts.json) {
+    process.stdout.write(
+      jsonLine({
+        source: 'analysis-assessment',
+        mode: 'analysis',
+        reused,
+        verdict: assessment.verdict,
+        sufficientFor: assessment.sufficientFor,
+        gaps: assessment.gaps,
+      }),
+    );
+  } else {
+    if (opts.note) process.stdout.write(`${opts.note}\n`);
+    process.stdout.write(
+      `analysis mode — research material assessment (${reused ? 'reused' : 'rebuilt'}): ` +
+        `${assessment.verdict.toUpperCase()} · protocol design ` +
+        `${assessment.sufficientFor.protocolDesign ? 'OK' : 'BLOCKED'} · smoke/quick ` +
+        `${assessment.sufficientFor.smokeQuick ? 'OK' : 'BLOCKED'}\n`,
+    );
+    for (const item of assessment.gaps.slice(0, 12)) {
+      process.stdout.write(
+        `  [${item.priority}] ${item.id}: ${item.reason}\n` + `          next: ${item.fillIn}\n`,
+      );
+    }
+    if (assessment.gaps.length > 12) {
+      process.stdout.write(`  … ${assessment.gaps.length - 12} more in the report\n`);
+    }
+    process.stdout.write('  file: knowledge/research-material-assessment.json\n');
+    process.stdout.write(
+      '  (analysis mode: run /prepare to build knowledge artifacts; switch to research when blocking gaps clear)\n',
+    );
+  }
+  return blocking.length > 0 ? 2 : 0;
+}
+
 export function registerAskCommand(program: Command): void {
   program
     .command('ask')
     .description(
-      'free-text entry: queries answer from state, high-impact requests become pending Decisions, rest routes to the supervisor',
+      'free-text entry: queries answer from state, high-impact requests become pending Decisions, rest routes to the mode-aware read-only agent',
     )
     .argument('<text...>', 'the user message')
     .option(
@@ -141,7 +202,7 @@ export function registerAskCommand(program: Command): void {
           return 0;
         }
 
-        // 1/2: deterministic classification first — no model needed.
+        // 1: deterministic read-only queries — no model needed.
         const intent = interpretInput(message);
         if (intent.kind === 'query') {
           const result = await runCli(intent.cliArgs, { timeoutMs: 60_000 });
@@ -158,56 +219,10 @@ export function registerAskCommand(program: Command): void {
           }
           return result.code;
         }
-        // Analysis mode: natural language enters the material-assessment
-        // flow (MODES.md Analysis 模式) — deterministic, writes only the
-        // knowledge gap artifact, never a Decision, never a model call.
-        {
-          const { readSessionMode } = await import('../session/mode.js');
-          const sessionMode = await readSessionMode(process.cwd()).catch(() => 'research' as const);
-          if (sessionMode === 'analysis') {
-            const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
-            const { assessment, reused } = await loadOrBuildAssessment(process.cwd());
-            const blocking = assessment.gaps.filter((g) => g.priority === 'blocking');
-            if (opts.json) {
-              process.stdout.write(
-                jsonLine({
-                  source: 'analysis-assessment',
-                  mode: 'analysis',
-                  reused,
-                  verdict: assessment.verdict,
-                  sufficientFor: assessment.sufficientFor,
-                  gaps: assessment.gaps,
-                }),
-              );
-            } else {
-              process.stdout.write(
-                `analysis mode — research material assessment (${reused ? 'reused' : 'rebuilt'}): ` +
-                  `${assessment.verdict.toUpperCase()} · protocol design ` +
-                  `${assessment.sufficientFor.protocolDesign ? 'OK' : 'BLOCKED'} · smoke/quick ` +
-                  `${assessment.sufficientFor.smokeQuick ? 'OK' : 'BLOCKED'}
-`,
-              );
-              for (const item of assessment.gaps.slice(0, 12)) {
-                process.stdout.write(
-                  `  [${item.priority}] ${item.id}: ${item.reason}
-` +
-                    `          next: ${item.fillIn}
-`,
-                );
-              }
-              if (assessment.gaps.length > 12) {
-                process.stdout.write(`  … ${assessment.gaps.length - 12} more in the report
-`);
-              }
-              process.stdout.write('  file: knowledge/research-material-assessment.json\n');
-              process.stdout.write(
-                '  (analysis mode: questions about materials are answered from state; switch to research when blocking gaps clear)\n',
-              );
-            }
-            return blocking.length > 0 ? 2 : 0;
-          }
-        }
 
+        // 2: deterministic high-impact action requests MUST become
+        // pending-approval Decisions in BOTH Research and Analysis modes
+        // (never silently swallowed by the Analysis gap shortcut).
         if (intent.kind === 'pending-action') {
           const decision = await runCli(
             ['decision', 'propose', `${intent.summary} (classified: ${intent.reason})`],
@@ -228,12 +243,35 @@ export function registerAskCommand(program: Command): void {
           return decision.code;
         }
 
-        // 3: unclassified → supervisor (DSH Agent for the current mode).
+        const { findProjectRoot } = await import('../config/paths.js');
+        const root = await findProjectRoot(process.cwd()).catch(() => null);
+        const { readSessionMode } = await import('../session/mode.js');
+        const sessionMode = root
+          ? await readSessionMode(root).catch(() => 'research' as const)
+          : ('research' as const);
+
         const keyPresent = Boolean(
           process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY.trim(),
         );
-        const kind =
-          opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
+        const explicitHarness = opts.harness ?? process.env.IDEASEEK_ASK_HARNESS;
+
+        // 3: Analysis mode deterministic readiness path for material/gap
+        // questions (or when no model harness is available for deep Q&A).
+        if (sessionMode === 'analysis') {
+          if (MATERIAL_READINESS_RE.test(message) || (!keyPresent && !explicitHarness)) {
+            return emitAnalysisAssessment({
+              json: opts.json,
+              note:
+                !MATERIAL_READINESS_RE.test(message) && !keyPresent && !explicitHarness
+                  ? 'analysis mode: no model key set for open-ended Q&A — showing material readiness (/models setup enables Q&A)'
+                  : undefined,
+            });
+          }
+        }
+
+        // 4: Model-backed read-only supervisor / material analyst seeded with
+        // compact project context + recent Q&A history.
+        const kind = explicitHarness ?? (keyPresent ? 'dsh' : 'fake');
         const { buildHarness } = await import('./shared.js');
         const harness = buildHarness(kind);
         // Free text can carry a pasted credential (an API key typed at the
@@ -241,21 +279,28 @@ export function registerAskCommand(program: Command): void {
         // place IdeaSeek sends user text off-machine, so it goes redacted:
         // docs/AGENTS.md forbids secrets in prompts, events and logs.
         const safeMessage = redactSecrets(message);
-        // Announce the classifier before the (potentially slow) model round
-        // trip — a silent spinner for tens of seconds felt dead. Streams
-        // through the relay's line framer; JSON mode stays machine-pure.
-        if (!opts.json) process.stdout.write(`supervisor (${kind}): classifying…\n`);
+        const { appendAskHistory, buildAskContext } = await import('../session/ask-context.js');
+        const projectContext = root ? await buildAskContext(root, sessionMode) : '';
+        const roleLabel = sessionMode === 'analysis' ? 'analyst' : 'supervisor';
+        if (!opts.json) process.stdout.write(`${roleLabel} (${kind}): classifying…\n`);
         await harness.initialize();
         try {
+          const inputs: { kind: 'text'; name: string; content: string }[] = [
+            { kind: 'text', name: 'user_message', content: safeMessage },
+          ];
+          if (projectContext) {
+            inputs.push({ kind: 'text', name: 'project_context', content: projectContext });
+          }
           const result = await harness.runTask({
             runId: 'ask-session',
             taskId: `ask-${Date.now()}`,
             profile: 'demo',
-            instruction: SUPERVISOR_INSTRUCTION,
-            inputs: [{ kind: 'text', name: 'user_message', content: safeMessage }],
+            instruction:
+              sessionMode === 'analysis' ? ANALYSIS_ANALYST_INSTRUCTION : SUPERVISOR_INSTRUCTION,
+            inputs,
             outputSchema: 'supervisor-intent-v1',
-            budget: { timeoutMs: 60_000, maxOutputTokens: 1024 },
-            idempotencyKey: `ask:${sha256Of(safeMessage)}`,
+            budget: { timeoutMs: 60_000, maxOutputTokens: 1536 },
+            idempotencyKey: `ask:${sessionMode}:${sha256Of(safeMessage + projectContext.slice(0, 200))}`,
           });
           const parsed = parseSupervisorOutput(result.output);
           if (!parsed) {
@@ -264,22 +309,45 @@ export function registerAskCommand(program: Command): void {
               `supervisor returned unparseable output: ${result.output.slice(0, 200)}`,
             );
           }
-          if (parsed.kind === 'query' && Array.isArray(parsed.cliArgs)) {
+
+          const recordTurn = async (turnKind: string, answerText: string) => {
+            if (!root) return;
+            await appendAskHistory(root, {
+              ts: Date.now(),
+              mode: sessionMode,
+              question: safeMessage,
+              kind: turnKind,
+              answer: answerText,
+            }).catch(() => undefined);
+          };
+
+          if (
+            parsed.kind === 'query' &&
+            Array.isArray(parsed.cliArgs) &&
+            parsed.cliArgs.length > 0
+          ) {
             const safeArgs = sanitizeSupervisorCliArgs(parsed.cliArgs);
             if (safeArgs) {
+              if (!opts.json && parsed.answer?.trim()) {
+                process.stdout.write(`${redactSecrets(parsed.answer.trim())}\n`);
+              }
               const relayed = await runCli(safeArgs, { timeoutMs: 60_000 });
               if (relayed.stdout) process.stdout.write(relayed.stdout);
               if (relayed.stderr) process.stderr.write(relayed.stderr);
+              await recordTurn('query', parsed.answer?.trim() || `ran: ${safeArgs.join(' ')}`);
               if (opts.json) {
                 process.stdout.write(
-                  jsonLine({ source: 'supervisor', kind: 'query', answer: parsed.answer ?? null }),
+                  jsonLine({
+                    source: sessionMode === 'analysis' ? 'analysis-qa' : 'supervisor',
+                    kind: 'query',
+                    cliArgs: safeArgs,
+                    answer: parsed.answer ?? null,
+                  }),
                 );
               }
               return relayed.code;
             }
-            // Not a read-only query (or empty after stripping the binary
-            // name): never relay it — record it for explicit review. Free
-            // text must not execute actions through a misclassification.
+            // Not a read-only query: never relay it — record it for explicit review.
             const decision = await runCli(
               [
                 'decision',
@@ -290,10 +358,11 @@ export function registerAskCommand(program: Command): void {
             );
             if (decision.stdout) process.stdout.write(decision.stdout);
             if (decision.stderr) process.stderr.write(decision.stderr);
+            await recordTurn('refused-non-readonly', parsed.cliArgs.join(' '));
             if (opts.json) {
               process.stdout.write(
                 jsonLine({
-                  source: 'supervisor',
+                  source: sessionMode === 'analysis' ? 'analysis-qa' : 'supervisor',
                   kind: 'refused-non-readonly',
                   cliArgs: parsed.cliArgs,
                 }),
@@ -301,8 +370,32 @@ export function registerAskCommand(program: Command): void {
             }
             return decision.code;
           }
+
+          // Direct evidence-grounded answer (or query with no cliArgs and a real answer).
+          if (
+            (parsed.kind === 'answer' || parsed.kind === 'query') &&
+            typeof parsed.answer === 'string' &&
+            parsed.answer.trim().length > 0
+          ) {
+            const safeAnswer = redactSecrets(parsed.answer.trim());
+            await recordTurn('answer', safeAnswer);
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  source: sessionMode === 'analysis' ? 'analysis-qa' : 'supervisor-answer',
+                  mode: sessionMode,
+                  kind: 'answer',
+                  answer: safeAnswer,
+                }),
+              );
+            } else {
+              process.stdout.write(`${safeAnswer}\n`);
+            }
+            return 0;
+          }
+
           if (parsed.kind === 'pending-action') {
-            const summary = parsed.summary || safeMessage;
+            const summary = redactSecrets(parsed.summary || safeMessage);
             const decision = await runCli(
               [
                 'decision',
@@ -313,19 +406,26 @@ export function registerAskCommand(program: Command): void {
             );
             if (decision.stdout) process.stdout.write(decision.stdout);
             if (decision.stderr) process.stderr.write(decision.stderr);
+            await recordTurn('pending-action', summary);
             if (opts.json) {
               process.stdout.write(
-                jsonLine({ ...parsed, source: 'supervisor', kind: 'pending-action' }),
+                jsonLine({
+                  ...parsed,
+                  summary,
+                  source: sessionMode === 'analysis' ? 'analysis-qa' : 'supervisor',
+                  kind: 'pending-action',
+                }),
               );
             }
             return decision.code;
           }
+
           // unclear: surface the supervisor's short answer, never "unknown input".
           if (opts.json) {
             process.stdout.write(jsonLine({ source: 'supervisor', ...parsed }));
             return 0;
           }
-          if (parsed.answer) process.stdout.write(`${parsed.answer}\n`);
+          if (parsed.answer) process.stdout.write(`${redactSecrets(parsed.answer)}\n`);
           process.stdout.write(`${UNCLEAR_FALLBACK}\n`);
           return 0;
         } catch (error) {
