@@ -20,7 +20,7 @@ IdeaSeek 的 CLI 是长期科研工作流的前端，负责显示 Supervisor 的
 └───────────────────────────────────────────────────────────────┘
 ```
 
-输入编辑区必须始终固定在同一位置；命令菜单是覆盖层，不能把输入复制成多行。用户继续输入时只更新候选和高亮，不滚动整个终端。上下键、Tab、Enter、Esc、Ctrl-C 和终端 resize 由 TUI 输入层统一处理。输入行本身有明确的“输入感”：上下细分隔线（hairline `─`）包裹加粗品牌前缀与水平窗口化编辑区（按终端显示列宽 `visualWidth` 计算 CJK/emoji 宽度，不依赖盲文空白填充，适配深/浅终端主题），空闲时光标块闪烁（约 530ms），执行命令时同一格原位显示 braille spinner，footer 同步展示运行耗时。
+输入编辑区必须始终固定在同一位置；命令菜单是覆盖层，不能把输入复制成多行。用户继续输入时只更新候选和高亮，不滚动整个终端。上下键、Tab、Enter、Esc、Ctrl-C 和终端 resize 由 TUI 输入层统一处理。输入行本身有明确的“输入感”：上下细分隔线（hairline `─`）包裹加粗品牌前缀与多行自适应编辑区（`Shift+Enter` / `Alt+Enter` / `Ctrl+J` 换行，最多 5 行滚动，大段粘贴自动折叠为 `[Pasted #N · M lines]` 并在提交时完整展开，按终端显示列宽 `visualWidth` 计算 CJK/emoji 宽度，适配深/浅终端主题）；支持 `/` 命令模糊匹配与子参数候选（`/mode `、`/models `、`/open `）、`@` 工作区文件/对象模糊补全（`papers/`、`datasets/`、`comparisons/`、`ideas/`、`knowledge/`）、`Ctrl+R` 增量反向历史检索；空闲时光标块闪烁（约 530ms），执行命令时同一格原位显示 braille spinner，footer 同步展示运行耗时与实时工作流遥测（阶段进度条、token/美元费用、待审批徽标）。
 
 输入行有三种互斥状态：**常规编辑**（composer）、**工具审批**（琥珀 `⏸ allow …`，见审批界面）、**密钥捕获**（`🔐 API key (input hidden): •••`——字符只存在于渲染组件的本地缓冲，Enter 提交、Esc/Ctrl-C 取消、Backspace 删除，**绝不回显、绝不进转录、绝不走 argv**）。`/models setup` 走该状态：捕获后以 `models setup --api-key-stdin --test` 拉起子进程（默认先连接测试，失败零写入），行式 `--plain` 路径无法掩码 → 提示改用真实终端运行 `ideaseek models setup`。
 
