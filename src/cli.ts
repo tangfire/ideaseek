@@ -233,11 +233,17 @@ const invokedDirectly =
   import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, '/')}`).href;
 
 if (invokedDirectly || process.env.IDEASEEK_CLI === '1') {
-  runCli(process.argv).then(
-    (code) => process.exit(code),
-    (error) => {
-      process.stderr.write(`error: ${(error as Error).stack ?? String(error)}\n`);
-      process.exit(1);
-    },
-  );
+  // `process.exit()` tears the event loop down while a finished HTTPS fetch
+  // still has closing libuv handles, which on Windows aborts the process with
+  // `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c`
+  // instead of exiting. Drain naturally; only force-exit if something keeps
+  // the loop alive, so the CLI can never hang.
+  const finish = (code: number): void => {
+    process.exitCode = code;
+    setTimeout(() => process.exit(code), 2_000).unref();
+  };
+  runCli(process.argv).then(finish, (error) => {
+    process.stderr.write(`error: ${(error as Error).stack ?? String(error)}\n`);
+    finish(1);
+  });
 }
