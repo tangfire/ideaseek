@@ -345,3 +345,20 @@ describe('CLI: data materialize guards', () => {
     expect(sibling.stderr + sibling.stdout).not.toContain('read-only datasets directory');
   }, 120_000);
 });
+
+describe('worker check-syntax gate', () => {
+  it('rejects an implementation that cannot compile', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-syntax-'));
+    const bad = join(dir, 'bad.py');
+    const good = join(dir, 'good.py');
+    await writeFile(bad, 'x = [1, 2\n', 'utf8');
+    await writeFile(good, 'x = [1, 2]\nprint(x)\n', 'utf8');
+    const { checkPythonSyntax } = await import('../src/knowledge/materialize.js');
+    const broken = await checkPythonSyntax(bad);
+    expect(broken.ok).toBe(false);
+    expect(broken.line).toBe(1);
+    expect(broken.message).toContain('never closed');
+    const fine = await checkPythonSyntax(good);
+    expect(fine.ok).toBe(true);
+  }, 120_000);
+});

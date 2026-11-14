@@ -250,6 +250,32 @@ def cmd_materialize(args) -> int:
     return 0
 
 
+def cmd_check_syntax(args) -> int:
+    """Compile a Python file and report the first syntax error, if any."""
+    from pathlib import Path as _Path
+
+    path = _Path(args.path)
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return _fail("FILE_NOT_FOUND", f"cannot read {path}: {exc}")
+    try:
+        compile(source, str(path), "exec")
+    except SyntaxError as exc:
+        _emit(
+            {
+                "ok": False,
+                "path": str(path),
+                "line": exc.lineno,
+                "offset": exc.offset,
+                "message": (exc.msg or "")[:200],
+            }
+        )
+        return 0
+    _emit({"ok": True, "path": str(path), "lines": len(source.splitlines())})
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -294,6 +320,12 @@ def main(argv: list[str] | None = None) -> int:
     tables_cmd = sub.add_parser("tables", help="extract table grids from a PDF")
     tables_cmd.add_argument("path")
     tables_cmd.set_defaults(func=cmd_tables)
+
+    syntax_cmd = sub.add_parser(
+        "check-syntax", help="compile a Python file and report the first syntax error"
+    )
+    syntax_cmd.add_argument("path")
+    syntax_cmd.set_defaults(func=cmd_check_syntax)
 
     self_cmd = sub.add_parser("selftest", help="parse a generated fixture end to end")
     self_cmd.set_defaults(func=cmd_selftest)

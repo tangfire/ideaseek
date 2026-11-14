@@ -6,7 +6,11 @@ import { findProjectRoot } from '../config/paths.js';
 import { stringify } from 'yaml';
 import { importComparisonRepo } from '../comparison/importer.js';
 import { buildCandidates, extractRepoUrls } from '../comparison/discover.js';
-import { evaluateComparisonGate } from '../comparison/gate.js';
+import {
+  evaluateComparisonGateForProject,
+  hashWorktreeDir,
+  writeSmokeWorktreeStamp,
+} from '../comparison/worktree-stamp.js';
 import { buildEntrySuggestions } from '../comparison/entry-suggest.js';
 import { assertWorktree } from '../comparison/repair.js';
 import { analyzeRepository } from '../knowledge/repository.js';
@@ -708,6 +712,30 @@ export function registerComparisonCommand(program: Command): void {
               );
             }
 
+            // Parse the implementation before persisting it. A blueprint whose
+            // code cannot compile is not a plan; leaving it in place only moves
+            // the failure into a later reproduce run.
+            const implementation = blueprint.algorithm?.source;
+            if (implementation && implementation.trim()) {
+              const { writeFile: writeTmp, mkdtemp, rm } = await import('node:fs/promises');
+              const { tmpdir } = await import('node:os');
+              const { checkPythonSyntax } = await import('../knowledge/materialize.js');
+              const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-bp-syntax-'));
+              const probe = join(scratch, 'algorithm.py');
+              try {
+                await writeTmp(probe, implementation, 'utf8');
+                const syntax = await checkPythonSyntax(probe);
+                if (!syntax.ok) {
+                  throw new IdeaseekError(
+                    'INVALID_ARTIFACT',
+                    `authored implementation does not compile (line ${syntax.line}: ${syntax.message}) — nothing was written; rerun with --force`,
+                  );
+                }
+              } finally {
+                await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+              }
+            }
+
             const dir = join(root, 'comparisons', methodId);
             await ensureDir(dir);
             const path = join(dir, 'blueprint.json');
@@ -882,7 +910,7 @@ export function registerComparisonCommand(program: Command): void {
         const root = await openRoot();
         const runtime = await openRuntime(root);
         try {
-          const gate = await evaluateComparisonGate(runtime.db);
+          const gate = await evaluateComparisonGateForProject(root, runtime.db);
           const { ok, required, passed, skipped, blocking, note } = gate;
           if (opts.json) {
             process.stdout.write(
@@ -1126,6 +1154,12 @@ export function registerComparisonCommand(program: Command): void {
           };
           await runtime.db.upsertComparison(updated);
           await exportMethodYaml(root, record);
+          if (passed) {
+            const worktreeHash = await hashWorktreeDir(worktreeDir);
+            if (worktreeHash) {
+              await writeSmokeWorktreeStamp(root, methodId, worktreeHash, smoke.at);
+            }
+          }
 
           if (opts.json) {
             process.stdout.write(

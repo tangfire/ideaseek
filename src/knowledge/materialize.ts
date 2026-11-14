@@ -73,7 +73,7 @@ export async function materializeCorpus(
   let lastError: unknown = null;
   for (const interpreter of interpreters) {
     try {
-      stdout = await runMaterializer(interpreter, args, cwd, timeoutMs);
+      stdout = await runWorker(interpreter, args, cwd, timeoutMs);
       break;
     } catch (error) {
       lastError = error;
@@ -102,7 +102,44 @@ export async function materializeCorpus(
   return report;
 }
 
-function runMaterializer(
+/**
+ * Compiles a Python file through the worker. Used to reject a blueprint whose
+ * implementation cannot even parse: catching it at authoring keeps a broken
+ * artifact out of the worktree, instead of discovering it one reproduce run later.
+ */
+export async function checkPythonSyntax(
+  filePath: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<{ ok: boolean; line?: number; message?: string }> {
+  const cwd = workerPythonDir();
+  const args = ['-m', 'ideaseek_worker', 'check-syntax', resolve(filePath)];
+  const venvPython =
+    process.platform === 'win32'
+      ? join(cwd, '.venv', 'Scripts', 'python.exe')
+      : join(cwd, '.venv', 'bin', 'python');
+  let stdout = '';
+  let lastError: unknown = null;
+  for (const interpreter of [venvPython, 'python3', 'python']) {
+    try {
+      stdout = await runWorker(interpreter, args, cwd, opts.timeoutMs ?? 30_000);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof IdeaseekError) || error.code !== 'ENV_UNSUPPORTED') throw error;
+    }
+  }
+  if (!stdout) {
+    throw lastError ?? new IdeaseekError('ENV_UNSUPPORTED', 'no usable python for syntax check');
+  }
+  const parsed = JSON.parse(stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? '{}') as {
+    ok?: boolean;
+    line?: number;
+    message?: string;
+  };
+  return { ok: parsed.ok === true, line: parsed.line, message: parsed.message };
+}
+
+function runWorker(
   interpreter: string,
   args: string[],
   cwd: string,
