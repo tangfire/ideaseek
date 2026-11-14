@@ -4,7 +4,33 @@ import {
   buildBlueprintContext,
   type BlueprintEvidence,
 } from '../src/comparison/blueprint-author.js';
-import { blueprintMetricNames, checkMetricFeasibility } from '../src/comparison/reproduce.js';
+import {
+  blueprintMetricNames,
+  checkMetricFeasibility,
+  metricKey,
+} from '../src/comparison/reproduce.js';
+
+it('a protocol name carrying its definition matches the bare identifier', () => {
+  // The observed instability: one run copied "x (held-out domain value, …)"
+  // and passed, the next wrote "x" and was blocked. Copying prose is not a
+  // property a plan should depend on.
+  expect(
+    metricKey('target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)'),
+  ).toBe(metricKey('target_unseen_domain_top1_accuracy'));
+  expect(metricKey('delta_over_FedAvg')).toBe('deltaoverfedavg');
+  expect(
+    checkMetricFeasibility(
+      ['target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)'],
+      ['target_unseen_domain_top1_accuracy'],
+    ).status,
+  ).toBe('covered');
+});
+
+it('a genuinely different metric is still blocked', () => {
+  expect(
+    checkMetricFeasibility(['average_accuracy_across_folds'], ['unseen_domain_accuracy']).status,
+  ).toBe('blocked');
+});
 
 it('the blueprint contract names the environment the program will really run in', () => {
   // Only check-data gets a path handed to it, so a plan that describes data
@@ -31,6 +57,15 @@ function evidence(over: Partial<BlueprintEvidence> = {}): BlueprintEvidence {
     ...over,
   };
 }
+
+it('the blueprint is a plan, not an embedded program', () => {
+  // Authoring used to demand a whole Python file inside one JSON string. That
+  // is where truncation and bracket failures came from, and it left two
+  // copies of the implementation (plan + worktree) with the plan never read
+  // again once implement had written the real one.
+  expect(BLUEPRINT_INSTRUCTION).toContain('This is a PLAN, not a program');
+  expect(BLUEPRINT_INSTRUCTION).toContain('comparison implement');
+});
 
 it('names the required metric keys instead of relying on "reuse verbatim"', () => {
   const context = buildBlueprintContext(evidence());

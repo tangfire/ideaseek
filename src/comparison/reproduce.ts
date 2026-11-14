@@ -443,6 +443,22 @@ export function blueprintMetricNames(blueprint: ReproductionBlueprint): string[]
     .filter((name) => typeof name === 'string' && name.trim());
 }
 
+/**
+ * Comparable identity of a metric name.
+ *
+ * Protocol proposals put the definition inside the identifier — a locked FDG
+ * metric is literally `target_unseen_domain_top1_accuracy (held-out domain
+ * value, all samples, %)`. Comparing whole strings made the gate depend on
+ * whether a model copied that prose exactly, so the same plan flipped between
+ * covered and blocked across runs. The identifier is the part that has to
+ * agree; the parenthetical is documentation. Tightening the contract itself is
+ * tracked separately, because it needs a migrator for already-locked protocols.
+ */
+export function metricKey(name: string): string {
+  const withoutDefinition = name.replace(/\s*\(.*$/, '');
+  return withoutDefinition.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 export function checkMetricFeasibility(
   protocolMetrics: string[],
   implementationMetrics: string[],
@@ -451,16 +467,15 @@ export function checkMetricFeasibility(
   covered: string[];
   uncovered: string[];
 } {
-  const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (protocolMetrics.length === 0) {
     return { status: 'no-protocol', covered: [], uncovered: [] };
   }
   if (implementationMetrics.length === 0) {
     return { status: 'no-implementation-metrics', covered: [], uncovered: [...protocolMetrics] };
   }
-  const implemented = new Set(implementationMetrics.map(normalize));
-  const covered = protocolMetrics.filter((name) => implemented.has(normalize(name)));
-  const uncovered = protocolMetrics.filter((name) => !implemented.has(normalize(name)));
+  const implemented = new Set(implementationMetrics.map(metricKey));
+  const covered = protocolMetrics.filter((name) => implemented.has(metricKey(name)));
+  const uncovered = protocolMetrics.filter((name) => !implemented.has(metricKey(name)));
   if (covered.length === 0) return { status: 'blocked', covered, uncovered };
   return {
     status: uncovered.length > 0 ? 'partial' : 'covered',
@@ -723,14 +738,15 @@ export async function runSmoke(
       .filter((line) => line.length > 0 && !line.startsWith('{'))
       .reverse()
       .find((line) => /error|not found|missing|expected|cannot|no such/i.test(line));
+    const summary = classified.summary.slice(0, 120);
     const failure: ReproductionPhaseResult = {
       ...base,
       ok: false,
       failureKind: run.timedOut ? 'timeout' : classified.kind,
       summary: run.timedOut
         ? `smoke timed out after ${opts.smokeTimeoutMs}ms`
-        : classified.kind === 'unknown' && ownWords
-          ? `${classified.summary.slice(0, 120)} — ${ownWords.slice(0, 200)}`
+        : classified.kind === 'unknown' && ownWords && !summary.includes(ownWords)
+          ? `${summary} — ${ownWords.slice(0, 200)}`
           : classified.summary.slice(0, 300),
     };
     record.phases.push(failure);

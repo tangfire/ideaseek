@@ -681,8 +681,12 @@ export function registerComparisonCommand(program: Command): void {
 
             const { authorBlueprint, describeBlueprint } =
               await import('../comparison/blueprint-author.js');
-            const { blueprintMetricNames, checkMetricFeasibility, validateReproductionBlueprint } =
-              await import('../comparison/reproduce.js');
+            const {
+              blueprintMetricNames,
+              checkMetricFeasibility,
+              metricKey,
+              validateReproductionBlueprint,
+            } = await import('../comparison/reproduce.js');
             const runId =
               (await runtime.db.getLatestRun(runtime.project.id))?.runId ?? `blueprint-${methodId}`;
             const evidenceBase = {
@@ -728,10 +732,11 @@ export function registerComparisonCommand(program: Command): void {
               );
               if (feasibility.status === 'blocked') {
                 problems.push(
-                  `algorithm.metrics must report every locked protocol metric — protocol measures ` +
-                    `[${requiredMetricNames.join(', ')}] but the plan offers ` +
-                    `[${blueprintMetricNames(blueprint).join(', ')}]; use the protocol names ` +
-                    `verbatim as the printed keys (additional metrics are allowed)`,
+                  `algorithm.metrics must cover the locked protocol metrics — the protocol ` +
+                    `measures [${requiredMetricNames.map((name) => metricKey(name)).join(', ')}] ` +
+                    `but the plan offers [${blueprintMetricNames(blueprint).join(', ')}]; use ` +
+                    `those identifiers exactly (additional metrics are allowed, and the ` +
+                    `protocol's trailing parenthetical text is a definition, not part of the name)`,
                 );
               } else if (feasibility.status === 'partial') {
                 process.stderr.write(

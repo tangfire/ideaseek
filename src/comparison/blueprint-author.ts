@@ -3,6 +3,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import type { ReproductionBlueprint } from './types.js';
+import { metricKey } from './reproduce.js';
 
 /**
  * Produces a ReproductionBlueprint from the papers, so `baseline reproduce`
@@ -37,9 +38,12 @@ Rules:
 - Details the papers omit go in missingDetails — list them; do not silently fill them.
 - confidence: high only when paperExplicit alone determines the algorithm; medium when
   assumptions carry real weight; low when missingDetails could change the result.
-- algorithm.source must be a single self-contained Python file that reads data, runs the
-  method, and prints one JSON line {"metrics": {...}}. It must support the subcommands
-  smoke | check-data | check-metrics and must not require GPU to pass smoke.
+- algorithm.source: leave it empty (""). This is a PLAN, not a program — a separate call
+  (comparison implement) writes the code into the worktree from this plan. Embedding a whole
+  Python file in one JSON string field is the fragile shape: it travels as escaped newlines inside
+  a JSON value, it hits output-token limits, and a plan gets refused for a bracket instead of for
+  bad science. Describe what the program must do in dataInterface, metrics and hyperparameters
+  instead.
 - algorithm.entry is the ARGV PREFIX used to invoke the file, e.g. ["python","reproduce.py"].
   Never put the subcommands there; smoke/check-data/check-metrics are appended by the runner.
 - Only check-data receives a path. The data interface must therefore also be reachable from the
@@ -126,10 +130,13 @@ export function buildBlueprintContext(evidence: BlueprintEvidence): string {
     const keys = evidence.protocol.primaryMetrics.map((metric) => metric.name);
     if (keys.length > 0) {
       parts.push(
-        `## required output metric keys\nalgorithm.metrics MUST report every one of these names ` +
-          `exactly as written: ${keys.join(', ')}\n` +
-          `Additional metrics are allowed; a closer-sounding name is not a substitute — ` +
-          `results keyed differently cannot answer the locked protocol.`,
+        `## required output metric keys\nalgorithm.metrics MUST report every one of these ` +
+          `identifiers: ${keys.map(metricKey).join(', ')}\n` +
+          `The locked protocol writes them with a definition appended, e.g. ` +
+          `"${keys[0]}" — use only the leading identifier as the name, and put the definition in ` +
+          `the metric's own description if you need one. A different-looking identifier ` +
+          `(unseen_domain_accuracy for target_unseen_domain_top1_accuracy) is not a substitute: ` +
+          `results keyed differently cannot answer the protocol.`,
       );
     }
   } else {
