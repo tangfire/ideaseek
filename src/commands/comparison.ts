@@ -26,6 +26,7 @@ import {
   validateComparisonMethod,
   type ComparisonMethod,
   type ComparisonStatus,
+  type ReproductionBlueprint,
 } from '../comparison/types.js';
 
 import { action, jsonLine } from './shared.js';
@@ -772,6 +773,135 @@ export function registerComparisonCommand(program: Command): void {
             process.stdout.write(
               'next: ideaseek baseline reproduce --method <id> --data <path>\n' +
                 'boundary: a reimplementation is not official code; assumptions and missing details stay recorded\n',
+            );
+            return 0;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
+    );
+
+  comparison
+    .command('implement')
+    .description(
+      'generate the reproduction program from the blueprint, compile-check it, and write it into the worktree',
+    )
+    .argument('<methodId>', 'comparison method id')
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
+    .option('--data <path>', 'data path the checks will be handed, passed to the generator')
+    .option('--force', 'regenerate over an existing implementation')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (
+          methodId: string,
+          opts: { harness?: string; data?: string; force?: boolean; json?: boolean },
+        ) => {
+          const root = await openRoot();
+          const shared = await import('./shared.js');
+          const runtime = await (
+            await import('../workflow/runtime.js')
+          ).ProjectRuntime.open({
+            cwd: root,
+            harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
+          });
+          try {
+            shared.assertConfigUsable(runtime.configLoad);
+            const doc = await runtime.db.getComparison(methodId);
+            if (!doc) {
+              throw new IdeaseekError('TASK_NOT_FOUND', `comparison ${methodId} not found`);
+            }
+            const { readFile } = await import('node:fs/promises');
+            const blueprintPath = join(root, 'comparisons', methodId, 'blueprint.json');
+            let blueprintValue: unknown;
+            try {
+              blueprintValue = JSON.parse(await readFile(blueprintPath, 'utf8'));
+            } catch {
+              throw new IdeaseekError(
+                'FILE_NOT_FOUND',
+                `no blueprint for ${methodId}: ${relative(root, blueprintPath).replace(/\\/g, '/')} — run: ideaseek comparison blueprint ${methodId}`,
+              );
+            }
+            const { validateReproductionBlueprint } = await import('../comparison/reproduce.js');
+            const method = toMethod(doc.record);
+            const validation = validateReproductionBlueprint(blueprintValue, {
+              methodId,
+              paperRefs: method.paperRefs,
+            });
+            if (!validation.ok) {
+              throw new IdeaseekError(
+                'INVALID_ARTIFACT',
+                `blueprint is not usable: ${validation.errors.join('; ')} — fix it with: ideaseek comparison blueprint ${methodId} --force`,
+              );
+            }
+            const blueprint = blueprintValue as ReproductionBlueprint;
+
+            const worktreeDir = join(root, 'comparisons', methodId, 'worktree');
+            const target = join(worktreeDir, 'reproduce.py');
+            const existing = await readFile(target, 'utf8').catch(() => null);
+            if (existing?.trim() && !opts.force) {
+              throw new IdeaseekError(
+                'ALREADY_COMMITTED',
+                `${relative(root, target).replace(/\\/g, '/')} already has an implementation — pass --force to replace it`,
+              );
+            }
+
+            const { authorImplementation } = await import('../comparison/implement-author.js');
+            const authored = await authorImplementation({
+              harness: runtime.harness!,
+              blueprint,
+              dataPath: opts.data ?? null,
+              runId:
+                (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
+                `implement-${methodId}`,
+              now: Date.now(),
+            });
+
+            // Compile before writing: an unparseable program in the worktree
+            // only fails later, after a venv and a clone have been paid for.
+            const { writeFile: writeTmp, mkdtemp, rm } = await import('node:fs/promises');
+            const { tmpdir } = await import('node:os');
+            const { checkPythonSyntax } = await import('../knowledge/materialize.js');
+            const scratch = await mkdtemp(join(tmpdir(), 'ideaseek-implement-'));
+            try {
+              await writeTmp(join(scratch, 'reproduce.py'), authored.source, 'utf8');
+              const syntax = await checkPythonSyntax(join(scratch, 'reproduce.py'));
+              if (!syntax.ok) {
+                throw new IdeaseekError(
+                  'INVALID_ARTIFACT',
+                  `authored implementation does not compile (line ${syntax.line}: ${syntax.message}) — nothing was written; rerun with --force`,
+                );
+              }
+            } finally {
+              await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+            }
+
+            await ensureDir(worktreeDir);
+            await writeFileAtomic(target, authored.source);
+
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  methodId,
+                  path: relative(root, target).replace(/\\/g, '/'),
+                  lines: authored.lines,
+                  origin: authored.origin,
+                  contextHash: authored.contextHash,
+                }),
+              );
+              return 0;
+            }
+            process.stdout.write(
+              `implementation written: ${relative(root, target).replace(/\\/g, '/')} ` +
+                `(${authored.lines} lines, ${authored.origin}, compiles)\n`,
+            );
+            process.stdout.write(
+              `next: ideaseek baseline reproduce --method ${methodId}` +
+                `${opts.data ? ` --data ${opts.data}` : ' --data <path>'}\n`,
             );
             return 0;
           } finally {
