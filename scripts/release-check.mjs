@@ -208,7 +208,9 @@ function checkVersionConsistency(pkg) {
   if (pkg.name === 'ideaseek') {
     const binPath = pkg.bin?.ideaseek;
     if (binPath !== './dist/cli.js') {
-      problems.push(`package.json bin.ideaseek must be ./dist/cli.js (got ${binPath ?? 'missing'})`);
+      problems.push(
+        `package.json bin.ideaseek must be ./dist/cli.js (got ${binPath ?? 'missing'})`,
+      );
     }
   }
   const cli = join(root, 'dist', 'cli.js');
