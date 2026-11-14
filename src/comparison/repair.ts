@@ -421,6 +421,31 @@ function venvPathDir(venvDir: string): string {
 }
 
 /**
+ * pip mirror from the operator environment (IDEASEEK_PIP_INDEX_URL).
+ *
+ * It arrives as pip's own variable rather than as a requirement spec: an agent
+ * that could write --index-url could redirect every install to any host, which
+ * is why the spec grammar rejects it. A mirror is infrastructure intent, so it
+ * comes from the operator, and an unsafe value is dropped instead of trusted —
+ * a slow install beats an install pointed at plaintext http or a URL carrying
+ * credentials.
+ */
+export function pipMirrorEnv(
+  value = process.env.IDEASEEK_PIP_INDEX_URL,
+): Record<string, string> | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) return undefined;
+  return { PIP_INDEX_URL: url.toString() };
+}
+
+/**
  * Creates the method venv and installs into it. Shared by repair and
  * reproduce: two copies of this drifted apart, and reproduce ended up running
  * checks with the system python while repair had installed dependencies into a
@@ -450,6 +475,12 @@ export async function ensureMethodVenv(
     }
   }
   const installArgs = [venvPython(venvDir), '-m', 'pip', 'install', '--disable-pip-version-check'];
+  // Mirror selection travels as pip's own environment variable, never as a
+  // requirement spec: --index-url inside a requirements file or an inferred
+  // package list would mean an agent could redirect installs to any host, and
+  // the spec grammar deliberately rejects it. A mirror is infrastructure
+  // intent, so it comes from the operator's environment.
+  const installEnv = pipMirrorEnv();
   if (opts.requirementsFile) {
     installArgs.push('-r', opts.requirementsFile);
   } else if (opts.packages && opts.packages.length > 0) {
@@ -462,6 +493,7 @@ export async function ensureMethodVenv(
     installArgs,
     worktreeDir,
     opts.installTimeoutMs ?? 600_000,
+    installEnv,
   );
   if (install.exitCode !== 0) {
     return {
