@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/image-profile-v1.json",
+  "title": "IdeaSeek image corpus profile (image-profile-v1)",
+  "description": "Structural contract for the metadata-only profile of an image corpus (directory layout, single parquet or parquet shards) emitted by `ideaseek_worker images`. It exists to ground protocol design in structure that is actually present: which column carries the domain axis, how many domains and classes exist, and the split rules that follow. Single authority across languages: Python validates before emitting, TypeScript validates at the parse boundary. Semantic judgements (whether a domain is a federated client, whether a split leaks) stay with the protocol and leakage modules.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "generatedBy",
+    "source",
+    "samples",
+    "grouping",
+    "classes",
+    "splitRules",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "image-profile-v1" },
+    "generatedBy": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "object",
+      "required": ["path", "format", "bytes", "sha256", "columns"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "format": {
+          "type": "string",
+          "enum": ["parquet", "parquet-shards", "image-dir"]
+        },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "columns": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "samples": { "type": "integer", "minimum": 0 },
+    "grouping": { "$ref": "#/definitions/grouping" },
+    "classes": { "$ref": "#/definitions/classes" },
+    "imageBytesColumn": { "type": ["string", "null"] },
+    "resolution": { "type": "object" },
+    "splitRules": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "countEntry": {
+      "type": "object",
+      "required": ["name", "count"],
+      "properties": {
+        "name": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "grouping": {
+      "type": "object",
+      "required": ["column", "values"],
+      "properties": {
+        "column": { "type": ["string", "null"] },
+        "values": { "type": "array", "items": { "$ref": "#/definitions/countEntry" } }
+      },
+      "additionalProperties": false
+    },
+    "classes": {
+      "type": "object",
+      "required": ["column", "values", "distinct"],
+      "properties": {
+        "column": { "type": ["string", "null"] },
+        "values": { "type": "array", "items": { "$ref": "#/definitions/countEntry" } },
+        "distinct": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

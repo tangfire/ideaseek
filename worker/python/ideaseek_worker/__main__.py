@@ -203,6 +203,26 @@ def cmd_dataset(args) -> int:
 
 
 
+def cmd_images(args) -> int:
+    """Profile an image corpus (directory layout or parquet) for protocol grounding."""
+    from .images import ImageProfileError, profile_images
+
+    path = Path(args.path)
+    try:
+        profile = profile_images(path)
+    except ImageProfileError as exc:
+        return _fail("DATASET_LAYOUT", str(exc))
+    except FileNotFoundError as exc:
+        return _fail("FILE_NOT_FOUND", str(exc))
+    except Exception as exc:  # noqa: BLE001 - normalize loader failures
+        return _fail("PARSE_FAILED", f"cannot profile images: {exc}")
+    violation = validate_payload("image-profile-v1", profile)
+    if violation is not None:
+        return _fail("SCHEMA_VIOLATION", violation)
+    _emit(profile)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_streams()
     parser = argparse.ArgumentParser(prog="ideaseek_worker")
@@ -225,6 +245,12 @@ def main(argv: list[str] | None = None) -> int:
     ds_cmd = sub.add_parser("dataset", help="profile an external federated dataset (read-only)")
     ds_cmd.add_argument("root")
     ds_cmd.set_defaults(func=cmd_dataset)
+
+    img_cmd = sub.add_parser(
+        "images", help="profile an image corpus (directory layout or parquet shards)"
+    )
+    img_cmd.add_argument("path")
+    img_cmd.set_defaults(func=cmd_images)
 
     tables_cmd = sub.add_parser("tables", help="extract table grids from a PDF")
     tables_cmd.add_argument("path")

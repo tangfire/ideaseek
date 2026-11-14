@@ -65,6 +65,8 @@ export function registerStaleCommand(program: Command): void {
         }
         rows.push(await matrixRow(root));
         rows.push(await protocolRow(root));
+        const inputs = await inputsRow(root);
+        if (inputs) rows.push(inputs);
 
         // ---- idea-scoped downstream results ----
         for (const ideaId of opts.idea ? [opts.idea] : planIds) {
@@ -129,6 +131,47 @@ async function ideaIds(root: string): Promise<string[]> {
     ids.push(entry.name);
   }
   return ids.sort();
+}
+
+/**
+ * Project-scoped raw-input drift row (docs/MODES.md「不禁止写入，但侦测写入」):
+ * papers/datasets/comparison upstreams vs the hashes `scan` recorded. Only an
+ * agent session or a manual edit can move these, and the point of the row is
+ * that downstream conclusions stop being verifiable — not that the write is
+ * illegal. No manifest yet means nothing recorded to compare, so no row.
+ */
+async function inputsRow(root: string): Promise<StaleRow | null> {
+  const { detectInputDrift, driftConsequences, hasInputDrift } =
+    await import('../knowledge/input-drift.js');
+  const report = await detectInputDrift(root);
+  if (!report.hasBaseline) return null;
+  if (!hasInputDrift(report)) {
+    return {
+      id: 'inputs',
+      scope: 'project',
+      status: 'current',
+      detail: `${report.checked} 个原始输入与已记录 hash 一致（roots ${report.roots.join(',')}）`,
+      invalidates: [],
+      recovery: '无需操作',
+    };
+  }
+  const counts = new Map<string, number>();
+  for (const file of report.drifted) counts.set(file.change, (counts.get(file.change) ?? 0) + 1);
+  const listed = (['modified', 'removed', 'added'] as const)
+    .filter((change) => counts.get(change))
+    .map((change) => `${change}=${counts.get(change)}`)
+    .join(', ');
+  const heads = report.drifted.slice(0, 3).map((file) => file.relPath);
+  return {
+    id: 'inputs',
+    scope: 'project',
+    status: 'stale',
+    detail: `原始输入与已记录 hash 不一致 (${listed}): ${heads.join(', ')}${
+      report.drifted.length > heads.length ? ' …' : ''
+    }`,
+    invalidates: driftConsequences(report.drifted),
+    recovery: 'ideaseek scan（记录新基线）→ ideaseek stale 复查 → 重跑受影响结果',
+  };
 }
 
 async function planRow(root: string, ideaId: string): Promise<StaleRow> {

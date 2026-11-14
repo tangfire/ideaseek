@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { APPROVAL_ALLOW, encodeApprovalRequest } from '../dsh/approval-channel.js';
+import type { InputDriftReport } from '../knowledge/input-drift.js';
 import { action, jsonLine } from './shared.js';
 
 /** Reads one answer line from stdin (stdio approval channel). */
@@ -61,6 +62,8 @@ async function runFakeAgentTurn(
   // --resume from the registry (cross-restart continuity e2e).
   const { recordAgentSession } = await import('../dsh/session.js');
   await recordAgentSession(root, { sessionId, prompt });
+  const drift = await checkInputDriftAfterTurn(root);
+  const { renderDriftReport } = await import('../knowledge/input-drift.js');
   if (json) {
     process.stdout.write(
       jsonLine({
@@ -73,6 +76,8 @@ async function runFakeAgentTurn(
           : [],
         response,
         eventSeq: null,
+        inputDrift: inputDriftJson(drift.report),
+        inputDriftEventSeq: drift.eventSeq,
       }),
     );
     return 0;
@@ -86,8 +91,62 @@ async function runFakeAgentTurn(
     );
   }
   process.stdout.write(`  ${response}\n`);
+  for (const line of renderDriftReport(drift.report)) process.stdout.write(`${line}\n`);
   process.stdout.write(`next: ideaseek agent "<prompt>" --resume ${sessionId}\n`);
   return 0;
+}
+
+/**
+ * Post-turn provenance check (docs/MODES.md「不禁止写入，但侦测写入」). The agent
+ * runs on DSH's `workspace-write` preset and may legitimately edit anything, so
+ * integrity comes from noticing, not blocking: compare the hashed inputs against
+ * disk, record an event, and tell the user which conclusions are no longer
+ * verifiable. Neutral attribution — this is a delta since the last `scan`.
+ */
+async function checkInputDriftAfterTurn(root: string): Promise<{
+  report: InputDriftReport;
+  eventSeq: number | null;
+}> {
+  const { detectInputDrift, driftEventSummary, hasInputDrift } =
+    await import('../knowledge/input-drift.js');
+  const report = await detectInputDrift(root);
+  if (!hasInputDrift(report)) return { report, eventSeq: null };
+  const { ProjectRuntime } = await import('../workflow/runtime.js');
+  let eventSeq: number | null = null;
+  const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+  try {
+    const run = await runtime.db.getLatestRun(runtime.project.id);
+    if (run) {
+      const event = await runtime.db.appendEvent({
+        runId: run.runId,
+        phase: 'DECISION',
+        objectId: 'input-drift',
+        role: 'system',
+        eventType: 'input_drift',
+        summary: driftEventSummary(report),
+        status: 'stale',
+      });
+      eventSeq = event.seq;
+    }
+  } finally {
+    await runtime.close();
+  }
+  return { report, eventSeq };
+}
+
+/** Machine shape for `--json` (bounded: a bulk rewrite must not flood stdout). */
+function inputDriftJson(report: InputDriftReport) {
+  return {
+    roots: report.roots,
+    hasBaseline: report.hasBaseline,
+    hashMatched: report.checked,
+    unchecked: report.unchecked,
+    drifted: report.drifted.length,
+    changes: report.drifted.slice(0, 20).map((file) => ({
+      path: file.relPath,
+      change: file.change,
+    })),
+  };
 }
 
 /**
@@ -262,6 +321,9 @@ export function registerAgentCommand(program: Command): void {
             await runtime.close();
           }
 
+          const drift = await checkInputDriftAfterTurn(root);
+          const { renderDriftReport } = await import('../knowledge/input-drift.js');
+
           if (opts.json) {
             process.stdout.write(
               jsonLine({
@@ -272,6 +334,8 @@ export function registerAgentCommand(program: Command): void {
                 approvals: result.approvals,
                 response: result.finalResponse,
                 eventSeq,
+                inputDrift: inputDriftJson(drift.report),
+                inputDriftEventSeq: drift.eventSeq,
               }),
             );
             return 0;
@@ -287,6 +351,7 @@ export function registerAgentCommand(program: Command): void {
           if (eventSeq !== null) {
             process.stdout.write(`  event #${eventSeq} recorded\n`);
           }
+          for (const line of renderDriftReport(drift.report)) process.stdout.write(`${line}\n`);
           process.stdout.write(`next: ideaseek agent "<prompt>" --resume ${result.sessionId}\n`);
           return 0;
         },

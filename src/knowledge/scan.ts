@@ -266,7 +266,9 @@ export interface ScanOptions {
   previous?: InputManifest | null;
 }
 
-async function walk(rootAbs: string, out: string[]): Promise<void> {
+/** Shared discovery pass: `scan` builds the manifest with it, drift detection
+ * compares against it — one exclusion list, one symlink policy. */
+export async function walk(rootAbs: string, out: string[]): Promise<void> {
   let entries;
   try {
     entries = await readdir(rootAbs, { withFileTypes: true });
