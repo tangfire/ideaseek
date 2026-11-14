@@ -74,7 +74,7 @@ ideaseek plan --question "在联邦学习中，不同客户端模型结构不一
 
 Analysis 模式会先完成一条准备管线：论文解析 → PaperCard/证据定位 → 主题综合/研究地图/机制库 → 数据画像/DatasetCard → comparison 入口与许可证分析 → 材料缺口评估。它会复用 Research 已经生成且 hash/schema 仍匹配的 artifact，不会重复解析同一篇论文或重建同一份 DatasetCard。只有新增/修改材料或版本变化影响了下游，才会增量重做。
 
-三种模式共享项目状态：你可以在 Research 中发现材料不足，切到 Analysis 补齐论文或数据；也可以切到 Agent 修复代码，再回 Research 重新检查受影响的节点。切换模式不会清空上下文、重复成功任务或创建第二个项目 run。
+两个档位和 agent 入口共享同一份项目状态：你可以在 Research 中发现材料不足，切到 Analysis 补齐论文或数据；也可以 `/agent` 修代码或修数据，再回 Research 重新检查受影响的节点。切换档位不会清空上下文、重复成功任务或创建第二个项目 run；agent 回合也不复制知识——它改了什么，输入 hash 会说出来。
 
 ### 启动探索
 
@@ -130,13 +130,13 @@ ideaseek interactive
 
 交互提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。高影响操作会变成待确认 Decision。
 
-IdeaSeek 有三个会话模式：
+IdeaSeek 的科研会话有两个权限档位，外加一个通用工程入口：
 
 - `Analysis`：准备材料。读取论文、数据和 comparison，告诉你还缺什么；只写知识与缺口报告，不启动正式实验。
 - `Research`：执行科研工作流，设计协议、提出 idea、运行受控的 smoke/quick/standard 实验并形成 handoff。
-- `Agent`：通用项目工程 Agent，复用 DSH 处理授权范围内的代码、测试和环境任务。
+- `/agent <指令>`（或 `ideaseek agent`）：通用 DSH coding 会话，帮你修数据、修实现、修环境。它**不是**第三个权限档位，也不受目录禁令约束——用 DSH 自带的 `workspace-write` + `ask` 预设，每个工具调用逐次问你；改动了论文/数据/upstream 时，回合结束会报告哪些已提交结论因此不再可复核。
 
-按 `Shift+Tab` 循环切换，或使用 `/mode analysis`、`/mode research`、`/mode agent`。
+按 `Shift+Tab` 在两个档位之间循环，或使用 `/mode analysis`、`/mode research`；工程改动用 `/agent`，`/mode agent` 会把你指到这条路上。
 
 ## IdeaSeek 会做什么
 

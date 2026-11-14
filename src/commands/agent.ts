@@ -150,6 +150,47 @@ function inputDriftJson(report: InputDriftReport) {
 }
 
 /**
+ * First turn of a NEW session carries a compact project brief (docs/MODES.md):
+ * a general agent dropped into a research folder otherwise has no idea the
+ * folder means anything. Resumed sessions already hold this in their history,
+ * so only a fresh session pays the extra tokens. Built from persisted state
+ * only — never from a model's memory of the project.
+ */
+export async function composeTurnPrompt(
+  root: string,
+  prompt: string,
+  isNewSession: boolean,
+): Promise<string> {
+  if (!isNewSession) return prompt;
+  const { ProjectRuntime } = await import('../workflow/runtime.js');
+  const { readSessionMode } = await import('../session/mode.js');
+  let brief: string[];
+  try {
+    const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+    try {
+      const run = await runtime.db.getLatestRun(runtime.project.id);
+      brief = [
+        `[IdeaSeek 项目上下文｜本回合为新建 session 的一次性注入]`,
+        `project: ${runtime.project.name} (${root})`,
+        `research tier: ${await readSessionMode(root)}`,
+        run
+          ? `question: ${String(run.question ?? '').slice(0, 300)}`
+          : 'question: 尚未开始 run（尚无研究问题记录）',
+        `provenance anchors: papers/、datasets/、comparisons/upstream/ 的内容已被 hash 记录；改动会被侦测并使下游结论失效。要改数据请写派生版本或处理后走 scan/datasets link。`,
+        `科研语义（指标/split/comparison/假设/协议）不在本回合里静默改；需要时说明并由用户在 Research 面确认。`,
+      ];
+    } finally {
+      await runtime.close();
+    }
+  } catch {
+    // No project state yet (fresh init, no run, DB unavailable): an agent turn
+    // must still run. Inject nothing rather than a half-built brief.
+    return prompt;
+  }
+  return `${brief.join('\n')}\n\n--- 用户指令 ---\n${prompt}`;
+}
+
+/**
  * `ideaseek agent` — Agent mode against a REAL DSH coding session
  * (docs/ARCHITECTURE research-cli; no fixed greetings, no ask-supervisor
  * stand-in): one prompt → pinned DSH runtime → named/resumable session
@@ -252,7 +293,7 @@ export function registerAgentCommand(program: Command): void {
           const { runAgentTurn, redactAgentText } = await import('../dsh/session.js');
           const result = await runAgentTurn({
             cwd: root,
-            prompt,
+            prompt: await composeTurnPrompt(root, prompt, opts.resume === undefined),
             ...(opts.resume ? { sessionId: opts.resume } : {}),
             policy: opts.denyTools ? 'deny' : 'interactive',
             ...(opts.provider ? { provider: opts.provider } : {}),

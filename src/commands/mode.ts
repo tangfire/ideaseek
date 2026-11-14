@@ -4,13 +4,15 @@ import { action, jsonLine } from './shared.js';
 import { SESSION_MODES } from '../session/mode.js';
 
 /**
- * `ideaseek mode [research|agent]` (docs/MODES.md): shows the current
- * session mode, project and permission summary; a target switches the
- * Research/Agent session mode. Switching is a session-scoped policy view —
- * explicit by nature, so no --confirm — but it always records a
- * Decision/Event when a run exists (never silent) and never starts a
- * second run. `--strategy` changes the project research strategy
- * (auto|starter|standard|research), which stays a protected guided action.
+ * `ideaseek mode [research|analysis]` (docs/MODES.md): shows the current
+ * research tier, project and permission summary; a target switches the tier.
+ * Switching is a session-scoped policy view — explicit by nature, so no
+ * --confirm — but it always records a Decision/Event when a run exists (never
+ * silent) and never starts a second run. `agent` is no longer a target: it is
+ * the general DSH coding entry (`ideaseek agent`), so the old spelling routes
+ * there instead of silently changing tiers. `--strategy` changes the project
+ * research strategy (auto|starter|standard|research), which stays a protected
+ * guided action.
  */
 
 const RESEARCH_MODES = ['auto', 'starter', 'standard', 'research'] as const;
@@ -97,7 +99,13 @@ async function switchSessionMode(
     buildSessionSummary,
     MODE_PERMISSIONS,
     SESSION_MODES,
+    AGENT_ENTRY_HINT,
   } = await import('../session/mode.js');
+  if (target === 'agent') {
+    // The old third tier was never enforceable and never was a permission
+    // tier; point at the entry instead of silently switching tiers.
+    throw new IdeaseekError('INVALID_ARGUMENT', AGENT_ENTRY_HINT);
+  }
   const requested = parseSessionMode(target);
   if (!requested) {
     throw new IdeaseekError(
@@ -160,10 +168,8 @@ async function switchSessionMode(
 export function registerModeCommand(program: Command): void {
   program
     .command('mode')
-    .description(
-      'show mode, project and permissions; switch the Research/Analysis/Agent session mode',
-    )
-    .argument('[target]', 'session mode: research | analysis | agent')
+    .description('show the research tier, project and permissions; switch between tiers')
+    .argument('[target]', `research tier: ${SESSION_MODES.join(' | ')}`)
     .option('--strategy <mode>', `project research strategy: ${RESEARCH_MODES.join(' | ')}`)
     .option('--force', 'override the Analysis to Research preparation gate (records a Decision)')
     .option('--confirm', 'guided confirmation for the protected strategy change')
@@ -189,6 +195,7 @@ export function registerModeCommand(program: Command): void {
             for (const line of renderSessionSummary(summary)) process.stdout.write(`${line}\n`);
             process.stdout.write(
               `switch: ideaseek mode ${SESSION_MODES.join('|')} · strategy: ideaseek mode --strategy <mode> --confirm
+coding entry (not a tier): ideaseek agent "<指令>" — DSH workspace-write + ask, drift reported per turn
 `,
             );
             return 0;

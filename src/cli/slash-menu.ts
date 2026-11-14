@@ -79,8 +79,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: '/mode',
-    usage: '/mode [research|agent]',
-    description: 'show mode, project and permissions; switch session mode',
+    usage: '/mode [research|analysis]',
+    description: 'show tier, project and permissions; switch the research tier',
+  },
+  {
+    name: '/agent',
+    usage: '/agent <指令>',
+    description: 'run a general DSH coding turn in this project (approvals asked per tool)',
   },
   {
     name: '/open',
@@ -123,7 +128,7 @@ const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
   { title: 'approvals', names: ['/pending', '/approve', '/reject'] },
   { title: 'research', names: ['/papers', '/comparisons', '/ideas', '/experiments', '/logs'] },
   { title: 'ideation', names: ['/rounds', '/ideate', '/feedback'] },
-  { title: 'session', names: ['/models', '/mode', '/open', '/report'] },
+  { title: 'session', names: ['/models', '/mode', '/agent', '/open', '/report'] },
   { title: 'control', names: ['/pause', '/resume', '/continue', '/cancel', '/quit'] },
 ];
 

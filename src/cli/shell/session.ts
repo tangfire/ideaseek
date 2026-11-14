@@ -336,16 +336,11 @@ export class InteractiveSession {
       if (/^\d+$/.test(input) && this.pendingItems.length > 0) {
         await this.approvePending(Number(input));
       } else if (!input.startsWith('/')) {
-        // Plain text routes by session mode (docs/MODES.md): agent mode is
-        // a REAL DSH coding session — the same `ideaseek agent` turn the
-        // CLI runs, resumed across messages; research mode classifies
-        // through `ideaseek ask`. Never prints "unknown input".
-        const root = await findProjectRoot(process.cwd()).catch(() => null);
-        const mode = root
-          ? await readSessionMode(root).catch(() => 'research' as const)
-          : 'research';
-        if (mode === 'agent') await this.runAgentTurn(input);
-        else await this.relay(['ask', ...tokenizeArgs(input)]);
+        // Plain text always goes through `ideaseek ask` (docs/MODES.md): the
+        // research/analysis tiers differ only in what the science pipeline may
+        // write, and a coding turn is an explicit `/agent <指令>` — never
+        // something a stray sentence silently becomes.
+        await this.relay(['ask', ...tokenizeArgs(input)]);
       } else {
         outcome = await this.dispatch(input);
       }
@@ -361,7 +356,7 @@ export class InteractiveSession {
     }
   }
 
-  /** Shift+Tab cycles Research/Analysis/Agent through the same audited CLI use-case. */
+  /** Shift+Tab cycles the two research tiers through the same audited CLI use-case. */
   async cycleMode(): Promise<void> {
     const root = await findProjectRoot(process.cwd());
     if (!root) {
@@ -372,8 +367,9 @@ export class InteractiveSession {
     }
     const { readSessionMode, SESSION_MODES } = await import('../../session/mode.js');
     const current = await readSessionMode(root);
-    // The documented cycle covers all three modes (docs/MODES.md); Analysis
-    // was reachable only by typing /mode, which made it feel missing.
+    // Agent is deliberately not in this cycle: it is an entry (`/agent`), not
+    // a permission tier, and cycling into it used to silently reclassify every
+    // following sentence as a coding turn.
     const next =
       SESSION_MODES[(SESSION_MODES.indexOf(current) + 1) % SESSION_MODES.length] ?? 'research';
     await this.relay(['mode', next]);
@@ -795,6 +791,17 @@ export class InteractiveSession {
         await this.relay(['models', ...restArgs]);
         return 'continue';
       }
+      case '/agent':
+        // `/agent` without a prompt lists the known DSH sessions; with one it
+        // runs a coding turn. It changes no permission tier — the research or
+        // analysis tier stays as it is, and drift detection runs inside the
+        // CLI turn it relays to.
+        if (!rest) {
+          await this.relay(['agent', '--list']);
+          return 'continue';
+        }
+        await this.runAgentTurn(rest);
+        return 'continue';
       case '/mode':
         await this.relay(['mode', ...restArgs]);
         await this.refreshHeader();

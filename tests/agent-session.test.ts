@@ -11,6 +11,7 @@ import {
   recordAgentSession,
   agentSessionsPath,
 } from '../src/dsh/session.js';
+import { composeTurnPrompt } from '../src/commands/agent.js';
 
 /**
  * Agent mode → real DSH coding session (rule: no fixed greetings, no
@@ -178,4 +179,29 @@ describe('ideaseek agent CLI', () => {
     },
     600_000,
   );
+});
+
+describe('first-turn project brief', () => {
+  it('prepends persisted project state only to a new session', async () => {
+    const dir = await makeProjectDir();
+
+    // No run yet: the brief says so instead of inventing a research question.
+    const bare = await composeTurnPrompt(dir, '修一下预处理', true);
+    expect(bare).toContain('[IdeaSeek 项目上下文');
+    expect(bare).toContain('尚未开始 run');
+    expect(bare).toContain('papers/、datasets/、comparisons/upstream/');
+    expect(bare.trimEnd().endsWith('修一下预处理')).toBe(true);
+
+    expect((await runCli(dir, ['run', '--question', 'domain shift', '--enqueue-only'])).code).toBe(
+      0,
+    );
+    const brief = await composeTurnPrompt(dir, '修一下预处理', true);
+    expect(brief).toContain('question: domain shift');
+    expect(brief).toContain('--- 用户指令 ---');
+    // The user's own instruction stays the last thing the model reads.
+    expect(brief.split('--- 用户指令 ---')[1]?.trim()).toBe('修一下预处理');
+
+    // A resumed session already holds this context; its prompt is untouched.
+    expect(await composeTurnPrompt(dir, '继续', false)).toBe('继续');
+  }, 180_000);
 });

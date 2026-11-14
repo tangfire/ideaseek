@@ -80,10 +80,12 @@ function makeCard(ideaId: string): Record<string, unknown> {
   };
 }
 
-describe('session mode store (analysis)', () => {
+describe('session tier store (analysis)', () => {
   it('parses, persists and carries read-only permissions for analysis', async () => {
-    expect(SESSION_MODES).toEqual(['research', 'analysis', 'agent']);
+    expect(SESSION_MODES).toEqual(['research', 'analysis']);
     expect(parseSessionMode('analysis')).toBe('analysis');
+    // The retired tier spelling is not a tier any more.
+    expect(parseSessionMode('agent')).toBeNull();
     expect(parseSessionMode('nope')).toBeNull();
     expect(MODE_PERMISSIONS.analysis.join(' ')).toContain('read-only');
     expect(MODE_PERMISSIONS.analysis.join(' ')).toContain('cannot lock protocols');
@@ -92,8 +94,11 @@ describe('session mode store (analysis)', () => {
     expect(await readSessionMode(dir)).toBe('research');
     await writeSessionMode(dir, 'analysis');
     expect(await readSessionMode(dir)).toBe('analysis');
-    await writeSessionMode(dir, 'agent');
-    expect(await readSessionMode(dir)).toBe('agent');
+    // A session file written before agent stopped being a tier still reads:
+    // the marker falls back to the science tier, the coding history lives in
+    // knowledge/agent-sessions.json instead.
+    await writeFile(join(dir, '.research', 'session.json'), '{"mode":"agent"}\n', 'utf8');
+    expect(await readSessionMode(dir)).toBe('research');
   }, 60_000);
 });
 
@@ -132,11 +137,16 @@ describe('ideaseek mode switch + Analysis→Research gate', () => {
     expect(payload.sessionMode).toBe('research');
   }, 180_000);
 
-  it('invalid mode target lists all three modes', async () => {
+  it('invalid mode target lists the two tiers, and `agent` routes to the entry', async () => {
     const dir = await makeProjectDir();
     const bad = await runCli(dir, ['mode', 'banana']);
     expect(bad.code).not.toBe(0);
-    expect(bad.stderr).toContain('research | analysis | agent');
+    expect(bad.stderr).toContain('research | analysis');
+    expect(bad.stderr).not.toContain('agent');
+
+    const retired = await runCli(dir, ['mode', 'agent']);
+    expect(retired.code).not.toBe(0);
+    expect(retired.stderr).toContain('ideaseek agent');
   }, 60_000);
 });
 

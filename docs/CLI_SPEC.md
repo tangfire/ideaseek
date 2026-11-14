@@ -14,8 +14,8 @@ ideaseek models list
 ideaseek models providers
 ideaseek models test --route deep
 ideaseek interactive --mode research
-ideaseek interactive --mode agent
-ideaseek mode show
+ideaseek agent "把预处理里的日期列修对" --resume <sessionId>
+ideaseek mode
 ideaseek plan --question "..."
 ideaseek projects
 ideaseek open <project-path>

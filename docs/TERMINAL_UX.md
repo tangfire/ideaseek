@@ -83,7 +83,8 @@ ideaseek ›
 ```text
 /status       当前阶段、任务、资源和预算
 /models       查看和配置模型 route/provider
-/mode         查看/切换 Research 和 Agent 模式
+/mode         查看/切换 Research 和 Analysis 权限档位
+/agent        起一轮通用 DSH coding 会话（`/agent <指令>`；无参列出可续的 session）
 /next         下一步和阻塞解释
 /papers       论文进度和失败解析
 /comparisons  comparison 状态、来源和阻塞
@@ -105,7 +106,7 @@ ideaseek ›
 
 每个斜杠命令都有等价的非交互 CLI 命令，方便脚本和 SSH 使用。
 
-提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言按会话模式分流：Research 模式走 `ideaseek ask`（supervisor 分类为查询、建议或待审批 Decision；问候/能力问题确定性即时应答）；Agent 模式直接作为一次真实 DSH coding-session turn 执行（同一 `ideaseek agent` use-case，TUI 内自动续会话）。高影响操作必须显示摘要并确认。
+提示符也接受自然语言，例如“为什么 method-b 还没通过？”或“优先验证 idea-002”。自然语言一律走 `ideaseek ask`（supervisor 分类为查询、建议或待审批 Decision；问候/能力问题确定性即时应答），Research 与 Analysis 档位的区别只在于科研管线允许写什么。工程改动不是靠说一句自然语言就静默改变会话权限，而是显式 `/agent <指令>`：一次真实 DSH coding-session turn（同一 `ideaseek agent` use-case，TUI 内自动续会话），工具审批把输入行切成 `y allow once · n reject`，回合末报告原始输入漂移。高影响操作必须显示摘要并确认。
 
 交互提示符始终显示当前项目名和路径。切换项目后要求二次确认，避免用户把控制命令发到错误的研究目录。
 

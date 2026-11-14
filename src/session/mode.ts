@@ -2,18 +2,27 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
- * Session mode (docs/MODES.md): the current session runs either as
- * `research` (default — the scientific workflow) or `agent` (bounded
- * engineering work inside the same project context). The mode is persisted
- * per project in `.research/session.json` so the REPL and its non-interactive
- * relay agree; switching never starts a second run. Tool availability for
- * agent mode rides on the DSH capability profile — this module only owns the
- * mode state, permission summary and audit-friendly rendering.
+ * Session tiers (docs/MODES.md): the research conversation runs either as
+ * `research` (default — the scientific workflow) or `analysis` (read-only
+ * material preparation). Agent is *not* a tier: `ideaseek agent` / `/agent`
+ * starts a general DSH coding session inside the same project, on DSH's own
+ * `workspace-write` + ask preset. What protects the science is not a directory
+ * ban nobody enforced, but the drift detection in knowledge/input-drift.ts.
+ *
+ * The tier is persisted per project in `.research/session.json` so the REPL and
+ * its non-interactive relay agree; switching never starts a second run. Tool
+ * availability rides on the DSH capability profile — this module owns the tier
+ * state, permission summary and audit-friendly rendering.
  */
 
-export type SessionMode = 'research' | 'analysis' | 'agent';
+export type SessionMode = 'research' | 'analysis';
 
-export const SESSION_MODES: readonly SessionMode[] = ['research', 'analysis', 'agent'];
+export const SESSION_MODES: readonly SessionMode[] = ['research', 'analysis'];
+
+/** Older session files persisted `agent` as a mode. A coding conversation is
+ * not a permission tier (and its history lives in knowledge/agent-sessions.json),
+ * so the marker falls back to the science tier rather than erroring on read. */
+const LEGACY_TIER_FALLBACK: ReadonlyMap<string, SessionMode> = new Map([['agent', 'research']]);
 
 export function parseSessionMode(raw: unknown): SessionMode | null {
   return typeof raw === 'string' && (SESSION_MODES as readonly string[]).includes(raw)
@@ -21,15 +30,21 @@ export function parseSessionMode(raw: unknown): SessionMode | null {
     : null;
 }
 
+/** Guidance for someone who asks for the old `mode agent` (an entry, not a tier). */
+export const AGENT_ENTRY_HINT =
+  'agent 不是权限档位而是入口：ideaseek agent "<指令>"（TUI 里 /agent <指令>）。' +
+  '科研档位保持不变；它跑 DSH 自带 workspace-write + ask 预设，回合末会侦测原始输入漂移。';
+
 export function sessionModeFile(root: string): string {
   return join(root, '.research', 'session.json');
 }
 
-/** Reads the persisted mode (default `research`; a corrupt file is ignored). */
+/** Reads the persisted tier (default `research`; a corrupt file is ignored). */
 export async function readSessionMode(root: string): Promise<SessionMode> {
   try {
     const parsed = JSON.parse(await readFile(sessionModeFile(root), 'utf8')) as { mode?: unknown };
-    return parseSessionMode(parsed.mode) ?? 'research';
+    const raw = parsed.mode;
+    return parseSessionMode(raw) ?? LEGACY_TIER_FALLBACK.get(String(raw)) ?? 'research';
   } catch {
     return 'research';
   }
@@ -72,10 +87,10 @@ export async function writeSessionMode(
   await rename(tmp, file);
 }
 
-/** Permission summary per mode — what this session may and may not do. */
+/** Permission summary per tier — what this session may and may not do. */
 export const MODE_PERMISSIONS: Record<SessionMode, readonly string[]> = {
   research: [
-    'read-only inputs: papers/, datasets/, comparisons/upstream are never modified',
+    'the science pipeline treats papers/, datasets/, comparisons/upstream as read-only inputs',
     'protected science (metrics/data/comparisons/hypothesis) always needs explicit confirmation',
     'experiments pass protocol lock + comparison gate + capacity admission first',
     'tools: research capability profile — project read + knowledge search only',
@@ -86,13 +101,20 @@ export const MODE_PERMISSIONS: Record<SessionMode, readonly string[]> = {
     'cannot lock protocols, start experiments, change the comparison list or write research code',
     'gaps report via ideaseek assessment; switching to research requires no blocking gaps (--force to override)',
   ],
-  agent: [
-    'may edit project code/config and run bounded tests inside the project root',
-    'never touches papers/, datasets/, comparisons/upstream, locked protocols or committed results',
-    'scientific changes still go through Research Decision/Approval (protected rules unchanged)',
-    'tools: DSH Agent session under the capability profile — path/network/credential policy applies',
-  ],
 };
+
+/**
+ * What the general agent entry actually runs on. Not a tier — shown by
+ * `/agent` and `mode` so nobody has to guess whether it can touch their data:
+ * the answer is yes, and the turn ends by reporting what moved.
+ */
+export const AGENT_ENTRY_PERMISSIONS: readonly string[] = [
+  'DSH preset workspace-write + ask: project read/write, restricted shell, test tools',
+  'every tool call is asked; non-TTY and --deny-tools reject (never auto-approve)',
+  'no directory ban: editing papers/, datasets/ or comparisons/upstream is allowed',
+  'what protects the science: the turn ends by hashing those anchors against the scan baseline',
+  'committed results, locked protocols and handoffs stay append-only',
+];
 
 export interface SessionSummary {
   mode: SessionMode;

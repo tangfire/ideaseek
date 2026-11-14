@@ -79,7 +79,8 @@ Shift+Tab：在 Research 和 Analysis 两个权限档位之间循环（终端支
 ```bash
 ideaseek interactive --mode research
 ideaseek interactive --mode analysis
-ideaseek mode show
+ideaseek mode
+ideaseek mode research --force
 ideaseek agent "<指令>" [--resume <id>] [--deny-tools]
 ```
 

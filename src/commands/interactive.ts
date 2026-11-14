@@ -8,21 +8,29 @@ import { action } from './shared.js';
  * `ideaseek interactive` — forces the REPL even when stdin is not a TTY
  * (pipes/tests). Bare `ideaseek` starts it only on a real terminal; with
  * `--json` bare invocation prints a machine-readable snapshot instead.
- * `--mode research|agent` sets the session mode before the UI starts
- * (docs/MODES.md).
+ * `--mode research|analysis` sets the research tier before the UI starts
+ * (docs/MODES.md); coding turns are `/agent` or `ideaseek agent`, not a tier.
  */
 export function registerInteractiveCommand(program: Command): void {
   program
     .command('interactive')
     .description('start the interactive UI: banner, prompt, live events, approvals')
     .option('--plain', 'short mark, no colors, log-friendly output')
-    .option('--mode <mode>', 'session mode for this project: research | agent')
+    .option('--mode <mode>', 'research tier for this project: research | analysis')
     .action(
       action(async (opts: { plain?: boolean; mode?: string }) => {
         const global = program.opts<{ plain?: boolean }>();
         if (opts.mode) {
-          const { parseSessionMode, readSessionMode, writeSessionMode, SESSION_MODES } =
-            await import('../session/mode.js');
+          const {
+            parseSessionMode,
+            readSessionMode,
+            writeSessionMode,
+            SESSION_MODES,
+            AGENT_ENTRY_HINT,
+          } = await import('../session/mode.js');
+          if (opts.mode === 'agent') {
+            throw new IdeaseekError('INVALID_ARGUMENT', AGENT_ENTRY_HINT);
+          }
           const mode = parseSessionMode(opts.mode);
           if (!mode) {
             throw new IdeaseekError(

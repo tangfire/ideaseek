@@ -43,7 +43,7 @@ export function renderBanner(opts: BannerOptions = {}): string {
 
 export interface HeaderContext {
   project: string;
-  /** Session mode as displayed: RESEARCH | AGENT. */
+  /** Research tier as displayed: RESEARCH | ANALYSIS. */
   sessionMode: string;
   question: string | null;
   runId: string | null;

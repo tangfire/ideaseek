@@ -159,18 +159,21 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // While the relay ran, the input line itself carried the spinner.
       expect(repl.output()).toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
 
-      // Shift+Tab cycles session mode through the audited /mode use-case, and
-      // covers all three modes (docs/MODES.md): Analysis used to be reachable
-      // only by typing /mode, and the header printed RESEARCH for it.
+      // Shift+Tab cycles the two research tiers through the audited /mode
+      // use-case (docs/MODES.md). Agent is deliberately absent from the
+      // cycle: it is an entry (`/agent`), and cycling into it used to turn
+      // every following sentence into a coding turn.
       await repl.write('\x1b[Z');
       await repl.waitFor(/session mode: research → analysis/);
       await repl.waitFor(/ink-interactive · ANALYSIS/);
+      // Cycling back out hits the Analysis→Research preparation gate (PROGRESS
+      // 84): a project with no papers must not be switched by one keystroke.
       await repl.write('\x1b[Z');
-      await repl.waitFor(/session mode: analysis → agent/);
-      await repl.waitFor(/ink-interactive · AGENT/);
-      await repl.waitFor(/AGENT.*Shift\+Tab mode/);
-      await repl.write('\x1b[Z');
-      await repl.waitFor(/session mode: agent → research/);
+      await repl.waitFor(/blocked by material gaps/);
+      await repl.waitFor(/ink-interactive · ANALYSIS/);
+      await repl.write('/mode research --force');
+      await repl.write('\r');
+      await repl.waitFor(/session mode: analysis → research/);
       await repl.waitFor(/ink-interactive · RESEARCH/);
       await repl.waitFor(/RESEARCH.*Shift\+Tab mode/);
       // Session-mode audit decisions are recorded but must never stream —
@@ -291,15 +294,16 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
     const dir = await makeProjectDir('ink-approve');
     // Canned turn (no model, no spend): asks to run pwsh once per turn and
     // completes with the operator's answer over the stdio channel.
-    const repl = startInk(dir, ['--mode', 'agent'], { IDEASEEK_FAKE_AGENT_TURN: '1' });
+    const repl = startInk(dir, [], { IDEASEEK_FAKE_AGENT_TURN: '1' });
     try {
       await repl.waitFor(/ideaseek ›/, 60_000);
-      await repl.waitFor(/ink-approve · AGENT/, 60_000);
+      // The tier badge does not change: `/agent` is a turn, not a mode.
+      await repl.waitFor(/ink-approve · RESEARCH/, 60_000);
 
       // Submit → step-level tool request streams first, then the approval
       // request: transcript audit line + input line flips to the
       // `y allow once · n reject` prompt.
-      await repl.write('check the workspace');
+      await repl.write('/agent check the workspace');
       await repl.write('\r');
       await repl.waitFor(/⚙ pwsh \{"command":"ls"\}/);
       await repl.waitFor(/approval required: pwsh/);
@@ -320,7 +324,7 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
       // generic pattern would match the first turn's still-buffered line
       // instantly — the 'n' would then type into the composer instead of
       // answering the live approval.
-      await repl.write('again please');
+      await repl.write('/agent again please');
       await repl.write('\r');
       await repl.waitFor(/approval required: pwsh — workspace probe for: again please/);
       await repl.write('n');

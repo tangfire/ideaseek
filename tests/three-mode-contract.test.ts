@@ -5,11 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { CLI_BIN, createDemoRun, makeProjectDir, openRuntime } from './helpers.js';
 
 /**
- * Three-mode coordination contract (PROGRESS 85, docs/MODES.md 三种模式
- * 如何协同): one project, one artifact store, one hash space —
+ * Mode coordination contract (PROGRESS 85, docs/MODES.md 两个权限档位与一个
+ * 通用入口如何协同): one project, one artifact store, one hash space —
  * 1. same inputs → same artifacts (no duplicate parse/extract versions);
- * 2. mode switches change only the session marker — no second run, no
- *    knowledge reset, no copied context;
+ * 2. tier switches AND an agent entry turn change only the session marker and
+ *    the agent session registry — no second run, no knowledge reset, no copied
+ *    context;
  * 3. a code change invalidates ONLY its downstream (check/analysis) while
  *    papers/PaperCards and the assessment of them stay untouched.
  */
@@ -18,11 +19,12 @@ function runCli(
   cwd: string,
   args: string[],
   timeoutMs = 180_000,
+  extraEnv: Record<string, string> = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI_BIN, ...args], {
       cwd,
-      env: { ...process.env, IDEASEEK_CLI: '1' },
+      env: { ...process.env, IDEASEEK_CLI: '1', ...extraEnv },
     });
     let stdout = '';
     let stderr = '';
@@ -149,8 +151,8 @@ describe('contract 1: same inputs → same artifacts (no duplicate versions)', (
   }, 300_000);
 });
 
-describe('contract 2: mode switches never reset project context', () => {
-  it('research → agent → research keeps runs, knowledge bytes and assessment identical', async () => {
+describe('contract 2: tier switches and an agent turn never reset project context', () => {
+  it('research → analysis → research plus one agent entry keeps runs, knowledge bytes and assessment identical', async () => {
     const dir = await makeProjectDir();
     const cardPath = join(dir, 'card.json');
     await writeFile(cardPath, JSON.stringify(makeCard('alpha')), 'utf8');
@@ -175,10 +177,19 @@ describe('contract 2: mode switches never reset project context', () => {
       await rtBefore.close();
     }
 
-    // Mode churn: only .research/session.json may change.
-    expect((await runCli(dir, ['mode', 'agent'])).code).toBe(0);
+    // Tier churn: only .research/session.json may change.
     expect((await runCli(dir, ['mode', 'analysis'])).code).toBe(0);
     expect((await runCli(dir, ['mode', 'research', '--force'])).code).toBe(0);
+
+    // And one general-agent entry: a coding turn is not a tier change, so the
+    // run, the task queue and the knowledge store must be untouched by it too.
+    const turn = await runCli(dir, ['agent', '读一下项目结构', '--json'], 180_000, {
+      IDEASEEK_FAKE_AGENT_TURN: '1',
+    });
+    expect(turn.code).toBe(0);
+    expect(
+      (JSON.parse(turn.stdout) as { inputDrift: { drifted: number } }).inputDrift.drifted,
+    ).toBe(0);
 
     const knowledgeAfter = await readFile(
       join(dir, 'knowledge', 'research-material-assessment.json'),

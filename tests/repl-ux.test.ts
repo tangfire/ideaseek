@@ -259,9 +259,11 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
 
   it('classic path answers agent tool approvals with a bare y/n line', async () => {
     const dir = await makeProjectDir();
-    const repl = startTtyRepl(dir, ['--mode', 'agent'], { IDEASEEK_FAKE_AGENT_TURN: '1' });
+    // A coding turn is an explicit `/agent` entry, not a tier the sentence
+    // happens to land in.
+    const repl = startTtyRepl(dir, [], { IDEASEEK_FAKE_AGENT_TURN: '1' });
     await repl.waitFor(/ideaseek ›/);
-    repl.write('check the workspace\r');
+    repl.write('/agent check the workspace\r');
     // Step-level tool request streams before the approval prompt.
     await repl.waitFor(/⚙ pwsh \{"command":"ls"\}/);
     await repl.waitFor(/approval required: pwsh/);
@@ -279,9 +281,9 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     const env = { IDEASEEK_FAKE_AGENT_TURN: '1' };
 
     // Session A: one turn, answered, recorded to knowledge/agent-sessions.json.
-    const first = startTtyRepl(dir, ['--mode', 'agent'], env);
+    const first = startTtyRepl(dir, [], env);
     await first.waitFor(/ideaseek ›/);
-    first.write('hello there\r');
+    first.write('/agent hello there\r');
     await first.waitFor(/approval required: pwsh/);
     first.write('y\r');
     await first.waitFor(/Fake turn complete/);
@@ -289,9 +291,9 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     expect(quit1.code).toBe(0);
 
     // Fresh TUI: seeds --resume from the registry — same conversation.
-    const second = startTtyRepl(dir, ['--mode', 'agent'], env);
+    const second = startTtyRepl(dir, [], env);
     await second.waitFor(/ideaseek ›/);
-    second.write('again please\r');
+    second.write('/agent again please\r');
     await second.waitFor(/resumed session session-fake-e2e/);
     await second.waitFor(/approval required: pwsh/);
     second.write('y\r');
@@ -378,7 +380,7 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
 });
 
 describe('new slash commands and NL routing (CLI)', () => {
-  it('/mode shows mode, project and permissions and switches research↔agent', async () => {
+  it('/mode shows tier, project and permissions and switches research↔analysis', async () => {
     const project = await makeProjectDir();
     const repl = startTtyRepl(project);
     await repl.waitFor(/ideaseek ›/);
@@ -386,50 +388,57 @@ describe('new slash commands and NL routing (CLI)', () => {
     repl.write('/mode\r');
     await repl.waitFor(/session mode : research/);
     await repl.waitFor(/permissions {2}:/);
-    await repl.waitFor(/read-only inputs/);
+    await repl.waitFor(/the science pipeline treats papers\//);
 
-    repl.write('/mode agent\r');
+    repl.write('/mode analysis\r');
     // The switch itself stays two short lines: migration + audit event,
     // then a one-line permission recap — never the full summary wall.
-    await repl.waitFor(/session mode: research → agent/);
-    await repl.waitFor(/may edit project code\/config/);
+    await repl.waitFor(/session mode: research → analysis/);
+    // A switch recaps only the tier's first permission line; the rest of the
+    // summary is one explicit /mode away.
+    await repl.waitFor(/read-only preparation/);
 
     // The full summary is one explicit /mode away.
     repl.write('/mode\r');
-    await repl.waitFor(/session mode : agent/);
-    await repl.waitFor(/tools: DSH Agent session/);
+    await repl.waitFor(/session mode : analysis/);
+    await repl.waitFor(/cannot lock protocols/);
+
+    // `agent` is no longer a tier: the old spelling is refused with a pointer
+    // and leaves the persisted tier untouched.
+    repl.write('/mode agent\r');
+    await repl.waitFor(/不是权限档位/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
     expect(done.stdout).not.toContain('unknown command: /mode');
     // The non-interactive CLI reads the same persisted session state.
     const shown = await runCli(project, ['mode', '--json']);
     expect(JSON.parse(shown.stdout)).toMatchObject({
-      sessionMode: 'agent',
+      sessionMode: 'analysis',
       project: 'test-project',
     });
   }, 90_000);
 
-  it('interactive --mode agent starts the session in agent mode', async () => {
+  it('interactive --mode analysis starts the session in the analysis tier', async () => {
     const project = await makeProjectDir();
-    const repl = startTtyRepl(project, ['--mode', 'agent']);
+    const repl = startTtyRepl(project, ['--mode', 'analysis']);
     await repl.waitFor(/ideaseek ›/);
     repl.write('/mode\r');
-    await repl.waitFor(/session mode : agent/);
+    await repl.waitFor(/session mode : analysis/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
   }, 60_000);
 
-  it('agent mode routes plain text to the real DSH agent turn, never ask', async () => {
+  it('/agent routes to the real DSH agent turn', async () => {
     const project = await makeProjectDir();
     // A bogus model name makes the real turn fail honestly in ~4s BEFORE
     // any model call (never spend credentials implicitly) — and its
     // failure text comes from the agent CLI, not from the ask supervisor.
-    const repl = startTtyRepl(project, ['--mode', 'agent'], {
+    const repl = startTtyRepl(project, [], {
       DEEPSEEK_API_KEY: '',
       IDEASEEK_AGENT_MODEL: 'ideaseek-no-such-model',
     });
     await repl.waitFor(/ideaseek ›/);
-    repl.write('hello there\r');
+    repl.write('/agent hello there\r');
     await repl.waitFor(/DSH session failed|agent turn failed|models setup|doctor/, 60_000);
     expect(repl.output()).not.toContain('recorded pending-approval decision');
     expect(repl.output()).not.toContain('IdeaSeek supervisor ready');
