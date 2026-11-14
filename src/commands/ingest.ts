@@ -58,6 +58,14 @@ export async function collectTabledSourceHashes(runtime: ProjectRuntime): Promis
   return hashes;
 }
 
+/**
+ * Parser revision the current extractor produces, asserted against the worker
+ * by tests/pdf.test.ts. A paper parsed by an older revision is not "done":
+ * its text may be missing pages the current extractor recovers, and comparing
+ * content hashes alone would cache that hole forever.
+ */
+export const EXPECTED_PARSER_REVISION = '+rev2';
+
 export async function collectParsedHashes(runtime: ProjectRuntime): Promise<Set<string>> {
   const hashes = new Set<string>();
   const artifacts = await runtime.db.listArtifactsByKind('parsed-paper');
@@ -65,8 +73,11 @@ export async function collectParsedHashes(runtime: ProjectRuntime): Promise<Set<
     try {
       const payload = JSON.parse(await runtime.store.readFinalText(artifact.contentHash)) as {
         sourceHash?: string;
+        parser?: string;
       };
-      if (payload.sourceHash) hashes.add(payload.sourceHash);
+      if (payload.sourceHash && (payload.parser ?? '').includes(EXPECTED_PARSER_REVISION)) {
+        hashes.add(payload.sourceHash);
+      }
     } catch {
       // Unreadable artifact does not poison the set; the paper re-parses.
     }

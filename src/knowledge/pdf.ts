@@ -84,10 +84,28 @@ export interface ParsePdfOptions {
  * contain library noise, so error parsing scans lines from the end.
  * The subprocess only receives a file path — no credentials, no DB access.
  */
+/**
+ * Parse budget scaled to file size. A fixed 60s is a silent correctness bug:
+ * large camera-ready PDFs (tens of MB for a dozen pages, dense vector
+ * graphics) then never parse, so the paper stays at whatever the first
+ * attempt produced and the extractor can never improve it.
+ */
+export async function parseTimeoutMs(pdfPath: string, explicit?: number): Promise<number> {
+  if (explicit !== undefined && Number.isFinite(explicit)) return explicit;
+  const { stat } = await import('node:fs/promises');
+  const bytes = await stat(pdfPath)
+    .then((info) => info.size)
+    .catch(() => 0);
+  const megabytes = bytes / (1024 * 1024);
+  // ~6s per megabyte, floor 60s, capped at 15 minutes so a pathological
+  // input fails with a reported timeout instead of wedging the worker.
+  return Math.min(900_000, Math.max(60_000, Math.round(megabytes * 6_000)));
+}
+
 export async function parsePdf(pdfPath: string, opts: ParsePdfOptions = {}): Promise<ParsedPdf> {
   const python = opts.pythonBin ?? (await pythonBinary());
   const cwd = workerPythonDir();
-  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const timeoutMs = await parseTimeoutMs(pdfPath, opts.timeoutMs);
 
   return new Promise<ParsedPdf>((resolvePromise, reject) => {
     const child = spawn(python, ['-m', 'ideaseek_worker', 'parse', pdfPath], {

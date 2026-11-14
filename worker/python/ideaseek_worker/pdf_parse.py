@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any
 
 PARSER_NAME = "pypdf"
+# Bump whenever extraction behaviour changes in a way that makes previously
+# parsed papers worth re-parsing (a recovered page, a new fallback). ingest
+# uses this to decide an old artifact is stale even though its bytes did not
+# change — without it, every parser improvement is permanently cached away.
+PARSER_REVISION = "rev2"
 
 
 class PdfParseError(Exception):
@@ -185,5 +190,5 @@ def parse_pdf(path: str | Path) -> ParsedPdf:
         source=str(file_path),
         page_count=len(pages),
         pages=pages,
-        parser=f"{PARSER_NAME}/{getattr(pypdf, '__version__', 'unknown')}",
+        parser=f"{PARSER_NAME}/{getattr(pypdf, '__version__', 'unknown')}+{PARSER_REVISION}",
     )
