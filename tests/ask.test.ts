@@ -125,6 +125,21 @@ describe('ask free-text quality (CLI)', () => {
     expect(refused.stdout).not.toContain('run created');
   }, 60_000);
 
+  it('redacts a pasted API key before the supervisor call and the audit summary', async () => {
+    const dir = await makeProjectDir();
+    await runCli(dir, ['run', '--question', 'guard', '--enqueue-only']);
+    // An empty summary forces the fallback that used to reuse the raw input.
+    const override = JSON.stringify({ kind: 'pending-action', summary: '', reason: 'budget' });
+    const result = await runCli(
+      dir,
+      ['ask', 'raise the cap, my key is sk-ABCDEFGHIJKLMNOPQRSTUV', '--harness', 'fake'],
+      { IDEASEEK_FAKE_SUPERVISOR_OUTPUT: override },
+    );
+    const all = result.stdout + result.stderr;
+    expect(all).not.toContain('sk-ABCDEFGHIJKLMNOPQRSTUV');
+    expect(all).toContain('sk-***');
+  }, 60_000);
+
   it('unclear input gets an orienting fallback, not "rephrase"', async () => {
     const dir = await makeProjectDir();
     const override = JSON.stringify({ kind: 'unclear', answer: '', summary: 'x' });

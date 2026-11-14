@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256Of } from '../core/hash.js';
+import { redactSecrets } from '../core/redact.js';
 import { interpretInput } from '../cli/nl.js';
 import { runCli } from '../cli/runner.js';
 import { action, jsonLine } from './shared.js';
@@ -235,6 +236,11 @@ export function registerAskCommand(program: Command): void {
           opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
         const { buildHarness } = await import('./shared.js');
         const harness = buildHarness(kind);
+        // Free text can carry a pasted credential (an API key typed at the
+        // prompt instead of `/models setup`). The supervisor call is the one
+        // place IdeaSeek sends user text off-machine, so it goes redacted:
+        // docs/AGENTS.md forbids secrets in prompts, events and logs.
+        const safeMessage = redactSecrets(message);
         // Announce the classifier before the (potentially slow) model round
         // trip — a silent spinner for tens of seconds felt dead. Streams
         // through the relay's line framer; JSON mode stays machine-pure.
@@ -246,10 +252,10 @@ export function registerAskCommand(program: Command): void {
             taskId: `ask-${Date.now()}`,
             profile: 'demo',
             instruction: SUPERVISOR_INSTRUCTION,
-            inputs: [{ kind: 'text', name: 'user_message', content: message }],
+            inputs: [{ kind: 'text', name: 'user_message', content: safeMessage }],
             outputSchema: 'supervisor-intent-v1',
             budget: { timeoutMs: 60_000, maxOutputTokens: 1024 },
-            idempotencyKey: `ask:${sha256Of(message)}`,
+            idempotencyKey: `ask:${sha256Of(safeMessage)}`,
           });
           const parsed = parseSupervisorOutput(result.output);
           if (!parsed) {
@@ -296,7 +302,7 @@ export function registerAskCommand(program: Command): void {
             return decision.code;
           }
           if (parsed.kind === 'pending-action') {
-            const summary = parsed.summary || message;
+            const summary = parsed.summary || safeMessage;
             const decision = await runCli(
               [
                 'decision',

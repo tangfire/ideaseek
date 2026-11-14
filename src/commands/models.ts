@@ -214,6 +214,7 @@ export function registerModelsCommand(program: Command): void {
             readDshProvider,
             writeDshApiKeyEnv,
             connectionTest,
+            knownBaseUrl,
             normalizeSuppliedKey,
             resolveTestKey,
             dshHome,
@@ -262,7 +263,10 @@ export function registerModelsCommand(program: Command): void {
           let tested: { ok: boolean; status: number | null; detail: string } | null = null;
           if (opts.test) {
             const providerView = await readDshProvider(opts.provider);
-            const baseUrl = opts.baseUrl ?? providerView.baseURL;
+            // Same well-known default the write path uses: a fresh machine has
+            // no DSH provider entry yet, and asking for --base-url there was
+            // pure friction.
+            const baseUrl = opts.baseUrl ?? providerView.baseURL ?? knownBaseUrl(opts.provider);
             if (!baseUrl) {
               throw new IdeaseekError(
                 'USER_INPUT_REQUIRED',

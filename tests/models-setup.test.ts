@@ -187,6 +187,21 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     await expect(readFile(h.userConfig, 'utf8')).rejects.toThrow();
   }, 60_000);
 
+  it('assumes the well-known deepseek endpoint instead of demanding --base-url', async () => {
+    const h = await makeHarness();
+    const result = await runCli(['models', 'setup', '--provider', 'deepseek', '--test', '--json'], {
+      ...h.env,
+      DEEPSEEK_API_KEY: '',
+    });
+    // Before, the connection test looked only at the DSH provider view and
+    // threw here — on a fresh machine there is no provider entry to read.
+    expect(result.stderr).not.toContain('no base URL known');
+    // It got past base-url resolution and stopped at the missing key: still
+    // offline, and nothing was written.
+    expect(result.stderr).toContain('no key available');
+    await expect(readFile(join(h.dshHome, 'settings.yaml'), 'utf8')).rejects.toThrow();
+  }, 60_000);
+
   it('a failing connection test writes nothing (fail closed)', async () => {
     const h = await makeHarness();
     const result = await runCli(

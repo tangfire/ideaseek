@@ -98,6 +98,15 @@ export interface DshSettingsWrite {
 }
 
 /**
+ * The only endpoints IdeaSeek will assume. Kept here so the write path and the
+ * connection test agree — a user configuring DeepSeek should not have to pass
+ * `--base-url` twice to reach a host everyone knows.
+ */
+export function knownBaseUrl(provider: string): string | undefined {
+  return provider === 'deepseek' ? 'https://api.deepseek.com' : undefined;
+}
+
+/**
  * Sets `llm-pi-ai.providers.<id>.apiKeyEnv` (a NAME) via yaml Document
  * round-trip — comments and unrelated keys are preserved. Creating a
  * provider requires an explicit --base-url (well-known deepseek endpoint
@@ -130,8 +139,7 @@ export async function writeDshApiKeyEnv(
   }
   let created = false;
   if (doc.getIn(['llm-pi-ai', 'providers', provider]) === undefined) {
-    const baseUrl =
-      opts.baseUrl ?? (provider === 'deepseek' ? 'https://api.deepseek.com' : undefined);
+    const baseUrl = opts.baseUrl ?? knownBaseUrl(provider);
     if (!baseUrl) {
       throw new IdeaseekError(
         'USER_INPUT_REQUIRED',
