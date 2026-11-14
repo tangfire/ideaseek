@@ -381,8 +381,8 @@ export function registerModelsCommand(program: Command): void {
           }
           process.stdout.write(`  wrote: ${wrote.join('; ')}\n`);
           process.stdout.write(
-            `next: make ${opts.apiKeyEnv} available to this project — put it in <project>/.env ` +
-              `(git-ignored, loaded at startup) or export it in your shell, then: ideaseek models test\n`,
+            `next: ideaseek models test  (key lives in DSH's credential store under ` +
+              `${opts.apiKeyEnv}; IdeaSeek holds only that NAME)\n`,
           );
           process.stdout.write(
             'boundary: IdeaSeek never writes the key value to config, git, prompts, events or logs\n',
