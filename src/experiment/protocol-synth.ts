@@ -1,7 +1,7 @@
 import type { CompactCard } from '../knowledge/synthesis.js';
 
 /** Prompt+schema version for provenance; bump when the instruction changes. */
-export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.2';
+export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.3';
 
 /**
  * Measured structure of an image corpus (docs/DATA_CONTRACTS.md §RunEnv
@@ -34,6 +34,28 @@ export interface DatasetProfileSummary {
   note: string;
 }
 
+/**
+ * Bounded digest of one paper's extracted experiment tables. Domain-neutral:
+ * the platform never interprets what a column means, it only hands the agent
+ * the numbers that were measured off the page (docs/DOMAIN_ADAPTERS.md
+ * 协议自动综合流程 lists tables as a required input).
+ */
+export interface TableDigest {
+  source: string;
+  tables: { page: number; rows: string[][] }[];
+}
+
+/** Registered comparison methods as design evidence: entry point, license, status. */
+export interface ComparisonDigest {
+  methodId: string;
+  status: string;
+  required: boolean;
+  entry: string[] | string | null;
+  license: string | null;
+  sourceKind: string | null;
+  readme: string | null;
+}
+
 export interface ProtocolInput {
   question: string;
   corpusPapers: number;
@@ -46,6 +68,10 @@ export interface ProtocolInput {
     topFindings: string[];
   }[];
   dataset: DatasetProfileSummary;
+  /** Experiment tables, when `ingest --tables` has run. */
+  tables?: TableDigest[];
+  /** Registered comparisons, when any exist. */
+  comparisons?: ComparisonDigest[];
 }
 
 /**
@@ -61,6 +87,8 @@ export function buildProtocolInput(opts: {
   datasetProfile: DatasetProfileSummary | null;
   /** Suffix from knowledge/dataset-candidates.json when discovery ran (Phase 4.5B). */
   discoveryNote?: string | null;
+  tables?: TableDigest[];
+  comparisons?: ComparisonDigest[];
 }): ProtocolInput {
   return {
     question: opts.question || '(no research question configured)',
@@ -86,6 +114,8 @@ export function buildProtocolInput(opts: {
         'no user dataset registered (datasets/ empty or unscanned) — data-dependent rules must be low-confidence agent-inference and flagged for user confirmation' +
         (opts.discoveryNote ? `; ${opts.discoveryNote}` : ''),
     },
+    ...(opts.tables && opts.tables.length > 0 ? { tables: opts.tables } : {}),
+    ...(opts.comparisons && opts.comparisons.length > 0 ? { comparisons: opts.comparisons } : {}),
   };
 }
 
@@ -118,6 +148,15 @@ export const PROTOCOL_INSTRUCTION = [
   'inferred: cite a domain axis, its values and per-domain counts as source "data-probe"',
   'with confidence >= 0.7, and prefer its splitCandidates over inventing a split; only mark',
   'a data property unconfirmed if it is absent from both files[] and corpora[].',
+  'when tables[] is present it holds numeric results transcribed from the papers: ground',
+  'baseline entries, metric targets and resource estimates in them with source',
+  '"paper-evidence" rather than inventing magnitudes; numbers you cannot trace to a table',
+  'row or a card fact are agent-inference and must be flagged.',
+  'when comparisons[] is present those methods are already registered with a code entry',
+  'point: reuse their entry commands instead of proposing new ones, and treat their',
+  'license/status as binding (a required method that is not smoke-tested blocks the gate).',
+  'Propose structure, not vocabulary: name any additional parameter you need as its own',
+  "key inside the existing slots; never assume the platform knows your field's terms.",
   'metrics direction must reflect how the paper reports them; baseline entries name the',
   'methods found in the corpus; stopConditions must include a budget bound. All arrays',
   'must be non-empty unless secondaryMetrics (may be empty).',

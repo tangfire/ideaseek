@@ -351,13 +351,17 @@ async function protocolRow(root: string): Promise<StaleRow> {
     const { buildProtocolInput, PROTOCOL_PROMPT_VERSION } =
       await import('../experiment/protocol-synth.js');
     const { loadCompactCards } = await import('../knowledge/cards.js');
-    const { loadDatasetProfile } = await import('../worker/protocol-handlers.js');
+    const { loadDatasetProfile, loadProtocolEvidence } =
+      await import('../worker/protocol-handlers.js');
     const { sha256OfJson } = await import('../core/hash.js');
     const cards = await loadCompactCards(runtime);
+    const evidence = await loadProtocolEvidence(runtime);
     const input = buildProtocolInput({
       question: runtime.config.research.question,
       cards,
       datasetProfile: await loadDatasetProfile(runtime),
+      tables: evidence.tables,
+      comparisons: evidence.comparisons,
     });
     const inputHash = await sha256OfJson({ inputs: input, generator: PROTOCOL_PROMPT_VERSION });
     if (latest.meta.inputHash !== inputHash) {

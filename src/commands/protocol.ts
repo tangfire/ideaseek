@@ -6,7 +6,7 @@ import { loadCompactCards } from '../knowledge/cards.js';
 import { PROTOCOL_PROMPT_VERSION, buildProtocolInput } from '../experiment/protocol-synth.js';
 import { ensureActiveRun } from './ingest.js';
 // One reader for the measured data structure, shared with the worker task.
-import { loadDatasetProfile } from '../worker/protocol-handlers.js';
+import { loadDatasetProfile, loadProtocolEvidence } from '../worker/protocol-handlers.js';
 import {
   action,
   assertConfigUsable,
@@ -55,10 +55,13 @@ export function registerProtocolCommand(program: Command): void {
 
           // Incremental: skip when a proposal for identical inputs is committed.
           const datasetProfile = await loadDatasetProfile(runtime);
+          const evidence = await loadProtocolEvidence(runtime);
           const input = buildProtocolInput({
             question: runtime.config.research.question,
             cards,
             datasetProfile,
+            tables: evidence.tables,
+            comparisons: evidence.comparisons,
           });
           const inputHash = await sha256OfJson({
             inputs: input,

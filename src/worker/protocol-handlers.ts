@@ -6,7 +6,9 @@ import {
   PROTOCOL_INSTRUCTION,
   PROTOCOL_PROMPT_VERSION,
   buildProtocolInput,
+  type ComparisonDigest,
   type DatasetProfileSummary,
+  type TableDigest,
 } from '../experiment/protocol-synth.js';
 import { validateProtocolProposal } from '../experiment/protocol.js';
 import type { ImageProfile } from '../knowledge/image-profile.js';
@@ -14,6 +16,14 @@ import type { TaskContext, TaskHandler } from './types.js';
 import type { ProjectRuntime } from '../workflow/runtime.js';
 import { applyFaults } from './handlers.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
+
+/** Context bound for tables and comparisons: enough numbers, not the whole PDF. */
+const MAX_TABLE_PAPERS = 8;
+const MAX_TABLES_PER_PAPER = 4;
+const MAX_TABLE_ROWS = 14;
+const MAX_TABLE_COLS = 12;
+const MAX_COMPARISONS = 8;
+const README_LIMIT = 700;
 
 /**
  * Reads the measured data structure for protocol synthesis. Exported because
@@ -83,6 +93,88 @@ export async function loadDatasetProfile(
 }
 
 /**
+ * The remaining inputs docs/DOMAIN_ADAPTERS.md 协议自动综合流程 promises: paper
+ * experiment tables and registered comparisons. Loaded in one place because
+ * the worker task, `protocol propose` and the staleness check must not each
+ * grow their own copy of what evidence the agent is owed.
+ */
+export async function loadProtocolEvidence(runtime: ProjectRuntime): Promise<{
+  tables: TableDigest[];
+  comparisons: ComparisonDigest[];
+}> {
+  const tables: TableDigest[] = [];
+  try {
+    const artifacts = await runtime.db.listArtifactsByKind('paper-tables');
+    for (const artifact of artifacts.slice(0, MAX_TABLE_PAPERS)) {
+      let payload: { source?: string; tables?: unknown };
+      try {
+        payload = JSON.parse(
+          await runtime.store.readFinalText(artifact.contentHash),
+        ) as typeof payload;
+      } catch {
+        continue;
+      }
+      const rows = Array.isArray(payload.tables) ? payload.tables : [];
+      const digested = rows
+        .slice(0, MAX_TABLES_PER_PAPER)
+        .map((raw) => {
+          const table = raw as { page?: unknown; rows?: unknown };
+          const grid = Array.isArray(table.rows)
+            ? table.rows
+                .slice(0, MAX_TABLE_ROWS)
+                .map((row) =>
+                  Array.isArray(row)
+                    ? row.slice(0, MAX_TABLE_COLS).map((cell) => String(cell ?? '').slice(0, 60))
+                    : [],
+                )
+            : [];
+          return { page: Number(table.page) || 0, rows: grid };
+        })
+        .filter((table) => table.rows.length > 0);
+      if (digested.length > 0) {
+        tables.push({ source: payload.source ?? artifact.contentHash, tables: digested });
+      }
+    }
+  } catch {
+    // No tables yet (ingest --tables is opt-in): the agent simply has less.
+  }
+
+  const comparisons: ComparisonDigest[] = [];
+  try {
+    const docs = await runtime.db.listComparisons();
+    const { readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    for (const doc of docs.slice(0, MAX_COMPARISONS)) {
+      const record = doc.record as Record<string, unknown>;
+      const repo = record.repo as { license?: string | null; url?: string } | undefined;
+      let readme: string | null = null;
+      try {
+        const text = await readFile(
+          join(runtime.paths.comparisonsDir, doc.methodId, 'worktree', 'README.md'),
+          'utf8',
+        );
+        readme = text.slice(0, README_LIMIT);
+      } catch {
+        // No README in the worktree: entry point and status still carry weight.
+      }
+      comparisons.push({
+        methodId: doc.methodId,
+        status: doc.status,
+        required: doc.required,
+        entry: (record.entry as string[] | string | undefined) ?? null,
+        license: repo?.license ?? null,
+        sourceKind: (record.sourceKind as string | undefined) ?? null,
+        readme,
+      });
+    }
+  } catch {
+    // No registered comparisons: the required-method gate handles that elsewhere.
+  }
+
+  return { tables, comparisons };
+}
+
+/**
  * Protocol Synthesis Agent task: proposal grounded in verified cards and the
  * deterministic dataset profile, platform-stamped (protocolId/generator/
  * timestamps are never model-authored) and validation-gated before commit.
@@ -113,6 +205,7 @@ export const protocolPropose: TaskHandler = async (ctx: TaskContext) => {
   // only, so the proposal never treats them as experiment inputs (Phase 4.5B).
   const discoveryNote =
     datasetProfile === null ? await discoveryCandidatesNote(ctx.runtime.paths.knowledgeDir) : null;
+  const evidence = await loadProtocolEvidence(ctx.runtime);
   const input = buildProtocolInput({
     // Same source as the propose command (config snapshot, not the run's
     // adopt-fallback question) so incremental input hashes match.
@@ -122,6 +215,8 @@ export const protocolPropose: TaskHandler = async (ctx: TaskContext) => {
     cards,
     datasetProfile,
     discoveryNote,
+    tables: evidence.tables,
+    comparisons: evidence.comparisons,
   });
   const inputHash = await sha256OfJson({
     inputs: input,
