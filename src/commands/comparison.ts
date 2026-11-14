@@ -854,7 +854,13 @@ export function registerComparisonCommand(program: Command): void {
           // Reuse the shared bounded runner (same path as baseline repair) —
           // commands never hand-roll subprocess handling (ADR-006).
           const { runRepairCommand, writeRepairLog } = await import('../comparison/repair.js');
-          const outcome = await runRepairCommand(command, worktreeDir, timeoutMs);
+          const { mergeRunEnv } = await import('../experiment/run-env.js');
+          const outcome = await runRepairCommand(
+            command,
+            worktreeDir,
+            timeoutMs,
+            await mergeRunEnv(root),
+          );
           const durationMs = outcome.durationMs;
           const passed = outcome.exitCode === 0 && !outcome.timedOut;
           const tail = outcome.out.slice(-1500);

@@ -52,6 +52,12 @@
 
 必须包含 `dataset_snapshot_id`、`scale`（`smoke`/`quick`/`standard`）或 `handoff_manifest`、选择规则、输入/输出 hash、统计摘要、随机种子、主体/客户端/域边界、生成代码版本和适用限制。探索切片是可重建派生 artifact，不能覆盖原始数据；实验结果必须引用具体 slice ID。`handoff_manifest` 只描述用户后续自行运行的全量实验，不代表 IdeaSeek 已执行。
 
+## RunEnv
+
+comparison 的 `reproduce.py` 和 idea 的 `train.py` 等入口命令不接收命令行里的数据路径，而是从环境变量读取位置：`IDEASEEK_PROJECT_ROOT`（项目根绝对路径）和 `IDEASEEK_DATASET_ROOTS`（`inputs.readonly_datasets` 按平台路径分隔符连接，未配置时不注入）。这两个变量由 `src/experiment/run-env.ts` 在每次 spawn 前从项目配置解析，method-local venv 的变量优先于注入值。
+
+入口脚本必须据此解析数据位置，不得把某台机器的绝对路径写进源码：同一份 comparison 或 idea 代码要在 Windows 开发机、WSL2 和 Linux 服务器上跑通，写死路径会让 Phase 6 的领域无关验收和服务器 full-run 直接失效。缺少变量时脚本应明确报错并提示配置 `inputs.readonly_datasets`，而不是回退到某个默认路径。
+
 ## IdeaCard
 
 必须包含研究假设、目标、论文证据、问题矛盾、机制链、最近邻 comparison、差异主张、组件必要性、竞争解释、风险、最小区分性实验、消融、主指标、否证条件、预算和停止条件。idea 版本变化要有 `parent_version`；科学假设变化要新建 `idea_id`。缺少机制解释、只是已有模块的表面组合时，状态必须为 `DRAFT_COMPOSITION`，不能进入自动实验队列。

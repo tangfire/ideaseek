@@ -4,6 +4,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { sha256Of } from '../core/hash.js';
 import type { ProgressLine } from '../experiment/checkpoint.js';
 import { parseProgressLine } from '../experiment/checkpoint.js';
+import { mergeRunEnv } from '../experiment/run-env.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { classifyRepairFailure, runRepairCommand, writeRepairLog } from '../comparison/repair.js';
 import { stableJson, type ExperimentSpec, type RunResult } from '../experiment/spec.js';
@@ -495,7 +496,7 @@ export async function executeSpecRun(
     command,
     opts.cwd ?? workspace,
     timeoutMs,
-    undefined,
+    await mergeRunEnv(projectRoot),
     onOutput,
   );
   const logName = `idea-${logTag}.log`;

@@ -6,6 +6,7 @@ import { sha256Of } from '../core/hash.js';
 import { redactSecrets } from '../core/redact.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { runGit } from './importer.js';
+import { mergeRunEnv } from '../experiment/run-env.js';
 import type {
   RepairAttempt,
   RepairChangeClass,
@@ -449,7 +450,7 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
       input.entry,
       input.worktreeDir,
       record.budget.timeoutMs,
-      venvReady ? venvEnv(input.worktreeDir) : undefined,
+      await mergeRunEnv(input.projectRoot, venvReady ? venvEnv(input.worktreeDir) : undefined),
     );
     roundsRun += 1;
     const logName = `repair-${input.methodId}-r${round}.log`;

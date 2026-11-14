@@ -11,6 +11,7 @@ import {
   writeRepairLog,
 } from './repair.js';
 import { stableJson } from '../experiment/spec.js';
+import { mergeRunEnv } from '../experiment/run-env.js';
 import type {
   RepairFailureKind,
   ReproductionBlueprint,
@@ -425,7 +426,12 @@ export async function runValidationPhases(
   ): Promise<ReproductionPhaseResult | null> => {
     if (done.has(phase)) return null;
     const started = Date.now();
-    const run = await runRepairCommand(command, opts.worktreeDir, timeoutMs);
+    const run = await runRepairCommand(
+      command,
+      opts.worktreeDir,
+      timeoutMs,
+      await mergeRunEnv(opts.projectRoot),
+    );
     const logName = `reproduce-${opts.methodId}-${phase}.log`;
     const logPath = `.research/logs/${logName}`;
     await writeRepairLog(opts.projectRoot, logName, command, run.exitCode, run.out);
@@ -587,7 +593,12 @@ export async function runSmoke(
   }
   const started = Date.now();
   const command = [...opts.entry, 'smoke'];
-  const run = await runRepairCommand(command, opts.worktreeDir, opts.smokeTimeoutMs);
+  const run = await runRepairCommand(
+    command,
+    opts.worktreeDir,
+    opts.smokeTimeoutMs,
+    await mergeRunEnv(opts.projectRoot),
+  );
   const logName = `reproduce-${opts.methodId}-smoke.log`;
   const logPath = `.research/logs/${logName}`;
   await writeRepairLog(opts.projectRoot, logName, command, run.exitCode, run.out);
