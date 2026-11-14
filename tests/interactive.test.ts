@@ -7,7 +7,7 @@ import {
   InteractiveSession,
   isSessionUiNoise,
 } from '../src/cli/shell/session.js';
-import { resolveSlash, slashCompleter, SLASH_COMMANDS } from '../src/cli/repl.js';
+import { helpText, resolveSlash, slashCompleter, SLASH_COMMANDS } from '../src/cli/repl.js';
 import type { RunEvent } from '../src/workflow/types.js';
 import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
 import { mkdtemp, readFile } from 'node:fs/promises';
@@ -136,6 +136,12 @@ describe('slash registry (unit)', () => {
     const ambiguous = resolveSlash('/r');
     expect(ambiguous.kind).toBe('ambiguous');
     expect(resolveSlash('/nope')).toEqual({ kind: 'unknown' });
+  });
+
+  it('/init is registered, resolvable and listed in /help', () => {
+    expect(SLASH_COMMANDS.map((cmd) => cmd.name)).toContain('/init');
+    expect(resolveSlash('/init')).toEqual({ kind: 'exact', name: '/init' });
+    expect(helpText()).toContain('/init');
   });
 
   it('covers the Phase 1.5 command set', () => {
@@ -305,6 +311,22 @@ describe('ideaseek interactive (CLI)', () => {
     expect(done.stdout).toContain('/status');
     expect(done.stdout).toContain('/quit');
     expect(done.stdout).toContain('try /help');
+  }, 60_000);
+
+  it('/init bootstraps the project without leaving the UI (first contact)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-first-contact-'));
+    const repl = startRepl(dir);
+    // The header must point at an in-UI command, not a shell round trip.
+    await repl.waitFor(/type \/init to create one here/);
+    repl.write('/init\n');
+    await repl.waitFor(/initialized IdeaSeek project/);
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    // First contact must not spray a raw error line above the /init hint.
+    expect(done.stdout).not.toContain('NOT_INITIALIZED');
+    const config = await readFile(join(dir, 'research.yaml'), 'utf8');
+    expect(config).toContain('config_version: 1');
+    expect(done.stdout).toContain('next: ideaseek run --question');
   }, 60_000);
 
   it('unique prefix resolves (Tab completer contract)', async () => {

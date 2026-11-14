@@ -88,7 +88,7 @@ describe('slash menu state machine (unit)', () => {
 
     const down = moveSelection(all, 1);
     expect(down.selected).toBe(1);
-    expect(selectedCommand(down)!.name).toBe('/status');
+    expect(selectedCommand(down)!.name).toBe(down.visible[1]!.name);
     // wrap: up from 0 → last
     const wrapped = moveSelection(openMenu('/'), -1);
     expect(wrapped.selected).toBe(wrapped.visible.length - 1);
@@ -177,7 +177,9 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     await repl.waitFor(/ideaseek ›/);
     repl.write('/');
     await repl.waitFor(/show this help/);
-    // Down once: /help → /status, then Enter executes it.
+    // Down twice: /help → /init → /status, then Enter executes it.
+    repl.write('\x1b[B');
+    await repl.waitFor(/> \/init/);
     repl.write('\x1b[B');
     await repl.waitFor(/> \/status/);
     repl.write('\r');

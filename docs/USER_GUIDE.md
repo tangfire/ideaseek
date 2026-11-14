@@ -33,6 +33,8 @@ cd fl-model-heterogeneity
 ideaseek init
 ```
 
+也可以直接在这个空目录里输入 `ideaseek` 打开交互界面，然后输入 `/init`——项目在当前目录建立，界面头部随即刷新为项目上下文，不需要退回命令行。SSH 登录后想先看看再决定时，这条路更顺手。
+
 当前目录就是项目。IdeaSeek 会创建：
 
 ```text

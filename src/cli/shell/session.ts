@@ -120,7 +120,9 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
   }>(['status', '--json']).catch(() => null);
   if (!status?.data) {
     return {
-      lines: ['not an IdeaSeek project — run: ideaseek init (or cd into one)'],
+      lines: [
+        'not an IdeaSeek project — type /init to create one here (or cd into an existing one)',
+      ],
       tone: 'warn',
     };
   }
@@ -360,7 +362,9 @@ export class InteractiveSession {
   async cycleMode(): Promise<void> {
     const root = await findProjectRoot(process.cwd());
     if (!root) {
-      this.println('not an IdeaSeek project — run: ideaseek init (or cd into one)');
+      this.println(
+        'not an IdeaSeek project — type /init to create one here (or cd into an existing one)',
+      );
       return;
     }
     const { readSessionMode } = await import('../../session/mode.js');
@@ -626,6 +630,13 @@ export class InteractiveSession {
       case '/help':
         this.println(helpText());
         return 'continue';
+      case '/init':
+        // First contact in a fresh directory: bootstrap inside the UI instead
+        // of sending the user back to a shell, then repaint the header so the
+        // new project context shows without restarting the session.
+        await this.relay(['init', ...restArgs]);
+        await this.refreshHeader();
+        return 'continue';
       case '/ideas':
         await this.relay(['idea', 'list']);
         return 'continue';
@@ -863,8 +874,10 @@ export class InteractiveSession {
       const text = String(chunk).trim();
       if (!text) return;
       // A fresh project has no run yet — attach exits with RUN_NOT_FOUND.
-      // That is the expected steady state, not a warning to paint red.
-      if (text.includes('RUN_NOT_FOUND')) {
+      // That is the expected steady state, not a warning to paint red. Same
+      // for NOT_INITIALIZED: first contact happens in an empty directory and
+      // the header already points at /init.
+      if (text.includes('RUN_NOT_FOUND') || text.includes('NOT_INITIALIZED')) {
         exitExplained = true;
         return;
       }

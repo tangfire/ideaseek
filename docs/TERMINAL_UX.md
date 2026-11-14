@@ -98,6 +98,7 @@ ideaseek ›
 /projects     查看已注册项目
 /open <path>  切换当前交互会话的项目
 /cleanup      预览可清理缓存
+/init         在当前目录初始化项目（空目录里的首条命令）
 /help         查看命令
 /quit         退出交互界面，不取消后台 run
 ```
