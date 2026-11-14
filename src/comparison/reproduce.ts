@@ -454,9 +454,15 @@ export function blueprintMetricNames(blueprint: ReproductionBlueprint): string[]
  * agree; the parenthetical is documentation. Tightening the contract itself is
  * tracked separately, because it needs a migrator for already-locked protocols.
  */
+/** The name as it should be written: identifier only, definition dropped. */
+export function metricIdentifier(name: string): string {
+  return name.replace(/\s*\(.*$/, '').trim();
+}
+
 export function metricKey(name: string): string {
-  const withoutDefinition = name.replace(/\s*\(.*$/, '');
-  return withoutDefinition.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return metricIdentifier(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 }
 
 export function checkMetricFeasibility(

@@ -684,7 +684,7 @@ export function registerComparisonCommand(program: Command): void {
             const {
               blueprintMetricNames,
               checkMetricFeasibility,
-              metricKey,
+              metricIdentifier,
               validateReproductionBlueprint,
             } = await import('../comparison/reproduce.js');
             const runId =
@@ -733,7 +733,7 @@ export function registerComparisonCommand(program: Command): void {
               if (feasibility.status === 'blocked') {
                 problems.push(
                   `algorithm.metrics must cover the locked protocol metrics — the protocol ` +
-                    `measures [${requiredMetricNames.map((name) => metricKey(name)).join(', ')}] ` +
+                    `measures [${requiredMetricNames.map((name) => metricIdentifier(name)).join(', ')}] ` +
                     `but the plan offers [${blueprintMetricNames(blueprint).join(', ')}]; use ` +
                     `those identifiers exactly (additional metrics are allowed, and the ` +
                     `protocol's trailing parenthetical text is a definition, not part of the name)`,

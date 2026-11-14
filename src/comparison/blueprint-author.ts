@@ -3,7 +3,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import type { ReproductionBlueprint } from './types.js';
-import { metricKey } from './reproduce.js';
+import { metricIdentifier } from './reproduce.js';
 
 /**
  * Produces a ReproductionBlueprint from the papers, so `baseline reproduce`
@@ -130,11 +130,12 @@ export function buildBlueprintContext(evidence: BlueprintEvidence): string {
     const keys = evidence.protocol.primaryMetrics.map((metric) => metric.name);
     if (keys.length > 0) {
       parts.push(
-        `## required output metric keys\nalgorithm.metrics MUST report every one of these ` +
-          `identifiers: ${keys.map(metricKey).join(', ')}\n` +
-          `The locked protocol writes them with a definition appended, e.g. ` +
-          `"${keys[0]}" — use only the leading identifier as the name, and put the definition in ` +
-          `the metric's own description if you need one. A different-looking identifier ` +
+        `## required output metric keys\nalgorithm.metrics MUST report every one of these names ` +
+          `exactly as written: ${keys.map(metricIdentifier).join(', ')}\n` +
+          `The locked protocol stores each one with its definition appended in parentheses, e.g. ` +
+          `"${keys[0]}" — the name is the part BEFORE the parenthesis, and the parenthetical is ` +
+          `documentation, not part of the key. Keep the spelling and underscores of the identifier ` +
+          `as given; do not lowercase it or strip its separators. A different-looking identifier ` +
           `(unseen_domain_accuracy for target_unseen_domain_top1_accuracy) is not a substitute: ` +
           `results keyed differently cannot answer the protocol.`,
       );

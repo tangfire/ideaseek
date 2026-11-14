@@ -7,8 +7,20 @@ import {
 import {
   blueprintMetricNames,
   checkMetricFeasibility,
+  metricIdentifier,
   metricKey,
 } from '../src/comparison/reproduce.js';
+
+it('shows the identifier, not the comparison key', () => {
+  // An earlier version listed the normalized key in the prompt, and the model
+  // dutifully wrote metric names like "targetunseendomaintop1accuracy" into
+  // the plan: matching became stable and the artifacts became unreadable.
+  expect(metricIdentifier('target_unseen_domain_top1_accuracy (held-out domain value, %)')).toBe(
+    'target_unseen_domain_top1_accuracy',
+  );
+  const context = buildBlueprintContext(evidence());
+  expect(context).toContain('do not lowercase it or strip its separators');
+});
 
 it('a protocol name carrying its definition matches the bare identifier', () => {
   // The observed instability: one run copied "x (held-out domain value, …)"
