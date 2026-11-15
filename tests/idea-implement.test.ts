@@ -254,7 +254,6 @@ describe('implementIdeaWithRefine', () => {
       dataPath: null,
       measuredData: null,
       runId: 'test',
-      rounds: 3,
       onRound: (_round, detail) => seen.push(detail),
     });
     expect(result.report.outcome).not.toBe('passed');

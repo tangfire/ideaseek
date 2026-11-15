@@ -2476,8 +2476,6 @@ export function registerIdeaCommand(program: Command): void {
               dataPath,
               measuredData,
               runId,
-              force: opts.force === true,
-              rounds: opts.rounds,
               onRound: (round, detail) => {
                 if (!opts.json) {
                   process.stderr.write(`round ${round}: ${detail}\n`);
@@ -2495,7 +2493,11 @@ export function registerIdeaCommand(program: Command): void {
                   removed: result.removed,
                   notes: result.notes,
                   rounds: result.rounds,
+                  patches: result.patches,
+                  reimplements: result.reimplements,
                   stalled: result.stalled,
+                  environmentBlocked: result.environmentBlocked,
+                  attempts: result.attempts,
                   outcome: report.outcome,
                   failingPhases: report.phases
                     .filter((phase) => !phase.skipped && !phase.ok)
@@ -2536,12 +2538,30 @@ export function registerIdeaCommand(program: Command): void {
               );
               return 0;
             }
+            if (result.environmentBlocked) {
+              // ARIS §5 says preparation failures stop before the code loop.
+              // Reporting them as "the program is broken" sends the researcher
+              // to edit code that was never the problem.
+              const blocked = result.attempts[result.attempts.length - 1];
+              process.stdout.write(
+                `stopped before code repair: ${blocked?.detail ?? 'environment blocker'}\n`,
+              );
+              return 2;
+            }
+            if (result.stalled) {
+              process.stdout.write(
+                'stopped: two clean rebuilds met the same verdict. Per the repair budget that ' +
+                  'means the plan or the environment is wrong, not the code — this is what needs ' +
+                  'a human, not another generation.\n' +
+                  `  attempts: ${result.attempts
+                    .map((attempt) => `r${attempt.round}/${attempt.mode}`)
+                    .join(', ')}\n` +
+                  `next: revisit the card's minimalExperiment or the host, then: ideaseek idea implement ${ideaId}\n`,
+              );
+              return 2;
+            }
             process.stdout.write(
-              result.stalled
-                ? `stopped: the regenerated files came back byte-identical, so another round would ` +
-                    'cost tokens and change nothing\nnext: fix the cause the checker names, or edit ' +
-                    `ideas/${ideaId}/src/ by hand, then: ideaseek idea check ${ideaId}\n`
-                : `not yet passing: ${report.outcome}\nnext: ideaseek idea check ${ideaId}\n`,
+              `not yet passing: ${report.outcome}\n` + `next: ideaseek idea check ${ideaId}\n`,
             );
             return 1;
           } finally {

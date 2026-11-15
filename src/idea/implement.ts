@@ -124,10 +124,17 @@ export function parseIdeaImplementationOutput(output: string): AuthoredIdeaCode[
   return out;
 }
 
+/**
+ * `cleanRebuild` marks the ARIS "discard and reimplement cleanly" mode: two
+ * patches on the same failure is usually worse than a rebuild from the card,
+ * so the model is told explicitly that it is starting over rather than
+ * continuing to edit, and must not try to preserve the previous structure.
+ */
 export function buildIdeaImplementationContext(
   card: IdeaCard,
   dataPath: string | null,
   measuredData?: string | null,
+  cleanRebuild = false,
 ): string {
   const parts = [
     `## idea\n${card.ideaId} v${card.version}`,
@@ -160,19 +167,55 @@ export function buildIdeaImplementationContext(
     `## budget\nmaxRounds ${card.budget.maxRounds} · maxGpuMinutes ${card.budget.maxGpuMinutes}`,
     `## data path handed to the checks\n${dataPath ?? '(caller supplies; use the environment)'}`,
   ];
+  if (cleanRebuild) {
+    parts.push(
+      '## mode: clean rebuild\n' +
+        'The previous attempt is discarded, not patched: none of it remains on disk. Write the ' +
+        'implementation straight from the card and the measured data above. Do not reproduce the ' +
+        'previous file layout, and do not narrow the scope just to make a phase go green.',
+    );
+  }
   const joined = parts.join('\n\n');
   return joined.length > 12_000 ? `${joined.slice(0, 12_000)}\n(context truncated)` : joined;
 }
 
-/** Outcome of the generate/check/refine loop. */
+/**
+ * Outcome of the generate/check/refine loop.
+ *
+ * The policy is ARIS's, not invented here: `aris-skills/skills/experiment-bridge/
+ * SKILL.md` budgets up to 2 patch attempts on the same failure, then up to 2
+ * clean reimplements, and stops when two clean reimplements fail the same way
+ * because at that point the plan or the environment is wrong rather than the
+ * code. My first version capped rounds at 3 and stopped on byte-identical
+ * output, which is a weaker signal than "same failure twice" and would keep
+ * patching code that should have been discarded.
+ */
 export interface IdeaRefineResult {
   report: IdeaCheckReport;
   rounds: number;
+  patches: number;
+  reimplements: number;
   written: string[];
   kept: string[];
   removed: string[];
   notes: string;
+  /** Two clean reimplements met the same verdict: the plan or environment is wrong. */
   stalled: boolean;
+  /** True when ARIS's environment stop condition applies, i.e. not code's fault. */
+  environmentBlocked: boolean;
+  attempts: { round: number; mode: 'patch' | 'reimplement'; detail: string }[];
+}
+
+/** ARIS experiment-bridge budget: 2 patches on one failure, then 2 clean rebuilds. */
+const MAX_PATCH_ATTEMPTS = 2;
+const MAX_CLEAN_REIMPLEMENTS = 2;
+
+function signatureOf(report: IdeaCheckReport): string {
+  return report.phases
+    .filter((phase) => !phase.skipped && !phase.ok)
+    .map((phase) => `${phase.phase}:${phase.failureKind ?? 'failed'}`)
+    .sort()
+    .join('|');
 }
 
 /**
@@ -185,10 +228,11 @@ export interface IdeaRefineResult {
  * further to do: the model never learned what the check had said, so the human
  * became the retry loop.
  *
- * Two stops, both necessary. A round limit alone still permits an infinite
- * unproductive loop when the model keeps returning the same file, so the code
- * hash is compared: an unchanged answer means the feedback did not land, and
- * trying again costs tokens to hear the same thing.
+ * See IdeaRefineResult for why the budget is ARIS's. The environment layer is
+ * checked first (compute-env-contract.md §5): missing access, authentication,
+ * networking or driver support is not fixed by rewriting the training script,
+ * and the line that separates them from code faults is which layer is wrong —
+ * spec, build, weights or exec.
  */
 export async function implementIdeaWithRefine(opts: {
   harness: HarnessAdapter;
@@ -198,24 +242,52 @@ export async function implementIdeaWithRefine(opts: {
   dataPath: string | null;
   measuredData: string | null;
   runId: string;
-  force?: boolean;
-  rounds?: number;
   timeoutMs?: number;
   onRound?: (round: number, detail: string) => void;
 }): Promise<IdeaRefineResult> {
   const { runIdeaChecks } = await import('./check.js');
-  const { hashIdeaSource } = await import('./workspace.js');
-  const maxRounds = Math.max(1, Math.min(opts.rounds ?? 3, 4));
+  const { detectEnvironmentBlock } = await import('./env-block.js');
+  const { clearGeneratedIdeaFiles } = await import('./implement-clean.js');
   let correction: string | undefined;
-  let lastHash: string | null = null;
   let report: IdeaCheckReport | null = null;
-  let last: AuthoredIdeaCode | null = null;
+  let notes = '';
   let written: string[] = [];
   let kept: string[] = [];
   let removed: string[] = [];
+  let patches = 0;
+  let reimplements = 0;
   let stalled = false;
+  let environmentBlocked = false;
+  const attempts: IdeaRefineResult['attempts'] = [];
+  const seenAfterReimplement: string[] = [];
 
-  for (let round = 1; round <= maxRounds; round += 1) {
+  for (let round = 1; round <= MAX_PATCH_ATTEMPTS + MAX_CLEAN_REIMPLEMENTS + 2; round += 1) {
+    // Preparation failures stop before the code loop (compute-env-contract §5):
+    // a blocked host and broken code can print the same smoke failure, and
+    // spending the reimplement budget on the former reports a code problem
+    // that does not exist.
+    const blocked = detectEnvironmentBlock(report);
+    if (blocked) {
+      environmentBlocked = true;
+      attempts.push({ round, mode: 'patch', detail: blocked });
+      break;
+    }
+
+    const mode: 'patch' | 'reimplement' =
+      report === null || patches < MAX_PATCH_ATTEMPTS ? 'patch' : 'reimplement';
+    if (mode === 'reimplement') {
+      if (reimplements >= MAX_CLEAN_REIMPLEMENTS) break;
+      reimplements += 1;
+      // A rebuild, not a third patch on two wrong ones. Only files this
+      // generator wrote are eligible — the manifest makes that boundary exact,
+      // and the plan, data and hand-written code are never deletable here.
+      const cleared = await clearGeneratedIdeaFiles(ideaWorkspace(opts.projectRoot, opts.ideaId));
+      removed = [...new Set([...removed, ...cleared])];
+      correction = undefined;
+    } else {
+      patches += 1;
+    }
+
     let authored: AuthoredIdeaCode | null = null;
     let refusal: string | null = null;
     try {
@@ -227,56 +299,72 @@ export async function implementIdeaWithRefine(opts: {
         runId: opts.runId,
         now: Date.now(),
         correction,
+        cleanRebuild: mode === 'reimplement',
       });
       refusal = await checkAuthoredFiles(authored.files);
     } catch (error) {
       refusal = error instanceof Error ? error.message : String(error);
     }
+
     if (!authored || refusal) {
+      attempts.push({ round, mode, detail: `refused: ${refusal ?? 'no files returned'}` });
+      opts.onRound?.(round, attempts[attempts.length - 1]!.detail);
       correction =
-        `the previous answer was refused: ${refusal ?? 'no files returned'}. ` +
-        'Return only .py files under src/, plain UTF-8, each under 400 lines, importing ' +
-        'siblings by bare module name.';
-      opts.onRound?.(round, `refused: ${refusal ?? 'no files'}`);
+        `the previous answer was refused: ${refusal ?? 'no files returned'}. Return only .py ` +
+        'files under src/, plain UTF-8, each under 400 lines, importing siblings by bare ' +
+        'module name.';
       continue;
     }
+
+    notes = authored.notes;
     const outcome = await writeIdeaFiles(
       ideaWorkspace(opts.projectRoot, opts.ideaId),
       authored.files,
-      {
-        force: opts.force === true,
-      },
+      { force: true },
     );
     written = outcome.written;
-    kept = outcome.kept;
-    removed = outcome.removed;
-    last = authored;
+    kept = [...new Set([...kept, ...outcome.kept])];
     report = await runIdeaChecks(opts.projectRoot, opts.ideaId, { timeoutMs: opts.timeoutMs });
+
     if (report.outcome === 'passed') {
-      return { report, rounds: round, written, kept, removed, notes: authored.notes, stalled };
-    }
-    const failing = report.phases.filter((phase) => !phase.skipped && !phase.ok);
-    if (report.outcome === 'not-implemented' || report.outcome === 'scaffold-placeholder') {
-      // Nothing of ours is under test: the template cannot be reasoned about,
-      // and asking for it again is the coin flip this loop exists to avoid.
-      opts.onRound?.(round, 'no real implementation under src/ yet');
+      attempts.push({ round, mode, detail: 'check passed' });
       break;
     }
-    const detail = failing
+    if (report.outcome === 'not-implemented' || report.outcome === 'scaffold-placeholder') {
+      attempts.push({
+        round,
+        mode,
+        detail: `no real implementation under src/ (${report.outcome})`,
+      });
+      break;
+    }
+
+    const detail = report.phases
+      .filter((phase) => !phase.skipped && !phase.ok)
       .map((phase) => `${phase.phase} (${phase.failureKind ?? 'failed'}): ${phase.summary ?? ''}`)
       .join('\n');
-    const hash = await hashIdeaSource(opts.projectRoot, opts.ideaId);
-    if (lastHash !== null && hash === lastHash) {
-      stalled = true;
-      opts.onRound?.(round, 'the regenerated files are byte-identical; stopping');
-      break;
-    }
-    lastHash = hash;
-    correction =
-      `the previous implementation failed the check ladder:\n${detail}\n` +
-      'Fix the cause named in each line rather than restructuring around it. Do not report ' +
-      'placeholder or constant metrics to satisfy the smoke phase.';
+    attempts.push({ round, mode, detail });
     opts.onRound?.(round, `check failed:\n${detail}`);
+
+    if (mode === 'reimplement') {
+      const signature = signatureOf(report);
+      if (seenAfterReimplement.includes(signature)) {
+        // The ARIS stop: two clean rebuilds meeting the same verdict means the
+        // plan or the environment is wrong, and that is what needs the human —
+        // not a fourth generation.
+        stalled = true;
+        break;
+      }
+      seenAfterReimplement.push(signature);
+    }
+
+    correction =
+      `the previous implementation failed the check ladder:
+${detail}
+` +
+      `Mode: ${mode === 'patch' ? 'patch the named cause' : 'rebuild cleanly from the card'}. ` +
+      'Do not report placeholder or constant metrics to satisfy the smoke phase, and do not ' +
+      'import a package the card does not declare.';
   }
 
   return {
@@ -289,12 +377,16 @@ export async function implementIdeaWithRefine(opts: {
       outcome: 'failed',
       phases: [],
     },
-    rounds: maxRounds,
+    rounds: attempts.length,
+    patches,
+    reimplements,
     written,
     kept,
     removed,
-    notes: last?.notes ?? '',
+    notes,
     stalled,
+    environmentBlocked,
+    attempts,
   };
 }
 
@@ -315,8 +407,15 @@ export async function authorIdeaImplementation(opts: {
   runId: string;
   now: number;
   correction?: string;
+  /** True when the previous attempt is discarded rather than patched. */
+  cleanRebuild?: boolean;
 }): Promise<AuthoredIdeaCode> {
-  const base = buildIdeaImplementationContext(opts.card, opts.dataPath, opts.measuredData ?? null);
+  const base = buildIdeaImplementationContext(
+    opts.card,
+    opts.dataPath,
+    opts.measuredData ?? null,
+    opts.cleanRebuild === true,
+  );
   const context = opts.correction ? `${base}\n\n## correction required\n${opts.correction}` : base;
   const result = await opts.harness.runTask({
     runId: opts.runId,

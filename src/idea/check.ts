@@ -193,7 +193,6 @@ export async function runIdeaChecks(
   };
 
   const runPhase = async (
-
     command: string[],
   ): Promise<Awaited<ReturnType<typeof runRepairCommand>>> => {
     const { mergeRunEnv } = await import('../experiment/run-env.js');
