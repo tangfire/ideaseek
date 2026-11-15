@@ -2452,35 +2452,8 @@ export function registerIdeaCommand(program: Command): void {
             // the request: the generator otherwise invents column names, and the
             // first real run failed with "no numeric feature column among
             // ['image','domain','label']" on data the platform had profiled.
-            let measuredData: string | null = null;
-            try {
-              const { readFile } = await import('node:fs/promises');
-              const profiles = JSON.parse(
-                await readFile(join(root, 'knowledge', 'image-profiles.json'), 'utf8'),
-              ) as {
-                profiles?: {
-                  samples: number;
-                  columns?: { name: string; dtype?: string }[];
-                  grouping?: { column: string | null; values: { name: string }[] };
-                  classes?: { distinct: number };
-                }[];
-              };
-              measuredData =
-                (profiles.profiles ?? [])
-                  .map(
-                    (profile) =>
-                      `samples: ${profile.samples}; columns: ${(profile.columns ?? [])
-                        .map((column) => `${column.name}:${column.dtype ?? '?'}`)
-                        .join(', ')}; grouping: ${profile.grouping?.column ?? '(none)'} over ${(
-                        profile.grouping?.values ?? []
-                      )
-                        .map((value) => value.name)
-                        .join('|')}; classes: ${profile.classes?.distinct ?? '?'}`,
-                  )
-                  .join('\n') || null;
-            } catch {
-              measuredData = null;
-            }
+            const { describeProfiledCorpus } = await import('../knowledge/corpus-describe.js');
+            const measuredData = await describeProfiledCorpus(root);
             const runId =
               (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
               `idea-implement-${ideaId}`;
