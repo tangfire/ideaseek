@@ -284,3 +284,46 @@ it('refuses an answer that omits the file the platform runs', () => {
     ),
   ).toHaveLength(1);
 });
+
+describe('generated-file ownership on the agent-session route', () => {
+  it('records what a session authored so the next attempt starts clean', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'ide-own-'));
+    await mkdir(join(workspace, 'src'), { recursive: true });
+    await writeFile(join(workspace, 'src', 'smoke.py'), 'scaffold template\n', 'utf8');
+    await writeFile(join(workspace, 'src', 'person.py'), 'hand written\n', 'utf8');
+
+    const { clearGeneratedIdeaFiles, recordAuthoredIdeaFiles } =
+      await import('../src/idea/implement-clean.js');
+    const { listSourceFiles } = await import('../src/idea/workspace.js');
+
+    const baseline = await listSourceFiles(workspace);
+    await writeFile(join(workspace, 'src', 'smoke.py'), 'real implementation\n', 'utf8');
+    await writeFile(join(workspace, 'src', 'agent.py'), 'authored by session\n', 'utf8');
+
+    const authored = await recordAuthoredIdeaFiles(workspace, baseline);
+    expect(authored).toEqual(['src/agent.py', 'src/smoke.py']);
+
+    const manifest = JSON.parse(
+      await readFile(join(workspace, 'src', '.generated.json'), 'utf8'),
+    ) as { files: string[] };
+    expect(manifest.files).toEqual(['src/agent.py', 'src/smoke.py']);
+
+    const removed = await clearGeneratedIdeaFiles(workspace);
+    expect(removed).toEqual(['src/agent.py', 'src/smoke.py']);
+    expect(await readFile(join(workspace, 'src', 'person.py'), 'utf8')).toBe('hand written\n');
+  });
+
+  it('names inherited files it must not delete', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'ide-unrec-'));
+    await mkdir(join(workspace, 'src'), { recursive: true });
+    await writeFile(join(workspace, 'src', 'smoke.py'), 'rewritten template\n', 'utf8');
+    await writeFile(join(workspace, 'src', 'geometry.py'), 'unrecorded work\n', 'utf8');
+
+    const { unrecordedSourceFiles } = await import('../src/idea/implement-clean.js');
+    const template = [
+      { path: 'src/smoke.py', content: 'rewritten template\n' },
+      { path: 'src/train.py', content: 'x\n' },
+    ];
+    expect(await unrecordedSourceFiles(workspace, template)).toEqual(['src/geometry.py']);
+  });
+});

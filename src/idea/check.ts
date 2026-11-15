@@ -508,7 +508,7 @@ export interface ScaffoldResult {
   skipped: string[];
 }
 
-function scaffoldFiles(card: IdeaCard): { path: string; content: string }[] {
+export function scaffoldFiles(card: IdeaCard): { path: string; content: string }[] {
   const trainPy = `"""Idea training entry (scaffold).
 
 Quick/standard experiments only — full training runs via experiment handoff.
@@ -766,7 +766,8 @@ export async function scaffoldIdea(projectRoot: string, ideaId: string): Promise
     }
     await ensureDir(dirname(target));
     await writeFileAtomic(target, file.content);
-    created.push(file.path);  }
+    created.push(file.path);
+  }
   // The scaffold's files join the generator's manifest. This is the list of
   // "platform-written" paths, and it is what makes ARIS's discard-and-reimplement
   // step mean something on the idea side: without it a clean rebuild removed

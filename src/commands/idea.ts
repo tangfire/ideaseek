@@ -2481,6 +2481,38 @@ export function registerIdeaCommand(program: Command): void {
             const runId =
               (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
               `idea-implement-${ideaId}`;
+            // Record the hop the ladder expects. `idea check` advances
+            // IMPLEMENTING → SMOKE_TESTED and nothing else writes that first
+            // transition, so an idea that went straight from the card to
+            // implementation kept status PROPOSED while its code passed: the
+            // first FDG agent run printed SMOKE_TESTED into a record that said
+            // nothing had happened, and `idea admit` could not see it.
+            const statusBefore = (await loadWorkspaceMeta(root, ideaId)).status;
+            if (
+              statusBefore === 'PROPOSED' ||
+              statusBefore === 'NEEDS_REVISION' ||
+              statusBefore === 'INVALID_RUN'
+            ) {
+              await setIdeaStatus(
+                root,
+                ideaId,
+                'IMPLEMENTING',
+                'implementation started by ideaseek idea implement',
+              );
+            }
+            const markImplemented = async (): Promise<IdeaRunStatus> => {
+              const current = (await loadWorkspaceMeta(root, ideaId)).status;
+              return current === 'IMPLEMENTING'
+                ? (
+                    await setIdeaStatus(
+                      root,
+                      ideaId,
+                      'SMOKE_TESTED',
+                      'check ladder passed on implemented code',
+                    )
+                  ).status
+                : current;
+            };
             if (agentMode) {
               const agent = await implementIdeaWithAgent({
                 projectRoot: root,
@@ -2498,12 +2530,16 @@ export function registerIdeaCommand(program: Command): void {
                   process.stderr.write(`  · ${message}
 `),
               });
+              const status = agent.passed
+                ? await markImplemented()
+                : (await loadWorkspaceMeta(root, ideaId)).status;
               if (opts.json) {
                 process.stdout.write(
                   jsonLine({
                     ideaId,
                     mode: 'agent',
                     passed: agent.passed,
+                    status,
                     terminal: agent.terminal,
                     sessionId: agent.sessionId,
                     rounds: agent.rounds,
@@ -2514,7 +2550,7 @@ export function registerIdeaCommand(program: Command): void {
               }
               process.stdout.write(
                 `idea implement ${ideaId} (agent session ${agent.sessionId ?? 'none'}): ` +
-                  `${agent.rounds.length} round(s) · ${agent.report?.outcome ?? 'failed'}
+                  `${agent.rounds.length} round(s) · ${agent.report?.outcome ?? 'failed'} · status ${status}
 `,
               );
               for (const round of agent.rounds) {
@@ -2523,6 +2559,12 @@ export function registerIdeaCommand(program: Command): void {
                     `${round.failing.length > 0 ? ` — ${round.failing.map((f) => f.phase).join(', ')} failing` : ''}
 `,
                 );
+                if (round.authored.length > 0) {
+                  process.stdout.write(
+                    `    authored by this session: ${round.authored.join(', ')}
+`,
+                  );
+                }
                 if (round.agentReport) {
                   process.stdout.write(`    agent: ${round.agentReport.slice(0, 220)}
 `);
@@ -2540,8 +2582,20 @@ export function registerIdeaCommand(program: Command): void {
               if (agent.passed) {
                 process.stdout.write(
                   `SMOKE_TESTED: the idea's implementation passes the ladder (bounded smoke, not a result)
-` +
-                    `next: ideaseek idea experiment ${ideaId} --scale smoke
+`,
+                );
+                if (agent.unrecordedAtStart.length > 0) {
+                  // The verdict stays; what is added is what it stands on. Code
+                  // with no generation record was present before this session
+                  // ran, so part of the pass may be inherited rather than
+                  // produced — and a green ladder that hides that is how a
+                  // project ends up believing it re-implemented something.
+                  process.stdout.write(
+                    `  caveat: ${agent.unrecordedAtStart.length} file(s) in src/ had no generation record and were kept as existing work: ${agent.unrecordedAtStart.slice(0, 6).join(', ')}${agent.unrecordedAtStart.length > 6 ? ', …' : ''}\n`,
+                  );
+                }
+                process.stdout.write(
+                  `next: ideaseek idea experiment ${ideaId} --scale smoke
 `,
                 );
                 return 0;
@@ -2573,10 +2627,14 @@ export function registerIdeaCommand(program: Command): void {
             });
             const report = result.report;
             const passed = report.outcome === 'passed';
+            const status = passed
+              ? await markImplemented()
+              : (await loadWorkspaceMeta(root, ideaId)).status;
             if (opts.json) {
               process.stdout.write(
                 jsonLine({
                   ideaId,
+                  status,
                   written: result.written,
                   kept: result.kept,
                   removed: result.removed,

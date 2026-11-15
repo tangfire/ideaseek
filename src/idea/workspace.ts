@@ -194,18 +194,16 @@ export async function loadVersionRecords(
 }
 
 /**
- * Content hash of an idea's src/ tree (path + bytes, sorted; skips caches).
- * Used instead of a nested git repo so idea code versions never collide with
- * the project repository or other ideas.
+ * Every file under an idea workspace's `src/` as `src/<rel>` → sha256 of its
+ * bytes (caches excluded). One walker because the skip-list is a correctness
+ * detail shared with hashIdeaSource: a second copy would drift, and a digest
+ * that skips `__pycache__` while the ownership manifest records `.pyc` files
+ * would have the generator delete bytecode it never wrote.
  */
-export async function hashIdeaSource(
-  projectRoot: string,
-  ideaId: string,
-): Promise<ContentHash | null> {
-  const srcDir = join(ideaDir(projectRoot, ideaId), 'src');
-  if (!(await pathExists(srcDir))) return null;
-  const hash = createHash('sha256');
-  let files = 0;
+export async function listSourceFiles(workspace: string): Promise<Map<string, string>> {
+  const srcDir = join(workspace, 'src');
+  const files = new Map<string, string>();
+  if (!(await pathExists(srcDir))) return files;
   const walk = async (dir: string, prefix: string): Promise<void> => {
     const entries = await readdir(dir, { withFileTypes: true });
     entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -217,14 +215,35 @@ export async function hashIdeaSource(
       if (entry.isDirectory()) {
         await walk(join(dir, entry.name), rel);
       } else if (entry.isFile()) {
-        hash.update(`${rel}\0`);
-        hash.update(await readFile(join(dir, entry.name)));
-        files += 1;
+        files.set(
+          `src/${rel}`,
+          createHash('sha256')
+            .update(await readFile(join(dir, entry.name)))
+            .digest('hex'),
+        );
       }
     }
   };
   await walk(srcDir, '');
-  if (files === 0) return null;
+  return files;
+}
+
+/**
+ * Content hash of an idea's src/ tree (path + bytes, sorted; skips caches).
+ * Used instead of a nested git repo so idea code versions never collide with
+ * the project repository or other ideas.
+ */
+export async function hashIdeaSource(
+  projectRoot: string,
+  ideaId: string,
+): Promise<ContentHash | null> {
+  const entries = await listSourceFiles(ideaDir(projectRoot, ideaId));
+  if (entries.size === 0) return null;
+  const hash = createHash('sha256');
+  for (const [rel, digest] of [...entries].sort((a, b) => a[0].localeCompare(b[0]))) {
+    hash.update(`${rel}\0`);
+    hash.update(digest);
+  }
   return `sha256:${hash.digest('hex')}`;
 }
 

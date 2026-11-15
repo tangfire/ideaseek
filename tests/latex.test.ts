@@ -192,3 +192,18 @@ describe('CLI: ingest .tex sources', () => {
     expect((JSON.parse(rerun.stdout) as { action?: string }).action).toBe('nothing-to-do');
   }, 240_000);
 });
+
+describe('parser currency per source kind', () => {
+  it('judges a .tex artifact by the latex version, not the pdf revision', async () => {
+    const { parserIsCurrent } = await import('../src/commands/ingest.js');
+    const { LATEX_PARSER_VERSION } = await import('../src/knowledge/latex.js');
+    // Every artifact this command wrote used to be tested against '+rev2',
+    // which is a pdf extractor stamp. That made .tex results permanently
+    // stale, so `ingest` re-parsed them and opened a new run each time.
+    expect(parserIsCurrent(LATEX_PARSER_VERSION)).toBe(true);
+    expect(parserIsCurrent('latex-v0')).toBe(false);
+    expect(parserIsCurrent('pypdf+rev2')).toBe(true);
+    expect(parserIsCurrent('pypdf+rev1')).toBe(false);
+    expect(parserIsCurrent(undefined)).toBe(false);
+  });
+});

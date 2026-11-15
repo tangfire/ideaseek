@@ -3,6 +3,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { countInputs, resolveStrategy } from '../workflow/strategy.js';
 import { performScan } from './inputs.js';
+import { LATEX_PARSER_VERSION } from '../knowledge/latex.js';
 import {
   action,
   assertConfigUsable,
@@ -59,12 +60,38 @@ export async function collectTabledSourceHashes(runtime: ProjectRuntime): Promis
 }
 
 /**
- * Parser revision the current extractor produces, asserted against the worker
- * by tests/pdf.test.ts. A paper parsed by an older revision is not "done":
- * its text may be missing pages the current extractor recovers, and comparing
- * content hashes alone would cache that hole forever.
+ * Parser revision the current PDF extractor produces, asserted against the
+ * worker by tests/pdf.test.ts. A paper parsed by an older revision is not
+ * "done": its text may be missing pages the current extractor recovers, and
+ * comparing content hashes alone would cache that hole forever.
  */
 export const EXPECTED_PARSER_REVISION = '+rev2';
+
+/**
+ * Whether an artifact was produced by a parser still in use, judged per source
+ * kind.
+ *
+ * This test used to be `parser.includes('+rev2')` for every parsed-paper
+ * artifact, which silently decided that LaTeX sources are never current:
+ * `latex.ts` stamps `latex-v1`, so `collectParsedHashes` dropped every .tex
+ * result and `ingest` re-parsed each one and created a fresh run on every
+ * invocation — observed in tests/latex.test.ts, where the "incremental rerun
+ * is a no-op" assertion saw `latexEnqueued: 1` a second time. A rule written
+ * for one extractor was applied to a second extractor that was never part of
+ * its design, and nothing failed loudly: the source just stopped being
+ * cacheable.
+ *
+ * The identity of a parser is the artifact's own `parser` string, so the
+ * branch is on the producer's prefix: the PDF stamp is `<engine>+rev2` (engine
+ * varies with what is installed, hence the substring test) while the LaTeX
+ * stamp is an exact version (`latex-v1`, hence equality — bumping it is the
+ * documented way to invalidate .tex results).
+ */
+export function parserIsCurrent(parser: string | undefined): boolean {
+  const value = parser ?? '';
+  if (value.startsWith('latex-')) return value === LATEX_PARSER_VERSION;
+  return value.includes(EXPECTED_PARSER_REVISION);
+}
 
 export async function collectParsedHashes(runtime: ProjectRuntime): Promise<Set<string>> {
   const hashes = new Set<string>();
@@ -75,7 +102,7 @@ export async function collectParsedHashes(runtime: ProjectRuntime): Promise<Set<
         sourceHash?: string;
         parser?: string;
       };
-      if (payload.sourceHash && (payload.parser ?? '').includes(EXPECTED_PARSER_REVISION)) {
+      if (payload.sourceHash && parserIsCurrent(payload.parser)) {
         hashes.add(payload.sourceHash);
       }
     } catch {

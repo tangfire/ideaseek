@@ -2,10 +2,14 @@ import { isAbsolute, join, relative } from 'node:path';
 import { redactSecrets } from '../core/redact.js';
 import { IdeaseekError } from '../core/errors.js';
 import { runAgentTurn, type ApprovalPolicy } from '../dsh/session.js';
-import { hashIdeaSource, ideaDir } from './workspace.js';
+import { hashIdeaSource, ideaDir, listSourceFiles } from './workspace.js';
 import type { IdeaCard } from './card.js';
-import { runIdeaChecks, type IdeaCheckReport } from './check.js';
-import { clearGeneratedIdeaFiles } from './implement-clean.js';
+import { runIdeaChecks, scaffoldFiles, type IdeaCheckReport } from './check.js';
+import {
+  clearGeneratedIdeaFiles,
+  recordAuthoredIdeaFiles,
+  unrecordedSourceFiles,
+} from './implement-clean.js';
 
 /**
  * Implementing an idea with an agent that has tools, instead of one that has
@@ -58,6 +62,12 @@ export interface AgentImplementationRound {
   failing: { phase: string; kind: string; summary: string }[];
   /** The agent's own closing statement for the round, redacted and shortened. */
   agentReport: string;
+  /**
+   * Paths under src/ this round's session authored (new or content-changed).
+   * This is what makes a passed verdict reproducible: without it the platform
+   * cannot say which files a `SMOKE_TESTED` run is standing on.
+   */
+  authored: string[];
 }
 
 export interface AgentImplementationResult {
@@ -67,6 +77,13 @@ export interface AgentImplementationResult {
   report: IdeaCheckReport | null;
   /** A check outcome that no further agent turn can change. */
   terminal: boolean;
+  /**
+   * `src/` files present at the start that were neither the scaffold template
+   * nor recorded as generated. They are kept — unrecorded does not mean
+   * disposable — but a pass standing on them is not a pass this session
+   * produced, so the caller has to say so.
+   */
+  unrecordedAtStart: string[];
 }
 
 function failingSummary(report: IdeaCheckReport): string {
@@ -137,6 +154,10 @@ export async function implementIdeaWithAgent(opts: {
   let report: IdeaCheckReport | null = null;
   let terminal = false;
   let lastHash: string | null = null;
+  // Snapshot of src/ taken once, after the round-1 clear: every file that
+  // differs from it afterwards was authored by this session.
+  let baseline = new Map<string, string>();
+  let unrecordedAtStart: string[] = [];
 
   const cardText = [
     `## idea card\n${opts.card.ideaId} v${opts.card.version}`,
@@ -154,13 +175,23 @@ export async function implementIdeaWithAgent(opts: {
       ? `## measured data structure (trust over assumption)\n${opts.measuredData}`
       : '## measured data structure\n(not profiled — probe the handed path and report what it holds)',
     `## data path handed to the checks\n${opts.dataPath ?? '(use the environment)'}`,
-  ].join('\n\n');
+    unrecordedAtStart.length > 0
+      ? `## files already in src/ with no generation record\n${unrecordedAtStart.join('\n')}\n` +
+        "These may be a researcher's work or an earlier attempt. Read them before writing: reuse " +
+        'or fix them deliberately, never assume they are correct, and never delete one because ' +
+        'its origin is unclear.'
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
   for (let round = 1; round <= (opts.maxRounds ?? MAX_AGENT_IMPLEMENT_ROUNDS); round += 1) {
     if (round === 1) {
       // Start from a clean slate so the scaffold template cannot survive into
       // the round that is supposed to be grading new work.
       await clearGeneratedIdeaFiles(workspace);
+      baseline = await listSourceFiles(workspace);
+      unrecordedAtStart = await unrecordedSourceFiles(workspace, scaffoldFiles(opts.card));
     }
     const turn = await runAgentTurn({
       cwd: workspace,
@@ -175,6 +206,7 @@ export async function implementIdeaWithAgent(opts: {
       onLog: opts.onLog,
     });
     sessionId = turn.sessionId;
+    const authored = await recordAuthoredIdeaFiles(workspace, baseline);
 
     report = await runIdeaChecks(opts.projectRoot, opts.ideaId);
     const failing = report.phases
@@ -190,6 +222,7 @@ export async function implementIdeaWithAgent(opts: {
       outcome: report.outcome,
       failing,
       agentReport: redactSecrets(turn.finalResponse).slice(0, 600),
+      authored,
     });
 
     if (report.outcome === 'passed') break;
@@ -217,5 +250,6 @@ export async function implementIdeaWithAgent(opts: {
     sessionId,
     report,
     terminal,
+    unrecordedAtStart,
   };
 }
