@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://ideaseek.local/schema/idea-implementation-v1.json",
   "title": "Idea Implementation v1",
   "description": "Output of the Idea Implementation Agent: the files that make an IdeaCard runnable in its own workspace. Paths are constrained to src/*.py here rather than only in code, so a redirected write is rejected by the contract and not just by the reader. Values are never validated for scientific meaning: `idea check` runs the code and refuses a smoke line that declares itself synthetic.",

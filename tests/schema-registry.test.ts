@@ -99,3 +99,15 @@ it('each registered schema has a JSON file in the package', async () => {
   }
   expect(missing).toEqual([]);
 });
+
+it('every registered schema compiles in the validator itself', async () => {
+  // Registration is all-up-front so $ref links resolve, which means one schema
+  // with a dialect the validator does not know poisons every other contract:
+  // a draft/2020-12 file added to a draft-07 registry took 342 tests down and
+  // nothing but running a validation caught it. Presence checks are not
+  // enough — the schema has to actually load.
+  const { validateAgainstSchema } = await import('../src/core/schema/index.js');
+  for (const name of listSchemaNames()) {
+    expect(() => validateAgainstSchema(name, {}), name).not.toThrow();
+  }
+});
