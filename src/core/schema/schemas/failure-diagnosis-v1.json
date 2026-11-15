@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.local/schema/failure-diagnosis-v1.json",
+  "title": "Failure Diagnosis v1",
+  "description": "An agent's reading of one failed phase, using the ARIS compute-env-contract layer vocabulary (spec/build/weights/resolution/exec) plus the two verdicts that decide what the platform does next: is this blocked by the environment rather than the code, and is another attempt worth making. Deliberately not a keyword classification: a regex table turns judgement into a maintenance list, and the symptom space here is open-ended. `reasoning` and `evidence` are what a human audits.",
+  "type": "object",
+  "required": ["layer", "environmentBlocked", "worthRetrying", "reasoning", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "layer": {
+      "type": "string",
+      "enum": ["spec", "build", "weights", "resolution", "exec", "code", "plan", "unknown"],
+      "description": "Which layer is wrong, per compute-env-contract §5. 'code' means the generated program; 'plan' means the idea card or protocol itself, which no further generation will fix."
+    },
+    "environmentBlocked": {
+      "type": "boolean",
+      "description": "True when missing access, credentials, quota, networking, container or driver support is the cause. The repair budget must not be spent on it."
+    },
+    "worthRetrying": {
+      "type": "boolean",
+      "description": "False ends the refine loop early even if attempts remain, because repeating the same request would not change the verdict."
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 900
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 300
+      },
+      "description": "Quoted lines from the log the verdict rests on. A diagnosis without quoted evidence is a guess, so this is required."
+    },
+    "recommendedAction": {
+      "type": "string",
+      "maxLength": 400
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  }
+}

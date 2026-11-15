@@ -8,6 +8,7 @@ import { checkPythonSyntax } from '../knowledge/materialize.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import type { IdeaCard } from './card.js';
 import type { IdeaCheckReport } from './check.js';
+import type { FailureDiagnosis } from './diagnose.js';
 
 /**
  * Idea-side code generation, the half `comparison implement` already covers.
@@ -216,8 +217,12 @@ export interface IdeaRefineResult {
   notes: string;
   /** Two clean reimplements met the same verdict: the plan or environment is wrong. */
   stalled: boolean;
-  /** True when ARIS's environment stop condition applies, i.e. not code's fault. */
+  /** True when the agent judged the cause environmental, i.e. not code's fault. */
   environmentBlocked: boolean;
+  /** True when the agent put the fault in the plan/protocol rather than the code. */
+  planIsWrong: boolean;
+  /** The agent's final reading of the failing evidence, when one was obtained. */
+  diagnosis: FailureDiagnosis | null;
   attempts: { round: number; mode: 'patch' | 'reimplement'; detail: string }[];
 }
 
@@ -261,7 +266,7 @@ export async function implementIdeaWithRefine(opts: {
   onRound?: (round: number, detail: string) => void;
 }): Promise<IdeaRefineResult> {
   const { runIdeaChecks } = await import('./check.js');
-  const { detectEnvironmentBlock } = await import('./env-block.js');
+  const { diagnoseFailure } = await import('./diagnose.js');
   const { clearGeneratedIdeaFiles } = await import('./implement-clean.js');
   let correction: string | undefined;
   let report: IdeaCheckReport | null = null;
@@ -273,19 +278,41 @@ export async function implementIdeaWithRefine(opts: {
   let reimplements = 0;
   let stalled = false;
   let environmentBlocked = false;
+  let planIsWrong = false;
+  let lastDiagnosis: Awaited<ReturnType<typeof diagnoseFailure>> | null = null;
   const attempts: IdeaRefineResult['attempts'] = [];
   const seenAfterReimplement: string[] = [];
 
   for (let round = 1; round <= MAX_PATCH_ATTEMPTS + MAX_CLEAN_REIMPLEMENTS + 2; round += 1) {
-    // Preparation failures stop before the code loop (compute-env-contract §5):
-    // a blocked host and broken code can print the same smoke failure, and
-    // spending the reimplement budget on the former reports a code problem
-    // that does not exist.
-    const blocked = detectEnvironmentBlock(report);
-    if (blocked) {
-      environmentBlocked = true;
-      attempts.push({ round, mode: 'patch', detail: blocked });
-      break;
+    // The verdict on which layer is wrong comes from an agent reading the log,
+    // not from a keyword table the platform maintains (see src/idea/diagnose.ts).
+    // What stays hard here is cost, not judgement: the round ceiling below is
+    // what bounds spend, while the decision to continue at all is the agent's.
+    if (report !== null && report.outcome !== 'passed') {
+      const diagnosis = await diagnoseFailure({
+        harness: opts.harness,
+        projectRoot: opts.projectRoot,
+        report,
+        ideaId: opts.ideaId,
+        runId: opts.runId,
+      });
+      if (diagnosis) {
+        lastDiagnosis = diagnosis;
+        if (diagnosis.environmentBlocked || !diagnosis.worthRetrying) {
+          environmentBlocked = diagnosis.environmentBlocked;
+          if (!diagnosis.environmentBlocked && diagnosis.layer === 'plan') planIsWrong = true;
+          attempts.push({
+            round,
+            mode: 'patch',
+            detail:
+              `diagnosis (${diagnosis.layer}${diagnosis.environmentBlocked ? ', environment blocked' : ''}): ` +
+              `${diagnosis.reasoning} [evidence: ${diagnosis.evidence.join(' / ')}]` +
+              (diagnosis.recommendedAction ? ` → ${diagnosis.recommendedAction}` : ''),
+          });
+          opts.onRound?.(round, attempts[attempts.length - 1]!.detail);
+          break;
+        }
+      }
     }
 
     const mode: 'patch' | 'reimplement' =
@@ -293,12 +320,18 @@ export async function implementIdeaWithRefine(opts: {
     if (mode === 'reimplement') {
       if (reimplements >= MAX_CLEAN_REIMPLEMENTS) break;
       reimplements += 1;
-      // A rebuild, not a third patch on two wrong ones. Only files this
-      // generator wrote are eligible — the manifest makes that boundary exact,
-      // and the plan, data and hand-written code are never deletable here.
+      // A rebuild, not a third patch on two wrong ones. Only files on the
+      // manifest are eligible — that list is what separates the platform's own
+      // scaffolding from code a person wrote, and no judgement call changes it.
       const cleared = await clearGeneratedIdeaFiles(ideaWorkspace(opts.projectRoot, opts.ideaId));
       removed = [...new Set([...removed, ...cleared])];
       correction = undefined;
+    } else if (report === null) {
+      // The first generation clears too, or the template's smoke and unit test
+      // survive into the run that is supposed to be grading new code.
+      const cleared = await clearGeneratedIdeaFiles(ideaWorkspace(opts.projectRoot, opts.ideaId));
+      removed = [...new Set(cleared)];
+      patches += 1;
     } else {
       patches += 1;
     }
@@ -401,6 +434,8 @@ ${detail}
     notes,
     stalled,
     environmentBlocked,
+    planIsWrong,
+    diagnosis: lastDiagnosis,
     attempts,
   };
 }

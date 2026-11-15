@@ -2,64 +2,39 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { detectEnvironmentBlock } from '../src/idea/env-block.js';
+import { DIAGNOSIS_INSTRUCTION, DIAGNOSIS_SCHEMA } from '../src/idea/diagnose.js';
 import { clearGeneratedIdeaFiles, GENERATED_MANIFEST } from '../src/idea/implement-clean.js';
-import type { IdeaCheckReport } from '../src/idea/check.js';
 
-function reportWith(phases: IdeaCheckReport['phases']): IdeaCheckReport {
-  return {
-    ideaId: 'x',
-    version: 1,
-    codeHash: null,
-    startedAt: 0,
-    finishedAt: 0,
-    outcome: 'failed',
-    phases,
-  };
-}
-
-const failed = (phase: string, kind: string, summary: string) =>
-  ({
-    phase,
-    ok: false,
-    skipped: false,
-    exitCode: 1,
-    durationMs: 1,
-    command: ['python', `src/${phase}.py`],
-    failureKind: kind,
-    summary,
-  }) as IdeaCheckReport['phases'][number];
-
-describe('detectEnvironmentBlock (ARIS preparation stop, compute-env-contract §5)', () => {
-  it('stops before the code loop on access, network and driver blockers', () => {
-    for (const summary of [
-      'HTTP 429 Too Many Requests from provider',
-      'NETWORK_BLOCKED: no route to hf-mirror.com',
-      'CUDA error: no CUDA GPUs are available',
-      'docker: command not found',
-    ]) {
-      const found = detectEnvironmentBlock(reportWith([failed('smoke', 'unknown', summary)]));
-      expect(found ?? `NO MATCH: ${summary}`).toContain('environment/preparation blocker');
-      expect(found ?? '').toContain('rewriting the program cannot fix');
-    }
+describe('failure diagnosis contract', () => {
+  it('requires quoted evidence and the ARIS layer vocabulary', () => {
+    // The point of replacing the keyword table: the agent has to show which
+    // lines its verdict rests on, and it reasons about layers rather than
+    // matching a list of strings the platform happened to think of.
+    expect(DIAGNOSIS_INSTRUCTION).toContain('evidence" must quote lines');
+    expect(DIAGNOSIS_INSTRUCTION).toContain('compute-env-contract');
+    expect(DIAGNOSIS_INSTRUCTION).toContain('version conflict');
+    expect(DIAGNOSIS_INSTRUCTION).toContain('more attempts at code will not fix a bad plan');
+    expect(DIAGNOSIS_SCHEMA).toBe('failure-diagnosis-v1');
   });
 
-  it('does not call a code fault an environment fault', () => {
-    expect(
-      detectEnvironmentBlock(
-        reportWith([failed('smoke', 'syntax-error', 'line 12: unexpected indent')]),
-      ),
-    ).toBeNull();
-    expect(
-      detectEnvironmentBlock(
-        reportWith([failed('smoke', 'unknown', 'smoke produced no metrics JSON line')]),
-      ),
-    ).toBeNull();
-  });
-
-  it('ignores phases that passed or were skipped', () => {
-    const passed = { ...failed('smoke', 'unknown', 'docker not found'), ok: true };
-    expect(detectEnvironmentBlock(reportWith([passed]))).toBeNull();
+  it('is registered so the verdict is validated, not merely requested', async () => {
+    const { listSchemaNames, assertAgainstSchema } = await import('../src/core/schema/index.js');
+    expect(listSchemaNames()).toContain(DIAGNOSIS_SCHEMA);
+    const good = {
+      layer: 'spec',
+      environmentBlocked: false,
+      worthRetrying: true,
+      reasoning:
+        'The spec pins numpy<2 while a later package requires numpy 2, so the install order is wrong.',
+      evidence: ['numpy.core.multiarray failed to import'],
+      recommendedAction: 'add a snap-back install phase after the conflicting package',
+      confidence: 0.7,
+    };
+    expect(() => assertAgainstSchema(DIAGNOSIS_SCHEMA, good)).not.toThrow();
+    // An unevidenced verdict must not load: without this the field is optional
+    // in practice and the diagnosis degrades back into a guess.
+    expect(() => assertAgainstSchema(DIAGNOSIS_SCHEMA, { ...good, evidence: [] })).toThrow();
+    expect(() => assertAgainstSchema(DIAGNOSIS_SCHEMA, { ...good, layer: 'dependency' })).toThrow();
   });
 });
 

@@ -9,6 +9,7 @@ import imageProfileV1 from './schemas/image-profile-v1.json' with { type: 'json'
 import materializationReportV1 from './schemas/materialization-report-v1.json' with { type: 'json' };
 import implementationProgramV1 from './schemas/implementation-program-v1.json' with { type: 'json' };
 import ideaImplementationV1 from './schemas/idea-implementation-v1.json' with { type: 'json' };
+import failureDiagnosisV1 from './schemas/failure-diagnosis-v1.json' with { type: 'json' };
 import experimentPlanV1 from './schemas/experiment-plan-v1.json' with { type: 'json' };
 import ablationPlanV1 from './schemas/ablation-plan-v1.json' with { type: 'json' };
 import noveltyCheckV1 from './schemas/novelty-check-v1.json' with { type: 'json' };
@@ -63,6 +64,7 @@ export type SchemaName =
   | 'materialization-report-v1'
   | 'implementation-program-v1'
   | 'idea-implementation-v1'
+  | 'failure-diagnosis-v1'
   | 'experiment-plan-v1'
   | 'ablation-plan-v1'
   | 'novelty-check-v1'
@@ -90,6 +92,7 @@ const SCHEMAS: Record<SchemaName, object> = {
   'materialization-report-v1': materializationReportV1,
   'implementation-program-v1': implementationProgramV1,
   'idea-implementation-v1': ideaImplementationV1,
+  'failure-diagnosis-v1': failureDiagnosisV1,
   'experiment-plan-v1': experimentPlanV1,
   'ablation-plan-v1': ablationPlanV1,
   'novelty-check-v1': noveltyCheckV1,

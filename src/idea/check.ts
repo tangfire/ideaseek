@@ -766,7 +766,37 @@ export async function scaffoldIdea(projectRoot: string, ideaId: string): Promise
     }
     await ensureDir(dirname(target));
     await writeFileAtomic(target, file.content);
-    created.push(file.path);
+    created.push(file.path);  }
+  // The scaffold's files join the generator's manifest. This is the list of
+  // "platform-written" paths, and it is what makes ARIS's discard-and-reimplement
+  // step mean something on the idea side: without it a clean rebuild removed
+  // only the previous generation's files and left the template's smoke and
+  // unit test in place, so the next check graded a starter stub instead of the
+  // answer being evaluated — which is exactly the mis-stop observed in a real
+  // FDG run. Hand-written or agent-edited files were never listed and stay.
+  try {
+    const { writeFile, readFile } = await import('node:fs/promises');
+    const manifestPath = join(workspace, 'src', '.generated.json');
+    let already: string[] = [];
+    try {
+      const stored = JSON.parse(await readFile(manifestPath, 'utf8')) as { files?: unknown };
+      already = Array.isArray(stored.files)
+        ? stored.files.filter((path): path is string => typeof path === 'string')
+        : [];
+    } catch {
+      already = [];
+    }
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify(
+        { schemaVersion: 1, files: [...new Set([...already, ...created])].sort() },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+  } catch {
+    // The manifest is a safety boundary, not a requirement for scaffolding.
   }
   return { created, skipped };
 }

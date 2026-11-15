@@ -2538,13 +2538,20 @@ export function registerIdeaCommand(program: Command): void {
               );
               return 0;
             }
-            if (result.environmentBlocked) {
-              // ARIS §5 says preparation failures stop before the code loop.
-              // Reporting them as "the program is broken" sends the researcher
-              // to edit code that was never the problem.
-              const blocked = result.attempts[result.attempts.length - 1];
+            if (result.environmentBlocked || result.planIsWrong) {
+              // The agent said which layer is wrong and that more code will not
+              // fix it. Quoting its reasoning and evidence is the point: a bare
+              // "stopped" would hide the diagnosis the researcher needs.
               process.stdout.write(
-                `stopped before code repair: ${blocked?.detail ?? 'environment blocker'}\n`,
+                `stopped by diagnosis: ${
+                  result.attempts[result.attempts.length - 1]?.detail ??
+                  `${result.diagnosis?.layer ?? 'unknown'} layer`
+                }\n` +
+                  (result.planIsWrong
+                    ? `next: revise the card or the protocol, then: ideaseek idea implement ${ideaId}\n`
+                    : 'next: restore the blocked access, then: ideaseek idea implement ' +
+                      ideaId +
+                      '\n'),
               );
               return 2;
             }
