@@ -47,8 +47,14 @@ export function registerStartCommand(program: Command): void {
           try {
             const run = await runtime.db.getLatestRun(runtime.project.id);
             const advice = await adviseNext(runtime, run);
-            guidance = advice.suggestion;
             nextCommand = advice.command;
+            // With no inputs at all, where to put them is the answer the user
+            // needs; the assessed gap is worth saying too, but not instead of
+            // it. An earlier rewrite dropped this sentence and the journey
+            // test caught the disappearance.
+            guidance = scan.files
+              ? advice.suggestion
+              : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），然后重来一次 ideaseek start 或直接看下一条命令';
           } finally {
             await runtime.close();
           }

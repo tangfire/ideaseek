@@ -47,7 +47,7 @@ async function withAlerts(runtime: ProjectRuntime, advice: NextAdvice): Promise<
  * their own inputs. `next` now asks the material assessment, which is
  * deterministic and needs no model call.
  */
-async function materialAdvice(runtime: ProjectRuntime): Promise<NextAdvice | null> {
+export async function materialAdvice(runtime: ProjectRuntime): Promise<NextAdvice | null> {
   const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
   let assessment;
   try {

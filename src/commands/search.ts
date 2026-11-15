@@ -83,7 +83,7 @@ export function registerSearchCommand(program: Command): void {
             }
             if (hits.length === 0) {
               process.stdout.write(
-                '  no matches (parse papers first: ideaseek run --paper <file.pdf>)\n',
+                '  no matches (parse the papers first: ideaseek ingest, then ideaseek search)\n',
               );
             } else {
               process.stdout.write(`  ⚠ ${EVIDENCE_DISCLAIMER}\n`);

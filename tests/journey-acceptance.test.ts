@@ -80,7 +80,10 @@ describe('Journey A — first use from an empty directory', () => {
     expect(start.code).toBe(0);
     expect(start.stdout).toContain('0 file(s)');
     expect(start.stdout).toMatch(/papers\/|datasets\//);
-    expect(start.stdout).toContain('next: ideaseek run --question');
+    // The bootstrap must not route an empty project into the fake-worker demo
+    // pipeline; it points at whatever the material assessment says is missing.
+    expect(start.stdout).not.toMatch(/next: ideaseek run\b/);
+    expect(start.stdout).toMatch(/next: ideaseek /);
     assertNoSecret(start.stdout, start.stderr);
   }, 180_000);
 });

@@ -341,7 +341,9 @@ describe('ideaseek interactive (CLI)', () => {
     expect(done.stdout).not.toContain('NOT_INITIALIZED');
     const config = await readFile(join(dir, 'research.yaml'), 'utf8');
     expect(config).toContain('config_version: 1');
-    expect(done.stdout).toContain('next: ideaseek run --question');
+    // /init inside the TUI must hand the user to the research chain, not the
+    // fake-worker demo pipeline.
+    expect(done.stdout).not.toMatch(/next: ideaseek run\b/);
   }, 60_000);
 
   it('outside a project a plain sentence opens doors, it does not start a coding turn', async () => {
@@ -428,7 +430,10 @@ describe('ideaseek interactive (CLI)', () => {
     await repl.waitFor(/当前阶段/);
     const done = await repl.quit();
     expect(done.code).toBe(0);
-    expect(done.stdout).toContain('ideaseek run');
+    // The contract is that /next relays the CLI's real advice, not a particular
+    // command: this assertion used to pin `ideaseek run`, which was the demo
+    // pipeline route the guidance layer has moved off.
+    expect(done.stdout).toMatch(/下一条命令：ideaseek /);
     expect(done.stdout).toContain('建议');
   }, 60_000);
 

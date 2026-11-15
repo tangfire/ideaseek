@@ -77,11 +77,15 @@ IdeaSeek research workspace.
 ## Commands
 
 \`\`\`bash
-ideaseek run --question "your research question"
+ideaseek prepare --question "your research question"   # read the inputs, report gaps
+ideaseek assessment                                    # what is still missing, and why
+ideaseek next                                          # the state-aware next command
 ideaseek status
-ideaseek next
 ideaseek pause / resume / continue / cancel
 \`\`\`
+
+\`ideaseek run\` executes the fake-worker demo pipeline used to prove the
+recovery chain; it is not the research path.
 `;
 }
 
@@ -228,7 +232,9 @@ export function registerInitCommand(program: Command): void {
           process.stdout.write(
             `  created: ${outcome.createdFiles.length ? outcome.createdFiles.join(', ') : '(kept existing files)'}\n`,
           );
-          process.stdout.write('next: ideaseek run --question "your research question"\n');
+          process.stdout.write(
+            'next: put papers under papers/ and run: ideaseek prepare --question "你的研究问题"\n',
+          );
         }
         return 0;
       }),

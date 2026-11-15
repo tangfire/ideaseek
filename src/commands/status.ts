@@ -99,7 +99,15 @@ export function registerStatusCommand(program: Command): void {
               process.stdout.write(`项目：${runtime.project.name}\n`);
               process.stdout.write('Run：尚无\n');
               await printAlertLines();
-              process.stdout.write('下一条命令：ideaseek run --question "你的研究问题"\n');
+              // This hardcoded `ideaseek run` sent every new project to the
+              // fake-worker demo pipeline, whatever its inputs were.
+              const { materialAdvice } = await import('./next.js');
+              const material = await materialAdvice(runtime).catch(() => null);
+              process.stdout.write(
+                material
+                  ? `研究链：${material.stage} · ${material.suggestion}\n  下一步：${material.command}\n`
+                  : '下一条命令：ideaseek prepare --question "你的研究问题"\n',
+              );
             }
             return 0;
           }
@@ -174,6 +182,25 @@ export function registerStatusCommand(program: Command): void {
           process.stdout.write(
             `任务：${done}/${total} 完成 · 排队 ${counts.queued ?? 0} · 执行中 ${(counts.leased ?? 0) + (counts.running ?? 0) + (counts.committing ?? 0)} · 失败 ${counts.failed ?? 0} · 取消 ${counts.canceled ?? 0}\n`,
           );
+          // One run is a workflow record, not the state of the research. FDG's
+          // status showed a two-year-old single-task skeleton run as "1/1
+          // 完成" while the project actually sat at the start of the chain,
+          // which is the kind of confident-but-irrelevant number the platform
+          // is supposed to avoid.
+          {
+            const { materialAdvice } = await import('./next.js');
+            try {
+              const material = await materialAdvice(runtime);
+              if (material) {
+                process.stdout.write(
+                  `研究链：${material.stage} · ${material.suggestion}\n` +
+                    `  下一步：${material.command}\n`,
+                );
+              }
+            } catch {
+              // Chain position is context; status must still print without it.
+            }
+          }
           {
             const { formatUsageLine } = await import('../runtime/usage.js');
             process.stdout.write(`${formatUsageLine(await usageSummary())}

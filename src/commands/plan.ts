@@ -187,7 +187,13 @@ export function registerPlanCommand(program: Command): void {
 
           const plan = {
             question: opts.question ?? config.research.question ?? null,
-            questionPersisted: (opts.question ?? '') === config.research.question,
+            // With no --question the displayed text IS the configured one, so
+            // it is persisted by definition. The old comparison
+            // (`(opts.question ?? '') === config.research.question`) was false
+            // in exactly that case and told every user that their saved
+            // question was unsaved.
+            questionPersisted:
+              opts.question === undefined || opts.question === config.research.question,
             mode: config.research.mode,
             autonomyMode,
             inputs: {
@@ -235,7 +241,7 @@ export function registerPlanCommand(program: Command): void {
           }
           process.stdout.write(`plan (dry-run — nothing started)\n`);
           process.stdout.write(
-            `  question: ${plan.question ?? '(unset)'}${plan.question ? (plan.questionPersisted ? '' : ' (not persisted — use ideaseek run --question to start)') : ''}\n`,
+            `  question: ${plan.question ?? '(unset)'}${plan.question ? (plan.questionPersisted ? '' : ' (来自 --question，未写入配置；用 ideaseek setup --question 持久化)') : ''}\n`,
           );
           process.stdout.write(
             `  inputs: ${plan.inputs.paperFiles} paper file(s), ${plan.inputs.indexedPapers} indexed, ${(plan.inputs.totalBytes / 1024 / 1024).toFixed(1)} MiB manifest\n`,
@@ -283,9 +289,7 @@ export function registerPlanCommand(program: Command): void {
               `  run ${runBlock.runId}: ${runBlock.status} · ${String(runBlock.remaining)} remaining\n`,
             );
           }
-          process.stdout.write(
-            'next: ideaseek run --question "..."   (plan never starts work by itself)\n',
-          );
+          process.stdout.write('next: ideaseek next   (plan never starts work by itself)\n');
           return 0;
         } finally {
           await runtime.close();
