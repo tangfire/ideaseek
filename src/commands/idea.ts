@@ -2443,17 +2443,28 @@ export function registerIdeaCommand(program: Command): void {
             );
           }
           process.stdout.write(`  report: ${reportPath}\n`);
+          // The session mode persists and gates the CLI too, so advice that
+          // names a mutating command has to say when the current mode would
+          // refuse it — otherwise following the product's own next step hits a
+          // dead end with no indication why.
+          const { readSessionMode } = await import('../session/mode.js');
+          const analysisMode = (await readSessionMode(root)) === 'analysis';
           if (report.outcome === 'failed') {
             process.stdout.write(
               `next: fix the failing phase, then rerun: ideaseek idea check ${ideaId}\n`,
             );
           } else if (report.outcome === 'smoke-missing') {
             process.stdout.write(
-              `next: write src/smoke.py (or ideaseek idea scaffold ${ideaId}) to reach SMOKE_TESTED\n`,
+              analysisMode
+                ? `next: ideaseek mode research, then write src/smoke.py or run ideaseek idea scaffold ${ideaId}\n`
+                : `next: write src/smoke.py (or ideaseek idea scaffold ${ideaId}) to reach SMOKE_TESTED\n`,
             );
           } else if (report.outcome === 'not-implemented') {
             process.stdout.write(
-              `next: ideaseek idea scaffold ${ideaId}   (nothing under src/ yet, so nothing was checked)\n`,
+              analysisMode
+                ? `next: ideaseek mode research, then: ideaseek idea scaffold ${ideaId}   ` +
+                    `(analysis mode is read-only and refuses scaffold)\n`
+                : `next: ideaseek idea scaffold ${ideaId}   (nothing under src/ yet, so nothing was checked)\n`,
             );
           } else {
             process.stdout.write(
