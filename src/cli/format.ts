@@ -45,14 +45,43 @@ function clockTime(ts: number): string {
  * `[13:21:04] PAPER_ANALYSIS  PaperExtractor  paper=018  completed  18/42`
  * Summaries are redacted and length-capped; full logs live in artifacts.
  */
+/**
+ * Usage events store their payload as JSON in the summary field, which made
+ * the transcript print raw objects at the user: `[01:21:12] USAGE deepseek-…`
+ * followed by `{"in":3193,"out":2242,"cost":null,...}`. The numbers are worth
+ * showing; the wire format is not. Rendered here rather than at each writer so
+ * `events`, `status` and the TUI all get the same line, and so older stored
+ * records — which are append-only — display correctly too.
+ */
+function renderUsageSummary(summary: string): string | null {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(summary) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (typeof payload.in !== 'number' && typeof payload.out !== 'number') return null;
+  const parts = [`${payload.in ?? 0} in / ${payload.out ?? 0} out tokens`];
+  if (typeof payload.cost === 'number') parts.push(`cost ${payload.cost}`);
+  // Phrased to survive the 120-character event line cap: the first version
+  // read "cost not computed (no rates configured)" and was cut mid-word.
+  else parts.push('cost unset (no rates)');
+  if (typeof payload.taskId === 'string') parts.push(`task ${payload.taskId}`);
+  return `usage: ${parts.join(' · ')}`;
+}
+
 export function formatEventLine(event: RunEvent, opts: PaintOptions = {}): string {
   const parts: string[] = [`[${clockTime(event.ts)}]`];
   if (event.phase) parts.push(event.phase);
   if (event.role) parts.push(event.role);
   if (event.objectId) parts.push(`object=${event.objectId}`);
   if (event.status) parts.push(event.status);
-  const summary = redactSecrets(event.summary).slice(0, 120);
-  if (summary) parts.push(summary);
+  const raw = redactSecrets(event.summary);
+  const readable =
+    event.eventType === 'model_usage'
+      ? (renderUsageSummary(raw) ?? raw.slice(0, 120))
+      : raw.slice(0, 120);
+  if (readable) parts.push(readable);
   const line = parts.join('  ');
   if (event.status === 'failed' || event.status === 'error') {
     return paint(line, 'error', opts);
