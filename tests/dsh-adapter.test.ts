@@ -247,3 +247,25 @@ describe('capability patch generation', () => {
     expect(again.patchPath).toBe(patch.patchPath);
   });
 });
+
+describe('describeTruncation (a cap cut is its own failure mode)', () => {
+  it('names the reason, the cap and the way out', async () => {
+    const { describeTruncation } = await import('../src/dsh/dsh-adapter.js');
+    const text = describeTruncation('max-tokens', 16_384);
+    expect(text).toContain('finishReason=max-tokens');
+    expect(text).toContain('maxTokens=16384');
+    // The actionable half: this artifact shape is the problem, not the
+    // provider, and "retry" would teach the reader to retry forever.
+    expect(text).toContain('does not fit in one response');
+    expect(text).toContain('write files instead of returning them');
+  });
+
+  it('is the same wording the pre-JSON path reports', async () => {
+    // Two messages for one cause drift apart, and then the log contradicts
+    // itself about which limit was hit.
+    const { describeTruncation, DEFAULT_DSH_MAX_TOKENS } =
+      await import('../src/dsh/dsh-adapter.js');
+    expect(describeTruncation('length', DEFAULT_DSH_MAX_TOKENS)).toContain('finishReason=length');
+    expect(describeTruncation('length', 8_192)).toContain('maxTokens=8192');
+  });
+});

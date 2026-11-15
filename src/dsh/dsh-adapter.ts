@@ -163,6 +163,21 @@ export function extractJson(text: string): string | null {
  * is shown next to the head because trailing prose and an unterminated string
  * look nothing alike.
  */
+/**
+ * Naming the cap that cut a turn off. Kept as one function because the number
+ * in the message has to be the number the harness actually used: two literals
+ * here would drift and the message would then lie about the limit it is
+ * blaming.
+ */
+export function describeTruncation(finishReason: string, maxTokens: number): string {
+  return (
+    `dsh response was truncated by the output token cap (finishReason=${finishReason}, ` +
+    `maxTokens=${maxTokens}, set at spawn). The requested artifact does not fit in one response: ` +
+    'shrink it, split it across turns, or move the bulk of it into a session that can write ' +
+    'files instead of returning them.'
+  );
+}
+
 export function describeJsonFailure(
   text: string,
   maxTokens: number,
@@ -361,6 +376,22 @@ export class DshHarnessAdapter implements HarnessAdapter {
       throw error;
     }
 
+    // A turn that ended at the output cap is its own failure mode, and it has
+    // to be named before the generic error path: DSH reports max-tokens as an
+    // error status without an LlmFailure code, so this surfaced as
+    // `dsh UNKNOWN` — indistinguishable from a provider outage — while the
+    // actual finding was "the artifact you asked for does not fit in one
+    // response". We never set maxTokensAsSuccess, so this reason is always an
+    // error on our side of the boundary.
+    if (result.finishReason === 'max-tokens' || result.finishReason === 'length') {
+      throw new Error(
+        describeTruncation(
+          result.finishReason,
+          this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
+        ),
+      );
+    }
+
     if (result.finishReason === 'error') {
       const failure = findLlmFailure(result);
       const code = failure?.code ?? 'UNKNOWN';
@@ -384,8 +415,11 @@ export class DshHarnessAdapter implements HarnessAdapter {
       // malformed response is a guess — including mine.
       await captureFailedResponse(this.opts.rawCapturePath, result.finalResponse ?? '');
       if (reason === 'length' || reason === 'max-tokens') {
+        // Same wording as the pre-JSON branch: two messages for one cause
+        // drift, and this one named no cap at all — the number the earlier
+        // investigation existed to pin down.
         throw new Error(
-          `dsh response was truncated by the output token cap (finishReason=${reason})`,
+          describeTruncation(reason, this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS),
         );
       }
       throw new Error(
