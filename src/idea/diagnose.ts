@@ -113,8 +113,30 @@ export async function diagnoseFailure(opts: {
       `failure diagnosis output is not JSON: ${(error as Error).message}`,
     );
   }
-  assertAgainstSchema(DIAGNOSIS_SCHEMA, parsed);
-  const value = parsed as Record<string, unknown>;
+  const value = (parsed ?? {}) as Record<string, unknown>;
+  // Prose is clamped to the contract's ceilings before validating. The first
+  // real run failed the whole command because a diagnosis explanation ran 50
+  // characters long, which is the wrong trade: structure (which layer, is it
+  // environmental, what evidence) is what must be enforced, and losing a good
+  // verdict to a length limit is a worse outcome than a shortened one.
+  const clamp = (text: unknown, max: number): string =>
+    String(text ?? '')
+      .trim()
+      .slice(0, max);
+  if (typeof value.reasoning === 'string') value.reasoning = clamp(value.reasoning, 900);
+  if (typeof value.recommendedAction === 'string') {
+    value.recommendedAction = clamp(value.recommendedAction, 400);
+  }
+  if (Array.isArray(value.evidence)) {
+    // Over-abundance is not a defect: a verdict quoting nine lines is better
+    // than one quoting three, and the second real run aborted the whole
+    // command on maxItems=6. Keep the strongest lines, enforce the structure.
+    value.evidence = value.evidence
+      .map((line) => clamp(line, 300))
+      .filter((line) => line.length > 0)
+      .slice(0, 6);
+  }
+  assertAgainstSchema(DIAGNOSIS_SCHEMA, value);
   return {
     layer: String(value.layer),
     environmentBlocked: value.environmentBlocked === true,

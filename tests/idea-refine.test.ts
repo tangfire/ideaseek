@@ -76,3 +76,32 @@ describe('clearGeneratedIdeaFiles (only the generator owns files)', () => {
     expect(await clearGeneratedIdeaFiles(dir)).toEqual([]);
   });
 });
+
+it('clamps long prose instead of discarding a usable verdict', async () => {
+  // Observed on the first real diagnosis run: a 950-character explanation made
+  // the whole `idea implement` fail on schema validation. Structure is what the
+  // contract must enforce; length should degrade, not abort.
+  const { readFile } = await import('node:fs/promises');
+  const schema = JSON.parse(
+    await readFile(
+      new URL('../src/core/schema/schemas/failure-diagnosis-v1.json', import.meta.url),
+      'utf8',
+    ),
+  ) as { properties: Record<string, { maxLength?: number; maxItems?: number }> };
+  expect(schema.properties.reasoning?.maxLength).toBe(900);
+  expect(schema.properties.evidence?.maxItems).toBe(6);
+  const { assertAgainstSchema } = await import('../src/core/schema/index.js');
+  const long = 'x'.repeat(950);
+  const clamped = long.slice(0, 900);
+  expect(() =>
+    assertAgainstSchema('failure-diagnosis-v1', {
+      layer: 'code',
+      environmentBlocked: false,
+      worthRetrying: true,
+      reasoning: clamped,
+      evidence: ['ValueError: matmul: Input operand 1 has a mismatch'],
+      recommendedAction: 'fix the basis projection shape',
+      confidence: 0.8,
+    }),
+  ).not.toThrow();
+});
