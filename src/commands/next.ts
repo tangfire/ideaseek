@@ -72,7 +72,11 @@ export async function materialAdvice(runtime: ProjectRuntime): Promise<NextAdvic
       done: `${count('paperCards')} PaperCard(s), ${count('slices')} slice(s), ${count('comparisons')} comparison(s)`,
       suggestion: `${nextGap.reason}${nextGap.cost ? ` (${nextGap.cost})` : ''}`,
       command: nextGap.fillIn ?? 'ideaseek assessment',
-      exitCode: 2,
+      // Exit 0: `next` succeeded at being an advisor. 2 is reserved for the
+      // CLI being unable to answer at all (invalid config), because using it
+      // for "this project is early" turns every young project into a script
+      // failure — the blockers and stage fields already carry that news.
+      exitCode: 0,
     };
   }
   if (recommended.length > 0 && nextGap) {

@@ -55,8 +55,10 @@ describe('ideaseek next routes the research chain, not the demo pipeline', () =>
     const out = await runCli(dir, ['next']);
     expect(out.stdout).not.toContain('demo 管线');
     expect(out.stdout).not.toMatch(/下一条命令：ideaseek run\b/);
-    // A blocking gap is missing input, not a failed task (docs/CLI_SPEC).
-    expect(out.code).toBe(2);
+    // Advisory output exits 0 even when the news is "you are blocked": using 2
+    // here turned every early-stage project into a script failure, which
+    // cli.e2e caught. The stage and blockers fields carry the news.
+    expect(out.code).toBe(0);
     expect(out.stdout).toContain('MATERIAL_INCOMPLETE');
     expect(out.stdout).toContain('下一条命令：');
   });

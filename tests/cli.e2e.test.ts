@@ -92,7 +92,14 @@ describe('ideaseek CLI end-to-end', () => {
 
     const next = await runCli(dir, ['next']);
     expect(next.code).toBe(0);
-    expect(next.stdout).toContain('下一条命令：ideaseek status --detail');
+    // A finished demo workflow is not "nothing left to do": `next` used to
+    // answer 所有任务已完成 + status --detail, while the project still had no
+    // research question and no papers. It now reports the run facts AND the
+    // chain position with a step that can actually be executed.
+    expect(next.stdout).toContain('RUN_DONE_');
+    expect(next.stdout).toContain('下一条命令：ideaseek ');
+    expect(next.stdout).not.toContain('下一条命令：ideaseek status --detail');
+    expect(next.stdout).not.toMatch(/下一条命令：ideaseek run\b/);
 
     const events = await runCli(dir, ['events', '--json']);
     expect(events.code).toBe(0);

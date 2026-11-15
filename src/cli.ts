@@ -225,19 +225,105 @@ const COMMANDER_INPUT_ERRORS = new Set([
   'commander.invalidArgument',
 ]);
 
+/**
+ * "Did you mean `status`?" for a mistyped command.
+ *
+ * The root has an action (bare invocation opens the TUI), so commander reports
+ * an unknown command as "too many arguments. Expected 0 arguments but got 1"
+ * — which is technically true and useless to a user with about fifty commands
+ * to choose from. The closest name is computed here rather than by commander
+ * because by the time the error is raised the command context is gone.
+ */
+export function suggestCommand(token: string, names: string[]): string | null {
+  if (!token || token.startsWith('-')) return null;
+  const target = token.toLowerCase();
+  let best: { name: string; distance: number; prefix: boolean } | null = null;
+  for (const name of names) {
+    const candidate = name.toLowerCase();
+    const prefix = candidate.startsWith(target.slice(0, Math.max(3, target.length - 2)));
+    const distance = editDistance(target, candidate);
+    if (distance > Math.max(2, Math.floor(candidate.length / 3)) && !prefix) continue;
+    if (!best || distance < best.distance || (prefix && distance === best.distance)) {
+      best = { name, distance, prefix };
+    }
+  }
+  return best?.name ?? null;
+}
+
+function editDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  let previous = Array.from({ length: cols }, (_, i) => i);
+  for (let i = 1; i < rows; i += 1) {
+    const current = [i];
+    for (let j = 1; j < cols; j += 1) {
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[cols - 1]!;
+}
+
+/**
+ * The first positional token of a root-level invocation, if it is not a known
+ * command.
+ *
+ * Checked before parsing because the root carries an action (bare `ideaseek`
+ * opens the UI), so commander sees a mistyped command as "too many arguments"
+ * and cannot suggest anything. A token that is neither a known command nor a
+ * flag is a typo, and with about fifty commands the nearest name is the only
+ * useful answer.
+ */
+function unknownRootCommand(argv: string[], program: Command): string | null {
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i]!;
+    if (token === '--project') {
+      i += 1; // its value is a path, not a command
+      continue;
+    }
+    if (token.startsWith('-')) continue;
+    const names = program.commands.map((command) => command.name());
+    return names.includes(token) ? null : token;
+  }
+  return null;
+}
+
 export async function runCli(argv: string[]): Promise<number> {
   loadLocalEnv(); // names-only, never overrides host env, never logs values
+  const program = buildProgram();
+  const extracted = await extractProjectOverride(argv);
+  // The two prefixes are skipped only for the typo check: parseAsync expects
+  // the process.argv shape and drops them itself.
+  const mistyped = unknownRootCommand(extracted.slice(2), program);
+  if (mistyped) {
+    const names = program.commands.map((command) => command.name());
+    const suggestion = suggestCommand(mistyped, names);
+    process.stderr.write(
+      suggestion
+        ? `ideaseek: unknown command "${mistyped}". Did you mean: ideaseek ${suggestion}?\n`
+        : `ideaseek: unknown command "${mistyped}". Run \`ideaseek --help\` for the command list.\n`,
+    );
+    return 2;
+  }
   try {
-    await buildProgram().parseAsync(await extractProjectOverride(argv));
+    await program.parseAsync(extracted);
     const code = process.exitCode;
     return typeof code === 'number' ? code : 0;
   } catch (error) {
     if (error instanceof CommanderError) {
-      // docs/CLI_SPEC: 2 is "user input or configuration is missing". A missing
-      // required option is exactly that, and commander's own 1 reads as a task
-      // failure to anything scripting the CLI — including the recovery paths
-      // that decide whether to retry.
-      if (COMMANDER_INPUT_ERRORS.has(error.code)) return 2;
+      if (COMMANDER_INPUT_ERRORS.has(error.code)) {
+        // Commander's own wording is kept here: reaching this branch means a
+        // subcommand was found and its arguments were wrong ("ideaseek status
+        // extra"), which is a different mistake from a mistyped command and is
+        // already described accurately. The typo case is answered earlier,
+        // before parsing, because the root's own action makes commander call
+        // it "too many arguments" with nothing to suggest.
+        return 2;
+      }
       // Help and version requests are successful output, not failures.
       return typeof error.exitCode === 'number' ? error.exitCode : 1;
     }
