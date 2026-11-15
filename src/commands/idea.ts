@@ -2388,6 +2388,183 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('implement')
+    .description(
+      'generate the idea implementation from its IdeaCard, compile-check it, and write it into the workspace',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--data <path>', 'data path handed to the generated checks')
+    .option('--force', 'replace existing files under src/', false)
+    .option(
+      '--harness <kind>',
+      'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (
+          ideaId: string,
+          opts: { data?: string; force?: boolean; harness?: string; json?: boolean },
+        ) => {
+          const root = await openRoot();
+          const shared = await import('./shared.js');
+          const runtime = await (
+            await import('../workflow/runtime.js')
+          ).ProjectRuntime.open({
+            cwd: root,
+            harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
+          });
+          try {
+            shared.assertConfigUsable(runtime.configLoad);
+            await assertEffectiveAutonomy(root, await getAutonomyMode(root), 'write-code');
+            const harness = runtime.harness;
+            if (!harness || harness.kind === 'fake') {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `idea implement needs the real harness (currently ${harness?.kind ?? 'none'}); ` +
+                  'configure a key with: ideaseek models setup',
+              );
+            }
+            const { loadIdeaCard } = await import('../idea/workspace.js');
+            const card = await loadIdeaCard(root, ideaId);
+            if (!card) {
+              throw new IdeaseekError(
+                'FILE_NOT_FOUND',
+                `no IdeaCard for ${ideaId} — run: ideaseek idea create ${ideaId} --from-card <file>`,
+              );
+            }
+            let dataPath = opts.data ?? null;
+            if (dataPath) {
+              const { isAbsolute, resolve: resolvePath } = await import('node:path');
+              const { stat } = await import('node:fs/promises');
+              const absolute = isAbsolute(dataPath) ? dataPath : resolvePath(root, dataPath);
+              if (!(await stat(absolute).catch(() => null))) {
+                throw new IdeaseekError(
+                  'FILE_NOT_FOUND',
+                  `--data path does not exist: ${dataPath} (looked at ${absolute})`,
+                );
+              }
+              dataPath = absolute;
+            }
+            const { authorIdeaImplementation, checkAuthoredFiles, writeIdeaFiles } =
+              await import('../idea/implement.js');
+            // Whatever the platform already measured about the corpus goes into
+            // the request: the generator otherwise invents column names, and the
+            // first real run failed with "no numeric feature column among
+            // ['image','domain','label']" on data the platform had profiled.
+            let measuredData: string | null = null;
+            try {
+              const { readFile } = await import('node:fs/promises');
+              const profiles = JSON.parse(
+                await readFile(join(root, 'knowledge', 'image-profiles.json'), 'utf8'),
+              ) as {
+                profiles?: {
+                  samples: number;
+                  columns?: { name: string; dtype?: string }[];
+                  grouping?: { column: string | null; values: { name: string }[] };
+                  classes?: { distinct: number };
+                }[];
+              };
+              measuredData =
+                (profiles.profiles ?? [])
+                  .map(
+                    (profile) =>
+                      `samples: ${profile.samples}; columns: ${(profile.columns ?? [])
+                        .map((column) => `${column.name}:${column.dtype ?? '?'}`)
+                        .join(', ')}; grouping: ${profile.grouping?.column ?? '(none)'} over ${(
+                        profile.grouping?.values ?? []
+                      )
+                        .map((value) => value.name)
+                        .join('|')}; classes: ${profile.classes?.distinct ?? '?'}`,
+                  )
+                  .join('\n') || null;
+            } catch {
+              measuredData = null;
+            }
+            const runId =
+              (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
+              `idea-implement-${ideaId}`;
+            let correction: string | undefined;
+            let authored: Awaited<ReturnType<typeof authorIdeaImplementation>> | null = null;
+            let compileError: string | null = null;
+            // Two turns at most, the second told why the first was refused: the
+            // comparison side learned that unparseable output recurs, and a bare
+            // retry sends the identical request.
+            for (let attempt = 1; attempt <= 2; attempt += 1) {
+              // Every refusal — envelope, path, size or compile — comes back as
+              // a correction. Letting a parse failure throw out of the loop
+              // wastes the retry: the model hears nothing and returns the same
+              // shape, which is what the first real run did.
+              try {
+                authored = await authorIdeaImplementation({
+                  harness,
+                  card,
+                  dataPath,
+                  measuredData,
+                  runId,
+                  now: Date.now(),
+                  correction,
+                });
+                compileError = await checkAuthoredFiles(authored.files);
+                if (!compileError) break;
+                correction =
+                  `the previous files did not compile: ${compileError}. Return complete files ` +
+                  `with every bracket, quote and indentation level closed.`;
+              } catch (error) {
+                if (!(error instanceof IdeaseekError)) throw error;
+                authored = null;
+                compileError = error.message;
+                correction =
+                  `the previous answer was refused: ${error.message}. Return only .py files ` +
+                  `under src/, plain UTF-8, each under 400 lines.`;
+              }
+              process.stderr.write(
+                `idea implementation refused on attempt ${attempt}: ${compileError}\n`,
+              );
+            }
+            if (!authored || compileError) {
+              throw new IdeaseekError(
+                'INVALID_ARTIFACT',
+                `generated idea code still does not compile (${compileError ?? 'unknown'}) — nothing was written`,
+              );
+            }
+            const written = await writeIdeaFiles(ideaDir(root, ideaId), authored.files, {
+              force: opts.force === true,
+            });
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  ideaId,
+                  written: written.written,
+                  kept: written.kept,
+                  removed: written.removed,
+                  notes: authored.notes,
+                  contextHash: authored.contextHash,
+                }),
+              );
+              return 0;
+            }
+            process.stdout.write(
+              `idea implement ${ideaId}: ${written.written.length} file(s) written, ` +
+                `${written.kept.length} kept` +
+                (written.removed.length > 0
+                  ? `, ${written.removed.length} dropped with the replaced set`
+                  : '') +
+                '\n',
+            );
+            for (const file of written.written) process.stdout.write(`  + ${file}\n`);
+            for (const file of written.removed) process.stdout.write(`  - ${file}\n`);
+            if (authored.notes) process.stdout.write(`  notes: ${authored.notes}\n`);
+            process.stdout.write(`next: ideaseek idea check ${ideaId}\n`);
+            return 0;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
+    );
+
+  idea
     .command('check')
     .description(
       'Code Implementer gate: static + unit tests + data/metrics interface + smoke micro-run',

@@ -119,6 +119,20 @@ export async function runIdeaChecks(
     return `.research/logs/${logName}`;
   };
 
+  /**
+   * Every phase runs with the project's run environment injected, exactly as
+   * the comparison ladder does. Idea code was told to resolve its corpus from
+   * IDEASEEK_DATASET_ROOTS / IDEASEEK_DATA_PATH while `idea check` handed it
+   * neither, so a correct implementation reported "data root not found; tried
+   * []" — the empty list is the tell that the contract was never delivered.
+   */
+  const runPhase = async (
+    command: string[],
+  ): Promise<Awaited<ReturnType<typeof runRepairCommand>>> => {
+    const { mergeRunEnv } = await import('../experiment/run-env.js');
+    return runRepairCommand(command, workspace, timeoutMs, await mergeRunEnv(projectRoot));
+  };
+
   // 1. static: py_compile every src .py + parse config/*.json in-process.
   {
     const files = await collectPythonFiles(srcDir);
@@ -140,7 +154,7 @@ export async function runIdeaChecks(
       });
     } else {
       const command = ['python', '-m', 'py_compile', ...files.map((f) => join(srcDir, f))];
-      const run = await runRepairCommand(command, workspace, timeoutMs);
+      const run = await runPhase(command);
       let failure: { kind: string; summary: string } | null = null;
       if (run.exitCode !== 0 || run.timedOut) {
         const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
@@ -187,7 +201,7 @@ export async function runIdeaChecks(
   );
   if (testFiles.length > 0) {
     const command = ['python', '-m', 'unittest', 'discover', '-s', 'src/tests', '-p', 'test_*.py'];
-    const run = await runRepairCommand(command, workspace, timeoutMs);
+    const run = await runPhase(command);
     const logPath = await pushLog('unit-tests', command, run.exitCode, run.out);
     const failed = run.exitCode !== 0 || run.timedOut;
     const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
@@ -210,7 +224,7 @@ export async function runIdeaChecks(
   // 3. data interface (only when src/check_data.py exists).
   if (await pathExists(join(srcDir, 'check_data.py'))) {
     const command = ['python', 'src/check_data.py'];
-    const run = await runRepairCommand(command, workspace, timeoutMs);
+    const run = await runPhase(command);
     const logPath = await pushLog('data', command, run.exitCode, run.out);
     const failed = run.exitCode !== 0 || run.timedOut;
     const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
@@ -233,7 +247,7 @@ export async function runIdeaChecks(
   // 4. metric computability (only when src/check_metrics.py exists).
   if (await pathExists(join(srcDir, 'check_metrics.py'))) {
     const command = ['python', 'src/check_metrics.py'];
-    const run = await runRepairCommand(command, workspace, timeoutMs);
+    const run = await runPhase(command);
     const logPath = await pushLog('metrics', command, run.exitCode, run.out);
     const failed = run.exitCode !== 0 || run.timedOut;
     const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
@@ -260,7 +274,7 @@ export async function runIdeaChecks(
   if (await pathExists(join(srcDir, 'smoke.py'))) {
     smokeRan = true;
     const command = ['python', 'src/smoke.py'];
-    const run = await runRepairCommand(command, workspace, timeoutMs);
+    const run = await runPhase(command);
     const logPath = await pushLog('smoke', command, run.exitCode, run.out);
     let failed = run.exitCode !== 0 || run.timedOut;
     let failureKind: string | undefined;
