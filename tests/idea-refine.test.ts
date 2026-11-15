@@ -105,3 +105,44 @@ it('clamps long prose instead of discarding a usable verdict', async () => {
     }),
   ).not.toThrow();
 });
+
+describe('agent implementation workspace guard', () => {
+  it('accepts a real idea path on the host separator', async () => {
+    // The first version compared against a '/' prefix and refused every
+    // Windows path, i.e. the guard blocked the work it was meant to bound.
+    const { implementIdeaWithAgent } = await import('../src/idea/implement-agent.js');
+    const dir = await mkdtemp(join(tmpdir(), 'idea-guard-'));
+    const workspace = join(dir, 'ideas', 'ok-idea');
+    await mkdir(workspace, { recursive: true });
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(
+      join(workspace, 'workspace.json'),
+      JSON.stringify({ ideaId: 'ok-idea', currentVersion: 1, status: 'IMPLEMENTING' }),
+      'utf8',
+    );
+    const card = {
+      ideaId: 'ok-idea',
+      minimalExperiment: { metrics: [], baselines: [], code: 'c', data: 'd', ablations: [] },
+      mechanismChain: { steps: [], designPrincipleLink: '' },
+      nearestComparisons: [],
+      hypothesis: { statement: 's', targetProblem: 't' },
+      boundaryConditions: [],
+      risks: [],
+      budget: { maxRounds: 1, maxGpuMinutes: 1 },
+      version: 1,
+    } as never;
+    // Reaching the harness call means the guard accepted the path; a refusal
+    // would throw INVALID_ARGUMENT before anything else happened.
+    await expect(
+      implementIdeaWithAgent({
+        projectRoot: dir,
+        ideaId: 'ok-idea',
+        card,
+        measuredData: null,
+        dataPath: null,
+        policy: 'deny',
+        maxRounds: 0,
+      }),
+    ).resolves.toBeDefined();
+  });
+});

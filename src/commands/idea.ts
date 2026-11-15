@@ -2397,13 +2397,18 @@ export function registerIdeaCommand(program: Command): void {
     .option('--force', 'replace existing files under src/', false)
     .option(
       '--rounds <n>',
-      'generation/check rounds (default 3, max 4): the checker verdict is fed back each time',
+      'bounded attempts; the ARIS repair budget is 2 patches then 2 clean rebuilds',
       (value) => Number(value),
-      3,
+      4,
     )
     .option(
       '--harness <kind>',
       'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
+    )
+    .option(
+      '--no-tools',
+      'reasoning-only fallback: return whole files instead of running a coding session, for when ' +
+        'tool approvals cannot be answered at all',
     )
     .option('--json', 'machine-readable output')
     .action(
@@ -2415,6 +2420,7 @@ export function registerIdeaCommand(program: Command): void {
             force?: boolean;
             harness?: string;
             rounds?: number;
+            tools?: boolean;
             json?: boolean;
           },
         ) => {
@@ -2464,10 +2470,93 @@ export function registerIdeaCommand(program: Command): void {
             // ['image','domain','label']" on data the platform had profiled.
             const { describeProfiledCorpus } = await import('../knowledge/corpus-describe.js');
             const measuredData = await describeProfiledCorpus(root);
+            // Default path is a tool-enabled DSH coding session scoped to the
+            // idea workspace: the agent runs what it wrote, reads its own
+            // traceback and fixes it, which is what a reasoning-only "return
+            // the whole file as JSON" turn cannot do. The file-envelope loop
+            // remains as the explicit fallback for when tools are declined.
+            const { implementIdeaWithAgent } = await import('../idea/implement-agent.js');
+            const agentMode = opts.tools !== false;
             const { implementIdeaWithRefine } = await import('../idea/implement.js');
             const runId =
               (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
               `idea-implement-${ideaId}`;
+            if (agentMode) {
+              const agent = await implementIdeaWithAgent({
+                projectRoot: root,
+                ideaId,
+                card,
+                measuredData,
+                dataPath,
+                // Same convention as `ideaseek agent`: interactive where a
+                // person can answer, declined where nobody can.
+                policy: process.stdin.isTTY === true ? 'interactive' : 'deny',
+                onStep: (line) =>
+                  process.stderr.write(`  · ${line}
+`),
+                onLog: (message) =>
+                  process.stderr.write(`  · ${message}
+`),
+              });
+              if (opts.json) {
+                process.stdout.write(
+                  jsonLine({
+                    ideaId,
+                    mode: 'agent',
+                    passed: agent.passed,
+                    terminal: agent.terminal,
+                    sessionId: agent.sessionId,
+                    rounds: agent.rounds,
+                    outcome: agent.report?.outcome ?? 'failed',
+                  }),
+                );
+                return agent.passed ? 0 : 1;
+              }
+              process.stdout.write(
+                `idea implement ${ideaId} (agent session ${agent.sessionId ?? 'none'}): ` +
+                  `${agent.rounds.length} round(s) · ${agent.report?.outcome ?? 'failed'}
+`,
+              );
+              for (const round of agent.rounds) {
+                process.stdout.write(
+                  `  round ${round.round}: ${round.outcome}` +
+                    `${round.failing.length > 0 ? ` — ${round.failing.map((f) => f.phase).join(', ')} failing` : ''}
+`,
+                );
+                if (round.agentReport) {
+                  process.stdout.write(`    agent: ${round.agentReport.slice(0, 220)}
+`);
+                }
+              }
+              for (const phase of agent.report?.phases ?? []) {
+                const mark = phase.skipped ? 'skip' : phase.ok ? 'ok  ' : 'FAIL';
+                process.stdout.write(
+                  `  ${mark} ${phase.phase.padEnd(11)} ${phase.durationMs}ms` +
+                    `${phase.failureKind ? `  ${phase.failureKind}` : ''}` +
+                    `${phase.summary && !phase.ok ? `  ${phase.summary.slice(0, 140)}` : ''}
+`,
+                );
+              }
+              if (agent.passed) {
+                process.stdout.write(
+                  `SMOKE_TESTED: the idea's implementation passes the ladder (bounded smoke, not a result)
+` +
+                    `next: ideaseek idea experiment ${ideaId} --scale smoke
+`,
+                );
+                return 0;
+              }
+              process.stdout.write(
+                agent.terminal
+                  ? 'stopped: the agent turn left src/ unchanged or wrote nothing runnable, so ' +
+                      'another round costs tokens and changes nothing\n' +
+                      `  last session: ${agent.sessionId ?? 'none'}\n` +
+                      `next: run it interactively where approvals can be answered: ideaseek idea implement ${ideaId}\n`
+                  : `not yet passing: ${agent.report?.outcome ?? 'failed'}\n` +
+                      `next: resume the session interactively, or: ideaseek idea check ${ideaId}\n`,
+              );
+              return 1;
+            }
             const result = await implementIdeaWithRefine({
               harness,
               card,
