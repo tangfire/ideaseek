@@ -2735,6 +2735,161 @@ export function registerIdeaCommand(program: Command): void {
     );
 
   idea
+    .command('align-metrics')
+    .description(
+      "map the card's metric names onto the locked protocol's identifiers (agent judgement, " +
+        'quoted evidence; --apply rewrites config/train.json)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option('--apply', 'rewrite config/train.json metrics with the aligned identifiers')
+    .option('--harness <kind>', 'harness backend (dsh by default)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { apply?: boolean; harness?: string; json?: boolean }) => {
+          const root = await openRoot();
+          const shared = await import('./shared.js');
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({
+            cwd: root,
+            harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
+          });
+          try {
+            const harness = runtime.harness;
+            if (!harness || harness.kind === 'fake') {
+              throw new IdeaseekError(
+                'USER_INPUT_REQUIRED',
+                `metric alignment needs the real harness (currently ${harness?.kind ?? 'none'}); ` +
+                  'configure a key with: ideaseek models setup',
+              );
+            }
+            const { loadIdeaCard } = await import('../idea/workspace.js');
+            const card = await loadIdeaCard(root, ideaId);
+            if (!card) {
+              throw new IdeaseekError('FILE_NOT_FOUND', `no IdeaCard for ${ideaId}`);
+            }
+            const { readLockedProtocol, protocolMetricNames } =
+              await import('../experiment/protocol-source.js');
+            const protocol = await readLockedProtocol(runtime);
+            const metricNames = protocolMetricNames(protocol ?? null);
+            if (!protocol || metricNames.length === 0) {
+              process.stdout.write(
+                `align-metrics ${ideaId}: no locked protocol to align against\n` +
+                  'next: ideaseek protocol propose, then: ideaseek protocol confirm\n',
+              );
+              return 2;
+            }
+            const align = await import('../idea/metric-align.js');
+            const alignment = await align.alignIdeaMetrics({
+              harness,
+              card,
+              protocol,
+              ideaId,
+              runId: `align-${ideaId}`,
+            });
+            if (!alignment) {
+              process.stdout.write(
+                `align-metrics ${ideaId}: the harness returned nothing usable\n` +
+                  '  the platform will not invent a mapping to get past the metric guard; ' +
+                  'fix the names by hand or re-lock the protocol\n' +
+                  `next: ideaseek idea experiment ${ideaId} --scale smoke\n`,
+              );
+              return 1;
+            }
+            const path = await align.writeMetricAlignment(root, alignment);
+            const declared = card.minimalExperiment.metrics;
+            let applied: { before: string[]; after: string[]; path: string } | null = null;
+            if (opts.apply) {
+              const required = align.requiredPrimaryMetric(protocol);
+              const acted = new Set(
+                alignment.mappings
+                  .filter((mapping) => mapping.confidence >= align.MIN_APPLIED_ALIGNMENT_CONFIDENCE)
+                  .map((mapping) => mapping.protocolMetric),
+              );
+              if (required && !acted.has(required)) {
+                // Renaming what remains would advertise a complete mapping while
+                // the primary is still unproduced, so the apply is refused and
+                // the gap is what gets reported. The gate is the protocol's own
+                // first primary metric — the same one the experiment guard
+                // requires — because a stricter gate blocks the command that is
+                // the only route out of a config it just refused to rewrite.
+                process.stdout.write(
+                  `align-metrics ${ideaId}: not applied — the protocol's primary metric ` +
+                    `${required} has no card metric behind it at confidence ` +
+                    `${align.MIN_APPLIED_ALIGNMENT_CONFIDENCE} or above, so the experiment would ` +
+                    'still fail to report the one number it has to be comparable on\n' +
+                    `  mapping kept for review: ${path}\n` +
+                    `next: revise the card (ideaseek idea revise ${ideaId}) or re-lock the protocol ` +
+                    'deliberately, then: ideaseek idea align-metrics ' +
+                    ideaId +
+                    ' --apply\n',
+                );
+                return 2;
+              }
+              applied = await align.applyMetricAlignment({
+                projectRoot: root,
+                ideaId,
+                declaredMetrics: declared,
+                alignment,
+              });
+            }
+
+            if (opts.json) {
+              process.stdout.write(jsonLine({ ideaId, alignment, applied, reportPath: path }));
+              return 0;
+            }
+            process.stdout.write(
+              `align-metrics ${ideaId} against protocol ${protocol.protocolId ?? '(unknown)'}:\n`,
+            );
+            for (const mapping of alignment.mappings) {
+              process.stdout.write(
+                `  ${mapping.protocolMetric ? '→' : '·'} ${mapping.cardMetric.slice(0, 70)}\n` +
+                  `     ${mapping.protocolMetric ?? 'no protocol metric'}\n` +
+                  `     ${mapping.reasoning.slice(0, 220)}\n`,
+              );
+              for (const line of mapping.evidence.slice(0, 2)) {
+                process.stdout.write(`     evidence: ${line.slice(0, 160)}\n`);
+              }
+            }
+            if (alignment.unmeasuredProtocolMetrics.length > 0) {
+              process.stdout.write(
+                `  unmeasured protocol metric(s): ${alignment.unmeasuredProtocolMetrics.join(', ')}\n`,
+              );
+            }
+            for (const weak of align.lowConfidenceMappings(alignment)) {
+              // The agent's own doubt is the most useful line in this output, so
+              // it is printed rather than silently dropped by the gate.
+              process.stdout.write(
+                `  not applied (confidence ${weak.confidence.toFixed(2)} < ` +
+                  `${align.MIN_APPLIED_ALIGNMENT_CONFIDENCE}): ${weak.cardMetric.slice(0, 70)} ↛ ` +
+                  `${weak.protocolMetric}\n     ${weak.reasoning.slice(0, 200)}\n`,
+              );
+            }
+            process.stdout.write(`  summary: ${alignment.summary.slice(0, 400)}\n`);
+            process.stdout.write(`  record: ${path}\n`);
+            if (applied) {
+              process.stdout.write(
+                `  config metrics: [${applied.before.join(', ').slice(0, 160)}]\n` +
+                  `             → [${applied.after.join(', ').slice(0, 160)}]\n` +
+                  `next: ideaseek idea implement ${ideaId} (the code must emit these keys), ` +
+                  'then: ideaseek idea check ' +
+                  ideaId +
+                  '\n',
+              );
+            } else {
+              process.stdout.write(
+                `next: review the mapping, then: ideaseek idea align-metrics ${ideaId} --apply\n`,
+              );
+            }
+            return 0;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
+    );
+
+  idea
     .command('check')
     .description(
       'Code Implementer gate: static + unit tests + data/metrics interface + smoke micro-run',

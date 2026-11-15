@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.local/schema/metric-alignment-v1.json",
+  "title": "Metric Alignment v1",
+  "description": "An agent's mapping between an idea card's metric names and the identifiers of the project's locked protocol. Produced because the two names come from different model calls with no shared vocabulary: ideation writes prose ('unseen-domain top-1 accuracy (held-out domain)') while the protocol carries an identifier with its definition attached ('target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)'). Deciding whether those are the same measurement is a judgement, so it is asked of an agent — but the agent may only choose among the protocol identifiers it was given or say it does not match, because a guessed rename would silently change what an experiment claims to measure. `evidence` per mapping is required: an alignment that cannot quote the protocol's own definition is a guess and must stay unresolved.",
+  "type": "object",
+  "required": ["mappings", "unmeasuredProtocolMetrics", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "mappings": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "required": ["cardMetric", "protocolMetric", "reasoning", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "cardMetric": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "The metric as the idea card declares it, verbatim."
+          },
+          "protocolMetric": {
+            "type": ["string", "null"],
+            "maxLength": 200,
+            "description": "One of the protocol identifiers handed to the call, or null when the card metric measures something the protocol does not define. Never a new name: inventing one is how a primary metric changes silently."
+          },
+          "reasoning": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 900,
+            "description": "Why these are or are not the same measurement, naming the part that decides it (population, split, aggregation), not restating the two strings."
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 300
+            },
+            "description": "Quoted text from the protocol definition and/or the card the verdict rests on."
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "unmeasuredProtocolMetrics": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "description": "Protocol identifiers no card metric covers. These are what the idea would still fail to report, so the gap stays visible instead of being smoothed over."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 900,
+      "description": "One paragraph a researcher can act on: what aligned, what did not, and what has to change if the disagreement is real (revisit the card, or re-lock the protocol deliberately)."
+    }
+  }
+}

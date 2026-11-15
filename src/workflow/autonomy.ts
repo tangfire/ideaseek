@@ -309,7 +309,7 @@ export function assertMetricsMatchProtocol(
       `protocol primary/secondary metrics missing from the experiment spec: ${missing.map(metricIdentifier).join(', ')} — ` +
         `the spec declares [${declared.join(', ') || 'nothing'}]. ` +
         'Either the card names this metric differently from the locked protocol ' +
-        '(fix the card, or re-lock the protocol deliberately: ideaseek protocol propose/confirm) ' +
+        '(map the names with evidence: ideaseek idea align-metrics <ideaId> --apply) ' +
         'or the metric was dropped from the experiment (add it to config/train.json). ' +
         'Metrics may not change silently.',
       { missing, declared },
