@@ -283,3 +283,26 @@ describe('buildDependencyContext', () => {
     expect(context.length).toBeLessThanOrEqual(12_100);
   });
 });
+
+it("does not turn the tree's own modules into pip packages", async () => {
+  // Real failure this replaces: a generated idea importing `src.geometry`
+  // derived a requirement named `geometry`, the platform then tried to pip
+  // install its own code, and every idea check paid for a venv.
+  const dir = await mkdtemp(join(tmpdir(), 'dep-local-'));
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  await mkdir(join(dir, 'src'), { recursive: true });
+  await writeFile(join(dir, 'src', 'geometry.py'), 'def project(x):\n    return x\n', 'utf8');
+  await writeFile(join(dir, 'pkg.py'), 'X = 1\n', 'utf8');
+  const source = [
+    'import numpy as np',
+    'from src.geometry import project',
+    'from pkg import X',
+    'import pandas',
+  ].join('\n');
+  const specs = await deriveRequirementsForWorktree(source, dir);
+  expect(specs).toContain('numpy');
+  expect(specs).toContain('pandas');
+  expect(specs).not.toContain('geometry');
+  expect(specs).not.toContain('pkg');
+  expect(specs).not.toContain('src');
+});

@@ -319,25 +319,45 @@ export function deriveImportRoots(source: string): string[] {
  * the repository's own modules, and pip has nothing to install for them (the
  * same distinction that keeps repair from pip-installing an internal package).
  */
+/**
+ * Which import roots are this tree's own modules rather than pip packages.
+ *
+ * Only the workspace root was checked, so `from src.geometry import ...` in a
+ * generated implementation became a requirement called `geometry` and the
+ * platform tried to pip install its own code. Checking under src/ as well
+ * keeps local modules local, which is also what made every idea check pay for
+ * a venv it did not need.
+ */
+async function isLocalModule(worktreeDir: string, root: string): Promise<boolean> {
+  const { stat } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const name = root.includes('.') ? root.split('.')[root.split('.').length - 1]! : root;
+  const candidates = [
+    join(worktreeDir, root),
+    join(worktreeDir, name),
+    join(worktreeDir, 'src', root),
+    join(worktreeDir, 'src', name),
+  ];
+  for (const candidate of candidates) {
+    for (const probePath of [candidate, `${candidate}.py`, join(candidate, '__init__.py')]) {
+      if (await stat(probePath).then(
+        () => true,
+        () => false,
+      )) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export async function deriveRequirementsForWorktree(
   source: string,
   worktreeDir: string,
 ): Promise<string[]> {
-  const { stat } = await import('node:fs/promises');
-  const { join } = await import('node:path');
   const specs = new Set<string>();
   for (const root of deriveImportRoots(source)) {
-    const asPath = join(worktreeDir, root);
-    const local =
-      (await stat(asPath).then(
-        () => true,
-        () => false,
-      )) ||
-      (await stat(`${asPath}.py`).then(
-        () => true,
-        () => false,
-      ));
-    if (local) continue;
+    if (await isLocalModule(worktreeDir, root)) continue;
     const spec = DISTRIBUTION_NAMES[root] ?? root.toLowerCase();
     if (validateRequirementSpec(spec)) specs.add(spec);
   }

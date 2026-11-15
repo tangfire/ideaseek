@@ -125,12 +125,52 @@ export async function runIdeaChecks(
    * IDEASEEK_DATASET_ROOTS / IDEASEEK_DATA_PATH while `idea check` handed it
    * neither, so a correct implementation reported "data root not found; tried
    * []" — the empty list is the tell that the contract was never delivered.
+   *
+   * The method venv is built here too. The comparison ladder had one and the
+   * idea ladder did not, so generated idea code that imported numpy hit the
+   * host's numpy and failed as `missing-dependency` on a version conflict the
+   * platform could have resolved. A venv that cannot be built is a warning,
+   * never an abort: the phases then classify the missing dependency honestly.
    */
+  let venvOverride: Record<string, string> | undefined;
+  {
+    const { readFile } = await import('node:fs/promises');
+    const sources = (await collectPythonFiles(srcDir)).slice(0, 12);
+    const joined: string[] = [];
+    for (const file of sources) {
+      joined.push(await readFile(join(srcDir, file), 'utf8').catch(() => ''));
+    }
+    if (joined.join('\n').trim()) {
+      const { deriveRequirementsForWorktree } = await import('../comparison/dep-inference.js');
+      const { ensureMethodVenv, venvEnv } = await import('../comparison/repair.js');
+      const requirements = await deriveRequirementsForWorktree(joined.join('\n'), workspace);
+      // No import probe: a distribution's module name is not derivable from its
+      // package name (pillow is PIL), so probing produces false "missing" and
+      // builds venvs that were never needed. The derivation is what decides —
+      // stdlib-only code derives nothing and runs on the host python.
+      if (requirements.length > 0) {
+        const venv = await ensureMethodVenv(workspace, { packages: requirements });
+        if (venv.ok) venvOverride = venvEnv(workspace);
+        else {
+          process.stderr.write(
+            `warning: idea venv could not be built: ${venv.detail.slice(0, 200)}\n` +
+              '  continuing with the host python; the phases will classify the missing dependency\n',
+          );
+        }
+      }
+    }
+  }
+
   const runPhase = async (
     command: string[],
   ): Promise<Awaited<ReturnType<typeof runRepairCommand>>> => {
     const { mergeRunEnv } = await import('../experiment/run-env.js');
-    return runRepairCommand(command, workspace, timeoutMs, await mergeRunEnv(projectRoot));
+    return runRepairCommand(
+      command,
+      workspace,
+      timeoutMs,
+      await mergeRunEnv(projectRoot, venvOverride),
+    );
   };
 
   // 1. static: py_compile every src .py + parse config/*.json in-process.
