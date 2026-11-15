@@ -63,6 +63,12 @@ Each IdeaCard must satisfy ALL of:
   DRAFT_COMPOSITION.
 - "competingExplanations", "boundaryConditions", "risks": non-empty arrays.
 - "minimalExperiment": {"code", "data", "baselines", "metrics", "ablations"}.
+  Metric names are machine keys, not sentences: an identifier matching
+  [A-Za-z][A-Za-z0-9_]* — no spaces, no prose in parentheses. The protocol's
+  identifiers are listed in the round context and must appear exactly as given:
+  a card that renames the primary metric cannot be run, because the experiment
+  spec is checked against the locked protocol. Say what a metric measures in
+  hypothesis.expectedOutcome instead.
 - "falsification": {"conditions": non-empty}.
 - "budget": {"maxRounds": int ≥1, "maxGpuMinutes": int ≥1}.
 - "stopConditions": non-empty; "createdAt": epoch milliseconds.
@@ -131,6 +137,11 @@ function buildRoundContext(round: IdeationRound): string {
     `Input manifest: ${round.snapshots.inputManifestHash ?? 'absent'}`,
     `Research map: ${round.snapshots.researchMapHash ?? 'absent'}`,
     `Protocol: ${round.snapshots.protocolId ?? 'absent'}${round.snapshots.protocolHash ? ` (${round.snapshots.protocolHash})` : ''}`,
+    `Protocol metric identifiers (a card's minimalExperiment.metrics MUST declare these, verbatim, plus any extra metric it needs): ${
+      round.snapshots.protocolMetrics.length > 0
+        ? round.snapshots.protocolMetrics.join(', ')
+        : 'none locked yet'
+    }`,
     `Comparisons: ${
       round.snapshots.comparisonSet.length > 0
         ? round.snapshots.comparisonSet

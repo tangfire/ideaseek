@@ -31,6 +31,8 @@ export interface RoundSnapshots {
   researchMapHash: ContentHash | null;
   protocolId: string | null;
   protocolHash: string | null;
+  /** Metric identifiers of the locked protocol (empty when none is locked). */
+  protocolMetrics: string[];
   comparisonSet: { methodId: string; status: string; commit: string | null }[];
   datasetRootHashes: string[];
 }
@@ -126,6 +128,7 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
 
   let protocolId: string | null = null;
   let protocolHash: string | null = null;
+  let protocolMetrics: string[] = [];
   try {
     const { ProjectRuntime } = await import('../workflow/runtime.js');
     const runtime = await ProjectRuntime.open({ cwd: projectRoot, recover: false });
@@ -141,6 +144,20 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
           const lock = await runtime.db.getProtocolLock(protocolId);
           protocolHash = lock?.protocolHash ?? null;
         }
+        // The metric vocabulary the project is already committed to. An idea
+        // card that invents its own metric spelling cannot be run: the primary
+        // metric guard refused a real `idea experiment` because the ideation
+        // round wrote "unseen-domain top-1 accuracy" where the locked protocol
+        // says target_unseen_domain_top1_accuracy. Two model calls, no shared
+        // vocabulary, and the mismatch surfaced as a user action item. Prose is
+        // stripped because the identifier is what a spec must declare; the
+        // definition stays readable in the protocol itself.
+        const { metricIdentifier } = await import('../core/metric-id.js');
+        const { protocolMetricNames, readLockedProtocol } =
+          await import('../experiment/protocol-source.js');
+        protocolMetrics = protocolMetricNames(await readLockedProtocol(runtime)).map(
+          metricIdentifier,
+        );
       }
       const methods = await runtime.db.listComparisons({});
       const comparisonSet = methods.map((method) => ({
@@ -162,6 +179,7 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
         researchMapHash,
         protocolId,
         protocolHash,
+        protocolMetrics,
         comparisonSet,
         datasetRootHashes,
       };
@@ -176,6 +194,7 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
       researchMapHash,
       protocolId,
       protocolHash,
+      protocolMetrics,
       comparisonSet: [],
       datasetRootHashes: [],
     };

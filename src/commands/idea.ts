@@ -2501,7 +2501,15 @@ export function registerIdeaCommand(program: Command): void {
                 'implementation started by ideaseek idea implement',
               );
             }
-            const markImplemented = async (): Promise<IdeaRunStatus> => {
+            const markImplemented = async (
+              report: Awaited<ReturnType<typeof runIdeaChecks>>,
+            ): Promise<IdeaRunStatus> => {
+              // The report is the artifact the next queue step reads
+              // (experiments/check-report.json), and only `idea check` wrote it:
+              // an idea implemented successfully by `idea implement` was then
+              // refused by `idea experiment` with "has no passing check report",
+              // i.e. the platform had run the gate and thrown the verdict away.
+              await saveCheckReport(root, report);
               const current = (await loadWorkspaceMeta(root, ideaId)).status;
               return current === 'IMPLEMENTING'
                 ? (
@@ -2532,7 +2540,7 @@ export function registerIdeaCommand(program: Command): void {
 `),
               });
               const status = agent.passed
-                ? await markImplemented()
+                ? await markImplemented(agent.report!)
                 : (await loadWorkspaceMeta(root, ideaId)).status;
               if (opts.json) {
                 process.stdout.write(
@@ -2629,7 +2637,7 @@ export function registerIdeaCommand(program: Command): void {
             const report = result.report;
             const passed = report.outcome === 'passed';
             const status = passed
-              ? await markImplemented()
+              ? await markImplemented(report)
               : (await loadWorkspaceMeta(root, ideaId)).status;
             if (opts.json) {
               process.stdout.write(
