@@ -1,4 +1,5 @@
 import { IdeaseekError } from '../core/errors.js';
+import { metricIdentifier } from '../core/metric-id.js';
 
 /**
  * Automation policy (docs/AUTONOMY_POLICY.md): guided (default) automates
@@ -272,20 +273,46 @@ export async function recordDecision(
  * Primary-metric guard: when a protocol exists, every protocol metric must
  * still appear in the experiment spec — a silent 主指标 change is refused
  * in every mode (re-lock the protocol to change metrics deliberately).
+ *
+ * Matched by metric identity, not by string equality on the recorded name.
+ * Protocol names carry their measurement definition as prose ("… (held-out
+ * domain value, all samples, %)"), which the spec has no way to reproduce
+ * verbatim; the first real `idea experiment` on FDG was refused for exactly
+ * that reason with a message that named a metric the config did declare.
+ *
+ * `metricIdentifier` and not `metricKey`: the comparison side needs the
+ * looser key because a model writes result dict keys by ear, but this is a
+ * guard, and folding case and punctuation would let `accuracy` answer for
+ * `Accuracy` or two differently-defined `top1_acc (…)` variants stand in for
+ * each other. Dropping or swapping a metric still fails here.
  */
 export function assertMetricsMatchProtocol(
   specMetrics: { name: string }[],
   protocolMetrics: { name: string }[],
 ): void {
   if (protocolMetrics.length === 0) return;
-  const specNames = new Set(specMetrics.map((m) => m.name));
-  const missing = protocolMetrics.map((m) => m.name).filter((name) => !specNames.has(name));
+  const specNames = new Set(specMetrics.map((metric) => metricIdentifier(metric.name)));
+  const missing = protocolMetrics
+    .map((metric) => metric.name)
+    .filter((name) => !specNames.has(metricIdentifier(name)));
   if (missing.length > 0) {
+    // Both vocabularies have to be on the page. The two names usually come from
+    // two different model calls — the ideation round wrote the card's prose
+    // metric, the protocol call wrote an identifier — so a message that quotes
+    // only one side asks the reader to guess what "align" means. When the spec
+    // does declare something that reads like the protocol metric, say so: the
+    // honest answer is then "the card and the protocol disagree on the name",
+    // which is a re-lock or a card revision, not a config edit.
+    const declared = specMetrics.map((metric) => metricIdentifier(metric.name));
     throw new IdeaseekError(
       'USER_INPUT_REQUIRED',
-      `protocol primary/secondary metrics missing from the experiment spec: ${missing.join(', ')} — ` +
-        'align config/train.json with the locked protocol (metrics may not change silently)',
-      { missing },
+      `protocol primary/secondary metrics missing from the experiment spec: ${missing.map(metricIdentifier).join(', ')} — ` +
+        `the spec declares [${declared.join(', ') || 'nothing'}]. ` +
+        'Either the card names this metric differently from the locked protocol ' +
+        '(fix the card, or re-lock the protocol deliberately: ideaseek protocol propose/confirm) ' +
+        'or the metric was dropped from the experiment (add it to config/train.json). ' +
+        'Metrics may not change silently.',
+      { missing, declared },
     );
   }
 }

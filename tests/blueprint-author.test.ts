@@ -4,12 +4,8 @@ import {
   buildBlueprintContext,
   type BlueprintEvidence,
 } from '../src/comparison/blueprint-author.js';
-import {
-  blueprintMetricNames,
-  checkMetricFeasibility,
-  metricIdentifier,
-  metricKey,
-} from '../src/comparison/reproduce.js';
+import { blueprintMetricNames, checkMetricFeasibility } from '../src/comparison/reproduce.js';
+import { metricIdentifier, metricKey } from '../src/core/metric-id.js';
 
 it('shows the identifier, not the comparison key', () => {
   // An earlier version listed the normalized key in the prompt, and the model

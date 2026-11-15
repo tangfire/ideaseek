@@ -3,7 +3,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import type { ReproductionBlueprint } from './types.js';
-import { metricIdentifier } from './reproduce.js';
+import { metricIdentifier } from '../core/metric-id.js';
 
 /**
  * Produces a ReproductionBlueprint from the papers, so `baseline reproduce`

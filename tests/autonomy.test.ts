@@ -378,3 +378,24 @@ describe('autonomy enforcement (CLI)', () => {
     expect(workspace.parentIdeaId).toBe('parent-idea');
   }, 120_000);
 });
+
+it('matches protocol metrics by identity, not by their prose', () => {
+  // Observed on a real FDG run: `idea experiment` refused with
+  // "protocol primary/secondary metrics missing from the experiment spec:
+  // target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)"
+  // while config/train.json declared exactly that metric. The prose is part of
+  // the protocol's name field, and no producer can reproduce it verbatim.
+  const protocol = [
+    { name: 'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)' },
+  ];
+  expect(() =>
+    assertMetricsMatchProtocol([{ name: 'target_unseen_domain_top1_accuracy' }], protocol),
+  ).not.toThrow();
+
+  // Still a guard: a dropped metric and a lookalike are both refused.
+  expect(() => assertMetricsMatchProtocol([{ name: 'loss' }], protocol)).toThrow(/missing/);
+  expect(() =>
+    assertMetricsMatchProtocol([{ name: 'Target_unseen_domain_top1_accuracy' }], protocol),
+  ).toThrow(/missing/);
+  expect(() => assertMetricsMatchProtocol([{ name: 'a (x)' }], [{ name: 'a (y)' }])).not.toThrow();
+});

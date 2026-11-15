@@ -681,12 +681,9 @@ export function registerComparisonCommand(program: Command): void {
 
             const { authorBlueprint, describeBlueprint } =
               await import('../comparison/blueprint-author.js');
-            const {
-              blueprintMetricNames,
-              checkMetricFeasibility,
-              metricIdentifier,
-              validateReproductionBlueprint,
-            } = await import('../comparison/reproduce.js');
+            const { blueprintMetricNames, checkMetricFeasibility, validateReproductionBlueprint } =
+              await import('../comparison/reproduce.js');
+            const { metricIdentifier } = await import('../core/metric-id.js');
             const runId =
               (await runtime.db.getLatestRun(runtime.project.id))?.runId ?? `blueprint-${methodId}`;
             const evidenceBase = {

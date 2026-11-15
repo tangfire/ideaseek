@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256Of, type ContentHash } from '../core/hash.js';
 import { redactSecrets } from '../core/redact.js';
+import { metricIdentifier, metricKey } from '../core/metric-id.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import {
   classifyRepairFailure,
@@ -456,15 +457,6 @@ export function blueprintMetricNames(blueprint: ReproductionBlueprint): string[]
  * tracked separately, because it needs a migrator for already-locked protocols.
  */
 /** The name as it should be written: identifier only, definition dropped. */
-export function metricIdentifier(name: string): string {
-  return name.replace(/\s*\(.*$/, '').trim();
-}
-
-export function metricKey(name: string): string {
-  return metricIdentifier(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-}
 
 export function checkMetricFeasibility(
   protocolMetrics: string[],
