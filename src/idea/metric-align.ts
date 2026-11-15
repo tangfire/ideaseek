@@ -292,7 +292,13 @@ export function alignedMetricNames(declared: string[], alignment: MetricAlignmen
   );
   const out: string[] = [];
   for (const metric of declared) {
-    const value = byCard.get(metric.trim()) ?? metricIdentifier(metric);
+    // An unaligned metric keeps its declared string verbatim. Stripping its
+    // trailing prose looked harmless and was not: the idea's own code emits the
+    // key the card declared, so rewriting `in-domain accuracy (no transfer
+    // cost)` to `in-domain accuracy` made the config disagree with the program
+    // and the check ladder failed a passing idea. This command renames a metric
+    // onto a protocol identifier or leaves it entirely alone.
+    const value = byCard.get(metric.trim()) ?? metric;
     if (value && !out.includes(value)) out.push(value);
   }
   return out;

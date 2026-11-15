@@ -255,3 +255,33 @@ it('will not act on a mapping the agent itself calls shaky', () => {
   // guard requires; a wider gate would block the repair route.
   expect(requiredPrimaryMetric(PROTOCOL)).toBe('target_unseen_domain_top1_accuracy');
 });
+
+it('leaves an unaligned metric exactly as the card declared it', () => {
+  // The identifier-stripping shortcut here broke a passing idea: the code
+  // emits the key the card declared, so rewriting the config's copy made
+  // config and program disagree, and `idea check` failed on
+  // "smoke metrics missing configured names: in-domain accuracy".
+  const alignment: MetricAlignment = {
+    ideaId: 'gen-x',
+    protocolId: 'p',
+    mappings: [
+      {
+        cardMetric: 'unseen-domain top-1 accuracy (held-out domain)',
+        protocolMetric: 'target_unseen_domain_top1_accuracy',
+        reasoning: 'same population, split and aggregation',
+        evidence: ['held-out domain value, all samples, %'],
+        confidence: 0.9,
+      },
+    ],
+    unmeasuredProtocolMetrics: ['worst_domain_accuracy'],
+    summary: 'one aligned primary, the rest left alone',
+    createdAt: 0,
+    alignmentHash: 'h',
+  };
+  expect(
+    alignedMetricNames(
+      ['unseen-domain top-1 accuracy (held-out domain)', 'in-domain accuracy (no transfer cost)'],
+      alignment,
+    ),
+  ).toEqual(['target_unseen_domain_top1_accuracy', 'in-domain accuracy (no transfer cost)']);
+});
