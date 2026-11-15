@@ -1,6 +1,8 @@
 import type { Command } from 'commander';
 import { basename } from 'node:path';
 import { detectEnvironment } from '../runtime/detect.js';
+import { ProjectRuntime } from '../workflow/runtime.js';
+import { adviseNext } from './next.js';
 import { initializeProject } from './init.js';
 import { performScan } from './inputs.js';
 import { performSetup } from './setup.js';
@@ -29,13 +31,30 @@ export function registerStartCommand(program: Command): void {
         const env = await detectEnvironment(cwd);
 
         const question = opts.question ?? '';
-        const nextCommand =
-          scan.files > 0 && !question
-            ? 'ideaseek run'
-            : `ideaseek run --question "${question || '你的研究问题'}"`;
-        const guidance = scan.files
-          ? '输入已就绪，可以创建工作流（demo 管线会先跑通恢复链路）'
-          : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），再启动 run';
+        // Ask the same advisor `ideaseek start`'s own help line would: this
+        // command used to hardcode `ideaseek run` (the fake-worker demo
+        // pipeline) as the next step for a project that had just been shown to
+        // contain papers. Two guidance sources meant the two could drift, and
+        // this one did.
+        let guidance = scan.files
+          ? '输入已就绪，平台先读一遍：解析、建索引、给出缺口评估'
+          : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），再回来跑 ideaseek start';
+        let nextCommand = question
+          ? `ideaseek prepare --question "${question}"`
+          : 'ideaseek prepare --question "你的研究问题"';
+        try {
+          const runtime = await ProjectRuntime.open({ cwd });
+          try {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            const advice = await adviseNext(runtime, run);
+            guidance = advice.suggestion;
+            nextCommand = advice.command;
+          } finally {
+            await runtime.close();
+          }
+        } catch {
+          // A guidance read must never fail a bootstrap that already succeeded.
+        }
 
         if (opts.json) {
           process.stdout.write(

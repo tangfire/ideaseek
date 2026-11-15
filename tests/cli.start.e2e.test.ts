@@ -50,7 +50,13 @@ describe('ideaseek start', () => {
     expect(payload.question).toBe('如何减少遗忘？');
     expect(payload.environment.node.supported).toBe(true);
     expect(payload.scan.files).toBe(0); // fresh project has no inputs yet
-    expect(payload.next).toContain('ideaseek run --question');
+    // A brand-new project is routed into the research chain, not the fake
+    // worker demo: `run` was the Phase 0 skeleton's answer and would have sent
+    // a user with papers into a pipeline that reads their inputs as nothing.
+    expect(payload.next).not.toContain('ideaseek run');
+    // With no inputs at all the assessment's own gap routing answers, so the
+    // exact command is its business — being off the demo pipeline is the rule.
+    expect(payload.next).toMatch(/ideaseek /);
 
     // Full workspace + question persisted + manifest written.
     for (const entry of [
@@ -80,7 +86,8 @@ describe('ideaseek start', () => {
     const configAgain = await readFile(join(dir, 'research.yaml'), 'utf8');
     expect(configAgain).toContain('如何减少遗忘？');
 
-    // With inputs present and no fresh question, `next` points at plain run.
+    // With papers present, the advice must come from the material assessment —
+    // the missing question is the real blocker, not "no run exists yet".
     await writeFile(join(dir, 'papers', 'a.pdf'), '%PDF-1.4');
     const third = await runCli(dir, ['start', '--json']);
     expect(third.code).toBe(0);
@@ -89,7 +96,7 @@ describe('ideaseek start', () => {
       next: string;
     };
     expect(thirdPayload.scan.files).toBe(1);
-    expect(thirdPayload.next).toBe('ideaseek run');
+    expect(thirdPayload.next).not.toContain('ideaseek run');
 
     const text = await runCli(dir, ['start']);
     expect(text.code).toBe(0);
