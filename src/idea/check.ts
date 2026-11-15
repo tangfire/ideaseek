@@ -45,8 +45,10 @@ export interface IdeaCheckReport {
    * passed      — every executed phase ok AND smoke ran (queue-eligible)
    * smoke-missing — executed phases ok but src/smoke.py absent
    * failed      — at least one executed phase failed
+   * not-implemented — src/ holds no python at all; nothing was run, so there is
+   *                   no verdict about code quality (docs/CLI_SPEC exit 2)
    */
-  outcome: 'passed' | 'smoke-missing' | 'failed';
+  outcome: 'passed' | 'smoke-missing' | 'failed' | 'not-implemented';
   phases: IdeaCheckPhaseResult[];
 }
 
@@ -97,6 +99,12 @@ export async function runIdeaChecks(
   const startedAt = Date.now();
   const phases: IdeaCheckPhaseResult[] = [];
   const codeHash = await hashIdeaSource(projectRoot, ideaId);
+  // An empty src/ is a workspace nobody has implemented yet, which is a
+  // different fact from "the implementation fails" and needs a different next
+  // step. The old code ran a synthetic failing command, so both printed
+  // FAILED static and the reader went hunting for a bug in files that do not
+  // exist.
+  let notImplemented = false;
 
   const pushLog = async (
     phase: IdeaCheckPhase,
@@ -112,47 +120,62 @@ export async function runIdeaChecks(
   // 1. static: py_compile every src .py + parse config/*.json in-process.
   {
     const files = await collectPythonFiles(srcDir);
-    const command = files.length
-      ? ['python', '-m', 'py_compile', ...files.map((f) => join(srcDir, f))]
-      : ['python', '-c', 'raise SystemExit("no python files under src/")'];
-    const run = await runRepairCommand(command, workspace, timeoutMs);
-    let failure: { kind: string; summary: string } | null = null;
-    if (run.exitCode !== 0 || run.timedOut) {
-      const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
-      failure = { kind: classified.kind, summary: classified.summary };
+    if (files.length === 0) {
+      // Nothing to check is not a failing check. The old version ran a
+      // synthetic `python -c raise SystemExit(...)` so an untouched workspace
+      // reported the same FAILED static phase as broken code, and the reader
+      // went looking for a bug in files that do not exist.
+      notImplemented = true;
+      phases.push({
+        phase: 'static',
+        ok: false,
+        skipped: true,
+        exitCode: 0,
+        durationMs: 0,
+        command: [],
+        failureKind: 'not-implemented',
+        summary: `no python files under src/ yet — run: ideaseek idea scaffold ${ideaId}`,
+      });
     } else {
-      // config JSON must parse (invalid config is a static error).
-      const configDir = join(workspace, 'config');
-      try {
-        const { readFile } = await import('node:fs/promises');
-        for (const name of await readdir(configDir)) {
-          if (!name.endsWith('.json')) continue;
-          try {
-            JSON.parse(await readFile(join(configDir, name), 'utf8'));
-          } catch (error) {
-            failure = {
-              kind: 'syntax-error',
-              summary: `config/${name} is not valid JSON: ${(error as Error).message}`,
-            };
-            break;
+      const command = ['python', '-m', 'py_compile', ...files.map((f) => join(srcDir, f))];
+      const run = await runRepairCommand(command, workspace, timeoutMs);
+      let failure: { kind: string; summary: string } | null = null;
+      if (run.exitCode !== 0 || run.timedOut) {
+        const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+        failure = { kind: classified.kind, summary: classified.summary };
+      } else {
+        // config JSON must parse (invalid config is a static error).
+        const configDir = join(workspace, 'config');
+        try {
+          const { readFile } = await import('node:fs/promises');
+          for (const name of await readdir(configDir)) {
+            if (!name.endsWith('.json')) continue;
+            try {
+              JSON.parse(await readFile(join(configDir, name), 'utf8'));
+            } catch (error) {
+              failure = {
+                kind: 'syntax-error',
+                summary: `config/${name} is not valid JSON: ${(error as Error).message}`,
+              };
+              break;
+            }
           }
+        } catch {
+          // no config dir yet — nothing to parse
         }
-      } catch {
-        // no config dir yet — nothing to parse
       }
+      const logPath = await pushLog('static', command, run.exitCode, run.out);
+      phases.push({
+        phase: 'static',
+        ok: failure === null && run.exitCode === 0 && !run.timedOut,
+        skipped: false,
+        exitCode: run.exitCode,
+        durationMs: run.durationMs,
+        command,
+        ...(failure ? { failureKind: failure.kind, summary: failure.summary } : {}),
+        logPath,
+      });
     }
-    const durationMs = run.durationMs;
-    const logPath = await pushLog('static', command, run.exitCode, run.out);
-    phases.push({
-      phase: 'static',
-      ok: failure === null && run.exitCode === 0 && !run.timedOut,
-      skipped: false,
-      exitCode: run.exitCode,
-      durationMs,
-      command,
-      ...(failure ? { failureKind: failure.kind, summary: failure.summary } : {}),
-      logPath,
-    });
   }
 
   // 2. unit tests (only when test files exist).
@@ -312,11 +335,13 @@ export async function runIdeaChecks(
   }
 
   const executedFailed = phases.some((phase) => !phase.skipped && !phase.ok);
-  const outcome: IdeaCheckReport['outcome'] = executedFailed
-    ? 'failed'
-    : smokeRan
-      ? 'passed'
-      : 'smoke-missing';
+  const outcome: IdeaCheckReport['outcome'] = notImplemented
+    ? 'not-implemented'
+    : executedFailed
+      ? 'failed'
+      : smokeRan
+        ? 'passed'
+        : 'smoke-missing';
 
   return {
     ideaId,

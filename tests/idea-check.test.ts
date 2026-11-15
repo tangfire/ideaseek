@@ -117,9 +117,23 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(result.code).toBe(0);
   }
 
-  it('scaffolds the starter skeleton idempotently', async () => {
-    const first = await scaffold();
-    expect(first.created).toEqual(
+  it('creates a workspace that is already checkable, and scaffolds idempotently', async () => {
+    // `idea create` used to leave src/ empty, so the first `idea check` on a
+    // brand-new idea reported FAILED static — a verdict about code that was
+    // never written. The workspace now arrives with the starter skeleton.
+    const otherCard = join(project, 'other.json');
+    await writeFile(otherCard, JSON.stringify(makeCard('never-written-idea'), null, 2), 'utf8');
+    const fresh = await runCli(project, [
+      'idea',
+      'create',
+      'never-written-idea',
+      '--from-card',
+      otherCard,
+      '--json',
+    ]);
+    expect(fresh.code, fresh.stderr).toBe(0);
+    const createdNow = JSON.parse(fresh.stdout) as { scaffolded: string[] };
+    expect(createdNow.scaffolded).toEqual(
       expect.arrayContaining([
         'src/train.py',
         'src/check_data.py',
@@ -130,9 +144,8 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
         'data/synthetic.csv',
       ]),
     );
-    expect(first.skipped).toEqual([]);
 
-    // Duplicate submission: second scaffold never overwrites user/agent code.
+    // An explicit scaffold afterwards must never overwrite agent/user code.
     await writeFile(join(project, 'ideas', 'calib-reweight', 'src', 'train.py'), '# mine\n');
     const second = await scaffold();
     expect(second.created).toEqual([]);
@@ -142,6 +155,19 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       'utf8',
     );
     expect(train).toBe('# mine\n');
+  }, 60_000);
+
+  it('reports an empty src/ as not implemented rather than as a failing check', async () => {
+    const dir = join(project, 'ideas', 'calib-reweight');
+    const { rm } = await import('node:fs/promises');
+    await rm(join(dir, 'src'), { recursive: true, force: true });
+    const result = await runCli(project, ['idea', 'check', 'calib-reweight']);
+    // Exit 2: the input is missing. Nothing was run, so there is no verdict
+    // about the idea, and 1 would invite someone to debug absent files.
+    expect(result.code).toBe(2);
+    expect(result.stdout).toContain('NOT-IMPLEMENTED');
+    expect(result.stdout).toContain('idea scaffold calib-reweight');
+    expect(result.stdout).not.toContain('FAIL static');
   }, 60_000);
 
   it('resolves scaffolded dataset_ref through IDEASEEK_DATASET_ROOTS (skips without python)', async () => {

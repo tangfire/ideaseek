@@ -2056,6 +2056,11 @@ export function registerIdeaCommand(program: Command): void {
           card,
           dataPaths: opts.data,
         });
+        // Scaffold immediately: `idea check` over an empty src/ reported a
+        // FAILED static phase for a workspace that had never had a chance to
+        // be checked, which reads as a broken idea rather than as a missing
+        // first step. Scaffold never overwrites, so this is safe on resume.
+        const scaffold = await scaffoldIdea(root, ideaId);
         if (opts.json) {
           process.stdout.write(
             jsonLine({
@@ -2064,7 +2069,13 @@ export function registerIdeaCommand(program: Command): void {
               version: meta.currentVersion,
               resumed,
               workspace: ideaDir(root, ideaId),
+              scaffolded: scaffold.created,
             }),
+          );
+        } else if (scaffold.created.length > 0) {
+          process.stdout.write(
+            `  scaffold: ${scaffold.created.length} starter file(s) under src/ ` +
+              `(train/check_data/check_metrics/smoke/tests; nothing overwritten)\n`,
           );
         } else {
           process.stdout.write(
@@ -2440,12 +2451,20 @@ export function registerIdeaCommand(program: Command): void {
             process.stdout.write(
               `next: write src/smoke.py (or ideaseek idea scaffold ${ideaId}) to reach SMOKE_TESTED\n`,
             );
+          } else if (report.outcome === 'not-implemented') {
+            process.stdout.write(
+              `next: ideaseek idea scaffold ${ideaId}   (nothing under src/ yet, so nothing was checked)\n`,
+            );
           } else {
             process.stdout.write(
               `next: ideaseek idea set-status ${ideaId} RUNNING   (experiments stay quick/standard)\n`,
             );
           }
         }
+        // 2 = the input is missing, not that a task failed: an empty src/ says
+        // nothing about the idea, and reporting it as a failure invites someone
+        // to debug code that does not exist.
+        if (report.outcome === 'not-implemented') return 2;
         return report.outcome === 'failed' ? 1 : 0;
       }),
     );
