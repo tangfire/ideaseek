@@ -64,6 +64,10 @@ describe('idea implementation contract', () => {
     // workspace root, so the platform then reported its own file as missing.
     expect(IDEA_IMPLEMENT_INSTRUCTION).toContain('WORKSPACE ROOT');
     expect(IDEA_IMPLEMENT_INSTRUCTION).toContain('python src/<name>.py');
+    // The platform put src/ on sys.path by running "python src/x.py", so the
+    // package-qualified form the platform itself suggested could not import.
+    expect(IDEA_IMPLEMENT_INSTRUCTION).toContain('BARE module name');
+    expect(IDEA_IMPLEMENT_INSTRUCTION).toContain('from geometry import project');
   });
 
   it('carries the mechanism, metrics and budget into the request', () => {

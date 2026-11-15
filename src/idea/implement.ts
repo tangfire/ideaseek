@@ -31,10 +31,15 @@ Rules:
   else IDEASEEK_DATASET_ROOTS, else IDEASEEK_PROJECT_ROOT) and print exactly one JSON line
   {"metrics": {...}} whose keys are exactly the idea's configured metric names.
 - The platform invokes each file as "python src/<name>.py" with the WORKSPACE ROOT as the working
-  directory, and other modules import it by "from src.geometry import ...". Resolve any file you
-  open against __file__ or against the workspace root — never against the src/ directory, and
-  never reference a sibling as a bare relative path (observed failure: check_metrics.py ran
-  "python smoke.py" and the platform reported the file as missing).
+  directory, which puts src/ itself on sys.path. Import siblings by BARE module name
+  ("from geometry import project"), never "from src.geometry import ..." — there is no package
+  named src, and that form fails as "No module named 'src'" (this wording came from the platform
+  and cost one full generation round). Resolve any file you open against __file__ or the workspace
+  root, never against the src/ directory, and never reference a sibling as a bare relative path
+  (observed failure: check_metrics.py ran "python smoke.py" and the platform reported the file
+  as missing).
+- Files under src/tests/ are run by the platform's unit-test phase; import the modules they test
+  by bare name too, and never assume a package path.
 - Never print a placeholder constant. Do not output a "synthetic" key, do not report
   {"status":"scaffold-not-implemented"}, and do not return 0.5 for everything: the platform
   refuses a smoke line that declares itself synthetic, and a template number that reaches a
@@ -172,11 +177,7 @@ export async function authorIdeaImplementation(opts: {
   now: number;
   correction?: string;
 }): Promise<AuthoredIdeaCode> {
-  const base = buildIdeaImplementationContext(
-    opts.card,
-    opts.dataPath,
-    opts.measuredData ?? null,
-  );
+  const base = buildIdeaImplementationContext(opts.card, opts.dataPath, opts.measuredData ?? null);
   const context = opts.correction ? `${base}\n\n## correction required\n${opts.correction}` : base;
   const result = await opts.harness.runTask({
     runId: opts.runId,
