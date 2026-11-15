@@ -261,3 +261,26 @@ describe('implementIdeaWithRefine', () => {
     expect(seen.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+it('refuses an answer that omits the file the platform runs', () => {
+  // Real shape from FDG: three modules returned, no src/smoke.py. The
+  // scaffold's placeholder smoke stayed on disk, so the next check graded the
+  // template and the refine loop stopped on a verdict about code it had not
+  // been given.
+  expect(() =>
+    parseIdeaImplementationOutput(
+      JSON.stringify({
+        files: [
+          { path: 'src/data.py', content: 'x = 1\n' },
+          { path: 'src/model.py', content: 'y = 2\n' },
+        ],
+        notes: '',
+      }),
+    ),
+  ).toThrow(/omitted src\/smoke.py/);
+  expect(
+    parseIdeaImplementationOutput(
+      JSON.stringify({ files: [{ path: 'src/smoke.py', content: 'print(1)\n' }], notes: '' }),
+    ),
+  ).toHaveLength(1);
+});

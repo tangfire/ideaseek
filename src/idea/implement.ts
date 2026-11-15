@@ -103,6 +103,9 @@ export function parseIdeaImplementationOutput(output: string): AuthoredIdeaCode[
     if (typeof record.content !== 'string' || !record.content.trim()) {
       throw new IdeaseekError('INVALID_ARTIFACT', `file ${path} came back empty`);
     }
+    if (typeof record.content !== 'string' || !record.content.trim()) {
+      throw new IdeaseekError('INVALID_ARTIFACT', `file ${path} came back empty`);
+    }
     if (record.content.includes('\0')) {
       // Observed in a real run: the returned string carried NUL bytes, which
       // compiles as "source code string cannot contain null bytes" and would
@@ -120,6 +123,18 @@ export function parseIdeaImplementationOutput(output: string): AuthoredIdeaCode[
       );
     }
     out.push({ path, content: record.content });
+  }
+  // The contract says the answer must be the complete set, so a missing
+  // src/smoke.py is not a stylistic gap: the workspace keeps the scaffold's
+  // placeholder smoke, `idea check` then grades that template, and the loop
+  // stops on "scaffold-placeholder" while believing it evaluated the
+  // generation. An instruction nothing verifies is a suggestion.
+  if (!out.some((file) => file.path === 'src/smoke.py')) {
+    throw new IdeaseekError(
+      'INVALID_ARTIFACT',
+      'the answer omitted src/smoke.py — the platform runs that file, and leaving the scaffold ' +
+        'placeholder in place means the next check grades the template instead of this work',
+    );
   }
   return out;
 }

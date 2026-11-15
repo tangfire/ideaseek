@@ -2518,7 +2518,7 @@ export function registerIdeaCommand(program: Command): void {
                 (result.removed.length > 0
                   ? `, ${result.removed.length} dropped with the replaced set`
                   : '') +
-                ` · ${result.rounds} round(s)\n`,
+                ` · ${result.rounds} attempt(s): ${result.patches} patch, ${result.reimplements} clean rebuild\n`,
             );
             for (const file of result.written) process.stdout.write(`  + ${file}\n`);
             for (const file of result.removed) process.stdout.write(`  - ${file}\n`);
