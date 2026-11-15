@@ -31,3 +31,11 @@ describe('help grouping', () => {
     expect(help).not.toContain('demo pipeline');
   });
 });
+
+it('answers the natural guess `idea status` with the workspace view', () => {
+  // The lifecycle status is the most-asked question about an idea, and the
+  // obvious verb was refused while `show` held the answer.
+  const idea = buildProgram().commands.find((command) => command.name() === 'idea');
+  const show = idea?.commands.find((command) => command.name() === 'show');
+  expect(show?.aliases()).toContain('status');
+});

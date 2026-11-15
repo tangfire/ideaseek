@@ -2121,6 +2121,7 @@ export function registerIdeaCommand(program: Command): void {
 
   idea
     .command('show')
+    .alias('status')
     .description('show one idea workspace: status, version chain, gate and links')
     .argument('<ideaId>', 'idea id')
     .option('--json', 'machine-readable output')
