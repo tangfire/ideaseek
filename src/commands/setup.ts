@@ -84,7 +84,7 @@ function applyDetection(
     notes.push('python not detected; install it before Phase 2 paper workers');
   }
   if (!env.gpu.nvidiaSmi.available) {
-    notes.push('no GPU visible; Phase 0 runs without one');
+    notes.push('no GPU visible — exploration scales run without one');
   }
   return { changed, notes };
 }

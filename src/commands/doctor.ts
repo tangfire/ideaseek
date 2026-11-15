@@ -230,7 +230,7 @@ export function registerDoctorCommand(program: Command): void {
           name: 'gpu',
           detail: env.gpu.nvidiaSmi.available
             ? `${env.gpu.devices.length} device(s)${env.gpu.cudaVersion ? `, CUDA ${env.gpu.cudaVersion}` : ''}: ${env.gpu.devices.join('; ')}`
-            : 'nvidia-smi not found (no GPU visible; Phase 0 does not need one)',
+            : 'nvidia-smi not found (no GPU visible — not needed until a GPU experiment is approved)',
         });
         if (env.disk.freeBytes !== null) {
           const critical = env.disk.freeBytes < 200 * 1024 * 1024;

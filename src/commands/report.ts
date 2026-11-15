@@ -71,7 +71,7 @@ function renderReport(
     '',
     `- run id: ${run.runId}`,
     `- config snapshot: stored inside the run record (config_version ${String(run.config.configVersion ?? 'unknown')})`,
-    `- every statement above is derived from persisted tasks/events; no model-generated claims are included in Phase 0 reports.`,
+    `- every statement above is derived from persisted tasks/events; the report adds no model-generated claims.`,
     '',
   ];
   return lines.join('\n');

@@ -156,7 +156,7 @@ const report: TaskHandler = async (ctx) => {
     '## Findings',
     ...analysis.findings.map((finding) => `- ${finding}`),
     '',
-    '> Phase 0 vertical slice: no model, no external services.',
+    '> demo pipeline: no model calls and no external services — it exists to prove the recovery chain.',
     '',
   ];
   return {

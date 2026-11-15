@@ -85,7 +85,9 @@ export function buildProgram(): Command {
   const program = new Command();
   program
     .name('ideaseek')
-    .description('DSH-based multi-agent research workflow platform (Phase 0: recoverable skeleton)')
+    .description(
+      'Evidence-grounded research platform: read your papers, design the protocol, run and audit the experiments, write the paper',
+    )
     .version(readVersion())
     .showHelpAfterError()
     // Global --plain/--json must precede the subcommand; subcommand flags
@@ -161,6 +163,7 @@ export function buildProgram(): Command {
   registerLogsCommand(program);
   registerDecisionCommand(program);
   registerInteractiveCommand(program);
+  groupCommands(program);
 
   // Global display modes (docs/TERMINAL_UX 三种显示模式). They apply to the
   // bare invocation; subcommands keep their own --json flags.
@@ -214,6 +217,134 @@ async function extractProjectOverride(argv: string[]): Promise<string[]> {
     process.chdir(target);
   }
   return out;
+}
+
+/**
+ * Help is grouped by what the user is trying to do.
+ *
+ * Sixty-one top-level commands in registration order is a list, not a map:
+ * `status`, `next`, `plan`, `prepare`, `assessment` and `queue` all answer
+ * different questions and sat five characters apart. Grouping is by journey
+ * stage, and the names are matched from a table so an unregistered or renamed
+ * command shows up in the residual group instead of disappearing from help.
+ */
+const HELP_GROUPS: { title: string; commands: string[] }[] = [
+  {
+    title: '开始与配置',
+    commands: [
+      'interactive',
+      'init',
+      'start',
+      'setup',
+      'doctor',
+      'config',
+      'models',
+      'mode',
+      'open',
+      'projects',
+      'version',
+      'update',
+    ],
+  },
+  {
+    title: '读懂已有输入',
+    commands: [
+      'prepare',
+      'scan',
+      'ingest',
+      'extract',
+      'synthesize',
+      'evaluate',
+      'mech',
+      'wiki',
+      'search',
+      'papers',
+      'intake',
+      'organize',
+      'assessment',
+    ],
+  },
+  {
+    title: '数据与实验协议',
+    commands: [
+      'datasets',
+      'data',
+      'protocol',
+      'confirm',
+      'reject',
+      'decision',
+      'pending',
+      'stale',
+      'comparison',
+      'baseline',
+      'repo',
+      'capacity',
+    ],
+  },
+  {
+    title: '想法与推进',
+    commands: ['ideate', 'rounds', 'idea', 'consolidate', 'feedback', 'experiment', 'explain'],
+  },
+  {
+    title: '交付',
+    commands: [
+      'paper',
+      'full',
+      'report',
+      'render',
+      'export',
+      'archive',
+      'backup',
+      'restore',
+      'cleanup',
+      'logs',
+    ],
+  },
+  {
+    title: '运行、观察与恢复',
+    commands: [
+      'next',
+      'plan',
+      'status',
+      'events',
+      'watch',
+      'attach',
+      'monitor',
+      'queue',
+      'watchdog',
+      'context',
+      'notify',
+      'run',
+      'worker',
+      'supervise',
+      'pause',
+      'resume',
+      'continue',
+      'cancel',
+      'agent',
+      'ask',
+      'aris',
+    ],
+  },
+];
+
+function groupCommands(program: Command): void {
+  const grouped = new Map<string, string>();
+  for (const group of HELP_GROUPS) {
+    for (const name of group.commands) grouped.set(name, group.title);
+  }
+  for (const command of program.commands) {
+    command.helpGroup(grouped.get(command.name()) ?? '其他');
+  }
+}
+
+/** The name→group table, exposed so its completeness can be tested. */
+export function helpGroupsOf(): Map<string, string> {
+  const grouped = new Map<string, string>();
+  for (const group of HELP_GROUPS) {
+    for (const name of group.commands) grouped.set(name, group.title);
+  }
+  return grouped;
 }
 
 /** Commander failures that mean "the caller did not say what to run". */
