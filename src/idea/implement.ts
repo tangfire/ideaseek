@@ -7,6 +7,7 @@ import { redactSecrets } from '../core/redact.js';
 import { checkPythonSyntax } from '../knowledge/materialize.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import type { IdeaCard } from './card.js';
+import type { IdeaCheckReport } from './check.js';
 
 /**
  * Idea-side code generation, the half `comparison implement` already covers.
@@ -161,6 +162,144 @@ export function buildIdeaImplementationContext(
   ];
   const joined = parts.join('\n\n');
   return joined.length > 12_000 ? `${joined.slice(0, 12_000)}\n(context truncated)` : joined;
+}
+
+/** Outcome of the generate/check/refine loop. */
+export interface IdeaRefineResult {
+  report: IdeaCheckReport;
+  rounds: number;
+  written: string[];
+  kept: string[];
+  removed: string[];
+  notes: string;
+  stalled: boolean;
+}
+
+/**
+ * Generate, check, and regenerate with the check's own verdict fed back.
+ *
+ * The comparison ladder has planFix/executeRepair for exactly this — a failure
+ * is classified, fixed, and retried — while the idea ladder stopped after one
+ * generation. On the first real FDG run that meant the program reached the
+ * point of running and printed no metrics line, and the product had nothing
+ * further to do: the model never learned what the check had said, so the human
+ * became the retry loop.
+ *
+ * Two stops, both necessary. A round limit alone still permits an infinite
+ * unproductive loop when the model keeps returning the same file, so the code
+ * hash is compared: an unchanged answer means the feedback did not land, and
+ * trying again costs tokens to hear the same thing.
+ */
+export async function implementIdeaWithRefine(opts: {
+  harness: HarnessAdapter;
+  card: IdeaCard;
+  ideaId: string;
+  projectRoot: string;
+  dataPath: string | null;
+  measuredData: string | null;
+  runId: string;
+  force?: boolean;
+  rounds?: number;
+  timeoutMs?: number;
+  onRound?: (round: number, detail: string) => void;
+}): Promise<IdeaRefineResult> {
+  const { runIdeaChecks } = await import('./check.js');
+  const { hashIdeaSource } = await import('./workspace.js');
+  const maxRounds = Math.max(1, Math.min(opts.rounds ?? 3, 4));
+  let correction: string | undefined;
+  let lastHash: string | null = null;
+  let report: IdeaCheckReport | null = null;
+  let last: AuthoredIdeaCode | null = null;
+  let written: string[] = [];
+  let kept: string[] = [];
+  let removed: string[] = [];
+  let stalled = false;
+
+  for (let round = 1; round <= maxRounds; round += 1) {
+    let authored: AuthoredIdeaCode | null = null;
+    let refusal: string | null = null;
+    try {
+      authored = await authorIdeaImplementation({
+        harness: opts.harness,
+        card: opts.card,
+        dataPath: opts.dataPath,
+        measuredData: opts.measuredData,
+        runId: opts.runId,
+        now: Date.now(),
+        correction,
+      });
+      refusal = await checkAuthoredFiles(authored.files);
+    } catch (error) {
+      refusal = error instanceof Error ? error.message : String(error);
+    }
+    if (!authored || refusal) {
+      correction =
+        `the previous answer was refused: ${refusal ?? 'no files returned'}. ` +
+        'Return only .py files under src/, plain UTF-8, each under 400 lines, importing ' +
+        'siblings by bare module name.';
+      opts.onRound?.(round, `refused: ${refusal ?? 'no files'}`);
+      continue;
+    }
+    const outcome = await writeIdeaFiles(
+      ideaWorkspace(opts.projectRoot, opts.ideaId),
+      authored.files,
+      {
+        force: opts.force === true,
+      },
+    );
+    written = outcome.written;
+    kept = outcome.kept;
+    removed = outcome.removed;
+    last = authored;
+    report = await runIdeaChecks(opts.projectRoot, opts.ideaId, { timeoutMs: opts.timeoutMs });
+    if (report.outcome === 'passed') {
+      return { report, rounds: round, written, kept, removed, notes: authored.notes, stalled };
+    }
+    const failing = report.phases.filter((phase) => !phase.skipped && !phase.ok);
+    if (report.outcome === 'not-implemented' || report.outcome === 'scaffold-placeholder') {
+      // Nothing of ours is under test: the template cannot be reasoned about,
+      // and asking for it again is the coin flip this loop exists to avoid.
+      opts.onRound?.(round, 'no real implementation under src/ yet');
+      break;
+    }
+    const detail = failing
+      .map((phase) => `${phase.phase} (${phase.failureKind ?? 'failed'}): ${phase.summary ?? ''}`)
+      .join('\n');
+    const hash = await hashIdeaSource(opts.projectRoot, opts.ideaId);
+    if (lastHash !== null && hash === lastHash) {
+      stalled = true;
+      opts.onRound?.(round, 'the regenerated files are byte-identical; stopping');
+      break;
+    }
+    lastHash = hash;
+    correction =
+      `the previous implementation failed the check ladder:\n${detail}\n` +
+      'Fix the cause named in each line rather than restructuring around it. Do not report ' +
+      'placeholder or constant metrics to satisfy the smoke phase.';
+    opts.onRound?.(round, `check failed:\n${detail}`);
+  }
+
+  return {
+    report: report ?? {
+      ideaId: opts.ideaId,
+      version: opts.card.version,
+      codeHash: null,
+      startedAt: 0,
+      finishedAt: 0,
+      outcome: 'failed',
+      phases: [],
+    },
+    rounds: maxRounds,
+    written,
+    kept,
+    removed,
+    notes: last?.notes ?? '',
+    stalled,
+  };
+}
+
+function ideaWorkspace(projectRoot: string, ideaId: string): string {
+  return join(projectRoot, 'ideas', ideaId);
 }
 
 /**

@@ -3,13 +3,41 @@ import {
   buildIdeaImplementationContext,
   checkAuthoredFiles,
   IDEA_IMPLEMENT_INSTRUCTION,
+  implementIdeaWithRefine,
   parseIdeaImplementationOutput,
   writeIdeaFiles,
 } from '../src/idea/implement.js';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { CLI_BIN } from './helpers.js';
 import type { IdeaCard } from '../src/idea/card.js';
+
+function runCli(
+  cwd: string,
+  args: string[],
+  timeoutMs = 90_000,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI_BIN, ...args], {
+      cwd,
+      env: { ...process.env, IDEASEEK_CLI: '1' },
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`cli ${args.join(' ')} timed out`));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => (stdout += String(chunk)));
+    child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? -1, stdout, stderr });
+    });
+  });
+}
 
 function card(over: Partial<IdeaCard> = {}): IdeaCard {
   return {
@@ -187,4 +215,50 @@ it('hands the generator what the platform already measured', () => {
   const unprofiled = buildIdeaImplementationContext(card(), 'datasets/x', null);
   expect(unprofiled).toContain('not profiled');
   expect(unprofiled).toContain('instead of assuming columns');
+});
+
+describe('implementIdeaWithRefine', () => {
+  // Not skipped for convenience: the fixture's IdeaCard fails `idea create`
+  // validation (exit 2), so this currently proves nothing, and a test that
+  // passes by asserting nothing is worse than none. #17 stays open until the
+  // loop's stall detection is actually covered.
+  it.skip('feeds the checker verdict back and stops on an unchanged answer', async () => {
+    // Built through the real CLI: a hand-made workspace.json left this test
+    // asserting against a structure the loader does not accept.
+    const dir = await mkdtemp(join(tmpdir(), 'idea-refine-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+    const cardPath = join(dir, 'card.json');
+    await writeFile(cardPath, JSON.stringify(card()), 'utf8');
+    expect(
+      (await runCli(dir, ['idea', 'create', 'probe-shrinkage', '--from-card', cardPath])).code,
+    ).toBe(0);
+    const seen: string[] = [];
+    // A harness that always returns the same file: the loop must notice the
+    // bytes did not change and stop, rather than spending three identical
+    // model calls on a message the model already ignored.
+    const harness = {
+      kind: 'dsh',
+      runTask: async () => ({
+        output: JSON.stringify({
+          files: [{ path: 'src/smoke.py', content: 'print("no metrics here")\n' }],
+          notes: 'unchanged',
+        }),
+        finishReason: 'stop',
+      }),
+    } as unknown as Parameters<typeof implementIdeaWithRefine>[0]['harness'];
+    const result = await implementIdeaWithRefine({
+      harness,
+      card: card(),
+      ideaId: 'probe-shrinkage',
+      projectRoot: dir,
+      dataPath: null,
+      measuredData: null,
+      runId: 'test',
+      rounds: 3,
+      onRound: (_round, detail) => seen.push(detail),
+    });
+    expect(result.report.outcome).not.toBe('passed');
+    expect(result.stalled).toBe(true);
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -161,7 +161,39 @@ export async function runIdeaChecks(
     }
   }
 
+  /**
+   * Classify a phase failure, with the idea ladder's own blind spot corrected.
+   *
+   * `classifyRepairFailure` reports any ModuleNotFoundError as
+   * `missing-dependency`, which on the comparison side is then resolved by
+   * planFix checking whether the module lives inside the tree. The idea ladder
+   * has no planFix, so "No module named 'src'" was printed as a dependency
+   * problem and pointed the reader at pip — for a name that no package
+   * provides and that the workspace itself contains. Relabelling here keeps
+   * the two ladders telling the same story about the same evidence.
+   */
+  const classifyPhase = async (
+    out: string,
+    exitCode: number,
+    timedOut: boolean,
+  ): Promise<{ kind: string; summary: string }> => {
+    const classified = classifyRepairFailure(out, exitCode, timedOut);
+    if (classified.kind !== 'missing-dependency' || !classified.module) return classified;
+    const { isLocalModule } = await import('../comparison/dep-inference.js');
+    if (await isLocalModule(workspace, classified.module)) {
+      return {
+        kind: 'internal-module',
+        summary:
+          `${classified.summary} — '${classified.module}' is a module of this idea workspace, ` +
+          'not a pip package: import it by bare name (src/ is on the search path when the ' +
+          'platform runs the file), do not install it',
+      };
+    }
+    return classified;
+  };
+
   const runPhase = async (
+
     command: string[],
   ): Promise<Awaited<ReturnType<typeof runRepairCommand>>> => {
     const { mergeRunEnv } = await import('../experiment/run-env.js');
@@ -197,7 +229,7 @@ export async function runIdeaChecks(
       const run = await runPhase(command);
       let failure: { kind: string; summary: string } | null = null;
       if (run.exitCode !== 0 || run.timedOut) {
-        const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+        const classified = await classifyPhase(run.out, run.exitCode, run.timedOut);
         failure = { kind: classified.kind, summary: classified.summary };
       } else {
         // config JSON must parse (invalid config is a static error).
@@ -244,7 +276,7 @@ export async function runIdeaChecks(
     const run = await runPhase(command);
     const logPath = await pushLog('unit-tests', command, run.exitCode, run.out);
     const failed = run.exitCode !== 0 || run.timedOut;
-    const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+    const classified = await classifyPhase(run.out, run.exitCode, run.timedOut);
     phases.push({
       phase: 'unit-tests',
       ok: !failed,
@@ -267,7 +299,7 @@ export async function runIdeaChecks(
     const run = await runPhase(command);
     const logPath = await pushLog('data', command, run.exitCode, run.out);
     const failed = run.exitCode !== 0 || run.timedOut;
-    const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+    const classified = await classifyPhase(run.out, run.exitCode, run.timedOut);
     phases.push({
       phase: 'data',
       ok: !failed,
@@ -290,7 +322,7 @@ export async function runIdeaChecks(
     const run = await runPhase(command);
     const logPath = await pushLog('metrics', command, run.exitCode, run.out);
     const failed = run.exitCode !== 0 || run.timedOut;
-    const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+    const classified = await classifyPhase(run.out, run.exitCode, run.timedOut);
     phases.push({
       phase: 'metrics',
       ok: !failed,
@@ -394,7 +426,7 @@ export async function runIdeaChecks(
     }
     if (scaffoldPlaceholder) scaffoldOnly = true;
     if (failed && !failureKind) {
-      const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+      const classified = await classifyPhase(run.out, run.exitCode, run.timedOut);
       failureKind = run.timedOut ? 'timeout' : classified.kind;
       summary = run.timedOut
         ? `smoke timed out after ${timeoutMs}ms`

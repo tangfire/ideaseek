@@ -328,7 +328,7 @@ export function deriveImportRoots(source: string): string[] {
  * keeps local modules local, which is also what made every idea check pay for
  * a venv it did not need.
  */
-async function isLocalModule(worktreeDir: string, root: string): Promise<boolean> {
+export async function isLocalModule(worktreeDir: string, root: string): Promise<boolean> {
   const { stat } = await import('node:fs/promises');
   const { join } = await import('node:path');
   const name = root.includes('.') ? root.split('.')[root.split('.').length - 1]! : root;

@@ -2396,6 +2396,12 @@ export function registerIdeaCommand(program: Command): void {
     .option('--data <path>', 'data path handed to the generated checks')
     .option('--force', 'replace existing files under src/', false)
     .option(
+      '--rounds <n>',
+      'generation/check rounds (default 3, max 4): the checker verdict is fed back each time',
+      (value) => Number(value),
+      3,
+    )
+    .option(
       '--harness <kind>',
       'agent harness: fake | dsh (default: dsh when a key is configured, else fake with a warning)',
     )
@@ -2404,7 +2410,13 @@ export function registerIdeaCommand(program: Command): void {
       action(
         async (
           ideaId: string,
-          opts: { data?: string; force?: boolean; harness?: string; json?: boolean },
+          opts: {
+            data?: string;
+            force?: boolean;
+            harness?: string;
+            rounds?: number;
+            json?: boolean;
+          },
         ) => {
           const root = await openRoot();
           const shared = await import('./shared.js');
@@ -2446,90 +2458,92 @@ export function registerIdeaCommand(program: Command): void {
               }
               dataPath = absolute;
             }
-            const { authorIdeaImplementation, checkAuthoredFiles, writeIdeaFiles } =
-              await import('../idea/implement.js');
             // Whatever the platform already measured about the corpus goes into
             // the request: the generator otherwise invents column names, and the
             // first real run failed with "no numeric feature column among
             // ['image','domain','label']" on data the platform had profiled.
             const { describeProfiledCorpus } = await import('../knowledge/corpus-describe.js');
             const measuredData = await describeProfiledCorpus(root);
+            const { implementIdeaWithRefine } = await import('../idea/implement.js');
             const runId =
               (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
               `idea-implement-${ideaId}`;
-            let correction: string | undefined;
-            let authored: Awaited<ReturnType<typeof authorIdeaImplementation>> | null = null;
-            let compileError: string | null = null;
-            // Two turns at most, the second told why the first was refused: the
-            // comparison side learned that unparseable output recurs, and a bare
-            // retry sends the identical request.
-            for (let attempt = 1; attempt <= 2; attempt += 1) {
-              // Every refusal — envelope, path, size or compile — comes back as
-              // a correction. Letting a parse failure throw out of the loop
-              // wastes the retry: the model hears nothing and returns the same
-              // shape, which is what the first real run did.
-              try {
-                authored = await authorIdeaImplementation({
-                  harness,
-                  card,
-                  dataPath,
-                  measuredData,
-                  runId,
-                  now: Date.now(),
-                  correction,
-                });
-                compileError = await checkAuthoredFiles(authored.files);
-                if (!compileError) break;
-                correction =
-                  `the previous files did not compile: ${compileError}. Return complete files ` +
-                  `with every bracket, quote and indentation level closed.`;
-              } catch (error) {
-                if (!(error instanceof IdeaseekError)) throw error;
-                authored = null;
-                compileError = error.message;
-                correction =
-                  `the previous answer was refused: ${error.message}. Return only .py files ` +
-                  `under src/, plain UTF-8, each under 400 lines.`;
-              }
-              process.stderr.write(
-                `idea implementation refused on attempt ${attempt}: ${compileError}\n`,
-              );
-            }
-            if (!authored || compileError) {
-              throw new IdeaseekError(
-                'INVALID_ARTIFACT',
-                `generated idea code still does not compile (${compileError ?? 'unknown'}) — nothing was written`,
-              );
-            }
-            const written = await writeIdeaFiles(ideaDir(root, ideaId), authored.files, {
+            const result = await implementIdeaWithRefine({
+              harness,
+              card,
+              ideaId,
+              projectRoot: root,
+              dataPath,
+              measuredData,
+              runId,
               force: opts.force === true,
+              rounds: opts.rounds,
+              onRound: (round, detail) => {
+                if (!opts.json) {
+                  process.stderr.write(`round ${round}: ${detail}\n`);
+                }
+              },
             });
+            const report = result.report;
+            const passed = report.outcome === 'passed';
             if (opts.json) {
               process.stdout.write(
                 jsonLine({
                   ideaId,
-                  written: written.written,
-                  kept: written.kept,
-                  removed: written.removed,
-                  notes: authored.notes,
-                  contextHash: authored.contextHash,
+                  written: result.written,
+                  kept: result.kept,
+                  removed: result.removed,
+                  notes: result.notes,
+                  rounds: result.rounds,
+                  stalled: result.stalled,
+                  outcome: report.outcome,
+                  failingPhases: report.phases
+                    .filter((phase) => !phase.skipped && !phase.ok)
+                    .map((phase) => ({
+                      phase: phase.phase,
+                      kind: phase.failureKind ?? 'failed',
+                      summary: phase.summary ?? '',
+                    })),
                 }),
+              );
+              // 2 when the loop ran out of ideas without the checker agreeing:
+              // the input (a workable implementation) is what is missing.
+              return passed ? 0 : result.stalled ? 2 : 1;
+            }
+            process.stdout.write(
+              `idea implement ${ideaId}: ${result.written.length} file(s) written, ` +
+                `${result.kept.length} kept` +
+                (result.removed.length > 0
+                  ? `, ${result.removed.length} dropped with the replaced set`
+                  : '') +
+                ` · ${result.rounds} round(s)\n`,
+            );
+            for (const file of result.written) process.stdout.write(`  + ${file}\n`);
+            for (const file of result.removed) process.stdout.write(`  - ${file}\n`);
+            if (result.notes) process.stdout.write(`  notes: ${result.notes}\n`);
+            for (const phase of report.phases) {
+              const mark = phase.skipped ? 'skip' : phase.ok ? 'ok  ' : 'FAIL';
+              process.stdout.write(
+                `  ${mark} ${phase.phase.padEnd(11)} ${phase.durationMs}ms` +
+                  `${phase.failureKind ? `  ${phase.failureKind}` : ''}` +
+                  `${phase.summary && !phase.ok ? `  ${phase.summary.slice(0, 140)}` : ''}\n`,
+              );
+            }
+            if (passed) {
+              process.stdout.write(
+                `SMOKE_TESTED: the idea's implementation passes the ladder (bounded smoke, not a result)\n` +
+                  `next: ideaseek idea experiment ${ideaId} --scale smoke\n`,
               );
               return 0;
             }
             process.stdout.write(
-              `idea implement ${ideaId}: ${written.written.length} file(s) written, ` +
-                `${written.kept.length} kept` +
-                (written.removed.length > 0
-                  ? `, ${written.removed.length} dropped with the replaced set`
-                  : '') +
-                '\n',
+              result.stalled
+                ? `stopped: the regenerated files came back byte-identical, so another round would ` +
+                    'cost tokens and change nothing\nnext: fix the cause the checker names, or edit ' +
+                    `ideas/${ideaId}/src/ by hand, then: ideaseek idea check ${ideaId}\n`
+                : `not yet passing: ${report.outcome}\nnext: ideaseek idea check ${ideaId}\n`,
             );
-            for (const file of written.written) process.stdout.write(`  + ${file}\n`);
-            for (const file of written.removed) process.stdout.write(`  - ${file}\n`);
-            if (authored.notes) process.stdout.write(`  notes: ${authored.notes}\n`);
-            process.stdout.write(`next: ideaseek idea check ${ideaId}\n`);
-            return 0;
+            return 1;
           } finally {
             await runtime.close();
           }
