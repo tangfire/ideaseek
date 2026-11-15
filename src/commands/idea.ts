@@ -2466,16 +2466,25 @@ export function registerIdeaCommand(program: Command): void {
                     `(analysis mode is read-only and refuses scaffold)\n`
                 : `next: ideaseek idea scaffold ${ideaId}   (nothing under src/ yet, so nothing was checked)\n`,
             );
+          } else if (report.outcome === 'scaffold-placeholder') {
+            process.stdout.write(
+              `next: implement the idea in ideas/${ideaId}/src/ (a coding turn: ideaseek agent ` +
+                `"<task>", or edit the files), then: ideaseek idea check ${ideaId}\n` +
+                '  why: the scaffold prints synthetic metric values — those are not results, and ' +
+                'taking them to RUNNING would put template numbers into the record\n',
+            );
           } else {
             process.stdout.write(
               `next: ideaseek idea set-status ${ideaId} RUNNING   (experiments stay quick/standard)\n`,
             );
           }
         }
-        // 2 = the input is missing, not that a task failed: an empty src/ says
-        // nothing about the idea, and reporting it as a failure invites someone
-        // to debug code that does not exist.
-        if (report.outcome === 'not-implemented') return 2;
+        // 2 = the input is missing, not that a task failed: an empty src, or a
+        // scaffold that only prints template numbers, says nothing about the
+        // idea's quality and invites someone to debug code that is not there.
+        if (report.outcome === 'not-implemented' || report.outcome === 'scaffold-placeholder') {
+          return 2;
+        }
         return report.outcome === 'failed' ? 1 : 0;
       }),
     );

@@ -234,6 +234,13 @@ describe('contract 3: a code change invalidates only its downstream', () => {
       'import json\nprint(json.dumps({"metrics": {"dice": 0.5}}))\n',
       'utf8',
     );
+    // The ladder checks src/smoke.py: this fixture used to reach a passing
+    // report only because the scaffold's synthetic smoke was graded as a pass.
+    await writeFile(
+      join(dir, 'ideas', 'alpha', 'src', 'smoke.py'),
+      'import json\nprint(json.dumps({"metrics": {"dice": 0.5}}))\n',
+      'utf8',
+    );
     const trainCfg = join(dir, 'ideas', 'alpha', 'config', 'train.json');
     const cfg = JSON.parse(await readFile(trainCfg, 'utf8')) as Record<string, unknown>;
     cfg.seeds = [42, 7];

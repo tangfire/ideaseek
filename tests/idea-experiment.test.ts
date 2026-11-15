@@ -86,13 +86,34 @@ function runCli(cwd: string, args: string[], timeoutMs = 60_000): Promise<CliRes
 describe('ideaseek idea experiment (CLI)', () => {
   let project: string;
 
-  /** create → IMPLEMENTING → scaffold → check (passes → SMOKE_TESTED). */
+  /** create → IMPLEMENTING → scaffold → implemented smoke → check (passed). */
   async function setupCheckedIdea(id = 'calib-reweight'): Promise<void> {
     const cardPath = join(project, 'card.json');
     await writeFile(cardPath, JSON.stringify(makeCard(id), null, 2), 'utf8');
     expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
     expect((await runCli(project, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', id])).code).toBe(0);
+    // This suite is about the experiment path, so it needs a genuinely passed
+    // check. It used to get one from the scaffold template, whose smoke prints
+    // 0.5 for every metric with "synthetic": true — `idea check` now refuses
+    // that, as it must, or a template number could reach a results record.
+    await writeFile(
+      join(project, 'ideas', id, 'src', 'smoke.py'),
+      [
+        'import json',
+        'from collections import Counter',
+        '',
+        'labels = [1, 1, 1, 0, 0, 1, 0, 1, 1, 0]',
+        'predicted = [1, 1, 0, 1, 0, 1, 0, 1, 1, 0]',
+        'rare = [p for p in predicted if Counter(labels)[p] <= 5]',
+        'hits = sum(1 for l, p in zip(labels, predicted) if l == p and Counter(labels)[l] <= 5)',
+        'recall = hits / len(rare) if rare else 0.0',
+        '',
+        'print(json.dumps({"metrics": {"rare-class recall": recall}}))',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
     const check = await runCli(project, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     expect((JSON.parse(check.stdout) as { outcome: string }).outcome).toBe('passed');
@@ -124,7 +145,13 @@ describe('ideaseek idea experiment (CLI)', () => {
       resultStatus: 'succeeded',
       statusAfter: 'ANALYZING',
     });
-    expect(payload.metrics).toEqual([{ name: 'rare-class recall', value: 0.5 }]);
+    // `value: 0.5` was the scaffold template's constant, asserted as though it
+    // were a measurement. The smoke now computes recall from its own fixture
+    // (0.75), so the honest assertion is a range rather than a new magic value.
+    expect(payload.metrics).toHaveLength(1);
+    expect(payload.metrics[0]!.name).toBe('rare-class recall');
+    expect(payload.metrics[0]!.value).toBeGreaterThanOrEqual(0);
+    expect(payload.metrics[0]!.value).toBeLessThanOrEqual(1);
 
     // Unified registry: spec bound to idea version, code hash and scale.
     const shown = await runCli(project, ['experiment', 'show', 'idea-calib-reweight', '--json']);
@@ -143,7 +170,8 @@ describe('ideaseek idea experiment (CLI)', () => {
     expect(doc.spec.environment.notes.join(' ')).toContain('scale:smoke');
     expect(doc.spec.environment.notes.join(' ')).toContain('idea-code:');
     expect(doc.spec.comparisonIds).toEqual(['fedavg']);
-    expect(doc.result?.metrics).toEqual([{ name: 'rare-class recall', value: 0.5 }]);
+    expect(doc.result?.metrics?.[0]?.name).toBe('rare-class recall');
+    expect(typeof doc.result?.metrics?.[0]?.value).toBe('number');
 
     // Workspace mirror inside the idea's own experiments/ directory.
     const mirror = await readFile(

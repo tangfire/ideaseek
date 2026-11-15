@@ -47,8 +47,10 @@ export interface IdeaCheckReport {
    * failed      — at least one executed phase failed
    * not-implemented — src/ holds no python at all; nothing was run, so there is
    *                   no verdict about code quality (docs/CLI_SPEC exit 2)
+   * scaffold-placeholder — the code runs, but smoke only returns the template's
+   *                   own synthetic numbers: implemented in form, not substance
    */
-  outcome: 'passed' | 'smoke-missing' | 'failed' | 'not-implemented';
+  outcome: 'passed' | 'smoke-missing' | 'failed' | 'not-implemented' | 'scaffold-placeholder';
   phases: IdeaCheckPhaseResult[];
 }
 
@@ -253,6 +255,8 @@ export async function runIdeaChecks(
 
   // 5. smoke micro-run (only when src/smoke.py exists) — never full training.
   let smokeRan = false;
+  // Set when the only smoke output is the scaffold's own placeholder numbers.
+  let scaffoldOnly = false;
   if (await pathExists(join(srcDir, 'smoke.py'))) {
     smokeRan = true;
     const command = ['python', 'src/smoke.py'];
@@ -261,6 +265,7 @@ export async function runIdeaChecks(
     let failed = run.exitCode !== 0 || run.timedOut;
     let failureKind: string | undefined;
     let summary: string | undefined;
+    let scaffoldPlaceholder = false;
     if (!failed) {
       // Require a {"metrics": {...}} line with finite values.
       const lines = run.out.split(/\r?\n/).filter((line) => line.trim());
@@ -278,10 +283,30 @@ export async function runIdeaChecks(
       }
       const metricValues = parsed?.metrics ?? {};
       const entries = Object.entries(metricValues);
+      // A smoke line that declares itself synthetic is a placeholder, not a
+      // measurement. The scaffolded starter prints exactly this — `0.5` for
+      // every metric with "synthetic": true — and used to be graded PASSED,
+      // which then told the user to set the idea RUNNING on numbers invented by
+      // a template. The same fake pass was already banned on the comparison
+      // side; this was the half left open.
+      const declared = parsed
+        ? String((parsed as Record<string, unknown>)['status'] ?? '').toLowerCase()
+        : '';
+      const selfDeclaredSynthetic =
+        (parsed as Record<string, unknown> | null)?.['synthetic'] === true ||
+        declared.includes('scaffold') ||
+        declared.includes('not-implemented');
       if (!parsed || entries.length === 0) {
         failed = true;
         failureKind = 'unknown';
         summary = 'smoke produced no {"metrics": {...}} JSON line';
+      } else if (selfDeclaredSynthetic) {
+        failed = true;
+        scaffoldPlaceholder = true;
+        failureKind = 'scaffold-placeholder';
+        summary =
+          'smoke reports synthetic values from the scaffold template — the idea is not ' +
+          'implemented yet, and these numbers mean nothing';
       } else {
         for (const [name, value] of entries) {
           if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -313,6 +338,7 @@ export async function runIdeaChecks(
         }
       }
     }
+    if (scaffoldPlaceholder) scaffoldOnly = true;
     if (failed && !failureKind) {
       const classified = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
       failureKind = run.timedOut ? 'timeout' : classified.kind;
@@ -334,14 +360,26 @@ export async function runIdeaChecks(
     phases.push(skippedPhase('smoke', 'src/smoke.py not present (write it to reach SMOKE_TESTED)'));
   }
 
-  const executedFailed = phases.some((phase) => !phase.skipped && !phase.ok);
-  const outcome: IdeaCheckReport['outcome'] = notImplemented
-    ? 'not-implemented'
-    : executedFailed
-      ? 'failed'
-      : smokeRan
-        ? 'passed'
-        : 'smoke-missing';
+  // A real failure outranks the placeholder signal — breaking static must not
+  // be reported as the softer "not implemented yet". The placeholder's own
+  // phase result is excluded from that count, or it would outrank itself and
+  // every scaffolded idea would read as a fault rather than as unfinished work.
+  const executedFailed = phases.some(
+    (phase) => !phase.skipped && !phase.ok && phase.failureKind !== 'scaffold-placeholder',
+  );
+  // Order matters: a phase that genuinely failed must outrank the
+  // scaffold-placeholder signal, otherwise breaking static would report the
+  // softer "not implemented yet" and hide the real fault. An empty src/ wins
+  // over both because nothing was executed at all.
+  const outcome: IdeaCheckReport['outcome'] = executedFailed
+    ? 'failed'
+    : notImplemented
+      ? 'not-implemented'
+      : scaffoldOnly
+        ? 'scaffold-placeholder'
+        : smokeRan
+          ? 'passed'
+          : 'smoke-missing';
 
   return {
     ideaId,

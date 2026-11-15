@@ -9,7 +9,7 @@ import {
   waiveFinding,
   type ForensicsFinding,
 } from '../src/idea/forensics.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 /**
  * Phase 4.5C integrity-forensics (ARIS integrity-forensics backend):
@@ -130,6 +130,9 @@ describe('ideaseek idea forensics (ARIS integrity-forensics backend)', () => {
     );
     expect((await runCli(project, ['idea', 'set-status', ideaId, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', ideaId])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, ideaId);
     const check = await runCli(project, ['idea', 'check', ideaId, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     const experiment = await runCli(project, ['idea', 'experiment', ideaId, '--json']);

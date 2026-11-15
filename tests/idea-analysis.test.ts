@@ -11,7 +11,7 @@ import {
   deriveAblations,
   type AnalysisInput,
 } from '../src/idea/analysis.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 function makeCard(ideaId: string): IdeaCard {
   return {
@@ -369,6 +369,9 @@ describe('ideaseek idea ablate + analyze (CLI)', () => {
     expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
     expect((await runCli(project, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', id])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // refuses; this fixture needs a passed check, so it implements one.
+    await implementIdeaSmoke(project, id, 'rare-class recall');
     const check = await runCli(project, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     const exp = await runCli(project, ['idea', 'experiment', id, '--json']);
@@ -397,6 +400,7 @@ describe('ideaseek idea ablate + analyze (CLI)', () => {
       (await runCli(project, ['idea', 'set-status', 'calib-reweight', 'IMPLEMENTING'])).code,
     ).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', 'calib-reweight'])).code).toBe(0);
+    await implementIdeaSmoke(project, 'calib-reweight', 'rare-class recall');
     expect((await runCli(project, ['idea', 'check', 'calib-reweight'])).code).toBe(0);
     const noMain = await runCli(project, ['idea', 'ablate', 'calib-reweight']);
     expect(noMain.code).not.toBe(0);

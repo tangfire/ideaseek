@@ -105,6 +105,31 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(created.code).toBe(0);
   }, 60_000);
 
+  /**
+   * Replace the starter smoke with code that computes a value. Tests about
+   * later phases need a passed ladder, and the template's own synthetic
+   * numbers are now correctly refused by `idea check`.
+   */
+  async function implementRealSmoke(ideaId = 'calib-reweight'): Promise<void> {
+    await writeFile(
+      join(project, 'ideas', ideaId, 'src', 'smoke.py'),
+      [
+        'import json',
+        'from collections import Counter',
+        '',
+        'labels = [1, 1, 1, 0, 0, 1, 0, 1, 1, 0]',
+        'predicted = [1, 1, 0, 1, 0, 1, 0, 1, 1, 0]',
+        'rare = [p for p in predicted if Counter(labels)[p] <= 5]',
+        'hits = sum(1 for l, p in zip(labels, predicted) if l == p and Counter(labels)[l] <= 5)',
+        'recall = hits / len(rare) if rare else 0.0',
+        '',
+        'print(json.dumps({"metrics": {"rare-class recall": recall}}))',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+  }
+
   async function scaffold(): Promise<{ created: string[]; skipped: string[] }> {
     const result = await runCli(project, ['idea', 'scaffold', 'calib-reweight', '--json']);
     expect(result.code, result.stderr).toBe(0);
@@ -205,9 +230,46 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(unconfigured.err).toContain('inputs.readonly_datasets');
   }, 120_000);
 
+  it('refuses to grade the scaffold template as a passing check', async () => {
+    await setImplementing();
+    await scaffold();
+    // The starter smoke prints 0.5 for every metric with "synthetic": true.
+    // This test used to assert PASSED and SMOKE_TESTED on top of that, which
+    // is exactly how a template number would reach the results record.
+    const check = await runCli(project, ['idea', 'check', 'calib-reweight', '--json']);
+    expect(check.code, check.stdout + check.stderr).toBe(2);
+    const payload = JSON.parse(check.stdout) as {
+      outcome: string;
+      status: string;
+      phases: { phase: string; ok: boolean; failureKind?: string }[];
+    };
+    expect(payload.outcome).toBe('scaffold-placeholder');
+    expect(payload.status).toBe('IMPLEMENTING');
+    const smoke = payload.phases.find((phase) => phase.phase === 'smoke');
+    expect(smoke?.failureKind).toBe('scaffold-placeholder');
+  }, 120_000);
+
   it('passes the full ladder and advances IMPLEMENTING → SMOKE_TESTED', async () => {
     await setImplementing();
     await scaffold();
+    // Replace the template smoke with code that computes something for real.
+    await writeFile(
+      join(project, 'ideas', 'calib-reweight', 'src', 'smoke.py'),
+      [
+        'import json',
+        'from collections import Counter',
+        '',
+        'labels = [1, 1, 1, 0, 0, 1, 0, 1, 1, 0]',
+        'predicted = [1, 1, 0, 1, 0, 1, 0, 1, 1, 0]',
+        'rare = [l for l, p in zip(labels, predicted) if Counter(labels)[l] <= 5]',
+        'hits = sum(1 for l, p in zip(labels, predicted) if l == p and Counter(labels)[l] <= 5)',
+        'recall = hits / len(rare) if rare else 0.0',
+        '',
+        `print(json.dumps({"metrics": {"rare-class recall": recall}}))`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
 
     const check = await runCli(project, ['idea', 'check', 'calib-reweight', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
@@ -242,12 +304,14 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(report.codeHash).toBe(payload.codeHash);
     expect(report.codeHash).toBe(await hashIdeaSource(project, 'calib-reweight'));
 
-    // Scaffold smoke is explicitly synthetic — never full training.
+    // The smoke that passes is the implemented one, not the template: its log
+    // must carry the computed metric and no synthetic marker.
     const smokeLog = await readFile(
       join(project, '.research', 'logs', 'idea-calib-reweight-smoke.log'),
       'utf8',
     );
-    expect(smokeLog).toContain('"synthetic": true');
+    expect(smokeLog).toContain('rare-class recall');
+    expect(smokeLog).not.toContain('"synthetic": true');
   }, 120_000);
 
   it('fails the static phase on broken code and keeps IMPLEMENTING', async () => {
@@ -364,7 +428,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
   it('binds check reports to the current idea version', async () => {
     await setImplementing();
     await scaffold();
-
+    await implementRealSmoke();
     const revised = await runCli(project, [
       'idea',
       'revise',

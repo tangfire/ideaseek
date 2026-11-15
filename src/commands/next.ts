@@ -199,7 +199,8 @@ export async function adviseNext(
         ? [`${failed.type} ${failed.error?.code ?? 'FAILED'}: ${failed.error?.message ?? ''}`]
         : ['run FAILED'],
       done,
-      suggestion: '查看失败任务与事件；修复后创建新 run（失败任务不自动重跑，避免把已修的问题混进旧结果）',
+      suggestion:
+        '查看失败任务与事件；修复后创建新 run（失败任务不自动重跑，避免把已修的问题混进旧结果）',
       command: 'ideaseek status --detail',
       exitCode: 1,
     };

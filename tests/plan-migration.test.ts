@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 /**
  * ADR-009 dedup conformance: the ARIS experiment-plan backend
@@ -157,6 +157,9 @@ describe('experiment-plan dedup (ADR-009 single default backend)', () => {
       (await runCli(project, ['idea', 'set-status', 'legacy-idea', 'IMPLEMENTING'])).code,
     ).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', 'legacy-idea'])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, 'legacy-idea');
     const check = await runCli(project, ['idea', 'check', 'legacy-idea', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     const experiment = await runCli(project, ['idea', 'experiment', 'legacy-idea', '--json']);

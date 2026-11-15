@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 function makeCard(ideaId: string): IdeaCard {
   return {
@@ -84,6 +84,9 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
     expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
     expect((await runCli(project, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', id])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, id);
     const check = await runCli(project, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
   }

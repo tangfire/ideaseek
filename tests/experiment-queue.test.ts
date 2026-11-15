@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN, openRuntime } from './helpers.js';
+import { CLI_BIN, openRuntime, implementIdeaSmoke } from './helpers.js';
 
 /**
  * Phase 4.5B experiment-queue: dependency waves + waitingOn, stale
@@ -203,6 +203,9 @@ describe('ideaseek queue (waves, stale cleanup, admission, resource retry)', () 
       0,
     );
     expect((await runCli(project, ['idea', 'scaffold', 'oom-idea'])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, 'oom-idea');
     const check = await runCli(project, ['idea', 'check', 'oom-idea', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
 
@@ -249,6 +252,9 @@ describe('ideaseek queue (waves, stale cleanup, admission, resource retry)', () 
       0,
     );
     expect((await runCli(project, ['idea', 'scaffold', 'oom2-idea'])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, 'oom2-idea');
     const check = await runCli(project, ['idea', 'check', 'oom2-idea', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN, openRuntime } from './helpers.js';
+import { CLI_BIN, openRuntime, implementIdeaSmoke } from './helpers.js';
 
 /**
  * Phase 4.5B research-wiki: deterministic extraction of papers/ideas/
@@ -119,6 +119,9 @@ describe('ideaseek wiki (ARIS research-wiki backend)', () => {
     );
     expect((await runCli(project, ['idea', 'set-status', ideaId, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', ideaId])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, ideaId);
     const check = await runCli(project, ['idea', 'check', ideaId, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     const plan = await runCli(project, [

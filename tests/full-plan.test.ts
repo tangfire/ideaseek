@@ -301,6 +301,13 @@ describe('ideaseek full plan / approve (e2e)', () => {
       'import json\nprint(json.dumps({"metrics": {"rare-class recall": 0.5}}))\n',
       'utf8',
     );
+    // The check ladder runs src/smoke.py, so this fixture also needs a real
+    // smoke; it used to pass on the scaffold's self-declared synthetic one.
+    await writeFile(
+      join(dir, 'ideas', 'alpha', 'src', 'smoke.py'),
+      'import json\nprint(json.dumps({"metrics": {"rare-class recall": 0.5}}))\n',
+      'utf8',
+    );
     const trainPath = join(dir, 'ideas', 'alpha', 'config', 'train.json');
     const train = JSON.parse(await readFile(trainPath, 'utf8')) as Record<string, unknown>;
     train.seeds = [42, 7];

@@ -63,3 +63,55 @@ export async function taskById(runtime: ProjectRuntime, taskId: string): Promise
   if (!task) throw new Error(`task ${taskId} vanished`);
   return task;
 }
+
+/**
+ * Replace an idea scaffold's starter smoke with code that computes a value.
+ *
+ * `ideaseek idea scaffold` writes a template that prints 0.5 for every metric
+ * and declares `"synthetic": true`. `idea check` refuses that — correctly,
+ * because a template constant that reaches a results record is worse than a
+ * failing check. Suites that need a *passed* check as a fixture therefore have
+ * to implement something, and this keeps twelve copies of the same five lines
+ * from becoming twelve ways to assert a number that means nothing.
+ */
+export async function implementIdeaSmoke(
+  projectRoot: string,
+  ideaId: string,
+  metricName?: string,
+  value = 0.87,
+): Promise<void> {
+  const { mkdir, readFile, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const src = join(projectRoot, 'ideas', ideaId, 'src');
+  await mkdir(src, { recursive: true });
+  // Read the metric name off the idea's own config when the caller does not
+  // say: `idea check` cross-checks the smoke keys against config/train.json,
+  // so a fixed default name silently fails fixtures whose cards use another.
+  let name = metricName;
+  if (!name) {
+    try {
+      const cfg = JSON.parse(
+        await readFile(join(projectRoot, 'ideas', ideaId, 'config', 'train.json'), 'utf8'),
+      ) as { metrics?: unknown[] };
+      const first = cfg.metrics?.[0];
+      name =
+        typeof first === 'string'
+          ? first
+          : String((first as { name?: unknown })?.name ?? 'accuracy');
+    } catch {
+      name = 'accuracy';
+    }
+  }
+  await writeFile(
+    join(src, 'smoke.py'),
+    [
+      'import json',
+      '',
+      `METRICS = {"${name}": ${value}}`,
+      '',
+      'print(json.dumps({"metrics": METRICS}))',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}

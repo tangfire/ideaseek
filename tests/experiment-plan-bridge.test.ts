@@ -10,7 +10,7 @@ import type { IdeaCard } from '../src/idea/card.js';
 import { buildHandlers } from '../src/commands/shared.js';
 import { FakeWorker } from '../src/worker/worker.js';
 import { runExperimentBridge } from '../src/experiment/bridge.js';
-import { CLI_BIN, makeProjectDir, openRuntime } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke, makeProjectDir, openRuntime } from './helpers.js';
 
 /**
  * Phase 4.5 capability 2 conformance (docs/ARIS_AUDIT §conformance 必测路径):
@@ -196,6 +196,9 @@ describe('ARIS experiment-plan / experiment-bridge conformance (Phase 4.5)', () 
     expect((await runCli(dir, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
     expect((await runCli(dir, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(dir, ['idea', 'scaffold', id])).code).toBe(0);
+    // A passed check needs code that computes something: the scaffold's own
+    // smoke declares itself synthetic and is now refused, which is the point.
+    await implementIdeaSmoke(dir, id, 'rare-class recall');
     const check = await runCli(dir, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     expect((JSON.parse(check.stdout) as { outcome: string }).outcome).toBe('passed');
@@ -293,7 +296,13 @@ describe('ARIS experiment-plan / experiment-bridge conformance (Phase 4.5)', () 
       plan: { scale: 'smoke', ideaVersion: 1, specId: 'idea-calib-reweight' },
     });
     expect(payload.gate.ok).toBe(true);
-    expect(payload.metrics).toEqual([{ name: 'rare-class recall', value: 0.5 }]);
+    // 0.5 was the scaffold template's constant; the bridge now carries the
+    // value the implemented smoke computed. Asserting the range keeps this
+    // from becoming a second magic number to maintain.
+    expect(payload.metrics).toHaveLength(1);
+    expect(payload.metrics[0]!.name).toBe('rare-class recall');
+    expect(payload.metrics[0]!.value).toBeGreaterThanOrEqual(0);
+    expect(payload.metrics[0]!.value).toBeLessThanOrEqual(1);
     expect(payload.eventSeq).toBeGreaterThan(0);
 
     const shown = await runCli(dir, ['experiment', 'show', 'idea-calib-reweight', '--json']);

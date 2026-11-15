@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { computeHandoffLevel } from '../src/idea/handoff.js';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 describe('computeHandoffLevel (unit)', () => {
   it('grants HANDOFF_READY only with supported verdict, coverage and a passing gate', () => {
@@ -145,6 +145,9 @@ describe('ideaseek idea handoff (CLI)', () => {
     expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
     expect((await runCli(project, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', id])).code).toBe(0);
+    // A passed check needs real code: the scaffold's own smoke declares itself
+    // synthetic and is refused.
+    await implementIdeaSmoke(project, id, 'rare-class recall');
     expect((await runCli(project, ['idea', 'check', id])).code).toBe(0);
     const exp = await runCli(project, ['idea', 'experiment', id, '--json']);
     expect(exp.code, exp.stdout + exp.stderr).toBe(0);

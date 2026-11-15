@@ -9,7 +9,7 @@ import {
   type CapacityRequest,
 } from '../src/runtime/capacity.js';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 function probe(overrides: Partial<CapacityProbe> = {}): CapacityProbe {
   return {
@@ -229,6 +229,9 @@ describe('ideaseek capacity (CLI)', () => {
       0,
     );
     expect((await runCli(project, ['idea', 'scaffold', 'ready-idea'])).code).toBe(0);
+    // A ready idea has to earn SMOKE_TESTED with real code: the scaffold's
+    // smoke declares itself synthetic and is refused.
+    await implementIdeaSmoke(project, 'ready-idea', 'm');
     const check = await runCli(project, ['idea', 'check', 'ready-idea', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
 

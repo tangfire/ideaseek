@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 /**
  * Capability 3 (Phase 4.5): ablation-planner → mechanism chain + ablation
@@ -121,6 +121,9 @@ describe('ideaseek idea ablation-plan (ARIS ablation-planner backend)', () => {
       (await runCli(project, ['idea', 'set-status', 'calib-reweight', 'IMPLEMENTING'])).code,
     ).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', 'calib-reweight'])).code).toBe(0);
+    // The scaffold's smoke is a self-declared template; a passed check needs
+    // code that actually computes.
+    await implementIdeaSmoke(project, 'calib-reweight', 'rare-class recall');
     const check = await runCli(project, ['idea', 'check', 'calib-reweight', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     const experiment = await runCli(project, ['idea', 'experiment', 'calib-reweight', '--json']);

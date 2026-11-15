@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CLI_BIN } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 /**
  * Rejected → revise → new version closure (LONG_RUNNING_WORKFLOWS + Journey G):
@@ -66,6 +66,9 @@ describe('rejected → revise → branch closure (CLI)', () => {
       (await runCli(project, ['idea', 'set-status', 'synth-revisable-idea', 'IMPLEMENTING'])).code,
     ).toBe(0);
     expect((await runCli(project, ['idea', 'scaffold', 'synth-revisable-idea'])).code).toBe(0);
+    // The check ladder runs src/smoke.py and now refuses the scaffold's
+    // self-declared synthetic values, so this fixture needs a computing smoke.
+    await implementIdeaSmoke(project, 'synth-revisable-idea');
 
     // Stronger registered baseline covering the card's nearest comparison.
     const baselineSpec = {

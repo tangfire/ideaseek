@@ -167,6 +167,14 @@ describe('ideaseek stale (difference preview)', () => {
       'import json\nprint(json.dumps({"metrics": {"dice": 0.5}}))\n',
       'utf8',
     );
+    // The ladder checks src/smoke.py; train.py alone never decided this
+    // fixture's outcome, it just did not fail because the scaffold's own
+    // synthetic smoke was still being graded as a pass.
+    await writeFile(
+      join(dir, 'ideas', 'alpha', 'src', 'smoke.py'),
+      'import json\nprint(json.dumps({"metrics": {"dice": 0.5}}))\n',
+      'utf8',
+    );
     const trainCfg = join(dir, 'ideas', 'alpha', 'config', 'train.json');
     const cfg = JSON.parse(await readFile(trainCfg, 'utf8')) as Record<string, unknown>;
     cfg.seeds = [42, 7];

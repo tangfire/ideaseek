@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
-import { CLI_BIN, openRuntime } from './helpers.js';
+import { CLI_BIN, implementIdeaSmoke, openRuntime } from './helpers.js';
 
 /**
  * Phase 4.5C claim/citation audit (ARIS paper-claim-audit +
@@ -177,6 +177,9 @@ describe('ideaseek idea claim-audit (deterministic citation checks)', () => {
       0,
     );
     expect((await runCli(project, ['idea', 'scaffold', 'claim-idea'])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, 'claim-idea', 'm');
     const check = await runCli(project, ['idea', 'check', 'claim-idea', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
 
@@ -222,6 +225,9 @@ describe('ideaseek idea claim-audit (deterministic citation checks)', () => {
       0,
     );
     expect((await runCli(project, ['idea', 'scaffold', 'claim-idea'])).code).toBe(0);
+    // The scaffold's smoke declares itself synthetic, which `idea check`
+    // now refuses; a fixture that needs a passed check must compute.
+    await implementIdeaSmoke(project, 'claim-idea', 'm');
     const check = await runCli(project, ['idea', 'check', 'claim-idea', '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     // Simulate a stale FAIL (card was revised after the audit).
