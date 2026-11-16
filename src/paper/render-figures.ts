@@ -1,4 +1,4 @@
-import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256Of, sha256OfFile } from '../core/hash.js';
@@ -54,6 +54,11 @@ export interface FigureRenderResult {
   statistics: string[];
   /** sha256 of the executed script (code-version manifest field). */
   scriptSha256: string;
+  /**
+   * Declared outputs whose bytes did not change this run. Reported so an
+   * idempotent re-render reads as "unchanged" instead of "nothing happened".
+   */
+  unchanged?: string[];
   review: FigureReview;
   error: string | null;
   durationMs: number;
@@ -101,6 +106,24 @@ async function readFigurePlan(root: string): Promise<StoredFigurePlan> {
     );
   }
   return stored;
+}
+
+/**
+ * File paths the script declares it will save.
+ *
+ * Read off `savefig(...)` / `write_image(...)` string arguments, which the
+ * authoring validator already requires — so this is the platform holding the
+ * plan to what the plan promised, not guessing from a directory listing.
+ * Non-literal arguments (f-strings, variables) are skipped rather than
+ * guessed at; those figures are still judged by "did it save anything".
+ */
+export function parseSaveTargets(script: string): string[] {
+  const targets = new Set<string>();
+  for (const match of script.matchAll(/(?:savefig|write_image)\s*\(\s*['"]([^'"]+)['"]/g)) {
+    const raw = (match[1] ?? '').trim();
+    if (raw && !raw.includes('\n')) targets.add(raw);
+  }
+  return [...targets];
 }
 
 async function listFigureFiles(dir: string): Promise<Set<string>> {
@@ -193,6 +216,25 @@ export async function renderFigures(
     await writeFile(scriptPath, spec.script, 'utf8');
     const scriptSha256 = sha256Of(spec.script);
     const started = Date.now();
+    // What the script says it will write, and what those files contain right
+    // now. Output was previously judged by "names not already in figures/ when
+    // this command started", which made a re-render of an unchanged plan
+    // impossible: every file already existed, so every figure reported
+    // `script exited 0 but produced no new files` — a failure that looked like
+    // a broken script and was really the platform refusing its own idempotent
+    // path. Declared targets plus content digests distinguish the three cases
+    // that directory diffing conflated: newly written, unchanged, and never
+    // written (the last one is still a failure).
+    const declaredTargets = parseSaveTargets(spec.script).map((target) => ({
+      name: target.includes('/') ? target.split('/').pop()! : target,
+      path: join(figuresDir, target),
+      relative: target.includes('/') ? target : `figures/${target}`,
+    }));
+    const digestsBefore = new Map<string, string>();
+    for (const target of declaredTargets) {
+      const digest = await sha256OfFile(target.path).catch(() => null);
+      if (digest) digestsBefore.set(target.relative, digest);
+    }
     const env = { ...process.env, MPLBACKEND: 'Agg' };
     let outcome: Awaited<ReturnType<typeof runProcess>>;
     try {
@@ -270,14 +312,43 @@ export async function renderFigures(
     await ensurePng(figuresDir, spec.id, outputs, seenOutputs);
     const formats = formatsOf(outputs);
     const hasVector = formats.includes('pdf') || formats.includes('svg');
-    if (outputs.length === 0) {
+    // Declared targets decide the verdict: written-with-changed-bytes, written
+    // but byte-identical (unchanged), or never written (failure). Judging by
+    // "names not present when this command started" made a re-render of an
+    // unchanged plan report `produced no new files` for every figure — a
+    // failure that looked like a broken script and was really the platform
+    // refusing its own idempotent path.
+    const declaredMissing: string[] = [];
+    const unchanged: string[] = [];
+    for (const target of declaredTargets) {
+      const info = await stat(target.path).catch(() => null);
+      if (!info?.isFile()) {
+        declaredMissing.push(target.relative);
+        continue;
+      }
+      const digest = await sha256OfFile(target.path);
+      const known = outputs.find((output) => output.path === target.relative);
+      if (known) {
+        known.sha256 = digest;
+        known.bytes = info.size;
+      } else {
+        outputs.push({ path: target.relative, bytes: info.size, sha256: digest });
+      }
+      if (digestsBefore.get(target.relative) === digest) unchanged.push(target.relative);
+    }
+    if (outputs.length === 0 || (declaredTargets.length > 0 && declaredMissing.length > 0)) {
+      const formatsAfter = formatsOf(outputs);
       results.push({
         id: spec.id,
         ok: false,
         outputs,
-        formats,
+        formats: formatsAfter,
         ...base,
-        error: 'script exited 0 but produced no new files under figures/',
+        error:
+          declaredMissing.length > 0
+            ? `script did not write its declared output(s): ${declaredMissing.join(', ')} — ` +
+              'a savefig target that never appears on disk is not a figure'
+            : 'script exited 0 without saving any figure file',
         durationMs,
       });
       continue;
@@ -298,8 +369,9 @@ export async function renderFigures(
       id: spec.id,
       ok: true,
       outputs,
-      formats,
+      formats: formatsOf(outputs),
       ...base,
+      unchanged,
       error: null,
       durationMs,
     });

@@ -191,7 +191,11 @@ describe('ideaseek paper render-figures (e2e)', () => {
           caption: 'Broken figure.',
           statistics: ['always fails'],
           dataSources: [{ kind: 'context', ref: 'x' }],
-          script: 'import matplotlib.pyplot as plt\nraise SystemExit(3)\n',
+          // Saves first, then fails: the plan contract requires a declared
+          // output, and what this test is about is a script that fails during
+          // rendering, not one that never promised a file.
+          script:
+            'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nfig.savefig("figures/fig-1.pdf")\nraise SystemExit(3)\n',
           latexInclude: '\\includegraphics{figures/fig-1}',
           claims: ['claim'],
         },
@@ -216,4 +220,22 @@ describe('ideaseek paper render-figures (e2e)', () => {
     expect(report.figures[0]!.ok).toBe(false);
     expect(report.figures[0]!.error).toBeTruthy();
   }, 300_000);
+});
+
+describe('declared save targets', () => {
+  it('reads the outputs a script promises to write', async () => {
+    const { parseSaveTargets } = await import('../src/paper/render-figures.js');
+    expect(
+      parseSaveTargets(
+        [
+          'import matplotlib.pyplot as plt',
+          'fig, ax = plt.subplots()',
+          'fig.savefig("figures/Fig 1.pdf")',
+          "fig.savefig('figures/Fig 1.png')",
+          'fig.savefig(f"figures/{name}.svg")',
+        ].join('\n'),
+      ),
+    ).toEqual(['figures/Fig 1.pdf', 'figures/Fig 1.png']);
+    expect(parseSaveTargets('plt.plot([1, 2])')).toEqual([]);
+  });
 });

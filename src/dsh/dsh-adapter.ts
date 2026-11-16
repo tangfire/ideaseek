@@ -25,6 +25,28 @@ export const DSH_SDK_VERSION = '0.2.2-rc.1';
  */
 export const DEFAULT_DSH_MAX_TOKENS = 16_384;
 
+/** Handshake bound when the caller does not set one; env-overridable. */
+export const DEFAULT_DSH_INITIALIZE_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve the handshake bound, from the environment if the operator set one.
+ *
+ * An unparseable value is not silently trusted with a number: the point of the
+ * knob is slow machines, and a typo that turned the bound into NaN would hang
+ * the handshake instead of bounding it.
+ */
+export function dshInitializeTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+  fallback = DEFAULT_DSH_INITIALIZE_TIMEOUT_MS,
+): number {
+  const raw = env.IDEASEEK_DSH_INIT_TIMEOUT_MS;
+  if (!raw || !raw.trim()) return fallback;
+  const parsed = Number(raw.trim());
+  return Number.isFinite(parsed) && parsed >= 1_000 && parsed <= 600_000
+    ? Math.floor(parsed)
+    : fallback;
+}
+
 export interface DshAdapterOptions {
   /** DSH home for this project (sessions, profiles): <project>/.research/dsh-home. */
   dshHome: string;
@@ -327,7 +349,13 @@ export class DshHarnessAdapter implements HarnessAdapter {
       // text now says only when finishReason actually reports a length cut.
       maxTokens: this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
       reasoningEffort: ReasoningEffortId(this.opts.reasoningEffort ?? 'off'),
-      initializeTimeoutMs: this.opts.initializeTimeoutMs ?? 15_000,
+      // The handshake bound is configurable because it is a machine property,
+      // not a protocol one: a loaded box (concurrent builds, installs and
+      // LaTeX runs) made a real figure session fail with
+      // `initialize timed out after 15000ms waiting for dsh profile "sdk"`,
+      // whose message blames a missing install when the actual cause was
+      // contention. 30s default, overridable for slow environments.
+      initializeTimeoutMs: this.opts.initializeTimeoutMs ?? dshInitializeTimeoutMs(),
     });
     this.harness = harness;
     this.startPromise = harness.start();
