@@ -32,6 +32,9 @@ Output exactly one JSON object:
  "reasoning": string, "evidence": [string], "recommendedAction": string, "confidence": number}
 
 Rules:
+- A keyword-based guess from the platform may appear in the evidence. It is the thing you are
+  replacing, not a prior to confirm: contradict it whenever the log does not support it, and say in
+  "reasoning" which layer the log actually shows.
 - "evidence" must quote lines from the supplied log, verbatim and short. A verdict with no quoted
   evidence is not accepted, so if you cannot quote something that supports it, answer
   layer "unknown" with confidence below 0.4.
@@ -63,9 +66,16 @@ async function phaseEvidence(projectRoot: string, report: IdeaCheckReport): Prom
   for (const phase of report.phases) {
     if (phase.skipped || phase.ok || !phase.logPath) continue;
     const tail = await readFile(join(projectRoot, phase.logPath), 'utf8').catch(() => '');
+    // The mechanical classification is passed as what it is — a keyword guess
+    // the agent is expected to contradict. Stating it in the evidence header
+    // without that framing made the table the agent exists to replace the
+    // first thing the agent read, and a model tends to agree with a label that
+    // is already printed above the log.
     parts.push(
-      `### ${phase.phase} (exit ${phase.exitCode}, classified ${phase.failureKind ?? 'unknown'})\n` +
+      `### ${phase.phase} (exit ${phase.exitCode})\n` +
         `command: ${phase.command.join(' ')}\n` +
+        `platform keyword guess (you may contradict it, and should if the log does not support it): ` +
+        `${phase.failureKind ?? 'none'}\n` +
         redactSecrets(tail).slice(-LOG_TAIL),
     );
   }
@@ -91,18 +101,29 @@ export async function diagnoseFailure(opts: {
   report: IdeaCheckReport;
   ideaId: string;
   runId: string;
+  /**
+   * What the plan asked for (card scope, declared requirements, locked
+   * protocol metrics). Without it the agent can only reason about the code, and
+   * `layer: "plan"` — the verdict that stops the loop instead of spending the
+   * budget — becomes unfalsifiable: nothing in a traceback says "this is what
+   * the card asked for and it is impossible on this data".
+   */
+  planContext?: string;
 }): Promise<FailureDiagnosis | null> {
   const evidence = await phaseEvidence(opts.projectRoot, opts.report);
   if (!evidence.trim()) return null;
+  const input = opts.planContext
+    ? `${evidence}\n\n## what the plan required (judge the code against this, and judge whether this itself is what is wrong)\n${redactSecrets(opts.planContext).slice(0, LOG_TAIL)}`
+    : evidence;
   const result = await opts.harness.runTask({
     runId: opts.runId,
     taskId: `diagnose-${opts.ideaId}`,
     profile: 'demo',
     instruction: DIAGNOSIS_INSTRUCTION,
-    inputs: [{ kind: 'text', name: 'failed-check-report', content: evidence }],
+    inputs: [{ kind: 'text', name: 'failed-check-report', content: input }],
     outputSchema: DIAGNOSIS_SCHEMA,
     budget: { timeoutMs: 120_000, maxOutputTokens: 2_000 },
-    idempotencyKey: `diagnose:${opts.ideaId}:${sha256Of(evidence).slice(7, 23)}`,
+    idempotencyKey: `diagnose:${opts.ideaId}:${sha256Of(input).slice(7, 23)}`,
   });
   let parsed: unknown;
   try {

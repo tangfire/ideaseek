@@ -300,6 +300,16 @@ export async function implementIdeaWithRefine(opts: {
         report,
         ideaId: opts.ideaId,
         runId: opts.runId,
+        // The plan side of the question, so `layer: "plan"` can be reached by
+        // reasoning rather than by exhaustion of the code hypothesis.
+        planContext: [
+          `scope: ${opts.card.minimalExperiment.code}`,
+          `data expectation: ${opts.card.minimalExperiment.data}`,
+          `metrics: ${opts.card.minimalExperiment.metrics.join(', ')}`,
+          `baselines: ${opts.card.minimalExperiment.baselines.join(', ')}`,
+          `budget: maxRounds=${opts.card.budget.maxRounds} maxGpuMinutes=${opts.card.budget.maxGpuMinutes}`,
+          `hypothesis: ${opts.card.hypothesis.statement}`,
+        ].join('\n'),
       });
       if (diagnosis) {
         lastDiagnosis = diagnosis;
