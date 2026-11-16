@@ -58,8 +58,16 @@ function validFigurePlan(): Record<string, unknown> {
         title: 'Main comparison',
         caption: 'Main comparison caption.',
         statistics: ['bar height = final accuracy'],
-        dataSources: [{ kind: 'experiment-spec', ref: 'repro-fedavg' }],
-        script: 'import matplotlib.pyplot as plt\n',
+        dataSources: [{ kind: 'result-file', ref: 'reports/paper/results.json' }],
+        // Compliant with the current figure contract: it reads the source it
+        // declares and saves the file the renderer must find.
+        script:
+          'import json, matplotlib.pyplot as plt\\n' +
+          'rows = json.load(open("reports/paper/results.json"))\\n' +
+          'fig, ax = plt.subplots()\\n' +
+          'ax.bar([r["specId"] for r in rows["rows"]], [r["metrics"][0]["value"] for r in rows["rows"]])\\n' +
+          'fig.savefig("figures/fig-1.pdf")\\n' +
+          'fig.savefig("figures/fig-1.png")',
         latexInclude: '\\includegraphics{figures/fig-1}',
         claims: ['A beats baseline'],
       },
