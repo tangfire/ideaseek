@@ -503,7 +503,17 @@ export async function executeSpecRun(
   await writeRepairLog(projectRoot, logName, command, run.exitCode, run.out);
   const logRef = `.research/logs/${logName}`;
 
-  const { metrics, parseFailure } = parseMetricsOutput(run.out, run.exitCode, run.timedOut, spec);
+  // What the platform told the program to run, read back out of the argv it
+  // built, so the comparison cannot drift from the command actually executed.
+  const scaleFlagAt = command.indexOf('--scale');
+  const requestedScale = scaleFlagAt >= 0 ? (command[scaleFlagAt + 1] ?? '') : '';
+  const { metrics, parseFailure } = parseMetricsOutput(
+    run.out,
+    run.exitCode,
+    run.timedOut,
+    spec,
+    requestedScale,
+  );
   const succeeded = run.exitCode === 0 && !run.timedOut && parseFailure === null;
   const failureCategory: RunFailureCategory = succeeded
     ? 'unknown'
@@ -612,20 +622,39 @@ export async function executeSpecRun(
   };
 }
 
-/** Parses the last {"metrics": {...}} JSON line against the spec metric list. */
+/**
+ * Parses the last {"metrics": {...}} JSON line against the spec metric list.
+ *
+ * `requestedScale` is the scale the platform asked the entry to run at, taken
+ * from the argv it built (`--scale quick`). When the program reports the scale
+ * it actually used and the two differ, the run is refused rather than recorded:
+ * an idea's `src/train.py` on FDG ran the same code as its `src/smoke.py`,
+ * printed `"scale": "smoke"`, and `run-ready --scale quick` recorded it as a
+ * quick experiment with metrics bit-identical to the smoke run. Nothing else
+ * in the platform can see that — the spec carries no scale field and the
+ * numbers themselves look legitimate — so a claim about how much data was
+ * consumed was being made on the program's behalf without the program's
+ * agreement. A program that reports nothing keeps working (the command line is
+ * the evidence for those entries); a program that reports a different scale is
+ * contradicting the record, which is the one case that must not be written.
+ */
 export function parseMetricsOutput(
   out: string,
   exitCode: number,
   timedOut: boolean,
   spec: ExperimentSpec,
+  requestedScale?: string,
 ): { metrics: { name: string; value: number }[]; parseFailure: string | null } {
   const metrics: { name: string; value: number }[] = [];
   if (exitCode !== 0 || timedOut) return { metrics, parseFailure: null };
   const lines = out.split(/\r?\n/).filter((line) => line.trim());
-  let parsed: { metrics?: Record<string, unknown> } | null = null;
+  let parsed: { metrics?: Record<string, unknown>; scale?: unknown } | null = null;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     try {
-      const candidate = JSON.parse(lines[i]!) as { metrics?: Record<string, unknown> };
+      const candidate = JSON.parse(lines[i]!) as {
+        metrics?: Record<string, unknown>;
+        scale?: unknown;
+      };
       if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
         parsed = candidate;
         break;
@@ -637,6 +666,17 @@ export function parseMetricsOutput(
   const metricMap = parsed?.metrics ?? {};
   if (!parsed || Object.keys(metricMap).length === 0) {
     return { metrics, parseFailure: 'entry produced no {"metrics": {...}} JSON line' };
+  }
+  const reported = typeof parsed.scale === 'string' ? parsed.scale.trim() : '';
+  if (requestedScale && reported && reported !== requestedScale) {
+    return {
+      metrics: [],
+      parseFailure:
+        `the entry reports scale="${reported}" but the platform ran it as ` +
+        `"--scale ${requestedScale}"; the numbers cannot be recorded under a scale the ` +
+        'program did not run. Make the entry honor its --scale argument (a larger slice, not ' +
+        'the smoke computation) and report the value it used',
+    };
   }
   const missing: string[] = [];
   for (const expected of spec.metrics) {

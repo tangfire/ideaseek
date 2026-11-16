@@ -32,6 +32,11 @@ Rules:
 - "src/smoke.py" is what the platform runs: it must READ the handed data (IDEASEEK_DATA_PATH,
   else IDEASEEK_DATASET_ROOTS, else IDEASEEK_PROJECT_ROOT) and print exactly one JSON line
   {"metrics": {...}} whose keys are exactly the idea's configured metric names.
+- "src/train.py" is what the platform runs for "--scale quick|standard": it must consume a LARGER
+  slice than src/smoke.py and print "scale" set to the value it was given
+  ({"metrics": {...}, "scale": "quick"}). An entry that reuses the smoke computation under a quick
+  label is refused, because the record would claim more data than was read (observed on a real
+  idea whose train.py printed "scale": "smoke" while run-ready asked for quick).
 - The platform invokes each file as "python src/<name>.py" with the WORKSPACE ROOT as the working
   directory, which puts src/ itself on sys.path. Import siblings by BARE module name
   ("from geometry import project"), never "from src.geometry import ..." — there is no package

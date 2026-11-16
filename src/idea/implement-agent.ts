@@ -45,6 +45,10 @@ Rules for the work itself:
   the metric names the idea card declares.
 - Import sibling modules by bare name; src/ is on the search path when the platform runs
   "python src/<file>.py".
+- The platform runs src/train.py with "--scale quick|standard" for anything beyond the smoke
+  check. That entry must consume a LARGER slice than src/smoke.py and print "scale" set to the
+  value it was given. Reusing the smoke computation under a quick label is refused by the
+  platform, and recording it would claim more evidence than exists.
 - RUN what you wrote before you finish. Execute src/smoke.py, read the traceback, fix it, and
   repeat until it prints real computed values. Do not declare success you have not observed.
 - Never emit placeholder, constant, or self-declared synthetic metric values. A metrics line
