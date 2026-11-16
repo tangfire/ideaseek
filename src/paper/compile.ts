@@ -107,7 +107,7 @@ export async function assembleLaTeXProject(
   }
   let templateText: string;
   try {
-    templateText = await readFile(templateAbs, 'utf8');
+    templateText = normalizeEscapedLayout(await readFile(templateAbs, 'utf8'));
   } catch {
     throw new IdeaseekError('FILE_NOT_FOUND', `vendored template missing: ${templateFile}`);
   }
@@ -157,7 +157,9 @@ export async function assembleLaTeXProject(
     escapeLatex(abstractStart),
     '\\end{abstract}',
     '',
-    ...manuscript.sections.map((section) => section.latex.trim()),
+    ...manuscript.sections.map((section) =>
+      normalizeEscapedLayout(section.latex).trim(),
+    ),
     '',
     `\\bibliographystyle{${bibStyle}}`,
     '\\bibliography{references}',
@@ -218,6 +220,34 @@ export function extractPageCount(log: string): number | null {
  * which of these the engine can actually resolve is a machine question, which
  * ones the document asks for is not.
  */
+/**
+ * Repair escaped newlines that a source asset carries verbatim.
+ *
+ * The vendored ICLR template contains literal backslash-n between preamble
+ * lines (`...{hyperref}\\n\\usepackage[capitalize]{cleveref}`), because it was
+ * written out by a model and committed without decoding — and pdflatex reads
+ * that as an undefined control sequence, so `paper compile` could not produce
+ * a PDF on any venue whose template shipped that way, while every check the
+ * platform had (style files present, inputs resolvable, dependencies staged)
+ * passed. Repairing at assemble time rather than editing the vendored bytes
+ * keeps `ideaseek aris verify` meaningful: the manifest still describes exactly
+ * what upstream shipped, and the deviation lives in code where it can be seen.
+ *
+ * Only a `\\n` NOT followed by a letter is replaced, because `\nu` and `\neg` are real
+ * LaTeX commands; the same rule is applied to tabs and carriage returns.
+ */
+export function normalizeEscapedLayout(text: string): string {
+  // Decided by what FOLLOWS, not by a list of LaTeX macros: a control word
+  // after `\n` must be lowercase (`\newtheorem`, `\normalsize`, `\times`),
+  // while an escaped newline from double-escaped model output is followed by
+  // prose — a capital, a space, punctuation or the end. An allowlist of names
+  // would need extending for every package; this needs nothing.
+  return text
+    .replace(/\\n(?![a-z])/g, '\n')
+    .replace(/\\t(?![a-z])/g, '\t')
+    .replace(/\\r(?![a-z])/g, '\r');
+}
+
 export function latexDependencyNames(source: string): string[] {
   const names = new Set<string>();
   for (const match of source.matchAll(
