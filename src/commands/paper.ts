@@ -347,21 +347,55 @@ export function registerPaperCommand(program: Command): void {
           opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : 'fake');
         const harness = buildHarness(kind);
         await harness.initialize();
-        let output: string;
+        let output = '';
         let runtimeKind = kind;
         try {
-          const result = await harness.runTask({
-            runId: 'paper-figure',
-            taskId: 'paper-figure',
-            profile: 'paper-planner',
-            instruction: request.instruction,
-            inputs: [{ kind: 'text', name: 'figure_context', content: request.context }],
-            outputSchema: PAPER_FIGURE_SCHEMA,
-            budget: { timeoutMs: 180_000, maxOutputTokens: 24_576 },
-            idempotencyKey: request.idempotencyKey,
-          });
-          output = result.output;
-          runtimeKind = result.runtime.kind;
+          // Bounded correction, in the ARIS shape the idea path already uses:
+          // one answer, and if the contract rejects it, the validator's own
+          // words go back to the model with a second and third chance. A whole
+          // figure plan used to be discarded on the first violation ("script
+          // must save the figure") with the user told nothing but the error
+          // text — and five scripts authored blind in one JSON envelope is the
+          // same fragile shape we replaced on the idea side. Two retries is the
+          // ceiling, not a loop: if the model still cannot state its outputs,
+          // the answer is a tool session, not another sample.
+          let instruction = request.instruction;
+          let lastViolation: Error | null = null;
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            const result = await harness.runTask({
+              runId: 'paper-figure',
+              taskId: 'paper-figure',
+              profile: 'paper-planner',
+              instruction,
+              inputs: [{ kind: 'text', name: 'figure_context', content: request.context }],
+              outputSchema: PAPER_FIGURE_SCHEMA,
+              budget: { timeoutMs: 180_000, maxOutputTokens: 24_576 },
+              idempotencyKey: `${request.idempotencyKey}:r${attempt}`,
+            });
+            output = result.output;
+            runtimeKind = result.runtime.kind;
+            try {
+              parsePaperFigureOutput(output, context);
+              lastViolation = null;
+              break;
+            } catch (error) {
+              if (!(error instanceof Error)) throw error;
+              lastViolation = error;
+              instruction = [
+                request.instruction,
+                '',
+                `## your previous answer was rejected by the platform (attempt ${attempt})`,
+                error.message,
+                'Fix exactly those fields and return the complete JSON again. Every script must',
+                'call savefig(...) (or write_image) for the files it claims, and must load the',
+                'results file it declares as its data source rather than drawing invented values.',
+              ].join('\n');
+              process.stderr.write(
+                `  · figure plan rejected (attempt ${attempt}): ${error.message.slice(0, 160)}\n`,
+              );
+            }
+          }
+          if (lastViolation) throw lastViolation;
         } catch (error) {
           if (error instanceof Error && error.name === 'HarnessBlockError') {
             const block = (error as { block?: string }).block ?? 'BLOCKED';
