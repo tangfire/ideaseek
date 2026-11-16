@@ -139,6 +139,12 @@ export interface AnalysisInput {
     spec: ExperimentSpec;
     result: RunResult;
   }[];
+  /**
+   * The locked protocol's declared name for the primary metric, prose and unit
+   * included. The spec stores the bare identifier, so without this the
+   * deterministic unit guard reads a name that can never declare anything.
+   */
+  declaredPrimary?: string;
   /** Primary-metric values from baseline/reproduction runs (null = unknown). */
   baselines: { methodId: string; value: number | null; scale?: string }[];
   /**
@@ -263,12 +269,15 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
   // the protocol declares this metric in percent and the idea's run recorded
   // 0.1686, so the "idea loses" verdict was really a unit mismatch on the
   // idea's side of the comparison.
+  // The protocol's declared name is the only place the unit exists: the spec
+  // stores the bare identifier, so asking it would always answer "no unit".
+  const declaredName = input.declaredPrimary ?? primary.name;
   const ideaUnitViolation =
-    ideaValueRaw === null ? null : unitViolation(metricUnit(primary.name), ideaValueRaw);
+    ideaValueRaw === null ? null : unitViolation(metricUnit(declaredName), ideaValueRaw);
   const ideaValue = ideaUnitViolation ? null : ideaValueRaw;
   if (ideaUnitViolation !== null) {
     reasons.push(
-      `primary metric "${metricIdentifier(primary.name)}" ${ideaUnitViolation} — the recorded ` +
+      `primary metric "${metricIdentifier(declaredName)}" ${ideaUnitViolation} — the recorded ` +
         'value cannot be compared against baselines in the declared unit',
     );
     nextSteps.push(

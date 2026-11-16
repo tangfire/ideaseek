@@ -120,6 +120,15 @@ export async function collectAnalysisInput(
   projectRoot: string,
   ideaId: string,
   db: RegistryLike,
+  /**
+   * The locked protocol's metric names as declared, prose and all:
+   * `target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)`.
+   * The spec carries the bare identifier, so without these the unit the
+   * protocol declares could never reach the comparison — the deterministic
+   * guard would sit inert while an agent read the same parenthetical and
+   * caught the mismatch.
+   */
+  protocolMetricNames: string[] = [],
 ): Promise<AnalysisInput> {
   const meta = await loadWorkspaceMeta(projectRoot, ideaId);
   const card = await loadIdeaCard(projectRoot, ideaId);
@@ -178,7 +187,17 @@ export async function collectAnalysisInput(
     [...mainMirrors].reverse().find((m) => m.result) ??
     null;
   const main = mainPick?.result ? { spec: mainPick.spec, result: mainPick.result } : null;
-  const primary = main && main.result.status === 'succeeded' ? primaryName(main.spec) : null;
+  const primarySpec = main && main.result.status === 'succeeded' ? primaryName(main.spec) : null;
+  // Prefer the protocol's declared form of the same metric: it is the only
+  // place the unit (and, in future, the intended direction) is written down.
+  // Matching is by identifier, because the spec's name is the identifier
+  // stripped of exactly that prose.
+  const primary =
+    primarySpec === null
+      ? null
+      : (protocolMetricNames.find(
+          (declared) => metricIdentifier(declared) === metricIdentifier(primarySpec),
+        ) ?? primarySpec);
 
   // Ablations: latest succeeded version per ablationId (mirror preferred,
   // registry row as fallback for anything not yet mirrored).
@@ -359,6 +378,9 @@ export async function collectAnalysisInput(
     main,
     ablations,
     baselines,
+    declaredPrimary: protocolMetricNames.find(
+      (declared) => primary !== null && metricIdentifier(declared) === metricIdentifier(primary),
+    ),
     unitProblems,
     ideaByScale,
     scalesRun: [...scales].sort(),
@@ -383,8 +405,9 @@ export async function runAnalysis(
   projectRoot: string,
   ideaId: string,
   db: RegistryLike,
+  protocolMetricNames: string[] = [],
 ): Promise<AnalysisOutcome> {
-  const input = await collectAnalysisInput(projectRoot, ideaId, db);
+  const input = await collectAnalysisInput(projectRoot, ideaId, db, protocolMetricNames);
   const analysis = analyzeIdea(input);
   const dir = join(ideaDir(projectRoot, ideaId), 'experiments');
   await ensureDir(dir);

@@ -3415,7 +3415,19 @@ export function registerIdeaCommand(program: Command): void {
           ),
         });
         try {
-          const { analysis, paths } = await runAnalysis(root, ideaId, runtime.db);
+          // The protocol's declared metric names go in with the input, so the
+          // deterministic unit guard has something to check against rather than
+          // relying on the agent review alone. Read before the ladder runs.
+          const { protocolMetricNames, readLockedProtocol } =
+            await import('../experiment/protocol-source.js');
+          const declaredProtocol = await readLockedProtocol(runtime);
+          const declaredMetricNames = protocolMetricNames(declaredProtocol ?? null);
+          const { analysis, paths } = await runAnalysis(
+            root,
+            ideaId,
+            runtime.db,
+            declaredMetricNames,
+          );
 
           // The comparability of the numbers is a judgement, so it is asked of
           // an agent working from the vendored ARIS analyze-results skill; the
