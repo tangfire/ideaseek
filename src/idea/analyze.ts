@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
-import { metricIdentifier } from '../core/metric-id.js';
+import { metricIdentifier, metricUnit, unitViolation } from '../core/metric-id.js';
 import type { ExperimentSpec, RunResult } from '../experiment/spec.js';
 import {
   analyzeIdea,
@@ -73,6 +73,24 @@ function metricOf(result: RunResult, name: string | null): number | null {
 function scaleOf(spec: ExperimentSpec): string {
   const note = (spec.environment.notes ?? []).find((n) => n.startsWith('scale:'));
   return note ? note.slice('scale:'.length) : 'unknown';
+}
+
+/**
+ * A baseline value that contradicts the unit the protocol's own metric
+ * declaration states cannot be compared, so it is dropped rather than ranked.
+ *
+ * Without this the platform computed `idea=0.1686 does not beat
+ * fedavg=18.75` — a percent recorded against a metric declared in percent being
+ * read as a fraction, or the reverse, and the arithmetic happily obeyed. An
+ * unusable number must produce "no valid comparison", never a verdict.
+ */
+function comparableValue(
+  declaredName: string | null,
+  value: number | null,
+): { value: number | null; violation: string | null } {
+  if (value === null) return { value: null, violation: null };
+  const violation = unitViolation(metricUnit(declaredName ?? ''), value);
+  return violation ? { value: null, violation } : { value, violation: null };
 }
 
 /**
@@ -207,6 +225,8 @@ export async function collectAnalysisInput(
   }
 
   const baselines: { methodId: string; value: number | null; scale?: string }[] = [];
+  /** Values rejected for contradicting their metric's declared unit. */
+  const unitProblems: string[] = [];
   const seenMethods = new Set<string>();
   for (const nearest of card.nearestComparisons) {
     if (seenMethods.has(nearest.methodId)) continue;
@@ -217,7 +237,10 @@ export async function collectAnalysisInput(
     if (repro?.result) {
       const result = asResult(repro.result);
       if (result.status === 'succeeded') {
-        value = metricOf(result, primary ?? primaryName(asSpec(repro.spec)));
+        const raw = metricOf(result, primary ?? primaryName(asSpec(repro.spec)));
+        const checked = comparableValue(primary ?? primaryName(asSpec(repro.spec)), raw);
+        value = checked.value;
+        if (checked.violation) unitProblems.push(`repro-${nearest.methodId}: ${checked.violation}`);
         valueScale = scaleOf(asSpec(repro.spec));
       }
     }
@@ -239,12 +262,14 @@ export async function collectAnalysisInput(
         // subject is that method: the `repro-<methodId>` records above, or a run
         // with no idea binding (baseline/protocol experiments).
         if (!isBaselineSubjectRun(spec, nearest.methodId, ideaId)) continue;
-        const candidate = metricOf(result, primary ?? primaryName(spec));
-        if (candidate !== null) {
-          value = candidate;
+        const raw = metricOf(result, primary ?? primaryName(spec));
+        const checked = comparableValue(primary ?? primaryName(spec), raw);
+        if (checked.value !== null) {
+          value = checked.value;
           valueScale = scaleOf(spec);
           break;
         }
+        if (checked.violation) unitProblems.push(`${doc.specId}: ${checked.violation}`);
       }
     }
     baselines.push({
@@ -260,9 +285,17 @@ export async function collectAnalysisInput(
       const spec = asSpec(doc.spec);
       const extraScale = scaleOf(spec);
       if (extraScale === valueScale) continue;
-      const extraValue = metricOf(result, primary ?? primaryName(spec));
-      if (extraValue === null) continue;
-      baselines.push({ methodId: nearest.methodId, value: extraValue, scale: extraScale });
+      const extraChecked = comparableValue(
+        primary ?? primaryName(spec),
+        metricOf(result, primary ?? primaryName(spec)),
+      );
+      if (extraChecked.value === null) {
+        if (extraChecked.violation) {
+          unitProblems.push(`${doc.specId}: ${extraChecked.violation}`);
+        }
+        continue;
+      }
+      baselines.push({ methodId: nearest.methodId, value: extraChecked.value, scale: extraScale });
     }
   }
 
@@ -326,6 +359,7 @@ export async function collectAnalysisInput(
     main,
     ablations,
     baselines,
+    unitProblems,
     ideaByScale,
     scalesRun: [...scales].sort(),
     datasetsRun: [...datasets].sort(),

@@ -1,4 +1,5 @@
 import type { ExperimentSpec, RunFailureCategory, RunResult } from '../experiment/spec.js';
+import { metricIdentifier, metricUnit, unitViolation } from '../core/metric-id.js';
 import type { IdeaCard } from './card.js';
 
 /**
@@ -140,6 +141,13 @@ export interface AnalysisInput {
   }[];
   /** Primary-metric values from baseline/reproduction runs (null = unknown). */
   baselines: { methodId: string; value: number | null; scale?: string }[];
+  /**
+   * Recorded values dropped for contradicting the unit their metric name
+   * declares (see core/metric-id.ts). Reported rather than silently discarded:
+   * "no valid comparison" and "we threw away the only baseline" are different
+   * messages, and only one of them tells the researcher to fix a unit.
+   */
+  unitProblems?: string[];
   /** Primary-metric value of the idea per scale (succeeded mirrors only). */
   ideaByScale?: Record<string, number>;
   /** Distinct scales with a succeeded idea result (smoke/quick/…). */
@@ -249,7 +257,43 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
     return finish(input, 'inconclusive', 'none', [], null, [], reasons, nextSteps, missing);
   }
 
-  const ideaValue = metricValue(mainResult, primary.name);
+  const ideaValueRaw = metricValue(mainResult, primary.name);
+  // The idea's own value is held to the same declared unit as the baselines.
+  // Checking only the other side would have passed over the actual FDG case:
+  // the protocol declares this metric in percent and the idea's run recorded
+  // 0.1686, so the "idea loses" verdict was really a unit mismatch on the
+  // idea's side of the comparison.
+  const ideaUnitViolation =
+    ideaValueRaw === null ? null : unitViolation(metricUnit(primary.name), ideaValueRaw);
+  const ideaValue = ideaUnitViolation ? null : ideaValueRaw;
+  if (ideaUnitViolation !== null) {
+    reasons.push(
+      `primary metric "${metricIdentifier(primary.name)}" ${ideaUnitViolation} — the recorded ` +
+        'value cannot be compared against baselines in the declared unit',
+    );
+    nextSteps.push(
+      'emit the metric in the unit the protocol declares (or re-lock the protocol with the ' +
+        'intended unit), then rerun: ideaseek idea experiment ' +
+        input.ideaId,
+    );
+    return finish(
+      input,
+      'invalid-run',
+      'metric',
+      input.baselines.map((baseline) => ({
+        methodId: baseline.methodId,
+        baselineValue: baseline.value,
+        ideaValue: ideaValueRaw,
+        delta: null,
+        ...(baseline.scale !== undefined ? { scale: baseline.scale } : {}),
+      })),
+      null,
+      [],
+      reasons,
+      nextSteps,
+      missing,
+    );
+  }
   if (ideaValue === null) {
     const failureClass: FailureClass = 'metric';
     reasons.push(`main run succeeded but primary metric "${primary.name}" is missing/non-finite`);
@@ -284,6 +328,19 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
     reasons.push(
       '缺少有效对照：no baseline result available — absolute results cannot claim superiority (plan §C.4)',
     );
+    if ((input.unitProblems ?? []).length > 0) {
+      // The difference matters: a dropped-for-units value means a baseline
+      // EXISTS and disagrees with its own declared unit, which is a recording
+      // bug to fix, not an absence to accept.
+      reasons.push(
+        `baseline value(s) discarded for contradicting the declared unit: ${(
+          input.unitProblems ?? []
+        ).join(' | ')}`,
+      );
+      nextSteps.push(
+        'fix the unit the metric declares versus what was recorded, then re-run the baseline',
+      );
+    }
     nextSteps.push(
       'reproduce or repair the nearest baseline first (ideaseek baseline reproduce/repair)',
     );

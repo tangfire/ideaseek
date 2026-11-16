@@ -36,6 +36,7 @@ import {
   verifyWorkspace,
   type IdeaRunStatus,
 } from '../idea/workspace.js';
+import { redactSecrets } from '../core/redact.js';
 import { findProjectRoot } from '../config/paths.js';
 import type { ComparativeVerdict } from '../idea/analysis-agent.js';
 import { action, buildHarness, jsonLine } from './shared.js';
@@ -3428,6 +3429,8 @@ export function registerIdeaCommand(program: Command): void {
           let review: ComparativeVerdict | null = null;
           let reviewNote = '';
           let directionNote = '';
+          // Set when a model-backed check could not run at all (harness down, quota, network).
+          let agentUnavailable: string | null = null;
           const harness = runtime.harness;
           const comparableFacts = analysis.baselineComparison.filter(
             (entry) => entry.baselineValue !== null && entry.ideaValue !== null,
@@ -3445,11 +3448,28 @@ export function registerIdeaCommand(program: Command): void {
               // near-orthogonal — was declared "higher", so the ladder was
               // reading a worsening as an improvement before any agent spoke.
               const directions = await import('../experiment/direction-audit.js');
-              const directionAudit = await directions.auditMetricDirections({
-                harness,
-                protocol: protocol!,
-                runId: `directions-${ideaId}`,
-              });
+              // Best effort by construction. The deterministic ladder above has
+              // already produced the verdict, and a harness that cannot start
+              // must not take the facts down with it: on FDG a DSH handshake
+              // timeout made `idea analyze` print a stack trace and no numbers
+              // at all, which is the worst behaviour for the one command a
+              // researcher runs when the model is unavailable.
+              const directionAudit = await directions
+                .auditMetricDirections({
+                  harness,
+                  protocol: protocol!,
+                  runId: `directions-${ideaId}`,
+                })
+                .catch((error: unknown) => {
+                  agentUnavailable = redactSecrets((error as Error).message).slice(0, 160);
+                  return null;
+                });
+              if (!directionAudit && agentUnavailable) {
+                directionNote =
+                  'direction audit not performed: the harness could not answer (' +
+                  agentUnavailable +
+                  '), so declared metric directions are unverified this run';
+              }
               if (directionAudit) {
                 // A verification that passes or fails quietly is worse than no
                 // verification: the first FDG run of this audit flagged the two
@@ -3502,48 +3522,57 @@ export function registerIdeaCommand(program: Command): void {
               const agent = await import('../idea/analysis-agent.js');
               review = directionBlocked
                 ? null
-                : await agent.compareWithAgent({
-                    harness,
-                    ideaId,
-                    runId: `analyze-${ideaId}`,
-                    protocolText: [
-                      `protocol ${protocol?.protocolId ?? '(unknown)'}`,
-                      `primary metric: ${primaryName}`,
-                      `secondary metrics: ${
-                        protocolMetricNames(protocol ?? null)
-                          .slice(1)
-                          .join(', ') || '(none)'
-                      }`,
-                      `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
-                    ].join('\n'),
-                    coverageText:
-                      `scales=[${analysis.coverage.scales.join(', ')}] ` +
-                      `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
-                      `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
-                    facts: comparableFacts.flatMap((entry) => [
-                      {
-                        source: 'idea-main',
-                        metric: primaryName,
-                        value: entry.ideaValue as number,
-                        scale: entry.scale ?? null,
-                        provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
-                      },
-                      {
-                        source: entry.methodId,
-                        metric: primaryName,
-                        value: entry.baselineValue as number,
-                        scale: entry.scale ?? null,
-                        provenance: 'recorded baseline result',
-                      },
-                    ]),
-                  });
+                : await agent
+                    .compareWithAgent({
+                      harness,
+                      ideaId,
+                      runId: `analyze-${ideaId}`,
+                      protocolText: [
+                        `protocol ${protocol?.protocolId ?? '(unknown)'}`,
+                        `primary metric: ${primaryName}`,
+                        `secondary metrics: ${
+                          protocolMetricNames(protocol ?? null)
+                            .slice(1)
+                            .join(', ') || '(none)'
+                        }`,
+                        `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
+                      ].join('\n'),
+                      coverageText:
+                        `scales=[${analysis.coverage.scales.join(', ')}] ` +
+                        `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
+                        `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
+                      facts: comparableFacts.flatMap((entry) => [
+                        {
+                          source: 'idea-main',
+                          metric: primaryName,
+                          value: entry.ideaValue as number,
+                          scale: entry.scale ?? null,
+                          provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
+                        },
+                        {
+                          source: entry.methodId,
+                          metric: primaryName,
+                          value: entry.baselineValue as number,
+                          scale: entry.scale ?? null,
+                          provenance: 'recorded baseline result',
+                        },
+                      ]),
+                    })
+                    .catch((error: unknown) => {
+                      agentUnavailable = redactSecrets((error as Error).message).slice(0, 160);
+                      return null;
+                    });
             }
           }
           // Silence here would be the worst outcome: a REJECTED verdict printed
           // as if it had been independently checked. Every path that does not
           // produce a review says so, with the command that would change it.
           if (comparableFacts.length > 0) {
-            if (directionBlocked) {
+            if (agentUnavailable) {
+              reviewNote =
+                `agent checks unavailable (${agentUnavailable}) — the verdict above is the ` +
+                'platform arithmetic only and has not been reviewed for comparability';
+            } else if (directionBlocked) {
               reviewNote =
                 'comparability not reviewed: the direction audit contradicts the protocol metric ' +
                 'definitions, so no comparative conclusion is issued this run';
