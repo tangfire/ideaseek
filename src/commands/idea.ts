@@ -3400,16 +3400,130 @@ export function registerIdeaCommand(program: Command): void {
       'Result Analyst: verdict from baselines + main run + ablations + coverage (crash ≠ hypothesis failure)',
     )
     .argument('<ideaId>', 'idea id')
+    .option('--harness <kind>', 'harness backend for the comparability review (dsh by default)')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (ideaId: string, opts: { json?: boolean }) => {
+      action(async (ideaId: string, opts: { harness?: string; json?: boolean }) => {
         const root = await openRoot();
         const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const runtime = await ProjectRuntime.open({ cwd: root });
+        const runtime = await ProjectRuntime.open({
+          cwd: root,
+          harness: (await import('./shared.js')).buildHarness(
+            (await import('./shared.js')).resolveHarnessKind(opts.harness),
+          ),
+        });
         try {
           const { analysis, paths } = await runAnalysis(root, ideaId, runtime.db);
+
+          // The comparability of the numbers is a judgement, so it is asked of
+          // an agent working from the vendored ARIS analyze-results skill; the
+          // deterministic ladder above owns the facts (values, coverage, which
+          // runs crashed). Without this the platform wrote
+          // "does not beat best baseline (fedavg=18.75)" against a 0-1 metric
+          // and recorded a hypothesis as having lost an arithmetic contest.
+          let review: Awaited<
+            ReturnType<typeof import('../idea/analysis-agent.js').compareWithAgent>
+          > = null;
+          const harness = runtime.harness;
+          const comparableFacts = analysis.baselineComparison.filter(
+            (entry) => entry.baselineValue !== null && entry.ideaValue !== null,
+          );
+          if (harness && harness.kind !== 'fake' && comparableFacts.length > 0) {
+            const { readLockedProtocol, protocolMetricNames } =
+              await import('../experiment/protocol-source.js');
+            const protocol = await readLockedProtocol(runtime);
+            const primaryName = protocolMetricNames(protocol ?? null)[0] ?? '';
+            if (primaryName) {
+              const agent = await import('../idea/analysis-agent.js');
+              review = await agent.compareWithAgent({
+                harness,
+                ideaId,
+                runId: `analyze-${ideaId}`,
+                protocolText: [
+                  `protocol ${protocol?.protocolId ?? '(unknown)'}`,
+                  `primary metric: ${primaryName}`,
+                  `secondary metrics: ${
+                    protocolMetricNames(protocol ?? null)
+                      .slice(1)
+                      .join(', ') || '(none)'
+                  }`,
+                  `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
+                ].join('\n'),
+                coverageText:
+                  `scales=[${analysis.coverage.scales.join(', ')}] ` +
+                  `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
+                  `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
+                facts: comparableFacts.flatMap((entry) => [
+                  {
+                    source: 'idea-main',
+                    metric: primaryName,
+                    value: entry.ideaValue as number,
+                    scale: entry.scale ?? null,
+                    provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
+                  },
+                  {
+                    source: entry.methodId,
+                    metric: primaryName,
+                    value: entry.baselineValue as number,
+                    scale: entry.scale ?? null,
+                    provenance: 'recorded baseline result',
+                  },
+                ]),
+              });
+            }
+          }
+          // Silence here would be the worst outcome: a REJECTED verdict printed
+          // as if it had been independently checked. Every path that does not
+          // produce a review says so, with the command that would change it.
+          let reviewNote = '';
+          if (comparableFacts.length > 0) {
+            if (!harness || harness.kind === 'fake') {
+              reviewNote =
+                'comparability NOT reviewed: no real harness configured, so the verdict above is the ' +
+                'platform arithmetic alone (run: ideaseek models setup, or --harness dsh)';
+            } else if (!review) {
+              reviewNote =
+                'comparability review discarded: the agent answer was unparseable, quoted no evidence, ' +
+                `or cited a value that is not in the records — the verdict above was not independently checked`;
+            }
+          }
+          if (review) {
+            if (!review.comparable && review.verdict === 'rejected') {
+              review.verdict = 'inconclusive';
+            }
+            if (analysis.verdict !== 'invalid-run' && review.verdict !== 'invalid-run') {
+              // The agent owns the comparative conclusion; the code keeps the
+              // one boundary no model may cross — a crashed or metric-less run
+              // is decided above and never argued with. Ignoring a returned
+              // verdict was itself the bug: on this idea the ladder said
+              // REJECTED, the skill-backed review said INCONCLUSIVE (a percent
+              // against a fraction is not a contest), and printing the ladder's
+              // word anyway would have recorded a lost hypothesis that was
+              // never actually tested.
+              analysis.verdict = review.verdict;
+              analysis.failureClass = review.comparable
+                ? review.verdict === 'supported'
+                  ? 'none'
+                  : review.verdict === 'rejected'
+                    ? 'effect-insufficient'
+                    : 'unknown'
+                : 'metric';
+              analysis.reasons.unshift(
+                `comparability review (ARIS analyze-results, confidence ` +
+                  `${review.confidence.toFixed(2)}): ${review.comparable ? 'comparable' : 'NOT comparable'} ` +
+                  `— ${review.unitAssessment}`,
+              );
+              if (review.recommendedNext) analysis.nextSteps.unshift(review.recommendedNext);
+            }
+            const { writeFile } = await import('node:fs/promises');
+            await writeFile(
+              paths[paths.length - 1]!.replace('analysis.json', 'analysis-agent-review.json'),
+              `${JSON.stringify({ ideaId, review, deterministic: analysis.verdict }, null, 2)}\n`,
+              'utf8',
+            ).catch(() => undefined);
+          }
           if (opts.json) {
-            process.stdout.write(jsonLine({ analysis, paths }));
+            process.stdout.write(jsonLine({ analysis, paths, review, reviewNote }));
             return 0;
           }
           process.stdout.write(
@@ -3425,6 +3539,21 @@ export function registerIdeaCommand(program: Command): void {
             process.stdout.write(`  primary delta vs best baseline: ${analysis.primaryDelta}\n`);
           }
           for (const reason of analysis.reasons) process.stdout.write(`  reason: ${reason}\n`);
+          if (reviewNote) process.stdout.write(`  ${reviewNote}\n`);
+          if (review) {
+            process.stdout.write(
+              `  comparability (agent, ARIS analyze-results): ` +
+                `${review.comparable ? 'comparable' : 'NOT comparable'} · verdict ${review.verdict} · ` +
+                `confidence ${review.confidence.toFixed(2)}\n` +
+                `    ${review.unitAssessment.slice(0, 300)}\n`,
+            );
+            for (const citation of review.citedValues) {
+              process.stdout.write(
+                `    cited ${citation.source} ${citation.metric} = ${citation.value}` +
+                  `${citation.unit ? ` ${citation.unit}` : ''}\n`,
+              );
+            }
+          }
           for (const failure of analysis.failures) {
             process.stdout.write(
               `  failure kept: ${failure.specId} ${failure.category ?? '?'} → ${failure.class}\n`,

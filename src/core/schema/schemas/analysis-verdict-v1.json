@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.local/schema/analysis-verdict-v1.json",
+  "title": "Analysis Verdict v1",
+  "description": "An agent's comparative verdict on one idea's experiment, using the vendored ARIS analyze-results skill. Produced because the platform's deterministic ladder decided 'effect insufficient' by comparing values whose unit systems it could not see (an idea metric recorded as a 0-1 fraction against a baseline recorded as a percentage: 0.1686 vs 18.75), which makes 'does not beat the best baseline' arithmetically true and scientifically meaningless. Comparability and 'is this delta meaningful' are judgements, so they belong to the agent. What stays with the platform is verification: the cited values must exist in the records, the enums are closed, and a run that crashed is never allowed to be reclassified as a scientific failure.",
+  "type": "object",
+  "required": ["comparable", "verdict", "failureClass", "unitAssessment", "reasoning", "citedValues", "evidence"],
+  "additionalProperties": false,
+  "properties": {
+    "comparable": {
+      "type": "boolean",
+      "description": "False when the idea's number and the baseline's number are not the same measurement in the same unit and domain — different scale, different aggregation, percent vs fraction, different split. This is the check the deterministic ladder could not perform."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["supported", "inconclusive", "rejected", "invalid-run"],
+      "description": "Only 'rejected' means the hypothesis was tested and lost. When comparable is false the verdict must be 'inconclusive', never 'rejected'."
+    },
+    "failureClass": {
+      "type": "string",
+      "enum": ["none", "engineering", "environment", "data", "resource", "metric", "hypothesis", "effect-insufficient", "unknown"],
+      "description": "'unit-mismatch' is expressed as comparable=false with failureClass 'metric': the measurement vocabulary, not the science, is what failed."
+    },
+    "unitAssessment": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 900,
+      "description": "What unit/domain each side is in and why they can or cannot be compared, naming the protocol or provenance text that shows it."
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 1200
+    },
+    "citedValues": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "required": ["source", "metric", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "source": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The record the number came from: methodId, specId or 'idea-main'." },
+          "metric": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "value": { "type": "number" },
+          "unit": { "type": "string", "maxLength": 60 }
+        },
+        "description": "Numbers the verdict rests on. The platform re-reads these from its own records and discards the verdict if a citation does not match, so a hallucinated number cannot reach a conclusion."
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": { "type": "string", "minLength": 2, "maxLength": 300 },
+      "description": "Quoted text from the protocol metric definitions, the spec, or the result records — not a paraphrase."
+    },
+    "recommendedNext": {
+      "type": "string",
+      "maxLength": 400
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}
