@@ -1,4 +1,4 @@
-import { copyFile, readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
+import { copyFile, readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { arisSkillsRoot } from '../aris/skill.js';
 import { IdeaseekError } from '../core/errors.js';
@@ -51,9 +51,6 @@ export const VENUE_TEMPLATES: Record<string, string> = {
   IEEE_CONF: 'ieee_conference.tex',
   IEEE_JOURNAL: 'ieee_journal.tex',
 };
-
-/** Style files copied next to main.tex when the template needs them. */
-const BUNDLED_STYLE_FILES = ['IEEEtran.cls', 'IEEEtran.bst'];
 
 export interface StoredManuscriptDoc {
   contract: string;
@@ -126,15 +123,26 @@ export async function assembleLaTeXProject(
   const paperDir = join(root, 'paper');
   await mkdir(paperDir, { recursive: true });
 
-  // IEEE templates need their vendored class/style files beside main.tex.
-  for (const style of BUNDLED_STYLE_FILES) {
-    if (templateText.includes('IEEEtran')) {
-      try {
-        const source = join(arisSkillsRoot(), 'skills', 'paper-write', 'templates', style);
-        await writeFile(join(paperDir, style), await readFile(source));
-      } catch {
-        // missing style file surfaces as a compile failure with log tail
-      }
+  // Stage the style files the venue template declares, from the vendored ARIS
+  // templates directory. This used to be a hardcoded pair (IEEEtran.cls/.bst)
+  // guarded by `includes('IEEEtran')`, which is exactly the shape that breaks:
+  // the ICLR template needs iclr2026_conference.sty, that file exists in the
+  // upstream ARIS checkout, and nothing in IdeaSeek ever brought it along — so
+  // every non-IEEE submission failed compile on a clean install while the
+  // capability looked present. The dependency names come from the template
+  // itself (`latexDependencyNames`), so a new venue works as soon as its style
+  // file is vendored, with no rule to edit.
+  const templateDir = join(arisSkillsRoot(), 'skills', 'paper-write', 'templates');
+  const neededAssets = new Set<string>();
+  for (const name of latexDependencyNames(templateText)) {
+    for (const suffix of ['.sty', '.cls', '.bst', '.tex']) neededAssets.add(name + suffix);
+  }
+  for (const asset of neededAssets) {
+    try {
+      await writeFile(join(paperDir, asset), await readFile(join(templateDir, asset)));
+    } catch {
+      // Not vendored here: the preflight in compileManuscript names it, rather
+      // than this loop swallowing the absence.
     }
   }
 
@@ -201,7 +209,10 @@ export function extractPageCount(log: string): number | null {
 }
 
 /**
- * The support files a LaTeX source declares (document class and packages).
+ * The support files a LaTeX source declares: document class, packages, and the files it
+ * \input or \include — the ARIS templates split their math setup into math_commands.tex,
+ * and a venue whose style pulls in a companion file is only buildable if that file comes
+ * along too (the first ICLR compile failed on exactly that).
  *
  * Pure and exported so the parsing can be tested without a TeX distribution:
  * which of these the engine can actually resolve is a machine question, which
@@ -210,7 +221,7 @@ export function extractPageCount(log: string): number | null {
 export function latexDependencyNames(source: string): string[] {
   const names = new Set<string>();
   for (const match of source.matchAll(
-    /\\(?:usepackage|documentclass)(?:\[[^\]]*\])?\{([^}]*)\}/g,
+    /\\(?:usepackage|documentclass|input|include)(?:\[[^\]]*\])?\{([^}]*)\}/g,
   )) {
     for (const raw of (match[1] ?? '').split(',')) {
       const name = raw.trim();
@@ -230,7 +241,13 @@ export function latexDependencyNames(source: string): string[] {
 async function findMissingStyles(mainTex: string): Promise<string[]> {
   const source = await readFile(mainTex, 'utf8').catch(() => '');
   if (!source) return [];
+  const paperDir = join(mainTex, '..');
   const resolves = async (name: string, suffix: string): Promise<boolean> => {
+    // A file beside main.tex is found by the engine whatever the search paths
+    // say: the manuscript \inputs the section files it assembled itself, and
+    // asking kpsewhich about those would report real files missing.
+    const local = await stat(join(paperDir, `${name}${suffix}`)).catch(() => null);
+    if (local?.isFile()) return true;
     const probe = await runProcess('kpsewhich', [`${name}${suffix}`], {
       cwd: join(mainTex, '..'),
       timeoutMs: 20_000,

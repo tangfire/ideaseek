@@ -172,6 +172,14 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
     sha256: '1e4c20b3c5b7445966194151d33c3e2023e828e621be8baf7ffb234b987cfc23',
   },
   {
+    path: 'skills/paper-write/templates/iclr2026_conference.bst',
+    sha256: '2d67552db7ed38ccfccb5957b52f95656e25c249724761d3cf5f7922ad1844c5',
+  },
+  {
+    path: 'skills/paper-write/templates/iclr2026_conference.sty',
+    sha256: 'a4852f68e080d6c5245057ca2039100b409e31727898aa93c03d78ddb84374a3',
+  },
+  {
     path: 'skills/paper-write/templates/icml2025.tex',
     sha256: 'd346d4b5b96276a4e04ccd7590ad158cce4aabcc090281dca7c4b0900d11530b',
   },
