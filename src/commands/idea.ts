@@ -37,6 +37,7 @@ import {
   type IdeaRunStatus,
 } from '../idea/workspace.js';
 import { findProjectRoot } from '../config/paths.js';
+import type { ComparativeVerdict } from '../idea/analysis-agent.js';
 import { action, buildHarness, jsonLine } from './shared.js';
 
 async function openRoot(): Promise<string> {
@@ -3421,9 +3422,12 @@ export function registerIdeaCommand(program: Command): void {
           // runs crashed). Without this the platform wrote
           // "does not beat best baseline (fedavg=18.75)" against a 0-1 metric
           // and recorded a hypothesis as having lost an arithmetic contest.
-          let review: Awaited<
-            ReturnType<typeof import('../idea/analysis-agent.js').compareWithAgent>
-          > = null;
+          // Set when the direction audit contradicts the protocol's own metric
+          // definitions: no comparative conclusion may be issued this round.
+          let directionBlocked = false;
+          let review: ComparativeVerdict | null = null;
+          let reviewNote = '';
+          let directionNote = '';
           const harness = runtime.harness;
           const comparableFacts = analysis.baselineComparison.filter(
             (entry) => entry.baselineValue !== null && entry.ideaValue !== null,
@@ -3434,50 +3438,116 @@ export function registerIdeaCommand(program: Command): void {
             const protocol = await readLockedProtocol(runtime);
             const primaryName = protocolMetricNames(protocol ?? null)[0] ?? '';
             if (primaryName) {
-              const agent = await import('../idea/analysis-agent.js');
-              review = await agent.compareWithAgent({
+              // Direction first: a metric whose declared direction contradicts
+              // its own definition makes every comparison meaningless, whatever
+              // the units turn out to be. On this protocol every metric —
+              // including a principal-angle mismatch where 79 degrees is
+              // near-orthogonal — was declared "higher", so the ladder was
+              // reading a worsening as an improvement before any agent spoke.
+              const directions = await import('../experiment/direction-audit.js');
+              const directionAudit = await directions.auditMetricDirections({
                 harness,
-                ideaId,
-                runId: `analyze-${ideaId}`,
-                protocolText: [
-                  `protocol ${protocol?.protocolId ?? '(unknown)'}`,
-                  `primary metric: ${primaryName}`,
-                  `secondary metrics: ${
-                    protocolMetricNames(protocol ?? null)
-                      .slice(1)
-                      .join(', ') || '(none)'
-                  }`,
-                  `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
-                ].join('\n'),
-                coverageText:
-                  `scales=[${analysis.coverage.scales.join(', ')}] ` +
-                  `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
-                  `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
-                facts: comparableFacts.flatMap((entry) => [
-                  {
-                    source: 'idea-main',
-                    metric: primaryName,
-                    value: entry.ideaValue as number,
-                    scale: entry.scale ?? null,
-                    provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
-                  },
-                  {
-                    source: entry.methodId,
-                    metric: primaryName,
-                    value: entry.baselineValue as number,
-                    scale: entry.scale ?? null,
-                    provenance: 'recorded baseline result',
-                  },
-                ]),
+                protocol: protocol!,
+                runId: `directions-${ideaId}`,
               });
+              if (directionAudit) {
+                // A verification that passes or fails quietly is worse than no
+                // verification: the first FDG run of this audit flagged the two
+                // error-like secondaries and correctly left the primary alone,
+                // printed nothing, and so looked like it had not run at all.
+                directionNote =
+                  directionAudit.inconsistent.length > 0
+                    ? `direction audit (agent): ${directionAudit.inconsistent.length} metric(s) ` +
+                      `contradict their own definitions — ${directionAudit.inconsistent.slice(0, 4).join(', ')}` +
+                      `${directionAudit.inconsistent.length > 4 ? ' …' : ''}`
+                    : `direction audit (agent): all ${directionAudit.findings.length} declared direction(s) consistent with their definitions`;
+              } else {
+                directionNote =
+                  'direction audit unavailable (no usable answer): declared directions are unverified, ' +
+                  'so any error-like metric may be read backwards by the comparisons below';
+              }
+              if (directionAudit && directionAudit.inconsistent.length > 0) {
+                analysis.nextSteps.unshift(
+                  `fix the metric directions before drawing mechanism conclusions: ` +
+                    `ideaseek protocol propose then ideaseek confirm (${directionAudit.summary.slice(0, 200)})`,
+                );
+              }
+              if (directionAudit && directions.directionIsFlagged(directionAudit, primaryName)) {
+                const finding = directionAudit.findings.find(
+                  (entry) =>
+                    entry.metric === primaryName ||
+                    directions.directionIsFlagged(directionAudit, entry.metric),
+                );
+                analysis.verdict = 'inconclusive';
+                analysis.failureClass = 'metric';
+                analysis.reasons.unshift(
+                  `direction audit (agent): "${(finding?.metric ?? primaryName).slice(0, 90)}" is declared ` +
+                    `${finding?.declared ?? 'unknown'} but the definition says otherwise` +
+                    `${finding?.expected && finding.expected !== 'unknown' ? ` (should be ${finding.expected})` : ''}: ` +
+                    `${finding?.reasoning ?? ''}` +
+                    `${finding?.evidence?.[0] ? ` — evidence: ${finding.evidence[0]}` : ''}`,
+                );
+                analysis.nextSteps.unshift(
+                  directionAudit.inconsistent.length > 1
+                    ? `re-lock the protocol with corrected directions; flagged metrics: ${directionAudit.inconsistent.join(', ')}`
+                    : 're-lock the protocol with the corrected direction: ideaseek protocol propose then ideaseek confirm',
+                );
+                // Not a return: the headline verdict and the coverage facts are
+                // exactly what the reader must see, and hiding the report to
+                // show the audit would lose the evidence that motivated it. The
+                // comparability call is skipped instead — with a wrong direction
+                // there is nothing for it to compare.
+                directionBlocked = true;
+              }
+              const agent = await import('../idea/analysis-agent.js');
+              review = directionBlocked
+                ? null
+                : await agent.compareWithAgent({
+                    harness,
+                    ideaId,
+                    runId: `analyze-${ideaId}`,
+                    protocolText: [
+                      `protocol ${protocol?.protocolId ?? '(unknown)'}`,
+                      `primary metric: ${primaryName}`,
+                      `secondary metrics: ${
+                        protocolMetricNames(protocol ?? null)
+                          .slice(1)
+                          .join(', ') || '(none)'
+                      }`,
+                      `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
+                    ].join('\n'),
+                    coverageText:
+                      `scales=[${analysis.coverage.scales.join(', ')}] ` +
+                      `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
+                      `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
+                    facts: comparableFacts.flatMap((entry) => [
+                      {
+                        source: 'idea-main',
+                        metric: primaryName,
+                        value: entry.ideaValue as number,
+                        scale: entry.scale ?? null,
+                        provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
+                      },
+                      {
+                        source: entry.methodId,
+                        metric: primaryName,
+                        value: entry.baselineValue as number,
+                        scale: entry.scale ?? null,
+                        provenance: 'recorded baseline result',
+                      },
+                    ]),
+                  });
             }
           }
           // Silence here would be the worst outcome: a REJECTED verdict printed
           // as if it had been independently checked. Every path that does not
           // produce a review says so, with the command that would change it.
-          let reviewNote = '';
           if (comparableFacts.length > 0) {
-            if (!harness || harness.kind === 'fake') {
+            if (directionBlocked) {
+              reviewNote =
+                'comparability not reviewed: the direction audit contradicts the protocol metric ' +
+                'definitions, so no comparative conclusion is issued this run';
+            } else if (!harness || harness.kind === 'fake') {
               reviewNote =
                 'comparability NOT reviewed: no real harness configured, so the verdict above is the ' +
                 'platform arithmetic alone (run: ideaseek models setup, or --harness dsh)';
@@ -3539,6 +3609,9 @@ export function registerIdeaCommand(program: Command): void {
             process.stdout.write(`  primary delta vs best baseline: ${analysis.primaryDelta}\n`);
           }
           for (const reason of analysis.reasons) process.stdout.write(`  reason: ${reason}\n`);
+          if (directionNote)
+            process.stdout.write(`  ${directionNote}
+`);
           if (reviewNote) process.stdout.write(`  ${reviewNote}\n`);
           if (review) {
             process.stdout.write(

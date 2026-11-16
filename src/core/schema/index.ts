@@ -6,6 +6,7 @@ import experimentSpecV1 from './schemas/experiment-spec-v1.json' with { type: 'j
 import runResultV1 from './schemas/run-result-v1.json' with { type: 'json' };
 import datasetProfileV1 from './schemas/dataset-profile-v1.json' with { type: 'json' };
 import imageProfileV1 from './schemas/image-profile-v1.json' with { type: 'json' };
+import directionAuditV1 from './schemas/direction-audit-v1.json' with { type: 'json' };
 import analysisVerdictV1 from './schemas/analysis-verdict-v1.json' with { type: 'json' };
 import materializationReportV1 from './schemas/materialization-report-v1.json' with { type: 'json' };
 import metricAlignmentV1 from './schemas/metric-alignment-v1.json' with { type: 'json' };
@@ -63,6 +64,7 @@ export type SchemaName =
   | 'run-result-v1'
   | 'dataset-profile-v1'
   | 'image-profile-v1'
+  | 'direction-audit-v1'
   | 'analysis-verdict-v1'
   | 'materialization-report-v1'
   | 'metric-alignment-v1'
@@ -93,6 +95,7 @@ const SCHEMAS: Record<SchemaName, object> = {
   'run-result-v1': runResultV1,
   'dataset-profile-v1': datasetProfileV1,
   'image-profile-v1': imageProfileV1,
+  'direction-audit-v1': directionAuditV1,
   'analysis-verdict-v1': analysisVerdictV1,
   'materialization-report-v1': materializationReportV1,
   'metric-alignment-v1': metricAlignmentV1,
