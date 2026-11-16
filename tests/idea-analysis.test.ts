@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { isBaselineSubjectRun } from '../src/idea/analyze.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -597,4 +598,16 @@ describe('ideaseek idea ablate + analyze (CLI)', () => {
     expect(failed!.class).toBe('metric');
     expect(payload.analysis.verdict).not.toBe('invalid-run'); // main smoke still succeeded
   }, 240_000);
+});
+
+it("never reads an idea's own score as a baseline's score", () => {
+  // The real FDG contamination: rethinkfl was printed as 0.2209625991904911,
+  // which was another idea's primary metric to the last digit, because the
+  // fallback accepted any run that merely LISTED the method in comparisonIds.
+  const spec = (idea: string | null, ids: string[]) =>
+    ({ idea: idea ? { ideaId: idea, version: 1 } : null, comparisonIds: ids }) as never;
+  expect(isBaselineSubjectRun(spec('gen-other', ['rethinkfl']), 'rethinkfl', 'gen-x')).toBe(false);
+  expect(isBaselineSubjectRun(spec('gen-x', ['rethinkfl']), 'rethinkfl', 'gen-x')).toBe(false);
+  expect(isBaselineSubjectRun(spec(null, ['rethinkfl']), 'rethinkfl', 'gen-x')).toBe(true);
+  expect(isBaselineSubjectRun(spec(null, ['fedavg']), 'rethinkfl', 'gen-x')).toBe(false);
 });

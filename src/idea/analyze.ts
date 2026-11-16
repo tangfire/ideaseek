@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
+import { metricIdentifier } from '../core/metric-id.js';
 import type { ExperimentSpec, RunResult } from '../experiment/spec.js';
 import {
   analyzeIdea,
@@ -49,15 +50,52 @@ function primaryName(spec: ExperimentSpec): string | null {
   return spec.metrics[0]?.name ?? null;
 }
 
+/**
+ * The value of `name` in a recorded run.
+ *
+ * Matched by exact name first, then by metric identifier: protocol names carry
+ * their definition prose ("… (held-out domain value, all samples, %)") while
+ * entries record whatever they printed, and raw-string matching silently
+ * returned "no such metric" for records that plainly had it — which, in the
+ * baseline path, reads as "no baseline available" and quietly discards real
+ * evidence. This is the same vocabulary gap #15 was about, found here by the
+ * contamination fix removing the wrong value that had been hiding it.
+ */
 function metricOf(result: RunResult, name: string | null): number | null {
   if (!name) return null;
-  const found = result.metrics.find((m) => m.name === name);
+  const identifier = metricIdentifier(name);
+  const found =
+    result.metrics.find((metric) => metric.name === name) ??
+    result.metrics.find((metric) => metricIdentifier(metric.name) === identifier);
   return found && Number.isFinite(found.value) ? found.value : null;
 }
 
 function scaleOf(spec: ExperimentSpec): string {
   const note = (spec.environment.notes ?? []).find((n) => n.startsWith('scale:'));
   return note ? note.slice('scale:'.length) : 'unknown';
+}
+
+/**
+ * Whether a recorded run measures the given method as its subject.
+ *
+ * An idea-experiment run lists the baselines it is compared AGAINST in
+ * `comparisonIds`; that is a reference, not a measurement. The fallback search
+ * used to accept it, so the first idea declaring "nearest: rethinkfl" became
+ * the source of rethinkfl's score — on FDG the analysis printed
+ * `rethinkfl=0.2209625991904911`, which was another idea's own primary metric
+ * to the last digit, and then judged the hypothesis against it. A baseline
+ * number may only come from a run whose subject is that method: a
+ * `repro-<methodId>` registry record, or a run with no idea binding
+ * (baseline/protocol experiments).
+ */
+export function isBaselineSubjectRun(
+  spec: Pick<ExperimentSpec, 'idea' | 'comparisonIds'>,
+  methodId: string,
+  ideaId: string,
+): boolean {
+  if (spec.idea?.ideaId === ideaId) return false;
+  if (spec.idea) return false;
+  return Boolean(spec.comparisonIds?.includes(methodId));
 }
 
 export async function collectAnalysisInput(
@@ -191,7 +229,16 @@ export async function collectAnalysisInput(
         const result = asResult(doc.result);
         if (result.status !== 'succeeded') continue;
         const spec = asSpec(doc.spec);
-        if (!spec.comparisonIds?.includes(nearest.methodId)) continue;
+        // An idea-experiment run lists the baselines it is compared AGAINST in
+        // `comparisonIds`; that is a reference, not a measurement of them. This
+        // loop used to accept it, so the first idea that declared "nearest:
+        // rethinkfl" became the source of rethinkfl's score — on FDG the
+        // analysis printed `rethinkfl=0.2209625991904911`, which was another
+        // idea's own primary metric to the last digit, and then called the
+        // hypothesis beaten. A baseline number may only come from a run whose
+        // subject is that method: the `repro-<methodId>` records above, or a run
+        // with no idea binding (baseline/protocol experiments).
+        if (!isBaselineSubjectRun(spec, nearest.methodId, ideaId)) continue;
         const candidate = metricOf(result, primary ?? primaryName(spec));
         if (candidate !== null) {
           value = candidate;
