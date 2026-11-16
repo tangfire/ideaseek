@@ -653,8 +653,12 @@ export function registerPaperCommand(program: Command): void {
       '--style-dir <dir>',
       'directory holding venue class/style files (e.g. iclr2026_conference.sty) that TeX Live lacks',
     )
+    .option(
+      '--allow-figures <paths>',
+      'comma-separated figures/ files to include without an accepted render (hand-made figures)',
+    )
     .action(
-      action(async (opts: { json?: boolean; styleDir?: string }) => {
+      action(async (opts: { json?: boolean; styleDir?: string; allowFigures?: string }) => {
         const root = await findRoot();
         const { loadArisSkill } = await import('../aris/skill.js');
         // Provenance only: this workflow is deterministic platform code that
@@ -667,7 +671,12 @@ export function registerPaperCommand(program: Command): void {
             name: skill.name,
             sha256: skill.sha256,
           },
-          { ...(opts.styleDir ? { styleDir: opts.styleDir } : {}) },
+          {
+            ...(opts.styleDir ? { styleDir: opts.styleDir } : {}),
+            ...(opts.allowFigures?.trim()
+              ? { allowFigures: opts.allowFigures.split(',').map((entry) => entry.trim()) }
+              : {}),
+          },
         );
 
         await ensureDir(join(root, 'reports', 'paper'));

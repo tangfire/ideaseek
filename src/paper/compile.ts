@@ -157,9 +157,7 @@ export async function assembleLaTeXProject(
     escapeLatex(abstractStart),
     '\\end{abstract}',
     '',
-    ...manuscript.sections.map((section) =>
-      normalizeEscapedLayout(section.latex).trim(),
-    ),
+    ...manuscript.sections.map((section) => normalizeEscapedLayout(section.latex).trim()),
     '',
     `\\bibliographystyle{${bibStyle}}`,
     '\\bibliography{references}',
@@ -181,6 +179,58 @@ export async function assembleLaTeXProject(
 
 function escapeLatex(text: string): string {
   return text.replace(/([&%$#_])/g, '\\$1');
+}
+
+/**
+ * Figure files the manuscript includes that the renderer did not accept.
+ *
+ * The hole this closes was observed on FDG: `paper render-figures` reported
+ * `partial: 0/6` because six scripts drew identical placeholder bars, and
+ * `paper compile` then produced a 7-page PDF embedding exactly those six
+ * rejected files. The platform's own verdict that no figure is trustworthy had
+ * no effect on the artifact people actually read — a report nobody obeys is
+ * decoration.
+ *
+ * Presence, not hash: an included figure must be listed as an output of a
+ * figure the renderer marked ok. That also catches stale files left by an older
+ * plan, which is what happened here. A human-drawn figure is reported rather
+ * than silently trusted, and `--allow-figure` names the ones you mean.
+ */
+export async function unapprovedFigureIncludes(
+  root: string,
+  mainTexText: string,
+  allowed: string[] = [],
+): Promise<string[]> {
+  const includes = [...mainTexText.matchAll(/\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/g)]
+    .map((match) => (match[1] ?? '').trim())
+    .filter((path) => path.startsWith('figures/'))
+    .map((path) => (/\.[a-z]+$/i.test(path) ? path : `${path}.pdf`));
+  if (includes.length === 0) return [];
+
+  const accepted = new Set<string>();
+  try {
+    const report = JSON.parse(
+      await readFile(join(root, 'reports', 'paper', 'figure-render.json'), 'utf8'),
+    ) as {
+      figures?: { ok?: boolean; outputs?: { path?: unknown }[] }[];
+    };
+    for (const figure of report.figures ?? []) {
+      if (figure?.ok !== true) continue;
+      for (const output of figure.outputs ?? []) {
+        if (typeof output?.path === 'string') accepted.add(output.path);
+      }
+    }
+  } catch {
+    // No report means nothing in figures/ has ever been accepted — the honest
+    // reading, since an unrendered figure is not a figure.
+  }
+  const allowedNames = new Set(allowed);
+  return [...new Set(includes)].filter(
+    (path) =>
+      !accepted.has(path) &&
+      !allowedNames.has(path) &&
+      !allowedNames.has(path.replace(/^figures\//, '')),
+  );
 }
 
 /** Classifies a failed latexmk log into an actionable blocker. */
@@ -335,6 +385,8 @@ interface CompileOptions {
   now?: number;
   /** Directory holding venue class/style files TeX Live does not provide. */
   styleDir?: string;
+  /** Figure paths to treat as approved without a render report entry. */
+  allowFigures?: string[];
 }
 
 /**
@@ -375,6 +427,90 @@ export async function compileManuscript(
       return { report, mainPath: '' };
     }
     throw error;
+  }
+
+  const mainTexText = await readFile(join(root, 'paper', 'main.tex'), 'utf8').catch(() => '');
+  // The check that FDG actually needed. `paper plan` listed six figures,
+  // `paper write` produced a manuscript containing no \includegraphics at all,
+  // and `paper compile` reported success with a 7-page PDF — a figure-less
+  // paper that looked finished. The plan is a commitment: an id it names that
+  // the manuscript never places is a gap, and silence about a gap in a
+  // research artifact is the defect, not the missing figure itself.
+  const unplacedFigures: string[] = [];
+  try {
+    const plan = JSON.parse(
+      await readFile(join(root, 'reports', 'paper', 'figures-plan.json'), 'utf8'),
+    ) as {
+      figures?: { figures?: { id?: unknown }[] };
+      preservedExisting?: unknown;
+      manualRemaining?: unknown;
+    };
+    const excused = new Set(
+      [
+        ...(Array.isArray(plan.preservedExisting) ? plan.preservedExisting : []),
+        ...(Array.isArray(plan.manualRemaining) ? plan.manualRemaining : []),
+      ].map(String),
+    );
+    for (const figure of plan.figures?.figures ?? []) {
+      const id = String(figure?.id ?? '').trim();
+      if (!id || excused.has(id)) continue;
+      if (!mainTexText.includes(`figures/${id}`)) unplacedFigures.push(id);
+    }
+  } catch {
+    // No stored plan: nothing to cross-check, and inventing a requirement would
+    // block manuscripts that never planned figures.
+  }
+  if (unplacedFigures.length > 0) {
+    const report: CompileReport = {
+      status: 'blocked',
+      venue: manuscript.venue,
+      template: null,
+      engine: 'pdflatex',
+      buildCommand: [],
+      attempts: 0,
+      exitCode: null,
+      pdfPath: null,
+      pageCount: null,
+      logTail: '',
+      blockers: [
+        `the figure plan commits to figures the manuscript never places: ${unplacedFigures.join(', ')} — ` +
+          'add them to the manuscript (ideaseek paper write) or record them as manual/preserved ' +
+          'in the plan; compiling without them would publish a paper missing its own evidence',
+      ],
+      skill: skillMeta,
+      manuscriptInputHash: stored.inputHash,
+      compiledAt: opts.now ?? Date.now(),
+    };
+    return { report, mainPath: join(root, 'paper', 'main.tex') };
+  }
+
+  const unapprovedFigures = await unapprovedFigureIncludes(
+    root,
+    mainTexText,
+    opts.allowFigures ?? [],
+  );
+  if (unapprovedFigures.length > 0) {
+    const report: CompileReport = {
+      status: 'blocked',
+      venue: manuscript.venue,
+      template: null,
+      engine: 'pdflatex',
+      buildCommand: [],
+      attempts: 0,
+      exitCode: null,
+      pdfPath: null,
+      pageCount: null,
+      logTail: '',
+      blockers: [
+        `figures included but not accepted by the renderer: ${unapprovedFigures.join(', ')} — ` +
+          'rerun: ideaseek paper render-figures (it reports ok per figure), or name deliberately ' +
+          'hand-made files with: ideaseek paper compile --allow-figure <path>',
+      ],
+      skill: skillMeta,
+      manuscriptInputHash: stored.inputHash,
+      compiledAt: opts.now ?? Date.now(),
+    };
+    return { report, mainPath: join(root, 'paper', 'main.tex') };
   }
 
   // Preflight the style dependencies before spending a latexmk run. The venue
