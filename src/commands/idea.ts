@@ -3225,6 +3225,37 @@ export function registerIdeaCommand(program: Command): void {
           } else {
             if (result.admitted.length === 0 && result.queued.length === 0) {
               process.stdout.write('run-ready: no SMOKE_TESTED ideas waiting\n');
+              // "nothing waiting" is only useful if it says what is waiting
+              // instead. The ideas in this project had already been run one at a
+              // time and moved on to ANALYZING, so the parallel path printed a
+              // dead end with no next command and looked like a broken feature.
+              const { listWorkspaces } = await import('../idea/workspace.js');
+              const where = new Map<string, string[]>();
+              for (const meta of await listWorkspaces(root)) {
+                const bucket = where.get(meta.status) ?? [];
+                bucket.push(meta.ideaId);
+                where.set(meta.status, bucket);
+              }
+              const nextFor: Record<string, string> = {
+                IMPLEMENTING: 'ideaseek idea check',
+                SMOKE_TESTED: 'ideaseek idea run-ready',
+                RUNNING: 'ideaseek status',
+                ANALYZING: 'ideaseek idea analyze',
+                NEEDS_REVISION: 'ideaseek idea implement',
+                INVALID_RUN: 'ideaseek idea implement',
+                SUPPORTED: 'ideaseek idea handoff',
+                REJECTED: 'ideaseek ideate',
+                PROPOSED: 'ideaseek idea implement',
+              };
+              for (const [status, ids] of [...where].sort()) {
+                process.stdout.write(
+                  `  ${status}: ${ids.slice(0, 3).join(', ')}${ids.length > 3 ? ` (+${ids.length - 3})` : ''}\n` +
+                    `     next: ${nextFor[status] ?? 'ideaseek idea show'}\n`,
+                );
+              }
+              if (where.size === 0) {
+                process.stdout.write('  none: ideaseek ideate --round new\n');
+              }
             } else {
               process.stdout.write(
                 `run-ready: ${result.admitted.length} admitted · ${result.queued.length} queued` +
