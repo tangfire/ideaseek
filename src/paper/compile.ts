@@ -1,8 +1,9 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, readFile, readdir, writeFile, mkdir } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { arisSkillsRoot } from '../aris/skill.js';
 import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
+import { ensureDir } from '../core/atomic.js';
 import { runProcess } from '../core/proc.js';
 import type { Manuscript } from './write.js';
 
@@ -199,10 +200,94 @@ export function extractPageCount(log: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-export interface CompileOptions {
+/**
+ * The support files a LaTeX source declares (document class and packages).
+ *
+ * Pure and exported so the parsing can be tested without a TeX distribution:
+ * which of these the engine can actually resolve is a machine question, which
+ * ones the document asks for is not.
+ */
+export function latexDependencyNames(source: string): string[] {
+  const names = new Set<string>();
+  for (const match of source.matchAll(
+    /\\(?:usepackage|documentclass)(?:\[[^\]]*\])?\{([^}]*)\}/g,
+  )) {
+    for (const raw of (match[1] ?? '').split(',')) {
+      const name = raw.trim();
+      if (name) names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Support files the assembled document needs but the engine cannot find.
+ *
+ * `kpsewhich` is asked per file because it is the same resolver LaTeX uses — a
+ * maintained list of "styles we expect" would be a rule needing an entry per
+ * venue, which is the pattern this project is removing.
+ */
+async function findMissingStyles(mainTex: string): Promise<string[]> {
+  const source = await readFile(mainTex, 'utf8').catch(() => '');
+  if (!source) return [];
+  const resolves = async (name: string, suffix: string): Promise<boolean> => {
+    const probe = await runProcess('kpsewhich', [`${name}${suffix}`], {
+      cwd: join(mainTex, '..'),
+      timeoutMs: 20_000,
+      env: process.env,
+    }).catch(() => null);
+    return Boolean(probe && probe.code === 0 && probe.stdout.trim());
+  };
+  // Sanity probe first. `article.cls` ships with every TeX distribution, so if
+  // it cannot be resolved the resolver itself is unusable (no kpsewhich on
+  // PATH) — and announcing that every package is missing would be a far worse
+  // lie than letting latexmk produce the real error.
+  if (!(await resolves('article', '.cls'))) return [];
+  const names = latexDependencyNames(source);
+  const missing: string[] = [];
+  for (const name of names) {
+    // Extensions the engine may resolve for one base name: a bare
+    // \documentclass{article} is a .cls, a package is .sty or .tex.
+    let found = false;
+    for (const suffix of ['.sty', '.cls', '.tex', '']) {
+      if (await resolves(name, suffix)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) missing.push(name);
+  }
+  return missing;
+}
+
+/**
+ * Copy a caller-supplied style directory next to main.tex.
+ *
+ * Same mechanism the bundled IEEE files use, so nothing about TEXINPUTS has to
+ * be reasoned about: TeX finds the file when it sits beside the document.
+ */
+async function stageStyleDir(styleDir: string, paperDir: string): Promise<string[]> {
+  const staged: string[] = [];
+  const entries = await readdir(styleDir, { withFileTypes: true }).catch(() => null);
+  if (!entries) {
+    throw new IdeaseekError('FILE_NOT_FOUND', `--style-dir not readable: ${styleDir}`);
+  }
+  await ensureDir(paperDir);
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!/\.(sty|cls|bst|tex|cfg)$/i.test(entry.name)) continue;
+    await copyFile(join(styleDir, entry.name), join(paperDir, basename(entry.name)));
+    staged.push(entry.name);
+  }
+  return staged;
+}
+
+interface CompileOptions {
   /** Bounds the latexmk run (tree-killed on timeout by runProcess). */
   timeoutMs?: number;
   now?: number;
+  /** Directory holding venue class/style files TeX Live does not provide. */
+  styleDir?: string;
 }
 
 /**
@@ -243,6 +328,41 @@ export async function compileManuscript(
       return { report, mainPath: '' };
     }
     throw error;
+  }
+
+  // Preflight the style dependencies before spending a latexmk run. The venue
+  // templates reference class/style files (ICLR needs
+  // iclr2026_conference.sty) that are not part of TeX Live and are not
+  // vendored here, so the first user on a clean machine got a latexmk failure
+  // whose message pointed at `main.tex` instead of at the one missing file.
+  // `\usepackage{a,b,c}` is resolved with kpsewhich, which knows every search
+  // path the engine itself will use — no list of expected files to maintain.
+  if (opts.styleDir) {
+    await stageStyleDir(opts.styleDir, join(root, 'paper'));
+  }
+  const missingStyles = await findMissingStyles(join(root, 'paper', 'main.tex'));
+  if (missingStyles.length > 0) {
+    const report: CompileReport = {
+      status: 'blocked',
+      venue: manuscript.venue,
+      template: null,
+      engine: 'pdflatex',
+      buildCommand: [],
+      attempts: 0,
+      exitCode: null,
+      pdfPath: null,
+      pageCount: null,
+      logTail: '',
+      blockers: [
+        `missing LaTeX support file(s): ${missingStyles.join(', ')} — these are not part of ` +
+          'TeX Live and not vendored with IdeaSeek. Place them in paper/ (next to main.tex), or ' +
+          'pass their directory with: ideaseek paper compile --style-dir <dir>',
+      ],
+      skill: skillMeta,
+      manuscriptInputHash: stored.inputHash,
+      compiledAt: opts.now ?? Date.now(),
+    };
+    return { report, mainPath: join(root, 'paper', 'main.tex') };
   }
 
   const buildCommand = [
