@@ -33,7 +33,12 @@ function validFigurePlan(): Record<string, unknown> {
         caption: 'Main comparison under the locked protocol.',
         statistics: ['bar height = final accuracy'],
         dataSources: [{ kind: 'experiment-spec', ref: 'repro-fedavg' }],
-        script: 'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n',
+        script: `import json, matplotlib.pyplot as plt
+rows = json.load(open("repro-fedavg"))
+fig, ax = plt.subplots()
+ax.bar(rows["labels"], rows["values"])
+fig.savefig("figures/fig.pdf")
+fig.savefig("figures/fig.png")`,
         latexInclude: '\\includegraphics{figures/fig-1}',
         claims: ['Method A beats the baseline'],
       },
@@ -57,6 +62,8 @@ function context(plannedIds: string[] = []): FigureContext {
     },
     existingFigures: [],
     question: 'q',
+    resultsGuide: '(none exported)',
+    resultsFile: null,
   };
 }
 
@@ -77,7 +84,12 @@ describe('validatePaperFigurePlan (contract)', () => {
         caption: 'Total GPU-hours under the locked budget.',
         statistics: ['bar height = gpu-hours'],
         dataSources: [{ kind: 'result-file', ref: 'result-1' }],
-        script: 'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n',
+        script: `import json, matplotlib.pyplot as plt
+rows = json.load(open("result-1"))
+fig, ax = plt.subplots()
+ax.bar(rows["labels"], rows["values"])
+fig.savefig("figures/fig.pdf")
+fig.savefig("figures/fig.png")`,
         latexInclude: '\\includegraphics{figures/fig-res}',
         claims: ['Method A costs less than the baseline'],
       },
@@ -88,7 +100,12 @@ describe('validatePaperFigurePlan (contract)', () => {
         caption: 'Sensitivity of rare-class recall to the drift coefficient.',
         statistics: ['x = drift weight, y = rare-class recall'],
         dataSources: [{ kind: 'result-file', ref: 'result-2' }],
-        script: 'import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n',
+        script: `import json, matplotlib.pyplot as plt
+rows = json.load(open("result-2"))
+fig, ax = plt.subplots()
+ax.bar(rows["labels"], rows["values"])
+fig.savefig("figures/fig.pdf")
+fig.savefig("figures/fig.png")`,
         latexInclude: '\\includegraphics{figures/fig-sens}',
         claims: ['Recall peaks at weight 0.5'],
       },
@@ -256,7 +273,12 @@ describe('parsePaperFigureOutput (plan pin)', () => {
       caption: 'Training curves.',
       statistics: ['y = metric over steps'],
       dataSources: [{ kind: 'result-file', ref: 'logs/run.json' }],
-      script: 'import matplotlib.pyplot as plt\n',
+      script: `import json, matplotlib.pyplot as plt
+rows = json.load(open("logs/run.json"))
+fig, ax = plt.subplots()
+ax.bar(rows["labels"], rows["values"])
+fig.savefig("figures/fig.pdf")
+fig.savefig("figures/fig.png")`,
       latexInclude: '\\includegraphics{figures/fig-2}',
       claims: ['curves converge'],
     });

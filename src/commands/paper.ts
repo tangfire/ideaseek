@@ -243,6 +243,55 @@ export function registerPaperCommand(program: Command): void {
     );
 
   paper
+    .command('results')
+    .description(
+      'export recorded experiment results to reports/paper/results.json for figures and tables (deterministic, no model)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { json?: boolean }) => {
+        const root = await findRoot();
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root });
+        try {
+          const { exportPaperResults } = await import('../paper/results-export.js');
+          const rows = await runtime.db.listExperiments();
+          const { export: exported, path } = await exportPaperResults(
+            root,
+            rows.map((row) => ({
+              spec: (row as { spec?: unknown }).spec as never,
+              result: (row as { result?: unknown }).result as never,
+            })),
+          );
+          if (opts.json) {
+            process.stdout.write(jsonLine({ path, rows: exported.rows.length, export: exported }));
+            return 0;
+          }
+          process.stdout.write(
+            `results exported: ${exported.rows.length} recorded run(s) → ${path}\n` +
+              `  input hash ${exported.inputHash.slice(0, 19)}… (figures cite this)\n`,
+          );
+          for (const row of exported.rows.slice(0, 8)) {
+            process.stdout.write(
+              `  ${row.specId} [${row.scale}/${row.status}] ` +
+                `${row.metrics.map((metric) => `${metric.identifier}=${metric.value}`).join(' ')}\n`,
+            );
+          }
+          if (exported.rows.length > 8) {
+            process.stdout.write(`  … ${exported.rows.length - 8} more\n`);
+          }
+          process.stdout.write(
+            'next: ideaseek paper figure --force (scripts must read this file), then ' +
+              'ideaseek paper render-figures\n',
+          );
+          return 0;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  paper
     .command('figure')
     .description(
       'plan publication figures and plotting scripts from persisted results (ARIS paper-figure)',

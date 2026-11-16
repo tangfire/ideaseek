@@ -6,6 +6,7 @@ import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { PaperPlanSnapshot } from './plan.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
+import { describeResultsForPrompt, readPaperResults } from './results-export.js';
 
 /**
  * paper-figure capability (Phase 4.5C, skill integration): the vendored
@@ -224,6 +225,9 @@ export interface FigureContext {
   snapshot: PaperPlanSnapshot;
   existingFigures: string[];
   question: string;
+  /** How to read reports/paper/results.json, or why it does not exist yet. */
+  resultsGuide: string;
+  resultsFile: string | null;
 }
 
 /** Reads the stored plan (if any) and the figures/ directory (read-only). */
@@ -252,11 +256,26 @@ export async function collectFigureContext(root: string): Promise<FigureContext>
   } catch {
     existingFigures = [];
   }
-  return { plannedFigureIds, snapshot, existingFigures, question: snapshot.question };
+  // The recorded numbers, or the honest absence of them. Before this existed
+  // the figure author was shown the research question and the protocol id, so
+  // it invented data and `ax.bar(['fake'], [1.0])` reached a "publication
+  // figure" plan; the file the scripts must read is now part of the request.
+  const resultsExport = await readPaperResults(root);
+  return {
+    plannedFigureIds,
+    snapshot,
+    existingFigures,
+    question: snapshot.question,
+    resultsGuide: resultsExport
+      ? describeResultsForPrompt(resultsExport)
+      : 'NO results export exists yet — run: ideaseek paper results (figures may not invent values)',
+    resultsFile: resultsExport ? resultsExport.rowPath : null,
+  };
 }
 
 function renderFigureContext(context: FigureContext): string {
   const lines = [`Research question: ${context.question}`];
+  lines.push('## recorded results', context.resultsGuide);
   lines.push(
     context.plannedFigureIds.length > 0
       ? `Figure ids from the stored paper plan (every one MUST appear in your output): ${context.plannedFigureIds.join(', ')}`
