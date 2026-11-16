@@ -306,12 +306,38 @@ export async function renderFigures(
   }
 
   const okCount = results.filter((result) => result.ok).length;
-  const status: FigureRenderReport['status'] =
+  let status: FigureRenderReport['status'] =
     results.length > 0 && okCount === results.length
       ? 'rendered'
       : okCount > 0
         ? 'partial'
         : 'failed';
+
+  // Distinct figures must not be the same bytes. The first FDG render reported
+  // `rendered 6/6` while all six PNGs shared one sha256 — a derivation step
+  // that silently re-used one file, which no per-figure check can see, because
+  // each figure individually "produced a vector and a raster output". Content
+  // identity across figures is the only signal, and it is deterministic.
+  const byDigest = new Map<string, string[]>();
+  for (const result of results) {
+    for (const output of result.outputs) {
+      const key = `${output.sha256}:${output.path.toLowerCase().slice(-4)}`;
+      byDigest.set(key, [...(byDigest.get(key) ?? []), result.id]);
+    }
+  }
+  const duplicates = [...byDigest.entries()].filter(([, ids]) => ids.length > 1);
+  if (duplicates.length > 0) {
+    status = 'partial';
+    for (const [, ids] of duplicates) {
+      for (const id of ids) {
+        const result = results.find((entry) => entry.id === id);
+        if (result) {
+          result.ok = false;
+          result.error = `identical output bytes shared with ${ids.filter((other) => other !== id).join(', ')} — these are not distinct figures`;
+        }
+      }
+    }
+  }
 
   return {
     report: {

@@ -133,8 +133,19 @@ export function validatePaperFigurePlan(value: unknown): { ok: boolean; errors: 
         errors.push(`figures[${index}].statistics must be non-empty strings`);
       }
       if (!nonEmpty(figure.script)) errors.push(`figures[${index}].script must be non-empty`);
-      else if (!figure.script.trim().includes('matplotlib')) {
-        errors.push(`figures[${index}].script must be a matplotlib source`);
+      // The contract is that the script PRODUCES the file the manuscript
+      // includes, not that it names a particular library. The previous rule
+      // demanded the substring "matplotlib" and rejected all five scripts of
+      // the first real model plan, which was a preference posed as a check —
+      // and it passed plans that draw without saving, the failure
+      // `paper render-figures` then had to discover (it requires a vector
+      // output and treats exit-0-without-a-file as failure). Both saving forms
+      // are accepted so a different plotting backend is not silently banned.
+      else if (!/(savefig|write_image)\s*\(/.test(figure.script)) {
+        errors.push(
+          `figures[${index}].script must save the figure (savefig(...) or write_image(...)) — ` +
+            'the renderer requires the output file the manuscript includes',
+        );
       }
       if (!nonEmpty(figure.latexInclude)) {
         errors.push(`figures[${index}].latexInclude must be non-empty`);
@@ -153,6 +164,27 @@ export function validatePaperFigurePlan(value: unknown): { ok: boolean; errors: 
             errors.push(`figures[${index}].dataSources[${s}] needs a known kind and non-empty ref`);
           }
         });
+        // Provenance, structurally rather than by keyword blacklist: a figure
+        // that declares it comes from a recorded experiment or result file must
+        // name that source in the script that draws it. The first real FDG
+        // render produced six "publication figures" from scripts that called
+        // `ax.bar(['fake'], [1.0])` and reported `rendered 6/6` — the plan said
+        // where the data came from and the code ignored it, and nothing in the
+        // platform compared those two statements.
+        const grounded = figure.dataSources.filter(
+          (source) =>
+            isObject(source) &&
+            ['experiment-spec', 'result-file', 'existing-figure'].includes(String(source.kind)),
+        );
+        for (const source of grounded) {
+          const ref = String((source as { ref?: unknown }).ref ?? '');
+          if (ref && !String(figure.script).includes(ref)) {
+            errors.push(
+              `figures[${index}].script does not read its declared data source ${ref} — ` +
+                'a figure may not draw invented values and claim they come from a recorded run',
+            );
+          }
+        }
       }
       if (
         !Array.isArray(figure.claims) ||
