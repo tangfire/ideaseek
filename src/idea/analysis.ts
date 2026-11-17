@@ -413,7 +413,15 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
 
   if (knownBaselines.length === 0) {
     reasons.push(
-      '缺少有效对照：no baseline result available — absolute results cannot claim superiority (plan §C.4)',
+      // One language per string. This reason used to read
+      // `缺少有效对照：no baseline result available — …`, which is two
+      // vocabularies in the same sentence: the analysis text is quoted into
+      // events, JSON artifacts, forensics reports and agent prompts, where a
+      // half-translated line is worse than either language alone. The TUI and
+      // the natural-language layer keep their Chinese labels — those are the
+      // places a person reads Chinese — while verdict text stays English and
+      // cites the plan section it comes from.
+      'no baseline result available — absolute results cannot claim superiority (plan §C.4)',
     );
     if ((input.unitProblems ?? []).length > 0) {
       // The difference matters: a dropped-for-units value means a baseline

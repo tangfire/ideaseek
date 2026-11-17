@@ -256,7 +256,7 @@ export function assertTransition(
   if (REASON_REQUIRED.includes(to) && !(reason && reason.trim())) {
     throw new IdeaseekError(
       'USER_INPUT_REQUIRED',
-      `status ${to} requires --reason (no silent skips; docs: EXCLUDED 必须有用户或配置原因)`,
+      `status ${to} requires --reason: excluding a comparison is a decision, and the record must say who made it and why (docs/AUTONOMY_POLICY)`,
       { status: to },
     );
   }

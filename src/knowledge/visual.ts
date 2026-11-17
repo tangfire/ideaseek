@@ -26,7 +26,7 @@ import type { ImageCapability } from '../models/image-capability.js';
 export const PAGE_VISUAL_SCHEMA = 'page-visual-v1';
 
 const VISUAL_INSTRUCTION = [
-  'You are the paper figure/page analyst (docs/EVALUATION 图像理解).',
+  'You are the paper figure/page analyst (docs/EVALUATION, image-understanding section).',
   'Describe what this rendered paper page shows: figures, tables, curves, layout.',
   'Rules:',
   '- Do NOT estimate numeric values from pixels (bar heights, curve points) — numbers come from tables and structured result files only.',

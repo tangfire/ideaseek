@@ -152,7 +152,7 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
         // GENERAL, not RESEARCH: there is no research tier or run in this
         // directory, and the footer badge must not imply one.
         'GENERAL — not an IdeaSeek project · /init creates one here · /open enters a registered project',
-        'coding turns are one explicit step away: /agent <指令> (this UI stays the research surface)',
+        'coding turns are one explicit step away: /agent <prompt> (this UI stays the research surface)',
       ],
       tone: 'warn',
     };
@@ -181,7 +181,7 @@ export async function buildHeaderLines(): Promise<HeaderInfo> {
     return {
       lines: [
         'GENERAL — not an IdeaSeek project · /init creates one here · /open enters a registered project',
-        'coding turns are one explicit step away: /agent <指令> (this UI stays the research surface)',
+        'coding turns are one explicit step away: /agent <prompt> (this UI stays the research surface)',
       ],
       tone: 'warn',
     };
