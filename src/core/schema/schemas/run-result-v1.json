@@ -33,6 +33,21 @@
       }
     },
     "resourcesUsed": { "type": "object" },
+    "baselines": {
+      "description": "Control methods measured IN THIS RUN, by the same code on the same data slice. This is what makes a baseline value admissible without a separate repro-* experiment: it carries the run's own scale and seed set, and it is reported by the program rather than inferred from another idea's output (#23). Optional: an entry that does not run controls simply has no baselines.",
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "required": ["methodId", "metric", "value"],
+        "properties": {
+          "methodId": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "metric": { "type": "string", "minLength": 1, "maxLength": 400 },
+          "value": { "type": "number" },
+          "stdev": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
     "failure": {
       "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/failure" }]
     },

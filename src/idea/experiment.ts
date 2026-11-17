@@ -7,7 +7,13 @@ import { parseProgressLine } from '../experiment/checkpoint.js';
 import { mergeRunEnv } from '../experiment/run-env.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { classifyRepairFailure, runRepairCommand, writeRepairLog } from '../comparison/repair.js';
-import { stableJson, type ExperimentSpec, type RunResult } from '../experiment/spec.js';
+import { metricIdentifier } from '../core/metric-id.js';
+import {
+  stableJson,
+  type ExperimentSpec,
+  type RunBaselineValue,
+  type RunResult,
+} from '../experiment/spec.js';
 import type { ExperimentProgressFile } from '../experiment/checkpoint.js';
 import type { RunFailureCategory } from '../experiment/spec.js';
 import { assessIdeaCard } from './card.js';
@@ -418,10 +424,83 @@ export async function recordPlannedSpec(
 export interface SpecExecResult {
   succeeded: boolean;
   metrics: { name: string; value: number }[];
+  /** Controls this run measured itself; recorded rather than discarded. */
+  baselines?: RunBaselineValue[];
   failure: { category: RunFailureCategory; summary: string } | null;
   startedAt: number;
   finishedAt: number;
   logRef: string;
+}
+
+/**
+ * The control group an entry printed, normalised to what the record can carry.
+ *
+ * Programs write this in whatever shape felt natural — `{"fedavg": 18.75}`,
+ * `{"fedavg": {"top1": 18.75}}`, `[{"method": "fedavg", "accuracy": 18.75}]` —
+ * and the platform used to drop all of it, then told the researcher there was
+ * no baseline to compare against (#22②). Two rules survive the normalisation,
+ * both boundaries rather than judgement: a value must be a finite number to
+ * enter a record at all, and the idea's own id can never be one of its
+ * controls — that is exactly the #23 contamination, where another idea's
+ * subject metric was read as a baseline.
+ */
+export function normalizeRunBaselines(
+  value: unknown,
+  spec: Pick<ExperimentSpec, 'metrics' | 'idea'>,
+): RunBaselineValue[] {
+  const primary = spec.metrics[0]?.name ?? '';
+  const own = spec.idea?.ideaId ?? null;
+  const out: RunBaselineValue[] = [];
+  const push = (methodId: string, metric: string, value: unknown, stdev: unknown): void => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return;
+    const id = methodId.trim();
+    if (!id || id === own) return;
+    if (out.length >= 24) return;
+    out.push({
+      methodId: id.slice(0, 200),
+      metric: (metric.trim() || primary).slice(0, 400),
+      value,
+      ...(typeof stdev === 'number' && Number.isFinite(stdev) && stdev >= 0
+        ? { stdev: Math.abs(stdev) }
+        : {}),
+    });
+  };
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue;
+      const record = entry as Record<string, unknown>;
+      const methodId = String(record.methodId ?? record.method ?? record.name ?? '');
+      const metric = String(record.metric ?? record.name ?? '');
+      const stdev = record.stdev ?? record.std;
+      push(methodId, metric, record.value ?? record.accuracy, stdev);
+    }
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    for (const [methodId, raw] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof raw === 'number') {
+        push(methodId, primary, raw, undefined);
+        continue;
+      }
+      if (raw && typeof raw === 'object') {
+        const record = raw as Record<string, unknown>;
+        const stdev = record.stdev ?? record.std;
+        // One metric per control is what the ladder can rank; a control that
+        // reported several keeps the one named like the spec's primary.
+        const named = Object.entries(record).find(
+          ([key, v]) =>
+            typeof v === 'number' && metricIdentifier(key) === metricIdentifier(primary),
+        );
+        if (named) {
+          push(methodId, named[0], named[1], stdev);
+          continue;
+        }
+        const single = Object.entries(record).find(([, v]) => typeof v === 'number');
+        if (single) push(methodId, single[0], single[1], stdev);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -507,7 +586,7 @@ export async function executeSpecRun(
   // built, so the comparison cannot drift from the command actually executed.
   const scaleFlagAt = command.indexOf('--scale');
   const requestedScale = scaleFlagAt >= 0 ? (command[scaleFlagAt + 1] ?? '') : '';
-  const { metrics, parseFailure } = parseMetricsOutput(
+  const { metrics, baselines, parseFailure } = parseMetricsOutput(
     run.out,
     run.exitCode,
     run.timedOut,
@@ -615,6 +694,7 @@ export async function executeSpecRun(
   return {
     succeeded: finalSucceeded,
     metrics,
+    ...(baselines.length > 0 ? { baselines } : {}),
     failure: finalFailure,
     startedAt,
     finishedAt: Date.now(),
@@ -644,16 +724,23 @@ export function parseMetricsOutput(
   timedOut: boolean,
   spec: ExperimentSpec,
   requestedScale?: string,
-): { metrics: { name: string; value: number }[]; parseFailure: string | null } {
+): {
+  metrics: { name: string; value: number }[];
+  baselines: RunBaselineValue[];
+  parseFailure: string | null;
+} {
   const metrics: { name: string; value: number }[] = [];
-  if (exitCode !== 0 || timedOut) return { metrics, parseFailure: null };
+  const baselines: RunBaselineValue[] = [];
+  if (exitCode !== 0 || timedOut) return { metrics, baselines, parseFailure: null };
   const lines = out.split(/\r?\n/).filter((line) => line.trim());
-  let parsed: { metrics?: Record<string, unknown>; scale?: unknown } | null = null;
+  let parsed: { metrics?: Record<string, unknown>; scale?: unknown; baselines?: unknown } | null =
+    null;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     try {
       const candidate = JSON.parse(lines[i]!) as {
         metrics?: Record<string, unknown>;
         scale?: unknown;
+        baselines?: unknown;
       };
       if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
         parsed = candidate;
@@ -665,12 +752,13 @@ export function parseMetricsOutput(
   }
   const metricMap = parsed?.metrics ?? {};
   if (!parsed || Object.keys(metricMap).length === 0) {
-    return { metrics, parseFailure: 'entry produced no {"metrics": {...}} JSON line' };
+    return { metrics, baselines, parseFailure: 'entry produced no {"metrics": {...}} JSON line' };
   }
   const reported = typeof parsed.scale === 'string' ? parsed.scale.trim() : '';
   if (requestedScale && reported && reported !== requestedScale) {
     return {
       metrics: [],
+      baselines: [],
       parseFailure:
         `the entry reports scale="${reported}" but the platform ran it as ` +
         `"--scale ${requestedScale}"; the numbers cannot be recorded under a scale the ` +
@@ -688,9 +776,15 @@ export function parseMetricsOutput(
     metrics.push({ name: expected.name, value });
   }
   if (missing.length > 0) {
-    return { metrics, parseFailure: `metrics missing or non-finite: ${missing.join(', ')}` };
+    return {
+      metrics,
+      baselines,
+      parseFailure: `metrics missing or non-finite: ${missing.join(', ')}`,
+    };
   }
-  return { metrics, parseFailure: null };
+  // The run's own control group, recorded rather than printed-and-discarded.
+  baselines.push(...normalizeRunBaselines(parsed.baselines, spec));
+  return { metrics, baselines, parseFailure: null };
 }
 
 /** Builds and attaches the unified RunResult for an executed spec. */
@@ -706,6 +800,7 @@ export async function attachSpecResult(
     logRefs: [exec.logRef],
     artifactRefs: [],
     metrics: exec.metrics,
+    ...(exec.baselines && exec.baselines.length > 0 ? { baselines: exec.baselines } : {}),
     resourcesUsed: {},
     failure: exec.failure,
     startedAt: exec.startedAt,

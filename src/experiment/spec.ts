@@ -76,6 +76,26 @@ export interface ResultMetricValue {
   n?: number;
 }
 
+/**
+ * A control method measured inside the same run: same code, same slice, same
+ * seeds as the subject.
+ *
+ * Idea entries already compute these — the FDG prototype prints
+ * `report["baselines"]` — and the platform threw the numbers away, because a
+ * baseline could only come from a separate `repro-*` experiment. That left
+ * comparisons with one legal source and no data in it ("no same-scale baseline
+ * comparison available"), while the run's own control group went unrecorded.
+ * An in-run control is admissible evidence precisely because it shares the
+ * run's scale; it is NOT the case #23 refused, where another idea's *subject*
+ * metric was relabelled as a baseline.
+ */
+export interface RunBaselineValue {
+  methodId: string;
+  metric: string;
+  value: number;
+  stdev?: number;
+}
+
 export interface RunFailure {
   category: RunFailureCategory;
   summary: string;
@@ -89,6 +109,8 @@ export interface RunResult {
   /** Artifact references (hashes or paths). */
   artifactRefs: string[];
   metrics: ResultMetricValue[];
+  /** Controls measured by this very run; see `RunBaselineValue`. */
+  baselines?: RunBaselineValue[];
   resourcesUsed: { gpuMinutes?: number; peakMemoryGiB?: number };
   /** Required when status is failed/partial/invalid. */
   failure: RunFailure | null;
@@ -258,6 +280,37 @@ export function validateRunResult(value: unknown): SpecValidation {
   }
 
   if (!isObject(value.resourcesUsed)) errors.push('resourcesUsed must be an object');
+
+  // Optional, and strict when present: an in-run control that is not a finite
+  // number under a method name would become a baseline the ladder ranks.
+  if (value.baselines !== undefined) {
+    if (!Array.isArray(value.baselines)) {
+      errors.push('baselines must be an array');
+    } else {
+      // The same ceiling the schema carries, so the two layers cannot disagree
+      // about a 25th control (a validator that accepts what the schema rejects
+      // breaks the decision-parity rule for this contract).
+      if (value.baselines.length > 24) errors.push('baselines must hold at most 24 entries');
+      for (const [i, entry] of value.baselines.entries()) {
+        if (!isObject(entry)) {
+          errors.push(`baselines[${i}] must be an object`);
+          continue;
+        }
+        if (typeof entry.methodId !== 'string' || !entry.methodId.trim()) {
+          errors.push(`baselines[${i}].methodId must be a non-empty string`);
+        }
+        if (typeof entry.metric !== 'string' || !entry.metric.trim()) {
+          errors.push(`baselines[${i}].metric must be a non-empty string`);
+        }
+        if (typeof entry.value !== 'number' || !Number.isFinite(entry.value)) {
+          errors.push(`baselines[${i}].value must be a finite number`);
+        }
+        if (entry.stdev !== undefined && (typeof entry.stdev !== 'number' || entry.stdev < 0)) {
+          errors.push(`baselines[${i}].stdev must be a non-negative number`);
+        }
+      }
+    }
+  }
 
   const status = typeof value.status === 'string' ? (value.status as RunResult['status']) : null;
   if (value.failure === null || value.failure === undefined) {

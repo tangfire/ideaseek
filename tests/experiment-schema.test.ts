@@ -211,6 +211,37 @@ const RESULT_CASES: { name: string; result: unknown; expectOk: boolean }[] = [
     result: mutate(validResult(), (r) => (r.explanation = 42)),
     expectOk: false,
   },
+  {
+    // #22②: an idea run's own control group, recorded instead of discarded.
+    name: 'in-run baselines',
+    result: mutate(validResult(), (r) => {
+      r.baselines = [
+        { methodId: 'fedavg', metric: 'target_unseen_domain_top1_accuracy', value: 18.75 },
+      ];
+    }),
+    expectOk: true,
+  },
+  {
+    name: 'baseline with a non-finite value',
+    result: mutate(validResult(), (r) => {
+      r.baselines = [{ methodId: 'fedavg', metric: 'top1', value: null }];
+    }),
+    expectOk: false,
+  },
+  {
+    name: 'baseline missing its method',
+    result: mutate(validResult(), (r) => {
+      r.baselines = [{ metric: 'top1', value: 1 }];
+    }),
+    expectOk: false,
+  },
+  {
+    name: 'baselines as an object',
+    result: mutate(validResult(), (r) => {
+      r.baselines = { fedavg: 18.75 };
+    }),
+    expectOk: false,
+  },
 ];
 
 describe('experiment-spec-v1 parity', () => {

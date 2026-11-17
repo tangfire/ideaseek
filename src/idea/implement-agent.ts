@@ -54,6 +54,12 @@ Rules for the work itself:
 - Never emit placeholder, constant, or self-declared synthetic metric values. A metrics line
   carrying "synthetic" is refused by the platform, and a number that reaches a results record
   without having been computed is worse than a failing run.
+- When the card names baselines, MEASURE them in this same run and print them beside the metrics:
+  {"metrics": {...}, "baselines": {"<methodId>": {"<primary metric name>": <value>}}}. A plain
+  {"baselines": {"<methodId>": <value>}} is accepted too. Those become recorded comparisons with
+  the run's own scale and seeds, which is the best-paired evidence this platform can hold. A number
+  copied from a paper, a README or another idea's output is not a measurement: report only what this
+  run computed, and say in your final message which controls you could not afford to run.
 - Use only the standard library and packages the idea card declares. If one is unavailable, say so
   in your final message instead of working around it silently.
 - Keep the scope of the card's minimalExperiment. Do not build a training stack the card did not

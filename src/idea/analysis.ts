@@ -115,6 +115,17 @@ export interface BaselineComparison {
   delta: number | null;
   /** Scale this baseline value was recorded at (smoke/quick/…). */
   scale?: string;
+  /**
+   * Which evidence the number came from, because the three are not equally
+   * independent of the idea being judged: a `repro` is the platform's own
+   * reproduction of that method, a `run` is a registered experiment whose
+   * subject is that method, and an `in-run` control was measured by the idea's
+   * own code inside the idea's own run. Best-paired (same slice, same seeds)
+   * and self-reported — a verdict resting on it must be quotable as such.
+   */
+  source?: 'repro' | 'run' | 'in-run';
+  /** The record the value was read out of (`in-run` provenance in particular). */
+  fromSpecId?: string;
 }
 
 export interface FailureObservation {
@@ -146,7 +157,23 @@ export interface AnalysisInput {
    */
   declaredPrimary?: string;
   /** Primary-metric values from baseline/reproduction runs (null = unknown). */
-  baselines: { methodId: string; value: number | null; scale?: string }[];
+  baselines: {
+    methodId: string;
+    value: number | null;
+    scale?: string;
+    /**
+     * Where the number came from, because the three sources are not equally
+     * trustworthy and a verdict text that hides which one it used cannot be
+     * audited: `repro` is an independent reproduction of that method, `run` is
+     * a registered experiment whose subject is that method, and `in-run` is a
+     * control the idea's own code measured inside its own run — same slice and
+     * seeds as the subject (so best-paired), but written by the party being
+     * judged.
+     */
+    source?: 'repro' | 'run' | 'in-run';
+    /** The record the value was read out of, for `source: in-run` provenance. */
+    fromSpecId?: string;
+  }[];
   /**
    * Recorded values dropped for contradicting the unit their metric name
    * declares (see core/metric-id.ts). Reported rather than silently discarded:
@@ -154,6 +181,14 @@ export interface AnalysisInput {
    * messages, and only one of them tells the researcher to fix a unit.
    */
   unitProblems?: string[];
+  /**
+   * In-run controls that WERE measured and recorded, but under a metric label
+   * that does not denote the primary metric — so they cannot be ranked. They
+   * must still be reported: "no baseline available" and "a control exists that
+   * this platform cannot read" send the researcher to fix two different files,
+   * and the second is a vocabulary bug in the entry, not an absence of evidence.
+   */
+  unmatchableControls?: string[];
   /** Primary-metric value of the idea per scale (succeeded mirrors only). */
   ideaByScale?: Record<string, number>;
   /** Distinct scales with a succeeded idea result (smoke/quick/…). */
@@ -329,6 +364,8 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
       ideaValue,
       delta,
       ...(baseline.scale !== undefined ? { scale: baseline.scale } : {}),
+      ...(baseline.source !== undefined ? { source: baseline.source } : {}),
+      ...(baseline.fromSpecId !== undefined ? { fromSpecId: baseline.fromSpecId } : {}),
     });
     if (delta !== null && (bestDelta === null || delta > bestDelta)) bestDelta = delta;
   }
@@ -352,6 +389,28 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
     }
     nextSteps.push(
       'reproduce or repair the nearest baseline first (ideaseek baseline reproduce/repair)',
+    );
+    if ((input.unmatchableControls ?? []).length > 0) {
+      // A third distinct fact: the control exists, was measured in this run,
+      // and is labelled with the entry's private vocabulary. Neither of the
+      // messages above is true for it, and an agent reading the record has to
+      // be told which file to edit.
+      reasons.push(
+        `in-run controls were recorded but cannot be ranked, because their metric label does ` +
+          `not denote the primary metric: ${(input.unmatchableControls ?? []).join(' | ')}`,
+      );
+      nextSteps.push(
+        're-emit the entry\'s "baselines" with the primary metric name as the key ' +
+          '(ideaseek idea implement <id> hands that name to the code as the metric contract)',
+      );
+    }
+    // The second way to obtain a legal comparison, which the platform itself
+    // used to make impossible: an idea run that records the controls it
+    // measured in the same run (#22② — entries printed them, the record had no
+    // field for them, and the analysis then reported an absence).
+    nextSteps.push(
+      `or make the idea's own entry measure its controls and report them under "baselines" ` +
+        `(methodId + the primary metric name + value), then rerun: ideaseek idea experiment ${input.ideaId}`,
     );
     nextSteps.push(`then rerun analysis: ideaseek idea analyze ${input.ideaId}`);
     return finish(
@@ -405,6 +464,8 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
         ideaValue: ideaAt,
         delta: d,
         scale: baseline.scale,
+        ...(baseline.source !== undefined ? { source: baseline.source } : {}),
+        ...(baseline.fromSpecId !== undefined ? { fromSpecId: baseline.fromSpecId } : {}),
       });
       if (d <= 0) mixed.push(`${baseline.scale} (${ideaAt} vs baseline ${baseline.value})`);
     }

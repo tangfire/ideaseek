@@ -246,12 +246,16 @@ export async function collectAnalysisInput(
   const baselines: { methodId: string; value: number | null; scale?: string }[] = [];
   /** Values rejected for contradicting their metric's declared unit. */
   const unitProblems: string[] = [];
+  /** In-run controls that exist but are not labelled as the primary metric. */
+  const unmatchableControls: string[] = [];
   const seenMethods = new Set<string>();
   for (const nearest of card.nearestComparisons) {
     if (seenMethods.has(nearest.methodId)) continue;
     seenMethods.add(nearest.methodId);
     let value: number | null = null;
     let valueScale: string | undefined;
+    let baselineSource: 'repro' | 'run' | 'in-run' | undefined;
+    let baselineFrom: string | undefined;
     const repro = await db.getExperiment(`repro-${nearest.methodId}`);
     if (repro?.result) {
       const result = asResult(repro.result);
@@ -261,6 +265,7 @@ export async function collectAnalysisInput(
         value = checked.value;
         if (checked.violation) unitProblems.push(`repro-${nearest.methodId}: ${checked.violation}`);
         valueScale = scaleOf(asSpec(repro.spec));
+        if (value !== null) baselineSource = 'repro';
       }
     }
     if (value === null) {
@@ -286,15 +291,79 @@ export async function collectAnalysisInput(
         if (checked.value !== null) {
           value = checked.value;
           valueScale = scaleOf(spec);
+          baselineSource = doc.specId.startsWith('repro-') ? 'repro' : 'run';
+          baselineFrom = doc.specId;
           break;
         }
         if (checked.violation) unitProblems.push(`${doc.specId}: ${checked.violation}`);
+      }
+    }
+    if (value === null) {
+      // Last legal source: a control this idea's own run measured and recorded
+      // as one (#22② — entries printed these for months and the platform threw
+      // the numbers away, then reported "no baseline available"). Admissible
+      // because the record names the method it measured, at this run's scale —
+      // not because some other number in the file looks similar, which is the
+      // #23 case this must not be confused with.
+      const inRunCandidates: { spec: ExperimentSpec; result: RunResult }[] = [
+        ...[...succeededMains]
+          .filter((mirror): mirror is { spec: ExperimentSpec; result: RunResult } =>
+            Boolean(mirror.result),
+          )
+          .reverse(),
+        ...all
+          .filter((doc) => doc.specId.startsWith(`idea-${ideaId}`) && doc.result)
+          .map((doc) => ({ spec: asSpec(doc.spec), result: asResult(doc.result!) })),
+      ];
+      for (const candidate of inRunCandidates) {
+        if (candidate.result.status !== 'succeeded') continue;
+        const recorded = (candidate.result.baselines ?? []).filter(
+          (entry) => entry.methodId === nearest.methodId,
+        );
+        if (recorded.length === 0) continue;
+        const control =
+          primary === null
+            ? undefined
+            : recorded.find(
+                (entry) => metricIdentifier(entry.metric) === metricIdentifier(primary),
+              );
+        if (!control) {
+          // The run DID measure this control, under a key that does not denote
+          // the primary metric. FDG's entry writes {"fedavg": {"unseen": …,
+          // "in_domain": …}} — private vocabulary again (#15), this time on the
+          // baseline side. Ranking it would compare whatever `unseen` is
+          // against an accuracy; dropping it silently would report an absence
+          // that is not true. So it is reported, unranked, with the fix.
+          unmatchableControls.push(
+            `${nearest.methodId}: recorded as "${recorded
+              .map((entry) => entry.metric)
+              .join('", "')}" in ${candidate.spec.specId}@v${candidate.spec.version}, ` +
+              `which does not denote the primary metric "${primary ?? '(unknown)'}"`,
+          );
+          continue;
+        }
+        const checked = comparableValue(primary, control.value);
+        if (checked.value === null) {
+          if (checked.violation) {
+            unitProblems.push(
+              `${candidate.spec.specId}@${candidate.spec.version}: ${checked.violation}`,
+            );
+          }
+          continue;
+        }
+        value = checked.value;
+        valueScale = scaleOf(candidate.spec);
+        baselineSource = 'in-run';
+        baselineFrom = `${candidate.spec.specId}@v${candidate.spec.version}`;
+        break;
       }
     }
     baselines.push({
       methodId: nearest.methodId,
       value,
       ...(valueScale !== undefined ? { scale: valueScale } : {}),
+      ...(baselineSource ? { source: baselineSource } : {}),
+      ...(baselineFrom ? { fromSpecId: baselineFrom } : {}),
     });
     // Additional per-scale registered baselines: repro-<methodId>-<scale>.
     for (const doc of all) {
@@ -382,6 +451,7 @@ export async function collectAnalysisInput(
       (declared) => primary !== null && metricIdentifier(declared) === metricIdentifier(primary),
     ),
     unitProblems,
+    unmatchableControls,
     ideaByScale,
     scalesRun: [...scales].sort(),
     datasetsRun: [...datasets].sort(),
