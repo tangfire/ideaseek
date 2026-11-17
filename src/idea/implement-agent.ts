@@ -113,10 +113,39 @@ function failingSummary(report: IdeaCheckReport): string {
  * needs. Pointing at the log file is better than pasting it, because the agent
  * can read the whole trace rather than the tail the platform guessed at.
  */
-function followupPrompt(report: IdeaCheckReport, round: number): string {
+/**
+ * Follow-up prompt for a round, and the FULL contract when context is gone.
+ *
+ * The rounds after the first assume the session still holds the card, the task
+ * rules and the code it wrote — normally true, because DSH persists session
+ * history. But `runAgentTurn` swallows a failed resume and opens a fresh
+ * session (session.ts logs it and continues), so a follow-up could arrive as
+ * "Round 3: the ladder failed — open these logs" to an agent that has never
+ * seen the card, the metric contract or its own previous reasoning. The agent
+ * then debugs blind, and the platform pays four rounds of tokens for an answer
+ * to a question it never asked. Attaching the contract again is the only fix
+ * that keeps working whether or not the resume succeeded.
+ */
+export function followupPrompt(
+  report: IdeaCheckReport,
+  round: number,
+  context?: { cardText: string; contextLost: boolean },
+): string {
   const summary = failingSummary(report);
+  // A lost session means the agent has never seen the card, the rules or its own
+  // earlier work, so the restatement is prepended rather than the summary being
+  // sent alone. When the resume succeeded the prompt stays short — repeating the
+  // whole contract into a session that already holds it wastes the context the
+  // fix needs, which is why the short form was the design in the first place.
+  const preamble = context?.contextLost
+    ? `Round ${round}: the platform ran the check ladder against your code and it failed.\n` +
+      'NOTE: your previous session context could not be restored, so the platform is ' +
+      'restating the whole task. Nothing from an earlier round is available to you — read ' +
+      'the files in your workspace before changing them.\n\n' +
+      `${context.cardText}\n\n${IMPLEMENT_TASK}\n\n`
+    : `Round ${round}: the platform ran the check ladder against your code and it failed.\n`;
   return (
-    `Round ${round}: the platform ran the check ladder against your code and it failed.\n` +
+    preamble +
     `${summary}\n\n` +
     'Open those log files, find the actual cause, fix it in place, and re-run the failing ' +
     'command yourself until it produces real metric values. Do not restructure the design to ' +
@@ -185,6 +214,9 @@ export async function implementIdeaWithAgent(opts: {
   let report: IdeaCheckReport | null = null;
   let terminal = false;
   let lastHash: string | null = null;
+  // Set when a turn asked for a persisted session and did not get it back; the
+  // next prompt must then restate the whole contract (see `followupPrompt`).
+  let contextLost = false;
   // Snapshot of src/ taken once, after the round-1 clear: every file that
   // differs from it afterwards was authored by this session.
   let baseline = new Map<string, string>();
@@ -235,7 +267,9 @@ export async function implementIdeaWithAgent(opts: {
     const turn = await runAgentTurn({
       cwd: workspace,
       prompt:
-        sessionId === null ? `${IMPLEMENT_TASK}\n\n${cardText}` : followupPrompt(report!, round),
+        sessionId === null
+          ? `${IMPLEMENT_TASK}\n\n${cardText}`
+          : followupPrompt(report!, round, { cardText, contextLost }),
       ...(sessionId ? { sessionId } : {}),
       policy: opts.policy,
       // This task is definitionally executable: an idea implementation that
@@ -250,6 +284,10 @@ export async function implementIdeaWithAgent(opts: {
       onStep: opts.onStep,
       onLog: opts.onLog,
     });
+    // `resumed` is the runtime's own answer: false with a sessionId we passed
+    // means the history could not be reloaded, so whatever this turn received
+    // was a bare follow-up instruction with no context behind it.
+    contextLost = sessionId !== null && turn.resumed === false;
     sessionId = turn.sessionId;
     const authored = await recordAuthoredIdeaFiles(workspace, baseline);
 

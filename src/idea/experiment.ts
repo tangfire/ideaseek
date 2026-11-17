@@ -867,10 +867,22 @@ export async function runIdeaExperiment(
     );
   }
   if (meta.status !== 'SMOKE_TESTED' && meta.status !== 'RUNNING' && meta.status !== 'ANALYZING') {
+    // The remedy depends entirely on where the idea actually is, and the old
+    // message said the same thing from every state: an idea already at
+    // IMPLEMENTING was told to "walk NEEDS_REVISION → IMPLEMENTING → check",
+    // i.e. to do the step it is standing on, which sends a researcher back to
+    // square one when the only missing action was `idea check`.
+    const nextStep =
+      meta.status === 'IMPLEMENTING'
+        ? `run the check ladder first: ideaseek idea check ${ideaId} ` +
+          `(a passing check is what promotes IMPLEMENTING to SMOKE_TESTED)`
+        : meta.status === 'PROPOSED'
+          ? `start implementation: ideaseek idea implement ${ideaId}`
+          : `walk back to implementation first: ideaseek idea set-status ${ideaId} NEEDS_REVISION ` +
+            `--reason "..." → ideaseek idea implement ${ideaId} → ideaseek idea check ${ideaId}`;
     throw new IdeaseekError(
       'INVALID_STATE',
-      `idea ${ideaId} is ${meta.status}; experiments start from SMOKE_TESTED ` +
-        `(walk NEEDS_REVISION → IMPLEMENTING → check after revisions)`,
+      `idea ${ideaId} is ${meta.status}; experiments start from SMOKE_TESTED. ${nextStep}`,
       { status: meta.status },
     );
   }

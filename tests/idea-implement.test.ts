@@ -327,3 +327,44 @@ describe('generated-file ownership on the agent-session route', () => {
     expect(await unrecordedSourceFiles(workspace, template)).toEqual(['src/geometry.py']);
   });
 });
+
+describe('follow-up prompts when the session context cannot be restored', () => {
+  it('restates the whole contract only when the resume actually failed', async () => {
+    // Rounds after the first send only a failure summary, which is correct
+    // while the persisted session carries the card, the rules and the code. It
+    // is wrong when DSH could not reload the history and IdeaSeek continued
+    // anyway: the agent would be told to debug a file it has never been shown.
+    const { followupPrompt } = await import('../src/idea/implement-agent.js');
+    const report = {
+      ideaId: 'x',
+      version: 1,
+      codeHash: 'sha256:aa',
+      startedAt: 1,
+      finishedAt: 2,
+      outcome: 'failed',
+      phases: [
+        {
+          phase: 'smoke',
+          ok: false,
+          skipped: false,
+          failureKind: 'unit',
+          summary: 'smoke metric acc: declared percent but the value 0.2 is a fraction',
+          logPath: 'experiments/logs/idea-x-smoke.log',
+        },
+      ],
+    } as unknown as Parameters<typeof followupPrompt>[0];
+    const card = '## metric contract\nacc (all samples, %)';
+    const lost = followupPrompt(report, 3, { cardText: card, contextLost: true });
+    expect(lost).toContain('could not be restored');
+    expect(lost).toContain('metric contract');
+    // The task rules come back too, not just the card: an agent with no context
+    // also has no knowledge of what the platform refuses to accept.
+    expect(lost).toContain('Implement this research idea');
+    const kept = followupPrompt(report, 3, { cardText: card, contextLost: false });
+    expect(kept).not.toContain('could not be restored');
+    expect(kept).not.toContain('Implement this research idea');
+    // And the failure summary itself must survive in both shapes.
+    expect(kept).toContain('idea-x-smoke.log');
+    expect(lost).toContain('idea-x-smoke.log');
+  });
+});
