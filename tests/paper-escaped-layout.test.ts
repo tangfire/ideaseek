@@ -23,3 +23,50 @@ describe('escaped-layout repair', () => {
     expect(normalizeEscapedLayout('\\noindent')).toBe('\\noindent');
   });
 });
+
+describe('manuscript layout is repaired before it is stored', () => {
+  it('normalizes abstract, sections and bibtex on the way in', async () => {
+    // The compile-side normaliser fixed what the engine saw while the stored
+    // artifact stayed dirty: the paper in the repository was not the paper that
+    // compiled, and every later reader (claim audit, exporter, human) inherited
+    // literal escape pairs.
+    const { normalizeManuscriptLayout } = await import('../src/paper/write.js');
+    const dirty = {
+      title: 'T',
+      venue: 'ICLR',
+      abstract: 'We show\nthat this works.',
+      sections: [
+        {
+          id: 'intro',
+          heading: 'Introduction\n',
+          latex: 'First sentence.\n\nSecond paragraph.',
+          sources: ['plan:intro'],
+        },
+      ],
+      bibliography: [{ key: 'smith2024', bibtex: '@article{a,\ntitle={A}\n}' }],
+    } as unknown as Parameters<typeof normalizeManuscriptLayout>[0];
+
+    const clean = normalizeManuscriptLayout(dirty);
+    expect(clean.abstract).toBe('We show\nthat this works.');
+    expect(clean.sections[0]!.heading).toBe('Introduction\n');
+    expect(clean.sections[0]!.latex).toContain('\n\nSecond paragraph.');
+    expect(clean.bibliography[0]!.bibtex).toContain(',\n');
+    // Real macros survive the repair, which is the whole reason the rule is
+    // "not followed by a lowercase letter" rather than a name list.
+    const macros = {
+      ...clean,
+      sections: [
+        {
+          id: 'method',
+          heading: 'Method',
+          latex: '\newtheorem{thm}{Theorem}\nu \in \mathbb{R}\nratio = 2',
+          sources: ['plan:method'],
+        },
+      ],
+    } as unknown as Parameters<typeof normalizeManuscriptLayout>[0];
+    const kept = normalizeManuscriptLayout(macros);
+    expect(kept.sections[0]!.latex).toContain('\newtheorem');
+    expect(kept.sections[0]!.latex).toContain('\nu');
+    expect(kept.sections[0]!.latex).toContain('\nratio');
+  });
+});

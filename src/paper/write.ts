@@ -1,5 +1,6 @@
 import { sha256Of } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
+import { normalizeEscapedLayout } from './compile.js';
 import { stableJson } from '../experiment/spec.js';
 import { renderArisSkill, type LoadedArisSkill } from '../aris/skill.js';
 import type { PaperPlanSnapshot } from './plan.js';
@@ -300,7 +301,7 @@ export function parseManuscriptOutput(output: string, context: WriteContext): Ma
   }
   // Defense in depth (JSON Schema authority): the TS validator ran first.
   assertAgainstSchema('paper-write-v1', parsed);
-  const manuscript = parsed as Manuscript;
+  const manuscript = normalizeManuscriptLayout(parsed as Manuscript);
   if (context.plan && manuscript.venue !== context.plan.venue) {
     throw new IdeaseekError(
       'PARSE_FAILED',
@@ -309,4 +310,34 @@ export function parseManuscriptOutput(output: string, context: WriteContext): Ma
     );
   }
   return manuscript;
+}
+
+/**
+ * Repair double-escaped layout before anything is stored.
+ *
+ * The model's answer arrives with literal `
+` sequences where the document
+ * needs real line breaks: the text was JSON-encoded twice somewhere upstream,
+ * and every consumer then sees prose with visible escape pairs. Assembly has
+ * normalised this since the compile fix, but the STORED artifact stayed dirty,
+ * so (a) the paper in the repository is not the paper that compiles, and
+ * (b) anything reading manuscript.json — a claim audit, an exporter, a person
+ * — inherits the damage. Normalising on the way in is the only version of this
+ * that makes the stored evidence trustworthy; the assembly-side rule stays for
+ * artifacts written before it.
+ */
+export function normalizeManuscriptLayout(manuscript: Manuscript): Manuscript {
+  return {
+    ...manuscript,
+    abstract: normalizeEscapedLayout(manuscript.abstract),
+    sections: manuscript.sections.map((section) => ({
+      ...section,
+      heading: normalizeEscapedLayout(section.heading),
+      latex: normalizeEscapedLayout(section.latex),
+    })),
+    bibliography: manuscript.bibliography.map((entry) => ({
+      ...entry,
+      bibtex: normalizeEscapedLayout(entry.bibtex),
+    })),
+  };
 }
