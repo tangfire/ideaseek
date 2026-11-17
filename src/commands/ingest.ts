@@ -283,12 +283,28 @@ export function registerIngestCommand(program: Command): void {
 
           const finalRun = await runtime.db.getRun(runId);
           const refreshed = await refreshIndexQuiet(runtime);
+          // Task outcomes, read once and reused below. The summary used to
+          // report `parsed ${enqueued.length}`, which is the number of tasks
+          // DISPATCHED: on a mixed run (one real paper, two unreadable ones)
+          // it printed `parsed 3 new paper(s)` while the index said 1 searchable
+          // and the failure list said 2 — a count that spoke for work that had
+          // not happened, in the one line a researcher uses to decide whether
+          // their corpus is ready for ideation.
+          const runTasks = await runtime.db.listTasks(runId);
+          const parsedOk = runTasks.filter(
+            (task) =>
+              (task.type === 'paper.parse' || task.type === 'paper.latex') &&
+              task.status === 'succeeded',
+          ).length;
+          const tasksFailed = runTasks.filter((task) => task.status === 'failed').length;
           if (opts.json) {
             process.stdout.write(
               jsonLine({
                 pending: pending.length,
                 alreadyParsed,
                 enqueued: enqueued.length,
+                parsedOk,
+                tasksFailed,
                 tablesEnqueued,
                 latexEnqueued,
                 runId,
@@ -300,16 +316,17 @@ export function registerIngestCommand(program: Command): void {
             );
           } else {
             process.stdout.write(
-              `ingest → ${finalRun?.status}: parsed ${enqueued.length} new paper(s), tables ${tablesEnqueued}, skipped ${alreadyParsed}\n`,
+              `ingest → ${finalRun?.status}: parsed ${parsedOk} of ${enqueued.length} dispatched ` +
+                `paper(s), tables ${tablesEnqueued}, skipped ${alreadyParsed}` +
+                `${tasksFailed > 0 ? ` · ${tasksFailed} task(s) FAILED` : ''}\n`,
             );
             process.stdout.write(`  index: ${refreshed} paper(s) searchable\n`);
             // A FAILED summary that names no input is not actionable: one
             // unreadable PDF among many produced the same red word as a total
             // failure, and the reason lived only in the task table.
             if (finalRun?.status === 'FAILED') {
-              const tasks = await runtime.db.listTasks(runId);
-              const failed = tasks.filter((task) => task.status === 'failed');
-              const succeeded = tasks.filter((task) => task.status === 'succeeded').length;
+              const failed = runTasks.filter((task) => task.status === 'failed');
+              const succeeded = runTasks.filter((task) => task.status === 'succeeded').length;
               for (const task of failed.slice(0, 5)) {
                 const where = String(
                   (task.payload as { pdfPath?: string; texPath?: string }).pdfPath ??

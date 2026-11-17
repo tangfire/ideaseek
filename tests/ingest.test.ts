@@ -193,3 +193,48 @@ describe('ingest failure reporting', () => {
     expect(out.stdout).toContain('next: ideaseek intake');
   }, 180_000);
 });
+
+describe('ingest counts what was parsed, not what was dispatched', () => {
+  it('reports the successful parses when some inputs failed', async () => {
+    // The defect: the summary line printed `parsed ${enqueued.length}`, which is
+    // the number of tasks DISPATCHED. On a mixed run (one readable paper, one
+    // unreadable) it said `parsed 2 new paper(s)` in the same breath as
+    // `index: 1 paper(s) searchable` and a failure naming the second file — the
+    // one line a researcher uses to decide whether the corpus is ready for
+    // ideation was over-reporting usable inputs.
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-ingest-count-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+    const { makeFixturePdf } = await import('../src/knowledge/pdf.js');
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(dir, 'papers'), { recursive: true });
+    try {
+      await makeFixturePdf(join(dir, 'papers', 'good.pdf'), 'Good');
+    } catch {
+      return; // python/pypdf unavailable
+    }
+    await writeFile(join(dir, 'papers', 'broken.pdf'), '%PDF-1.4\nnot a pdf at all\n%%EOF\n');
+    await runCli(dir, ['scan']);
+
+    const text = await runCli(dir, ['ingest']);
+    expect(text.stdout).toMatch(/parsed 1 of 2 dispatched/);
+    expect(text.stdout).not.toMatch(/parsed 2 new paper/);
+
+    const jsonRun = await runCli(dir, ['ingest', '--json']);
+    // Re-running dispatches only what is left: the parsed one is skipped, so the
+    // honest counts must move with reality rather than restating the first run.
+    const payload = JSON.parse(jsonRun.stdout) as {
+      parsedOk: number;
+      tasksFailed: number;
+      enqueued: number;
+      alreadyParsed: number;
+      indexed: number;
+      status: string;
+    };
+    expect(payload.alreadyParsed).toBe(1);
+    expect(payload.indexed).toBeGreaterThanOrEqual(1);
+    expect(payload.status).toBe('FAILED');
+    // Machine consumers were being fooled by the same field: `enqueued` was all
+    // they could see, so the JSON now carries the outcome explicitly.
+    expect(payload.parsedOk).toBe(payload.enqueued - payload.tasksFailed);
+  }, 240_000);
+});
