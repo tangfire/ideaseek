@@ -571,13 +571,18 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     // process.env — dropping the credential variable would have turned a
     // correctness fix into an outage.
     env: {
+      // The coding contract first, then the defaults: the guard, `project_read`
+      // and the read fence all read their scope from these variables, and a
+      // mount that supplies patches without its own env silently un-configures
+      // them — which is how every file tool in a real FDG implementation
+      // session started failing while the patch itself loaded fine.
       ...process.env,
+      ...(boot ? boot.env : {}),
       // A turn cut off by the output cap must not count as success. The `sdk`
       // profile layers dsh-sdk-app, whose patch enables maxTokensAsSuccess
       // unless this variable is defined, and this path never set it — so
       // truncated subagent work was being reported as ok, including the
       // "subagent ok" line this module prints. Checked rather than assumed.
-      DSH_MAX_TOKENS_AS_SUCCESS: 'false',
     },
     ...(opts.provider ? { provider: opts.provider } : {}),
     ...(opts.model ? { model: opts.model } : {}),
