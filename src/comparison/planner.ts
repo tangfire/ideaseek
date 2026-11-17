@@ -1,4 +1,5 @@
 import { sha256Of } from '../core/hash.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import { stableJson } from '../experiment/spec.js';
 
 /**
@@ -316,5 +317,16 @@ export function validateMatrixProposal(
     }
   }
   if (errors.length > 0) return { ok: false, errors };
+  // Defense in depth (JSON Schema authority): the domain validator ran first
+  // because it is the one that needs the request context (candidate ids,
+  // literature ids). What it cannot see is the document's own shape — the type
+  // of the top-level `notes`, an `entries` item that is not an object — and that
+  // shape is what a Python worker or ARIS skill reads out of the persisted
+  // `comparison-matrix-proposal` artifact, since the same JSON file is the
+  // contract there. Refusing here happens before the artifact lands, and the one
+  // caller (src/worker/matrix-handlers.ts) already fails the task on an invalid
+  // proposal: this changes which message the operator sees, not whether the run
+  // continues, and it never repairs a proposal into a classification.
+  assertAgainstSchema(MATRIX_PROPOSAL_SCHEMA, doc);
   return { ok: true, proposal: doc as MatrixProposal };
 }

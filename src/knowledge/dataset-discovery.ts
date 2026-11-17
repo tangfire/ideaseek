@@ -2339,6 +2339,18 @@ export async function writeDiscoveryExports(
   root: string,
   artifact: DatasetDiscoveryArtifact,
 ): Promise<string[]> {
+  // Persistence boundary (JSON Schema authority): this is the ONLY writer of
+  // knowledge/dataset-candidates.json — both the discovery run's own literal
+  // and the `datasets authorize/acquire/link` re-exports of a loaded
+  // artifact. Aborting is the honest choice, and it is not a degradation:
+  // renderDiscoveryMarkdown below already dereferences `sources[].ref`,
+  // `candidates[].license.value` and `authorization.state`, so today the same
+  // envelope hole crashed with a TypeError AFTER the JSON was on disk. An
+  // empty candidates array stays valid (nothing grounded is a discovery
+  // result), and readDiscoveryArtifact keeps fail-closing to `null` — a
+  // foreign or legacy file is still "no artifact, run discovery again", never
+  // a hard error at read time.
+  assertAgainstSchema(DISCOVERY_SCHEMA, artifact);
   const jsonPath = discoveryArtifactPath(root);
   const mdPath = discoveryRecommendationsPath(root);
   await writeFileAtomic(jsonPath, `${JSON.stringify(artifact, null, 2)}\n`);

@@ -1,6 +1,7 @@
 import { sha256Of } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 import type { ReproductionBlueprint } from './types.js';
 import { metricIdentifier } from '../core/metric-id.js';
@@ -180,11 +181,34 @@ export function parseBlueprintOutput(output: string, methodId: string): Reproduc
       `blueprint output is not JSON: ${(error as Error).message}`,
     );
   }
-  const record = (value ?? {}) as Record<string, unknown>;
+  const record =
+    // A JSON string or list is a refused answer, not a blueprint: the cast the
+    // parser used before stamped `methodId` onto whatever came back and either
+    // threw a raw TypeError (strict mode cannot set a property on a primitive)
+    // or produced an array that the domain validator rejected with one opaque
+    // line. Normalising here lets the contract below say exactly which fields a
+    // plan is missing.
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
   // The method id is platform-assigned: a model echoing another id would
   // silently attach this plan to the wrong comparison.
-  record.methodId = methodId;
-  return record as unknown as ReproductionBlueprint;
+  const blueprint = { ...record, methodId };
+  // Defense in depth (JSON Schema authority): reproduction-blueprint-v1 names
+  // exactly the members the later phases dereference — the scaffold, the
+  // algorithm fingerprint and `comparison implement` all read the
+  // comparisons/<id>/blueprint.json written from this object, and the same JSON
+  // file is the contract the Python side reads. validateReproductionBlueprint
+  // (src/comparison/reproduce.ts) stays the authority on meaning (paper
+  // grounding, the protocol's metric identifiers, at-least-one paper-explicit
+  // statement) and the CLI's two-attempt correction loop keeps retrying on
+  // those, because it is at least as strict as this schema on every field the
+  // schema requires: nothing the correction loop could still salvage is refused
+  // here. The tradeoff is deliberate and narrow — a shape-broken answer aborts
+  // the first authoring turn with the contract's field list instead of
+  // consuming the retry, and neither path persists anything.
+  assertAgainstSchema(BLUEPRINT_OUTPUT_SCHEMA, blueprint);
+  return blueprint as unknown as ReproductionBlueprint;
 }
 
 /** Asks the harness for a blueprint. Validation happens at the call site. */

@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 
 /**
@@ -92,7 +93,7 @@ export function parseDependencyPlan(output: string): DependencyPlan {
       `no usable requirement specs (rejected: ${rejected.slice(0, 5).join(', ') || 'none'})`,
     );
   }
-  return {
+  const plan: DependencyPlan = {
     packages: packages.slice(0, MAX_PACKAGES),
     notes:
       (typeof record.notes === 'string' ? record.notes : '').slice(0, 400) +
@@ -100,6 +101,20 @@ export function parseDependencyPlan(output: string): DependencyPlan {
         ? ` | rejected ${rejected.length} unsafe spec(s): ${rejected.slice(0, 3).join(', ')}`
         : ''),
   };
+  // Enforcement sits on the plan the platform SHIPS — the spec array pip is
+  // handed as argv and the note the researcher reads — and deliberately NOT on
+  // the model's raw answer: one non-string entry, or the `notes` the prompt asks
+  // for left out entirely, is repaired just above with a visible reason (a
+  // refused spec is stamped into the note, a missing note becomes ''), and
+  // aborting a repair that works would trade a partial plan for no plan at all.
+  // What stays non-negotiable is the grammar in validateRequirementSpec (no
+  // --index-url, no URL, no -e/-r, no shell), applied spec by spec: that is a
+  // security boundary, not a shape preference. The assert still earns its place
+  // — it fails loudly the moment this parser stops guaranteeing its own
+  // contract, which is the only way a consumer of the recorded plan could be
+  // handed something dependency-plan-v1 does not describe.
+  assertAgainstSchema(DEP_OUTPUT_SCHEMA, plan);
+  return plan;
 }
 
 const IMPORT_DIRS = new Set(['src', 'utils', 'models', 'networks', 'methods', 'lib', 'code']);
@@ -340,10 +355,12 @@ export async function isLocalModule(worktreeDir: string, root: string): Promise<
   ];
   for (const candidate of candidates) {
     for (const probePath of [candidate, `${candidate}.py`, join(candidate, '__init__.py')]) {
-      if (await stat(probePath).then(
-        () => true,
-        () => false,
-      )) {
+      if (
+        await stat(probePath).then(
+          () => true,
+          () => false,
+        )
+      ) {
         return true;
       }
     }

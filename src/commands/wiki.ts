@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import { action, jsonLine } from './shared.js';
 
 /**
@@ -26,21 +27,29 @@ export function registerWikiCommand(program: Command): void {
             'no IdeaSeek project here; run: ideaseek init',
           );
         }
-        const { buildResearchWiki } = await import('../knowledge/wiki.js');
+        const { buildResearchWiki, WIKI_SCHEMA } = await import('../knowledge/wiki.js');
         const result = await buildResearchWiki(root, { helper: opts.helper !== false });
 
         if (opts.json) {
-          process.stdout.write(
-            jsonLine({
-              schema: 'research-wiki-v1',
-              root: result.root,
-              nodes: result.nodes,
-              edges: result.edges,
-              pages: result.pages.length,
-              helper: result.helper,
-              stats: result.stats,
-            }),
-          );
+          const payload = {
+            schema: WIKI_SCHEMA,
+            root: result.root,
+            nodes: result.nodes,
+            edges: result.edges,
+            pages: result.pages.length,
+            helper: result.helper,
+            stats: result.stats,
+          };
+          // This command is the writer of the TAGGED payload, and the writer
+          // whose `pages` is a COUNT (src/knowledge/wiki.ts emits the relPath
+          // list — the contract admits both shapes on purpose), so this is the
+          // only place the count shape gets gated. Checked before the byte
+          // reaches stdout: a --json consumer must never receive a
+          // contract-tagged report the schema rejects. The pages and edges are
+          // already materialized and idempotent, so a failure here reports a
+          // platform bug instead of discarding user work.
+          assertAgainstSchema(WIKI_SCHEMA, payload);
+          process.stdout.write(jsonLine(payload));
           return 0;
         }
 

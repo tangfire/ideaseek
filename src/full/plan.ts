@@ -1,5 +1,6 @@
 import { sha256Of } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
+import { assertAgainstSchema, validateAgainstSchema } from '../core/schema/index.js';
 import { stableJson } from '../experiment/spec.js';
 
 /**
@@ -120,12 +121,24 @@ export async function buildFullPlan(root: string, ideaId: string): Promise<FullP
       const { buildFairnessLock } = await import('./fairness.js');
       const freshFairness = await buildFairnessLock(root, ideaId);
       let storedFairness: typeof freshFairness | null = null;
+      // A fairness file that parses but does not match fairness-lock-v1 is NOT a
+      // lock: reading it with a bare cast used to credit whatever `confirmed`
+      // member it happened to carry, so garbage could satisfy the gate that
+      // authorises a full run. It is reported instead — a blocker naming the
+      // violations and the rebuild command, which is the same recorded
+      // degradation a missing lock already gets. `full plan` stays printable:
+      // the plan is a read-only report over state, and an unusable draft is a
+      // fact about that state, not a reason to abort the report.
+      let storedFairnessIssues: string[] = [];
       try {
         const { readFile } = await import('node:fs/promises');
         const { join } = await import('node:path');
-        storedFairness = JSON.parse(
+        const draft = JSON.parse(
           await readFile(join(root, 'knowledge', `fairness-${ideaId}.json`), 'utf8'),
         ) as typeof freshFairness;
+        const shape = validateAgainstSchema('fairness-lock-v1', draft);
+        if (shape.ok) storedFairness = draft;
+        else storedFairnessIssues = shape.errors;
       } catch {
         storedFairness = null;
       }
@@ -142,7 +155,13 @@ export async function buildFullPlan(root: string, ideaId: string): Promise<FullP
         fairnessBlockers.push(
           storedFairness
             ? `fairness lock stale or unconfirmed for ${ideaId} — run: ideaseek full fairness --idea ${ideaId} (review, then --confirm)`
-            : `fairness lock missing for ${ideaId} — run: ideaseek full fairness --idea ${ideaId} (review, then --confirm)`,
+            : storedFairnessIssues.length > 0
+              ? `stored fairness lock for ${ideaId} violates fairness-lock-v1 (${storedFairnessIssues
+                  .slice(0, 3)
+                  .join(
+                    '; ',
+                  )}) — run: ideaseek full fairness --idea ${ideaId} (review, then --confirm)`
+              : `fairness lock missing for ${ideaId} — run: ideaseek full fairness --idea ${ideaId} (review, then --confirm)`,
         );
       }
       for (const blocker of freshFairness.blockers) {
@@ -283,14 +302,30 @@ export async function buildFullPlan(root: string, ideaId: string): Promise<FullP
       ],
     };
     const inputHash = computeInputHash(base);
-    return { ...base, inputHash };
+    const plan: FullPlan = { ...base, inputHash };
+    // Defense in depth (JSON Schema authority): the plan is COMPUTED BY CODE
+    // from persisted state — no model answers it — so a payload that does not
+    // match full-plan-v1 is a platform bug, and this is the last point before
+    // knowledge/full-plan-<idea>.json is written. It matters which file that is:
+    // `full approve` stamps its Decision onto it and `full run` re-reads it as
+    // the evidence that authorised the run, so a plan with a drifting shape is a
+    // hole in the audit chain, not a cosmetic defect. Fail loudly.
+    assertAgainstSchema(FULL_PLAN_SCHEMA, plan);
+    return plan;
   } finally {
     await runtime.close();
   }
 }
 
-/** Pure approve gates (unit-testable): freshness + readiness. */
+/** Pure approve gates (unit-testable): shape, freshness, readiness. */
 export function assertApprovable(plan: FullPlan, currentInputHash: string): void {
+  // The plan approved (and later re-read by `full run`) is the one on disk, and
+  // the researcher is expected to review and edit it. Checking the contract
+  // first, before the staleness comparison, says the true thing about a
+  // document whose readiness or fairness block cannot be interpreted at all:
+  // the rebuild command is the same either way, and every plan that
+  // `full plan` wrote passes here unchanged — nothing approvable is refused.
+  assertAgainstSchema(FULL_PLAN_SCHEMA, plan);
   if (plan.inputHash !== currentInputHash) {
     throw new IdeaseekError(
       'INVALID_ARGUMENT',

@@ -1,5 +1,6 @@
 import { writeFileAtomic } from '../core/atomic.js';
 import { sha256Of } from '../core/hash.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import { stableJson } from '../experiment/spec.js';
 import { locateQuote } from '../knowledge/checker.js';
 
@@ -199,11 +200,26 @@ export function claimAuditPath(root: string, ideaId: string): string {
 }
 
 export async function writeClaimAudit(root: string, audit: EvidenceAudit): Promise<string> {
+  // Persistence boundary (JSON Schema authority, defense in depth after the
+  // TS construction): this file is re-read raw by the handoff gate
+  // (src/idea/handoff.ts currentEvidence) and hashed by forensics. The payload
+  // is runClaimAudit's own literal — no model in the loop — so a structural
+  // violation is a platform bug, never user state: abort instead of storing an
+  // audit whose lost `stats.missing`/`verdict` would silently unblock a
+  // delivery the evidence does not support. Honest `unverified` checks (the
+  // degrade path: paper not indexed, refs unresolvable) stay schema-valid, so
+  // this gate never turns degraded evidence into a failed run.
+  assertAgainstSchema(CLAIM_AUDIT_SCHEMA, audit);
   const path = claimAuditPath(root, audit.ideaId);
   await writeFileAtomic(path, `${JSON.stringify(audit, null, 2)}\n`);
   return path;
 }
 
+/**
+ * Fail-closed READ on purpose: an absent, unparseable or foreign-contract
+ * audit becomes `null` (the gate then demands a fresh audit), never a throw —
+ * that degradation is the user's recovery path, so it is not schema-gated.
+ */
 export async function readClaimAudit(root: string, ideaId: string): Promise<EvidenceAudit | null> {
   try {
     const { readFile } = await import('node:fs/promises');

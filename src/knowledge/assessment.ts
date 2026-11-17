@@ -1,4 +1,5 @@
 import { sha256Of, sha256OfFile } from '../core/hash.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import { stableJson } from '../experiment/spec.js';
 
 /**
@@ -98,7 +99,10 @@ function gap(partial: AssessmentGap): AssessmentGap {
 
 /**
  * Builds the assessment from persisted state (read-only). Never throws
- * for missing pieces — they become gaps with recovery commands.
+ * for missing pieces — they become gaps with recovery commands. The only
+ * throw it adds is the structural gate on its OWN output (assertAgainstSchema
+ * at the end): a report this module cannot even describe is a platform bug,
+ * not a user gap.
  */
 export async function buildResearchMaterialAssessment(
   root: string,
@@ -662,6 +666,21 @@ export async function buildResearchMaterialAssessment(
         'Re-run after adding materials: only changed inputs rebuild (contextHash reuse).',
       ],
     };
+    // Structural gate (JSON Schema authority) on the FRESH report. Every
+    // consumer gets the object straight from here — `ask`, `next`, `prepare`,
+    // the Analysis→Research mode gate, and both persistence sites
+    // (loadOrBuildAssessment below and `ideaseek assessment --force`) — so
+    // checking at the producer validates it before either file is written.
+    // Abort rather than degrade: a report that lost `stats.protocolProposal`
+    // or a gap without `blocks` would make those callers print `undefined`
+    // and let the mode gate decide on a field it never read. This literal is
+    // built by this module alone (no model in the loop), so a violation is a
+    // platform bug, not missing user material: an empty gaps list, a `gaps`
+    // verdict, a null venue or zero counts all stay schema-valid. The STORED
+    // report is deliberately NOT gated — a foreign or older file falls
+    // through to a rebuild (reuse rule in loadOrBuildAssessment), which is
+    // the degradation callers rely on.
+    assertAgainstSchema(ASSESSMENT_SCHEMA, assessment);
     return assessment;
   } finally {
     await runtime.close();

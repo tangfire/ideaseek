@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { arisSkillsRoot } from '../aris/skill.js';
 import { runProcess } from '../core/proc.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * Research wiki (Phase 4.5B, ARIS research-wiki): a persistent per-project
@@ -355,7 +356,7 @@ export async function buildResearchWiki(
     }
   }
 
-  return {
+  const result: WikiBuildResult = {
     root: wikiRoot,
     nodes: pages.length,
     edges: edges.length,
@@ -363,6 +364,17 @@ export async function buildResearchWiki(
     helper,
     stats,
   };
+  // Structural gate (JSON Schema authority) on THIS writer's report. The
+  // pages/edges files are already materialized and each node page/edge line
+  // is built from the typed WikiNodePage/WikiEdge objects above, so the
+  // report itself is the last thing that can drift from what consumers read.
+  // `pages` here is the relPath LIST; the CLI writer stamps the COUNT
+  // (src/commands/wiki.ts) — the contract takes either shape on purpose
+  // (`anyOf`), so enforcing it cannot break one writer to please the other.
+  // Helper degradation stays valid by design: 'skipped:<reason>' plus
+  // `stats: []` is an honest build, never an aborted run.
+  assertAgainstSchema(WIKI_SCHEMA, result);
+  return result;
 }
 
 /** Runs the helper; null when the interpreter cannot even spawn. */

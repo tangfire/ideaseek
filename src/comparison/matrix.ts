@@ -1,5 +1,6 @@
 import { sha256Of } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
+import { assertAgainstSchema, validateAgainstSchema } from '../core/schema/index.js';
 import { stableJson } from '../experiment/spec.js';
 import type { ComparisonStatus } from './types.js';
 
@@ -267,7 +268,24 @@ export async function buildComparisonMatrix(
         const unknownIds = proposalEntries
           .map((entry) => entry.methodId)
           .filter((id): id is string => typeof id === 'string' && !byId.has(id));
-        if (unknownIds.length > 0) {
+        // The proposal is a MODEL output, so a payload that does not even have
+        // the shape its contract declares is recorded as un-applied rather than
+        // half-merged. The ad-hoc field checks below skip what they cannot use
+        // and still report `applied: true`, which is a false conclusion: the
+        // researcher would read "planner proposal merged" about a document that
+        // was mostly ignored. Nothing here aborts the matrix build — the
+        // deterministic classification stands on its own, and the note says
+        // exactly what the planner has to fix.
+        const shape = validateAgainstSchema('comparison-matrix-proposal-v1', proposal);
+        if (!shape.ok) {
+          agentProposal = {
+            contextHash,
+            applied: false,
+            note: `planner proposal violates comparison-matrix-proposal-v1 and was not merged: ${shape.errors
+              .slice(0, 3)
+              .join('; ')}`,
+          };
+        } else if (unknownIds.length > 0) {
           agentProposal = {
             contextHash,
             applied: false,
@@ -325,7 +343,15 @@ export async function buildComparisonMatrix(
       ...(agentProposal ? { agentProposal } : {}),
     };
     const inputHash = computeInputHash(base);
-    return { ...base, inputHash };
+    const matrix: ComparisonMatrix = { ...base, inputHash };
+    // Defense in depth (JSON Schema authority): the matrix is BUILT BY CODE, not
+    // answered by a model, so a payload that does not match
+    // comparison-matrix-v1 is a platform bug and there is no useful reading of it.
+    // The file written from this object is what `--confirm` applies and what the
+    // reports cite, so it is refused here — before the CLI persists it — rather
+    // than being stored and failing in a later stage.
+    assertAgainstSchema(MATRIX_SCHEMA, matrix);
+    return matrix;
   } finally {
     await runtime.close();
   }
@@ -367,6 +393,16 @@ export async function applyComparisonMatrix(
   const { assertTransition } = await import('./types.js');
   const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
   try {
+    // This is the boundary where the matrix stops being a review document and
+    // starts changing the registry, and the object arriving here is the one on
+    // disk — which the researcher edits by hand. A structurally broken matrix
+    // used to fail midway through the loop (a raw TypeError on `entry.rationale`
+    // when the field was deleted, or INVALID_STATE about a method id when an
+    // entry lost its `classification`) after some methods had already been
+    // transitioned; refusing it whole up front cannot abandon a run that works
+    // today, because nothing valid that `comparison matrix` wrote is ever
+    // rejected here.
+    assertAgainstSchema(MATRIX_SCHEMA, matrix);
     const applied: string[] = [];
     for (const entry of matrix.entries) {
       if (entry.origin !== 'registered') continue;

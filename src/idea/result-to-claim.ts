@@ -1,5 +1,6 @@
-import { IdeaseekError } from '../core/errors.js';
 import { writeFileAtomic } from '../core/atomic.js';
+import { IdeaseekError } from '../core/errors.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 
 /**
  * result-to-claim (docs/FULL_RESEARCH_MODE.md 图表与论文: 论文 claim 必须
@@ -245,6 +246,16 @@ export function resultToClaimPath(root: string, ideaId: string): string {
 }
 
 export async function writeResultToClaim(root: string, claim: ResultToClaim): Promise<string> {
+  // Persistence boundary (JSON Schema authority, defense in depth after the
+  // TS construction). runResultToClaim builds this literal itself, so a
+  // violation is a platform bug — and silence here is expensive: consumers
+  // test `derived.delta !== null && derived.baselineValue !== null`
+  // (src/commands/idea.ts result-to-claim printing), so a DROPPED key reads as
+  // "no delta" instead of failing. The schema keeps the three delta fields
+  // required, so the writer cannot lose one quietly. A *null* delta (one side
+  // of the comparison missing) is the honest `insufficient` claim and stays
+  // valid — the gate never aborts a degraded-but-correct derivation.
+  assertAgainstSchema(RESULT_TO_CLAIM_SCHEMA, claim);
   const { join } = await import('node:path');
   const { ensureDir } = await import('../core/atomic.js');
   const path = resultToClaimPath(root, claim.ideaId);

@@ -1,6 +1,7 @@
 import { sha256Of } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
 import { metricIdentifier } from '../core/metric-id.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
 import { isBaselineSubjectRun } from '../idea/analyze.js';
 import { stableJson } from '../experiment/spec.js';
 
@@ -388,14 +389,32 @@ export async function buildFairnessLock(root: string, ideaId: string): Promise<F
       blockers,
     };
     const inputHash = computeInputHash(base);
-    return { ...base, inputHash };
+    const lock: FairnessLock = { ...base, inputHash };
+    // Defense in depth (JSON Schema authority): the lock is COMPUTED BY CODE
+    // from persisted specs, never answered by a model, so a payload that does not
+    // match fairness-lock-v1 is a platform bug with no defensible reading. It
+    // matters which payload that is: this file is the evidence `full plan` reads
+    // back to decide whether fairness is confirmed+current, and a lock whose
+    // methods/dimensions drifted from the contract would gate a full run on
+    // structure nobody can interpret. Refused before knowledge/fairness-<idea>.json
+    // is written (src/commands/full.ts), so a broken build never becomes state.
+    assertAgainstSchema(FAIRNESS_SCHEMA, lock);
+    return lock;
   } finally {
     await runtime.close();
   }
 }
 
-/** Pure confirm gates: freshness + blockers (unit-testable). */
+/** Pure confirm gates: shape + freshness + blockers (unit-testable). */
 export function assertFairnessApprovable(lock: FairnessLock, currentInputHash: string): void {
+  // The object confirmed here is the one on disk, which the researcher may have
+  // opened. A lock missing `blockers` used to crash this very gate
+  // (`lock.blockers.length` on undefined) after the freshness comparison had
+  // already passed, which is a stack trace where a contract violation was the
+  // truth; `ideaseek full fairness --idea <id>` rebuilds it either way, so
+  // nothing that could be confirmed before is refused now — a valid lock passes
+  // and the confirmation stamp it earns is unchanged.
+  assertAgainstSchema(FAIRNESS_SCHEMA, lock);
   if (lock.inputHash !== currentInputHash) {
     throw new IdeaseekError(
       'INVALID_ARGUMENT',
