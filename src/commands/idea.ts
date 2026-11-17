@@ -3696,6 +3696,52 @@ export function registerIdeaCommand(program: Command): void {
             process.stdout.write(jsonLine({ analysis, paths, review, reviewNote }));
             return 0;
           }
+          // The one verdict the platform records by itself, and only when the
+          // idea is parked in a state that can legally leave it. A research
+          // verdict (SUPPORTED/REJECTED) still belongs to the researcher; an
+          // invalid run is an engineering fact the deterministic ladder proved,
+          // and leaving it unrecorded is what made the documented repair route
+          // (INVALID_RUN → IMPLEMENTING) unreachable.
+          // State tracking before verdicts: analysing recorded results means
+          // experiments happened, and an idea parked at SMOKE_TESTED or RUNNING
+          // while its analysis completes leaves the record describing a phase
+          // the pipeline already left. Both edges are legal in the lifecycle
+          // graph, and neither is a scientific judgement: RUNNING and ANALYZING
+          // name what the platform is doing, SUPPORTED/REJECTED name what the
+          // evidence means and still belong to the researcher.
+          const { advanceAnalysisPhase } = await import('../idea/analysis.js');
+          const phaseNote = await advanceAnalysisPhase(root, ideaId);
+
+          const { verdictAdvancesStatus } = await import('../idea/analysis.js');
+          const advanceTo = verdictAdvancesStatus(analysis.verdict);
+          let statusNote = '';
+          if (advanceTo) {
+            const before = await loadWorkspaceMeta(root, ideaId);
+            if (before.status === 'ANALYZING' || before.status === 'RUNNING') {
+              try {
+                const after = await setIdeaStatus(
+                  root,
+                  ideaId,
+                  advanceTo,
+                  `recorded by ideaseek idea analyze: ${analysis.reasons[0] ?? 'run cannot support a conclusion'}`.slice(
+                    0,
+                    300,
+                  ),
+                );
+                statusNote =
+                  `status: ${before.status} → ${after.status} (engineering verdict, ` +
+                  `not a judgement about the hypothesis)`;
+              } catch (error) {
+                // An illegal transition here is information, not a reason to
+                // lose the analysis that just completed.
+                statusNote = `status not advanced: ${(error as Error).message}`;
+              }
+            } else {
+              statusNote =
+                `status left at ${before.status}: an invalid-run verdict only ` +
+                're-opens work from ANALYZING/RUNNING, and nothing else may be overruled silently';
+            }
+          }
           process.stdout.write(
             `analysis ${ideaId} v${analysis.ideaVersion}: ${analysis.verdict.toUpperCase()}` +
               `${analysis.failureClass !== 'none' ? ` (failure class: ${analysis.failureClass})` : ''}\n`,
@@ -3733,6 +3779,8 @@ export function registerIdeaCommand(program: Command): void {
             );
           }
           for (const step of analysis.nextSteps) process.stdout.write(`  next: ${step}\n`);
+          if (phaseNote) process.stdout.write(`  ${phaseNote}\n`);
+          if (statusNote) process.stdout.write(`  ${statusNote}\n`);
           process.stdout.write(`  written: ${paths.join(', ')}\n`);
           return 0;
         } finally {

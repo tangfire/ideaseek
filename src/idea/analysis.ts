@@ -1,6 +1,7 @@
 import type { ExperimentSpec, RunFailureCategory, RunResult } from '../experiment/spec.js';
 import { metricIdentifier, metricUnit, unitViolation } from '../core/metric-id.js';
 import type { IdeaCard } from './card.js';
+import type { IdeaRunStatus } from './workspace.js';
 
 /**
  * Result Analyst (docs/plan.md §E.7–8, EVALUATION.md): reads baseline
@@ -700,4 +701,62 @@ function finish(
     nextSteps,
     generatedAt: Date.now(),
   };
+}
+
+/**
+ * The one analysis verdict the platform may record as a status by itself.
+ *
+ * `supported` and `rejected` are decisions about a hypothesis and stay with the
+ * researcher (the ladder's own guidance says to run `idea set-status`, and an
+ * automatic SUPPORTED would let arithmetic speak for a scientific claim).
+ * `inconclusive` means nothing was established, so there is nothing to record.
+ *
+ * `invalid-run` is different in kind: it is an engineering fact the
+ * deterministic ladder already proved without a model — the run crashed, or a
+ * value contradicted the unit its own metric declares. Refusing to record it
+ * was the dead end researchers actually hit: the idea stayed in ANALYZING, whose
+ * only legal exits are verdicts, so the documented repair route
+ * INVALID_RUN → IMPLEMENTING was unreachable and re-implementing the idea
+ * complained about an illegal transition instead of fixing the code.
+ */
+export function verdictAdvancesStatus(verdict: AnalysisVerdict): IdeaRunStatus | null {
+  return verdict === 'invalid-run' ? 'INVALID_RUN' : null;
+}
+
+/**
+ * Moves an idea onto the analysis phases it is demonstrably in, before any
+ * verdict is considered.
+ *
+ * Returns a note for the caller, or null when there was nothing to record. The
+ * reason this lives in code rather than in guidance is that its absence made
+ * the documented repair route unreachable in practice: an idea whose recorded
+ * experiment was invalid sat at SMOKE_TESTED, `idea analyze` proved the run was
+ * unusable, and the only legal exits from SMOKE_TESTED are RUNNING,
+ * NEEDS_REVISION and REJECTED — so INVALID_RUN could not be recorded at all and
+ * `idea implement` then refused to re-open work. Advancing through RUNNING (both
+ * edges legal) is the platform describing its own activity, which is exactly
+ * what statuses are for; the verdict about the hypothesis is untouched and
+ * still requires a human.
+ */
+export async function advanceAnalysisPhase(
+  projectRoot: string,
+  ideaId: string,
+): Promise<string | null> {
+  const { loadWorkspaceMeta, setIdeaStatus } = await import('./workspace.js');
+  const meta = await loadWorkspaceMeta(projectRoot, ideaId);
+  if (meta.status !== 'SMOKE_TESTED' && meta.status !== 'PROPOSED') return null;
+  const trail: IdeaRunStatus[] = [meta.status];
+  let current: IdeaRunStatus = meta.status;
+  if (current === 'PROPOSED') {
+    // A proposed idea cannot be analysed as if it had run: say so plainly
+    // instead of inventing a phase it never reached.
+    return `analysis phase not advanced from PROPOSED: no experiment has been recorded yet`;
+  }
+  current = (
+    await setIdeaStatus(projectRoot, ideaId, 'RUNNING', 'analysis started on recorded results')
+  ).status;
+  trail.push(current);
+  current = (await setIdeaStatus(projectRoot, ideaId, 'ANALYZING', 'analysis in progress')).status;
+  trail.push(current);
+  return `status: ${trail[0]} → ${current} (phase tracking only; no verdict recorded)`;
 }

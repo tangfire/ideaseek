@@ -8,10 +8,12 @@ import type { ExperimentSpec, RunResult } from '../src/experiment/spec.js';
 import type { IdeaCard } from '../src/idea/card.js';
 import {
   analyzeIdea,
+  verdictAdvancesStatus,
   classifyRuntimeFailure,
   deriveAblations,
   type AnalysisInput,
 } from '../src/idea/analysis.js';
+import { IDEA_TRANSITIONS } from '../src/idea/workspace.js';
 import { CLI_BIN, implementIdeaSmoke } from './helpers.js';
 
 function makeCard(ideaId: string): IdeaCard {
@@ -610,4 +612,36 @@ it("never reads an idea's own score as a baseline's score", () => {
   expect(isBaselineSubjectRun(spec('gen-x', ['rethinkfl']), 'rethinkfl', 'gen-x')).toBe(false);
   expect(isBaselineSubjectRun(spec(null, ['rethinkfl']), 'rethinkfl', 'gen-x')).toBe(true);
   expect(isBaselineSubjectRun(spec(null, ['fedavg']), 'rethinkfl', 'gen-x')).toBe(false);
+});
+
+describe('verdictAdvancesStatus (only the engineering verdict is recorded automatically)', () => {
+  it('advances invalid-run and nothing else', () => {
+    // The distinction is the whole point: whether a hypothesis is supported is
+    // a researcher's decision (the ladder's own guidance says to run
+    // `idea set-status`), while an invalid run is a fact the deterministic
+    // ladder proved without a model. Recording the first automatically would
+    // let arithmetic speak for a scientific claim; refusing to record the
+    // second is what parked ideas in ANALYZING forever, whose only legal exits
+    // are verdicts — so the documented repair route
+    // INVALID_RUN → IMPLEMENTING was unreachable and re-implementing an idea
+    // complained about an illegal transition instead of fixing the code.
+    expect(verdictAdvancesStatus('invalid-run')).toBe('INVALID_RUN');
+    expect(verdictAdvancesStatus('supported')).toBeNull();
+    expect(verdictAdvancesStatus('rejected')).toBeNull();
+    expect(verdictAdvancesStatus('inconclusive')).toBeNull();
+  });
+
+  it('keeps the recorded status inside what the lifecycle graph allows', () => {
+    // A mapping that names an illegal edge would throw at run time on real
+    // projects, which is how the first version of this fix was caught: the
+    // state machine refused ANALYZING → SMOKE_TESTED loudly, and it is right to.
+    for (const verdict of ['supported', 'inconclusive', 'rejected', 'invalid-run'] as const) {
+      const target = verdictAdvancesStatus(verdict);
+      if (target === null) continue;
+      expect(IDEA_TRANSITIONS.ANALYZING).toContain(target);
+      expect(IDEA_TRANSITIONS.RUNNING).toContain(target);
+      // And the repair route it is meant to open actually exists.
+      expect(IDEA_TRANSITIONS.INVALID_RUN).toContain('IMPLEMENTING');
+    }
+  });
 });
