@@ -5,6 +5,7 @@ import {
   type DirectionAudit,
 } from '../src/experiment/direction-audit.js';
 import type { LockedProtocol } from '../src/experiment/protocol-source.js';
+import { declaredMetric } from '../src/experiment/protocol-source.js';
 
 // The FDG protocol as actually recorded: every metric declared direction
 // "higher", including one where a larger value is the failing outcome.
@@ -12,17 +13,17 @@ const PROTOCOL: LockedProtocol = {
   protocolId: 'p-1',
   locked: true,
   primaryMetrics: [
-    {
-      name: 'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
-      direction: 'higher',
-    },
+    declaredMetric(
+      'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
+      'higher',
+    ),
   ],
   secondaryMetrics: [
-    { name: 'principal-angle mismatch of per-client separating bases', direction: 'higher' },
-    {
-      name: 'class-conditional cross-client prototype variance along separating vs nuisance directions',
-      direction: 'higher',
-    },
+    declaredMetric('principal-angle mismatch of per-client separating bases', 'higher'),
+    declaredMetric(
+      'class-conditional cross-client prototype variance along separating vs nuisance directions',
+      'higher',
+    ),
   ],
   splitRules: [],
   slicing: [],

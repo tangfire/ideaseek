@@ -1,5 +1,6 @@
 import type { ExperimentSpec, RunFailureCategory, RunResult } from '../experiment/spec.js';
-import { metricIdentifier, metricUnit, unitViolation } from '../core/metric-id.js';
+import { metricIdentifier, unitViolation } from '../core/metric-id.js';
+import { declaredUnitFor, type DeclaredMetric } from '../core/metric-id.js';
 import type { IdeaCard } from './card.js';
 import type { IdeaRunStatus } from './workspace.js';
 
@@ -157,6 +158,12 @@ export interface AnalysisInput {
    * deterministic unit guard reads a name that can never declare anything.
    */
   declaredPrimary?: string;
+  /**
+   * The protocol's declared metrics, with unit as a field. When the primary
+   * metric's unit is declared here, the guard below enforces a contract rather
+   * than re-reading a sentence, and the refusal says which one it was.
+   */
+  declaredProtocolMetrics?: DeclaredMetric[];
   /** Primary-metric values from baseline/reproduction runs (null = unknown). */
   baselines: {
     methodId: string;
@@ -325,13 +332,29 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
   // The protocol's declared name is the only place the unit exists: the spec
   // stores the bare identifier, so asking it would always answer "no unit".
   const declaredName = input.declaredPrimary ?? primary.name;
+  const unitBasis = declaredUnitFor(
+    metricIdentifier(declaredName),
+    input.declaredProtocolMetrics,
+    declaredName,
+  );
   const ideaUnitViolation =
-    ideaValueRaw === null ? null : unitViolation(metricUnit(declaredName), ideaValueRaw);
+    ideaValueRaw === null ? null : unitViolation(unitBasis.unit, ideaValueRaw);
   const ideaValue = ideaUnitViolation ? null : ideaValueRaw;
   if (ideaUnitViolation !== null) {
     reasons.push(
       `primary metric "${metricIdentifier(declaredName)}" ${ideaUnitViolation} — the recorded ` +
-        'value cannot be compared against baselines in the declared unit',
+        'value cannot be compared against baselines in the declared unit' +
+        // Which authority enforced it: a protocol that states its unit as a
+        // field, or this platform reading a parenthetical. A researcher who is
+        // told to "match the declared unit" deserves to know whether there is a
+        // declaration to look at at all.
+        ` [unit basis: ${
+          unitBasis.source === 'declared'
+            ? 'the protocol declares unit as a field'
+            : unitBasis.source === 'parsed-from-definition'
+              ? 'parsed from the protocol definition prose — consider re-locking with an explicit unit'
+              : 'no unit could be determined'
+        }]`,
     );
     nextSteps.push(
       'emit the metric in the unit the protocol declares (or re-lock the protocol with the ' +

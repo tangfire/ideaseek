@@ -1006,7 +1006,18 @@ async function executeReproduction(
     sliceIds: [],
     environment: {
       python: process.version,
-      notes: [`paper-reproduction smoke (scale=smoke)`, `algorithm-fingerprint:${fingerprint}`],
+      notes: [
+        `paper-reproduction smoke (scale=smoke)`,
+        `algorithm-fingerprint:${fingerprint}`,
+        // Read by `scaleOf()` in the analysis layer, which is what pairs a
+        // baseline with an idea run. Without a `scale:` note here the value is
+        // permanently "unknown", so a same-scale comparison is impossible by
+        // construction and the ladder can only ever compare across scales —
+        // which is the methodological error the pairing rule exists to stop.
+        // Added only on the entry's own confirmation (#21), never because the
+        // platform asked for smoke.
+        ...(smoke?.scaleConfirmed ? [`scale:${smoke.reportedScale ?? 'smoke'}`] : []),
+      ],
     },
     command: [...entry, 'smoke'],
     metrics: blueprint.algorithm.metrics,

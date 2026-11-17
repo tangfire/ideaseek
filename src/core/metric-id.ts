@@ -78,3 +78,71 @@ export function unitViolation(unit: MetricUnit | null, value: number): string | 
   }
   return null;
 }
+
+/** The units this platform can check a value against. */
+export const METRIC_UNITS: readonly MetricUnit[] = ['percent', 'fraction', 'count', 'ratio'];
+
+/**
+ * Build one declared metric from its name.
+ *
+ * Exported because a fixture that hand-rolls `{ name, direction }` silently
+ * omits identity and unit, and a test built on such an object proves nothing
+ * about the contract the ladder actually reads.
+ */
+export function declaredMetric(
+  name: string,
+  direction = 'higher',
+  unit?: MetricUnit,
+): DeclaredMetric {
+  return {
+    name,
+    direction,
+    identifier: metricIdentifier(name),
+    unit: unit ?? metricUnit(name),
+    unitDeclared: unit !== undefined,
+  };
+}
+
+/**
+ * One metric as a protocol declares it: name, direction, and the identity and
+ * unit as fields.
+ *
+ * Declared at this layer because both the protocol reader and the analysis
+ * ladder need it, and a helper living in either of them would make the other
+ * import upward (the analysis layer briefly did exactly that, importing
+ * `idea/analyze.js` from `idea/analysis.js` — a cycle that typechecking happily
+ * accepted and only module loading would have judged).
+ */
+export interface DeclaredMetric {
+  name: string;
+  direction: string;
+  /** The name with its definition prose removed. */
+  identifier: string;
+  unit: MetricUnit | null;
+  /** True when `unit` came from the proposal itself rather than from prose. */
+  unitDeclared: boolean;
+}
+
+/**
+ * The unit a value must obey, and how it was obtained.
+ *
+ * A declared unit is a contract; a unit parsed out of the definition prose is a
+ * reading of a sentence. They are not the same kind of authority and the
+ * refusal text says which one applied, so a researcher told to "emit the
+ * declared unit" knows whether the protocol actually declared it or the
+ * platform inferred it from a parenthetical.
+ */
+export function declaredUnitFor(
+  identifier: string,
+  protocolMetrics: readonly DeclaredMetric[] | undefined,
+  declaredName: string | null,
+): { unit: MetricUnit | null; source: 'declared' | 'parsed-from-definition' | 'none' } {
+  const match = (protocolMetrics ?? []).find(
+    (metric) => metricIdentifier(metric.name) === metricIdentifier(identifier),
+  );
+  if (match?.unit && match.unitDeclared) return { unit: match.unit, source: 'declared' };
+  const parsed = metricUnit(declaredName ?? match?.name ?? '');
+  if (parsed) return { unit: parsed, source: 'parsed-from-definition' };
+  if (match?.unit) return { unit: match.unit, source: 'parsed-from-definition' };
+  return { unit: null, source: 'none' };
+}

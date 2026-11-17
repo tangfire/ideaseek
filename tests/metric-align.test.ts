@@ -12,17 +12,18 @@ import {
 } from '../src/idea/metric-align.js';
 import type { IdeaCard } from '../src/idea/card.js';
 import type { LockedProtocol } from '../src/experiment/protocol-source.js';
+import { declaredMetric } from '../src/experiment/protocol-source.js';
 
 const PROTOCOL: LockedProtocol = {
   protocolId: 'p-feddg-1',
   locked: true,
   primaryMetrics: [
-    {
-      name: 'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
-      direction: 'higher',
-    },
+    declaredMetric(
+      'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
+      'higher',
+    ),
   ],
-  secondaryMetrics: [{ name: 'worst_domain_accuracy (min over domains, %)', direction: 'higher' }],
+  secondaryMetrics: [declaredMetric('worst_domain_accuracy (min over domains, %)', 'higher')],
   splitRules: ['test domains never used for training'],
   slicing: [],
 };

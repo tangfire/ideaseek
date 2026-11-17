@@ -688,6 +688,19 @@ export async function runValidationPhases(
 export interface SmokeOutcome {
   metrics: { name: string; value: number }[];
   raw: string;
+  /**
+   * The scale the entry itself reported having run at.
+   *
+   * The platform asks for `smoke` by appending the word to the entry command,
+   * which is a request, not evidence. #21 established the rule on the idea side
+   * and this applies the same one here: the comparison record may only carry a
+   * scale the program agreed to, otherwise a baseline would be paired with an
+   * idea run by a number nobody verified — which is exactly how a smoke result
+   * came to be recorded as a quick experiment once before.
+   */
+  reportedScale?: string;
+  /** True when the entry confirmed the scale it was asked to run at. */
+  scaleConfirmed: boolean;
 }
 
 /**
@@ -702,7 +715,11 @@ export async function runSmoke(
   if (record.completedPhases.includes('smoke')) {
     return {
       failure: null,
-      smoke: { metrics: record.smokeMetrics ?? [], raw: '' },
+      // A resumed run has the metrics in its record but not the entry's own
+      // output line, so the scale the program reported is genuinely unknown
+      // here. Saying `false` rather than guessing `true` is the point: the
+      // record must not claim a confirmation nobody observed.
+      smoke: { metrics: record.smokeMetrics ?? [], raw: '', scaleConfirmed: false },
     };
   }
   const started = Date.now();
@@ -756,12 +773,13 @@ export async function runSmoke(
 
   // Parse the last JSON line carrying {"metrics": {...}}.
   const lines = run.out.split(/\r?\n/).filter((line) => line.trim());
-  let parsed: { metrics?: Record<string, unknown> } | null = null;
+  let parsed: { metrics?: Record<string, unknown>; scale?: unknown } | null = null;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     try {
       const candidate = JSON.parse(lines[i]!) as {
         metrics?: Record<string, unknown>;
         status?: unknown;
+        scale?: unknown;
       };
       // A line that declares itself skipped, ephemeral or partial is not a
       // result even if it also carries numbers: generated code can report
@@ -817,12 +835,42 @@ export async function runSmoke(
     return { failure, smoke: null };
   }
 
+  // Scale honesty, the same rule the idea side applies (#21). The word
+  // `smoke` in the command line is what the platform ASKED for; only the
+  // entry's own report says what it did. A record carrying an unverified scale
+  // would let the analysis layer pair a baseline with an idea run "at the same
+  // scale" on the strength of a hope.
+  const reported = typeof parsed.scale === 'string' ? parsed.scale.trim().toLowerCase() : '';
+  const asked = 'smoke';
+  if (reported && reported !== asked) {
+    const failure: ReproductionPhaseResult = {
+      ...base,
+      ok: false,
+      failureKind: 'unknown',
+      summary:
+        `the entry reports scale="${reported}" but the platform ran it as smoke; the numbers ` +
+        'cannot be recorded under a scale the program did not run. Make the entry honor its ' +
+        'scale argument and report the value it used',
+    };
+    record.phases.push(failure);
+    record.outcome = 'failed';
+    await opts.onPhase(record);
+    return { failure, smoke: null };
+  }
   const success: ReproductionPhaseResult = { ...base, ok: true };
   record.phases.push(success);
   record.completedPhases.push('smoke');
   record.smokeMetrics = metrics;
   await opts.onPhase(record);
-  return { failure: null, smoke: { metrics, raw: run.out.slice(-2000) } };
+  return {
+    failure: null,
+    smoke: {
+      metrics,
+      raw: run.out.slice(-2000),
+      reportedScale: reported || undefined,
+      scaleConfirmed: reported === asked,
+    },
+  };
 }
 
 /** Worktree diff hash for the record (generated code is uncommitted by design). */

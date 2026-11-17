@@ -379,6 +379,10 @@
           "direction": {
             "enum": ["higher", "lower"]
           },
+          "unit": {
+            "description": "How values of this metric are to be read. Declaring it here makes the unit a checked contract instead of a sentence inside `name` that every consumer has to re-parse; omitted means the platform infers it from the definition prose and says so when it refuses a value.",
+            "enum": ["percent", "fraction", "count", "ratio", "none"]
+          },
           "source": {
             "enum": [
               "paper-evidence",
@@ -407,6 +411,10 @@
           },
           "direction": {
             "enum": ["higher", "lower"]
+          },
+          "unit": {
+            "description": "How values of this metric are to be read. Declaring it here makes the unit a checked contract instead of a sentence inside `name` that every consumer has to re-parse; omitted means the platform infers it from the definition prose and says so when it refuses a value.",
+            "enum": ["percent", "fraction", "count", "ratio", "none"]
           },
           "source": {
             "enum": [

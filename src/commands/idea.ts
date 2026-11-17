@@ -3484,11 +3484,15 @@ export function registerIdeaCommand(program: Command): void {
             await import('../experiment/protocol-source.js');
           const declaredProtocol = await readLockedProtocol(runtime);
           const declaredMetricNames = protocolMetricNames(declaredProtocol ?? null);
+          const declaredMetrics = declaredProtocol
+            ? [...declaredProtocol.primaryMetrics, ...declaredProtocol.secondaryMetrics]
+            : [];
           const { analysis, paths } = await runAnalysis(
             root,
             ideaId,
             runtime.db,
             declaredMetricNames,
+            declaredMetrics,
           );
 
           // The comparability of the numbers is a judgement, so it is asked of

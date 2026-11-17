@@ -2,7 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
-import { metricIdentifier, metricUnit, unitViolation } from '../core/metric-id.js';
+import {
+  declaredUnitFor,
+  metricIdentifier,
+  unitViolation,
+  type DeclaredMetric,
+} from '../core/metric-id.js';
 import type { ExperimentSpec, RunResult } from '../experiment/spec.js';
 import {
   analyzeIdea,
@@ -88,9 +93,15 @@ function scaleOf(spec: ExperimentSpec): string {
 function comparableValue(
   declaredName: string | null,
   value: number | null,
+  protocolMetrics?: DeclaredMetric[],
 ): { value: number | null; violation: string | null } {
   if (value === null) return { value: null, violation: null };
-  const violation = unitViolation(metricUnit(declaredName ?? ''), value);
+  const { unit } = declaredUnitFor(
+    metricIdentifier(declaredName ?? ''),
+    protocolMetrics,
+    declaredName,
+  );
+  const violation = unitViolation(unit, value);
   return violation ? { value: null, violation } : { value, violation: null };
 }
 
@@ -130,6 +141,13 @@ export async function collectAnalysisInput(
    * caught the mismatch.
    */
   protocolMetricNames: string[] = [],
+  /**
+   * The same metrics as the protocol declares them: identifier and unit as
+   * fields rather than a sentence to re-read. Preferred when supplied, because
+   * a declared unit is a contract while a parsed one is a reading, and the
+   * ladder should say which of the two it enforced.
+   */
+  protocolMetrics?: DeclaredMetric[],
 ): Promise<AnalysisInput> {
   const meta = await loadWorkspaceMeta(projectRoot, ideaId);
   const card = await loadIdeaCard(projectRoot, ideaId);
@@ -262,7 +280,11 @@ export async function collectAnalysisInput(
       const result = asResult(repro.result);
       if (result.status === 'succeeded') {
         const raw = metricOf(result, primary ?? primaryName(asSpec(repro.spec)));
-        const checked = comparableValue(primary ?? primaryName(asSpec(repro.spec)), raw);
+        const checked = comparableValue(
+          primary ?? primaryName(asSpec(repro.spec)),
+          raw,
+          protocolMetrics,
+        );
         value = checked.value;
         if (checked.violation) unitProblems.push(`repro-${nearest.methodId}: ${checked.violation}`);
         valueScale = scaleOf(asSpec(repro.spec));
@@ -288,7 +310,7 @@ export async function collectAnalysisInput(
         // with no idea binding (baseline/protocol experiments).
         if (!isBaselineSubjectRun(spec, nearest.methodId, ideaId)) continue;
         const raw = metricOf(result, primary ?? primaryName(spec));
-        const checked = comparableValue(primary ?? primaryName(spec), raw);
+        const checked = comparableValue(primary ?? primaryName(spec), raw, protocolMetrics);
         if (checked.value !== null) {
           value = checked.value;
           valueScale = scaleOf(spec);
@@ -351,7 +373,7 @@ export async function collectAnalysisInput(
           );
           continue;
         }
-        const checked = comparableValue(primary, control.value);
+        const checked = comparableValue(primary, control.value, protocolMetrics);
         if (checked.value === null) {
           if (checked.violation) {
             unitProblems.push(
@@ -394,6 +416,7 @@ export async function collectAnalysisInput(
       const extraChecked = comparableValue(
         primary ?? primaryName(spec),
         metricOf(result, primary ?? primaryName(spec)),
+        protocolMetrics,
       );
       if (extraChecked.value === null) {
         if (extraChecked.violation) {
@@ -500,6 +523,7 @@ export async function collectAnalysisInput(
     main,
     ablations,
     baselines,
+    declaredProtocolMetrics: protocolMetrics ?? [],
     declaredPrimary: protocolMetricNames.find(
       (declared) => primary !== null && metricIdentifier(declared) === metricIdentifier(primary),
     ),
@@ -530,8 +554,15 @@ export async function runAnalysis(
   ideaId: string,
   db: RegistryLike,
   protocolMetricNames: string[] = [],
+  protocolMetrics?: DeclaredMetric[],
 ): Promise<AnalysisOutcome> {
-  const input = await collectAnalysisInput(projectRoot, ideaId, db, protocolMetricNames);
+  const input = await collectAnalysisInput(
+    projectRoot,
+    ideaId,
+    db,
+    protocolMetricNames,
+    protocolMetrics,
+  );
   const analysis = analyzeIdea(input);
   const paths = await persistAnalysis(projectRoot, analysis);
   return { analysis, paths };
