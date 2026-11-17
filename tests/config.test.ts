@@ -88,6 +88,41 @@ describe('config schema and migration', () => {
     expect(loaded.resolved.resources.maxModelTokens).toBeNull();
   });
 
+  it('treats a malformed tool grant as an error, never as an ignored line', async () => {
+    // policy.agent_allow_tools widens what a NON-interactive session may do
+    // without a human answering a prompt. A config typo that silently fell back
+    // to "nothing granted" would read as if the grant had taken effect (or, in
+    // the other direction, a stray scalar could quietly grant a shell), so the
+    // field is validated like the booleans beside it and reported by name.
+    const ok = await projectWithConfig(
+      [
+        'config_version: 1',
+        'policy:',
+        '  agent_allow_tools:',
+        '    - Shell',
+        '    - project_read',
+        '',
+      ].join('\n'),
+    );
+    const loadedOk = await loadConfig(ok);
+    expect(configIsUsable(loadedOk)).toBe(true);
+    // Normalised to lowercase once, at parse time, so the comparison against the
+    // runtime's reported tool name cannot be defeated by how it was spelled.
+    expect(loadedOk.resolved.policy.agentAllowTools).toEqual(['shell', 'project_read']);
+
+    const single = await projectWithConfig(
+      'config_version: 1\npolicy:\n  agent_allow_tools: shell\n',
+    );
+    expect((await loadConfig(single)).resolved.policy.agentAllowTools).toEqual(['shell']);
+
+    const bad = await projectWithConfig('config_version: 1\npolicy:\n  agent_allow_tools: 42\n');
+    const loadedBad = await loadConfig(bad);
+    expect(configIsUsable(loadedBad)).toBe(false);
+    expect(loadedBad.errors.join(' | ')).toContain('policy.agent_allow_tools');
+    // And the default remains the safe one: nothing granted.
+    expect(loadedBad.resolved.policy.agentAllowTools).toEqual([]);
+  });
+
   it('migrates a pre-versioned file in memory and records a note', async () => {
     const paths = await projectWithConfig('project:\n  name: legacy\n');
     const loaded = await loadConfig(paths);

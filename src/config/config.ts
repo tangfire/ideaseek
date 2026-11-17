@@ -56,6 +56,15 @@ export interface ResolvedConfig {
     autoAcceptDiscoveredComparisons: boolean;
     /** guided (default) | autonomous | review-only — docs/AUTONOMY_POLICY.md */
     autonomyMode: string;
+    /**
+     * Capabilities an agent session may use without an interactive approval
+     * (`shell` covers the runtime shell, whichever name the host reports).
+     * Empty by default: a non-interactive turn grants nothing, and a coding
+     * task that cannot execute refuses to start rather than burning rounds.
+     * This is an operator's enumeration, never a model's choice, and
+     * `--deny-tools` still outranks it.
+     */
+    agentAllowTools: string[];
   };
 }
 
@@ -115,6 +124,7 @@ export function defaultConfig(projectName: string): ResolvedConfig {
       allowPaperReimplementation: true,
       autoAcceptDiscoveredComparisons: false,
       autonomyMode: 'guided',
+      agentAllowTools: [],
     },
   };
 }
@@ -150,6 +160,7 @@ const SHAPE: Record<string, readonly string[]> = {
     'allow_paper_reimplementation',
     'auto_accept_discovered_comparisons',
     'autonomy_mode',
+    'agent_allow_tools',
   ],
 };
 
@@ -580,6 +591,32 @@ export async function loadConfig(
             ok: false,
             message: `${path} must be one of: ${ENUMS['policy.autonomy_mode']!.join(', ')}`,
           };
+    },
+  );
+
+  // A list of capability names, and nothing else may be granted from config.
+  // A string is accepted as the single-name case because `agent_allow_tools =
+  // "shell"` reads naturally in a config file; anything else is an error rather
+  // than a silently ignored grant, since this field widens what an
+  // non-interactive session may do without a human answering a prompt.
+  resolved.policy.agentAllowTools = take(
+    'policy',
+    'agent_allow_tools',
+    resolved.policy.agentAllowTools,
+    (path, raw) => {
+      const names = Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : null;
+      if (names === null) {
+        return { ok: false, message: `${path} must be a string or an array of strings` };
+      }
+      const cleaned: string[] = [];
+      for (const entry of names) {
+        if (typeof entry !== 'string' || !entry.trim()) {
+          return { ok: false, message: `${path} entries must be non-empty strings` };
+        }
+        const name = entry.trim().toLowerCase();
+        if (!cleaned.includes(name)) cleaned.push(name);
+      }
+      return { ok: true, value: cleaned };
     },
   );
 

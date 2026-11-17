@@ -1,6 +1,10 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
-import { APPROVAL_ALLOW, encodeApprovalRequest } from '../dsh/approval-channel.js';
+import {
+  APPROVAL_ALLOW,
+  askForApprovalOnce,
+  encodeApprovalRequest,
+} from '../dsh/approval-channel.js';
 import {
   GENERAL_SCOPE_NOTICE,
   assertProjectAgentBudget,
@@ -152,6 +156,18 @@ export function registerAgentCommand(program: Command): void {
     .option('--resume <sessionId>', 'continue a persisted session instead of minting a new one')
     .option('--list', 'list known session ids and exit')
     .option('--deny-tools', 'reject every tool approval for this turn (safe default on scripts)')
+    .option(
+      '--allow-tools <list>',
+      'comma-separated capabilities this turn may use without asking (a non-interactive turn ' +
+        'grants nothing by default). "shell" covers the runtime shell whichever name the host ' +
+        'reports; other entries must be spelled as the runtime reports them. The workspace ' +
+        'confinement is unchanged, and --deny-tools still outranks this.',
+      (value) =>
+        value
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean),
+    )
     .option('--provider <id>', 'DSH provider route for the session')
     .option('--model <name>', 'model for the session')
     .option(
@@ -168,6 +184,7 @@ export function registerAgentCommand(program: Command): void {
             resume?: string;
             list?: boolean;
             denyTools?: boolean;
+            allowTools?: string[];
             provider?: string;
             model?: string;
             timeout?: number;
@@ -253,6 +270,9 @@ export function registerAgentCommand(program: Command): void {
               : {}),
             ...(opts.resume ? { sessionId: opts.resume } : {}),
             policy: opts.denyTools ? 'deny' : 'interactive',
+            ...(opts.allowTools && opts.allowTools.length > 0
+              ? { allowTools: opts.allowTools }
+              : {}),
             ...(opts.provider ? { provider: opts.provider } : {}),
             ...(opts.model ? { model: opts.model } : {}),
             ...(Number.isFinite(opts.timeout) ? { requestTimeoutMs: opts.timeout as number } : {}),
@@ -270,29 +290,8 @@ export function registerAgentCommand(program: Command): void {
             // Interactive approval on a real TTY, or the parent shell's
             // stdio channel (magic request line + stdin answer); every
             // other pipe context denies (never auto-approve).
-            promptFn: async ({ toolName, reason }) => {
-              if (process.env.IDEASEEK_AGENT_APPROVAL === 'stdio') {
-                process.stdout.write(encodeApprovalRequest({ toolName, reason: reason ?? '' }));
-                return (await readStdinAnswer()) === APPROVAL_ALLOW;
-              }
-              if (!process.stdin.isTTY) return false;
-              process.stdout.write(
-                `agent requests tool approval: ${toolName}${reason ? ` — ${reason}` : ''}\n`,
-              );
-              process.stdout.write('allow ONCE? [y/N] ');
-              const readline = await import('node:readline');
-              const answer = await new Promise<string>((resolve) => {
-                const rl = readline.createInterface({
-                  input: process.stdin,
-                  output: process.stdout,
-                });
-                rl.question('', (line) => {
-                  rl.close();
-                  resolve(line.trim().toLowerCase());
-                });
-              });
-              return answer === 'y' || answer === 'yes';
-            },
+            promptFn: async ({ toolName, reason }) =>
+              askForApprovalOnce({ toolName, reason: reason ?? '' }),
           });
 
           await recordAgentSession(root, {

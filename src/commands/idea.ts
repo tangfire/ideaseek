@@ -2413,6 +2413,18 @@ export function registerIdeaCommand(program: Command): void {
       'reasoning-only fallback: return whole files instead of running a coding session, for when ' +
         'tool approvals cannot be answered at all',
     )
+    .option(
+      '--allow-tools <list>',
+      'pre-grant capabilities for the coding session without an interactive approval ' +
+        '(comma-separated; "shell" covers the runtime shell). Defaults to policy.agent_allow_tools, ' +
+        'which is empty: a non-interactive implementation with no grant refuses to start rather ' +
+        'than spending rounds on code it can never run',
+      (value) =>
+        value
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean),
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
@@ -2424,6 +2436,7 @@ export function registerIdeaCommand(program: Command): void {
             harness?: string;
             rounds?: number;
             tools?: boolean;
+            allowTools?: string[];
             json?: boolean;
           },
         ) => {
@@ -2530,6 +2543,7 @@ export function registerIdeaCommand(program: Command): void {
             // only at analysis, after the experiment had been paid for.
             const { protocolMetricNames: metricNamesOf, readLockedProtocol } =
               await import('../experiment/protocol-source.js');
+            const { askForApprovalOnce } = await import('../dsh/approval-channel.js');
             const implementContract = metricNamesOf((await readLockedProtocol(runtime)) ?? null);
             if (agentMode) {
               const agent = await implementIdeaWithAgent({
@@ -2539,9 +2553,21 @@ export function registerIdeaCommand(program: Command): void {
                 measuredData,
                 dataPath,
                 metricContract: implementContract,
+                // The operator's grant for this turn: a flag wins, otherwise the
+                // config default, which is empty by design.
+                allowTools: opts.allowTools ?? runtime.config.policy.agentAllowTools,
                 // Same convention as `ideaseek agent`: interactive where a
                 // person can answer, declined where nobody can.
                 policy: process.stdin.isTTY === true ? 'interactive' : 'deny',
+                // The human channel itself: a TTY is only a surface if
+                // something can ask over it. Without this wiring the command
+                // claimed interactivity it did not have, and every tool call in
+                // a real FDG implementation run was refused in silence.
+                promptFn: (approval) =>
+                  askForApprovalOnce({
+                    toolName: approval.toolName,
+                    reason: approval.reason ?? '',
+                  }),
                 onStep: (line) =>
                   process.stderr.write(`  · ${line}
 `),

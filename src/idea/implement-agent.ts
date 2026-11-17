@@ -143,6 +143,19 @@ export async function implementIdeaWithAgent(opts: {
    * `RunChecksOptions.metricContract`.
    */
   metricContract?: string[];
+  /**
+   * Tools the operator pre-granted for these sessions (capability names). Empty
+   * by default, and an implementation turn with no grant and no terminal
+   * refuses to start rather than burning rounds on code it cannot run.
+   */
+  allowTools?: string[];
+  /**
+   * The human channel for tool approvals. A TTY on its own is not one: with no
+   * prompter attached, an `interactive` policy still refuses everything, and a
+   * real implementation run spent four rounds writing code nothing would run
+   * for it. Callers that can ask a person pass this (see askForApprovalOnce).
+   */
+  promptFn?: (request: { toolName: string; reason: string | null }) => Promise<boolean>;
   onStep?: (line: string) => void;
   onLog?: (message: string) => void;
 }): Promise<AgentImplementationResult> {
@@ -223,6 +236,12 @@ export async function implementIdeaWithAgent(opts: {
         sessionId === null ? `${IMPLEMENT_TASK}\n\n${cardText}` : followupPrompt(report!, round),
       ...(sessionId ? { sessionId } : {}),
       policy: opts.policy,
+      // This task is definitionally executable: an idea implementation that
+      // cannot run its own code cannot reach the ladder's pass verdict, so the
+      // turn says up front whether it is able to (see `AgentTurnOptions`).
+      needsExecution: true,
+      ...(opts.promptFn ? { promptFn: opts.promptFn } : {}),
+      ...(opts.allowTools && opts.allowTools.length > 0 ? { allowTools: opts.allowTools } : {}),
       ...(opts.model ? { model: opts.model } : {}),
       ...(opts.provider ? { provider: opts.provider } : {}),
       ...(opts.requestTimeoutMs ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),

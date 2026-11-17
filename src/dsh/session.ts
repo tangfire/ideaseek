@@ -2,6 +2,12 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DeepSeekHarness, HarnessSession } from '@deepseek-ai/dsh-sdk-client';
 import { IdeaseekError } from '../core/errors.js';
+import {
+  DSH_SDK_VERSION,
+  dshHandshakeFailureMessage,
+  dshInitializeAttempts,
+  dshInitializeTimeoutMs,
+} from './dsh-adapter.js';
 
 /**
  * Agent mode → REAL DSH coding session (docs/ARCHITECTURE research-cli
@@ -23,6 +29,39 @@ import { IdeaseekError } from '../core/errors.js';
 
 export type ApprovalPolicy = 'interactive' | 'deny';
 
+/**
+ * The tool names that mean "run a command in the workspace".
+ *
+ * Not a judgement table — a capability naming map. DSH reports the shell under
+ * whichever program the host actually has (`pwsh` on this Windows box, `bash`
+ * on POSIX), so an operator who wants to grant "may execute my research code"
+ * would otherwise have to know the runtime's OS-specific spelling before the
+ * session even starts. `shell` in an allowlist means this set and nothing else:
+ * it does not open file writes outside the confined workspace, which the
+ * sandbox mode already bounds, and it never covers other tool names.
+ */
+export const SHELL_TOOL_NAMES: readonly string[] = [
+  'bash',
+  'sh',
+  'zsh',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'terminal',
+];
+
+/** Pure allowlist match, so the security-relevant rule is testable on its own. */
+export function toolIsAllowListed(toolName: string, allowTools: readonly string[]): boolean {
+  const name = toolName.trim().toLowerCase();
+  if (!name) return false;
+  return allowTools.some((entry) => {
+    const allowed = entry.trim().toLowerCase();
+    if (!allowed) return false;
+    if (allowed === name) return true;
+    return allowed === 'shell' && SHELL_TOOL_NAMES.includes(name);
+  });
+}
+
 export interface ApprovalDecision {
   outcome: 'allowed-once' | 'rejected' | 'cancelled';
   toolName: string;
@@ -34,23 +73,88 @@ export interface ApprovalPrompt {
 }
 
 /**
- * Pure approval decision (unit-testable): interactive prompting only
- * happens on a real TTY with a prompt function; everything else denies.
+ * The refusal text, with the two remedies named in the order a researcher can
+ * actually use them: grant the capability, or skip the model session entirely
+ * and let the deterministic ladder run the code.
+ */
+export function refusalWhenExecutionCannotBeApproved(allowTools: readonly string[]): string {
+  const grant = allowTools.length > 0 ? ` (currently granted: ${allowTools.join(', ')})` : '';
+  return (
+    'this agent turn must run commands, and nothing can approve them: no approval channel is ' +
+    'attached and no tool was pre-granted' +
+    grant +
+    '. Choose one: run it where a person can ' +
+    'answer (a TTY with the prompt wired, or the TUI), grant the capability explicitly ' +
+    '(--allow-tools shell, or policy.agent_allow_tools), or let the platform execute the check ' +
+    'ladder instead (ideaseek idea check <id>, which needs no model session at all).'
+  );
+}
+
+/**
+ * Whether an execution-requiring turn is unapprovable before it even starts.
+
+ *
+ * Pure, because the alternative is testing it by booting a real runtime and
+ * waiting: the property is a decision over four inputs, and a test that spawns
+ * DSH to learn the answer takes half a minute and fails on a machine with no
+ * key. `canAsk` is the caller's verdict on whether a human is reachable (a
+ * channel *and* something holding it — see `runAgentTurn`), and `deny` outranks
+ * everything: an operator who closed the tools asked for exactly this.
+ */
+export function executionTurnIsUnapprovable(opts: {
+  needsExecution?: boolean;
+  policy: ApprovalPolicy;
+  allowTools: readonly string[];
+  canAsk: boolean;
+}): boolean {
+  if (opts.needsExecution !== true) return false;
+  if (opts.policy === 'deny') return false;
+  if (toolIsAllowListed('pwsh', opts.allowTools)) return false;
+  return !opts.canAsk;
+}
+
+/**
+ * Pure approval decision (unit-testable).
+ *
+ * Precedence is the whole design, and it is deliberately rigid:
+ * 1. `deny` (an operator said no tools for this turn) refuses, allowlist or not;
+ * 2. otherwise a tool the operator pre-granted is allowed once, with the grant
+ *    named in the reason, because an automatic approval that cannot be traced
+ *    back to a human decision is not an audit trail;
+ * 3. otherwise an interactive prompt, when there is somebody to ask;
+ * 4. otherwise refuse — dismissal is never approval.
  */
 export async function resolveApproval(
   policy: ApprovalPolicy,
   isTTY: boolean,
   prompt: ApprovalPrompt | null,
   detail: { toolName: string; reason: string | null; sessionId: string },
+  allowTools: readonly string[] = [],
 ): Promise<ApprovalDecision> {
-  if (policy === 'deny' || !isTTY || !prompt) {
+  if (policy === 'deny') {
+    return {
+      outcome: 'rejected',
+      toolName: detail.toolName,
+      reason: 'denied by --deny-tools policy',
+    };
+  }
+  if (toolIsAllowListed(detail.toolName, allowTools)) {
+    return {
+      outcome: 'allowed-once',
+      toolName: detail.toolName,
+      reason:
+        `auto-approved by the operator's allowlist (--allow-tools / policy.agentAllowTools); ` +
+        'the session is confined to its workspace root',
+    };
+  }
+  if (!isTTY || !prompt) {
     return {
       outcome: 'rejected',
       toolName: detail.toolName,
       reason:
-        policy === 'deny'
-          ? 'denied by --deny-tools policy'
-          : 'no interactive TTY — tool approval defaults to rejected',
+        'no interactive TTY — tool approval defaults to rejected. Run it where a person can ' +
+        'answer, or pre-grant the capability: --allow-tools ' +
+        (SHELL_TOOL_NAMES.includes(detail.toolName.toLowerCase()) ? 'shell' : detail.toolName),
     };
   }
   const allowed = await prompt(detail);
@@ -76,6 +180,22 @@ export interface AgentTurnOptions {
   /** Per-request bound (ms); undefined waits (a coding turn can run long). */
   requestTimeoutMs?: number;
   promptFn?: ApprovalPrompt;
+  /**
+   * Tools the operator pre-granted for this turn (capability names, not a
+   * model's). Empty by default: nothing is auto-approved that no human
+   * enumerated.
+   */
+  allowTools?: string[];
+  /**
+   * True when the task cannot be completed without executing commands (writing
+   * and running research code). Checked before the runtime is spawned, because
+   * the alternative is a session that spends its whole budget discovering the
+   * limitation itself: an FDG implementation turn wrote four rounds of code,
+   * every shell call was refused for want of a TTY, and the agent's final
+   * message was "No shell command could execute in this session" — a correct
+   * diagnosis the platform could have stated before charging for it.
+   */
+  needsExecution?: boolean;
   onLog?: (message: string) => void;
   /**
    * Live step-level lines for the transcript: tool/call, tool/result and
@@ -256,6 +376,56 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   const policy = opts.policy ?? 'interactive';
   const approvals: ApprovalDecision[] = [];
   const log = opts.onLog ?? (() => undefined);
+  const allowTools = opts.allowTools ?? [];
+  // Being able to ask is a channel *and* somebody holding it: a TTY with no
+  // prompt function attached asks nobody. Treating the TTY alone as the surface
+  // is how a real `idea implement` run spent four rounds writing code that no
+  // tool would execute for it, and then reported the agent's own diagnosis.
+  const hasChannel =
+    process.stdin.isTTY === true || process.env.IDEASEEK_AGENT_APPROVAL === 'stdio';
+  const interactiveSurface = hasChannel && opts.promptFn != null;
+  // The approval handler, hoisted so the boot path can install it on whichever
+  // client ends up owning the runtime.
+  const handleApprovalRequest = async (method: string, params: unknown) => {
+    if (method !== 'approval/request') {
+      throw new Error(`unexpected runtime request ${method}`);
+    }
+    const detail = params as {
+      sessionId?: unknown;
+      toolName?: unknown;
+      reason?: unknown;
+    };
+    const decision = await resolveApproval(
+      policy,
+      interactiveSurface,
+      opts.promptFn ?? null,
+      {
+        toolName: String(detail.toolName ?? 'unknown-tool'),
+        reason: typeof detail.reason === 'string' ? detail.reason : null,
+        sessionId: String(detail.sessionId ?? ''),
+      },
+      allowTools,
+    );
+    approvals.push(decision);
+    log(
+      `approval ${decision.outcome}: ${decision.toolName}` +
+        (decision.reason ? ` (${decision.reason})` : ''),
+    );
+    return { outcome: decision.outcome };
+  };
+  if (
+    executionTurnIsUnapprovable({
+      needsExecution: opts.needsExecution,
+      policy,
+      allowTools,
+      canAsk: interactiveSurface,
+    })
+  ) {
+    throw new IdeaseekError(
+      'USER_INPUT_REQUIRED',
+      refusalWhenExecutionCannotBeApproved(allowTools),
+    );
+  }
 
   const harness = new DeepSeekHarness({
     cwd: opts.cwd,
@@ -264,37 +434,57 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.dshHome ? { dshHome: opts.dshHome } : {}),
     ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
-    initializeTimeoutMs: 15_000,
+    // The bound the rest of the platform already honours (env-overridable, and
+    // 30s by default) instead of a second, tighter literal living here: this is
+    // the path the implementation and figure sessions boot on, and it was the
+    // one still failing with `initialize timed out after 15000ms` on a loaded
+    // machine after the adapter default was raised.
+    initializeTimeoutMs: dshInitializeTimeoutMs(),
   });
 
-  try {
-    harness.client.start();
-    const isTTY = process.stdin.isTTY === true || process.env.IDEASEEK_AGENT_APPROVAL === 'stdio';
-    harness.client.onRequest(async (method, params) => {
-      if (method !== 'approval/request') {
-        throw new Error(`unexpected runtime request ${method}`);
-      }
-      const detail = params as {
-        sessionId?: unknown;
-        toolName?: unknown;
-        reason?: unknown;
-      };
-      const decision = await resolveApproval(policy, isTTY, opts.promptFn ?? null, {
-        toolName: String(detail.toolName ?? 'unknown-tool'),
-        reason: typeof detail.reason === 'string' ? detail.reason : null,
-        sessionId: String(detail.sessionId ?? ''),
-      });
-      approvals.push(decision);
+  // Boot with the same bounded retry the adapter uses, but through the harness
+  // rather than around it: `HarnessClient.close` is permanent, so a failed
+  // attempt cannot be retried on the same object — whereas `DeepSeekHarness.start`
+  // is documented to reap the runtime and install a fresh client after a
+  // *successful* cleanup, which makes a second call to it the retry. The
+  // approval handler is installed only once the boot succeeded, on whichever
+  // client then owns the runtime (the SDK refuses a handler on a client that
+  // has not started, and a handler left on a dead client answers nothing).
+  const attempts = dshInitializeAttempts();
+  let bootError: Error | null = null;
+  let booted = false;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await harness.start();
+      booted = true;
+      break;
+    } catch (error) {
+      bootError = error instanceof Error ? error : new Error(String(error));
       log(
-        `approval ${decision.outcome}: ${decision.toolName}` +
-          (decision.reason ? ` (${decision.reason})` : ''),
+        `dsh handshake attempt ${attempt}/${attempts} failed: ${redactAgentText(bootError.message)}`,
       );
-      return { outcome: decision.outcome };
-    });
+      if (attempt < attempts) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+  if (!booted) {
+    throw new IdeaseekError(
+      'MODEL_UNAVAILABLE',
+      dshHandshakeFailureMessage({
+        sdkVersion: DSH_SDK_VERSION,
+        timeoutMs: dshInitializeTimeoutMs(),
+        attempts,
+        lastError: bootError?.message ?? '(unknown)',
+      }) +
+        ' — then check the runtime with: ideaseek doctor, and the credential with: ' +
+        'ideaseek models setup --test',
+    );
+  }
+  harness.client.onRequest(handleApprovalRequest);
+  log('dsh runtime started');
 
-    await harness.start();
-    log('dsh runtime started');
-
+  try {
     let resumed = false;
     let session: HarnessSession;
     if (opts.sessionId) {
@@ -318,8 +508,11 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     if (error instanceof IdeaseekError) throw error;
     throw new IdeaseekError(
       'ENV_UNSUPPORTED',
-      `DSH session failed to start: ${redactAgentText((error as Error).message ?? String(error))} — ` +
-        'the pinned DSH runtime must boot locally (dsh on PATH / SDK profile "sdk"); retry after: ideaseek doctor',
+      `DSH agent turn failed: ${redactAgentText((error as Error).message ?? String(error))} — ` +
+        'if this says the runtime did not start, the pinned DSH runtime must boot locally ' +
+        '(dsh on PATH / SDK profile "sdk"); if the session died mid-turn it was ended with the ' +
+        'process. Check either way with: ideaseek doctor, and the credential with: ' +
+        'ideaseek models setup --test',
     );
   } finally {
     await harness.close().catch(() => undefined);
@@ -342,6 +535,7 @@ export class WarmAgentHost {
     policy: ApprovalPolicy;
     interactive: boolean;
     promptFn: ApprovalPrompt | null;
+    allowTools: string[];
     approvals: ApprovalDecision[];
     log: (message: string) => void;
   } | null = null;
@@ -353,12 +547,36 @@ export class WarmAgentHost {
     const policy = opts.policy ?? 'interactive';
     const approvals: ApprovalDecision[] = [];
     const log = opts.onLog ?? (() => undefined);
+    const allowTools = opts.allowTools ?? [];
+    const hasChannel =
+      opts.interactiveSurface === true ||
+      process.stdin.isTTY === true ||
+      process.env.IDEASEEK_AGENT_APPROVAL === 'stdio';
+    const interactiveSurface = hasChannel && opts.promptFn != null;
+    // Same pre-flight refusal as runAgentTurn: a warm host that cannot approve
+    // a shell must say so before the turn, not after four rounds of it.
+    if (
+      executionTurnIsUnapprovable({
+        needsExecution: opts.needsExecution,
+        policy,
+        allowTools,
+        canAsk: interactiveSurface,
+      })
+    ) {
+      throw new IdeaseekError(
+        'USER_INPUT_REQUIRED',
+        refusalWhenExecutionCannotBeApproved(allowTools),
+      );
+    }
     const nextSig = JSON.stringify({
       cwd: opts.cwd,
       provider: opts.provider ?? '',
       model: opts.model ?? '',
       dshHome: opts.dshHome ?? '',
       timeout: opts.requestTimeoutMs ?? null,
+      // A different grant is a different runtime contract, so the warm client
+      // must not be reused across turns that allow different tools.
+      allowTools: [...allowTools].sort().join(','),
     });
 
     if (this.harness && this.sig !== nextSig) {
@@ -368,8 +586,9 @@ export class WarmAgentHost {
     this.aborted = false;
     this.turnSink = {
       policy,
-      interactive: opts.interactiveSurface === true || process.stdin.isTTY === true,
+      interactive: interactiveSurface,
       promptFn: opts.promptFn ?? null,
+      allowTools,
       approvals,
       log,
     };
@@ -385,7 +604,7 @@ export class WarmAgentHost {
           ...(opts.requestTimeoutMs !== undefined
             ? { requestTimeoutMs: opts.requestTimeoutMs }
             : {}),
-          initializeTimeoutMs: 15_000,
+          initializeTimeoutMs: dshInitializeTimeoutMs(),
         });
         harness.client.start();
         harness.client.onRequest(async (method, params) => {
@@ -399,11 +618,17 @@ export class WarmAgentHost {
             toolName?: unknown;
             reason?: unknown;
           };
-          const decision = await resolveApproval(sink.policy, sink.interactive, sink.promptFn, {
-            toolName: String(detail.toolName ?? 'unknown-tool'),
-            reason: typeof detail.reason === 'string' ? detail.reason : null,
-            sessionId: String(detail.sessionId ?? ''),
-          });
+          const decision = await resolveApproval(
+            sink.policy,
+            sink.interactive,
+            sink.promptFn,
+            {
+              toolName: String(detail.toolName ?? 'unknown-tool'),
+              reason: typeof detail.reason === 'string' ? detail.reason : null,
+              sessionId: String(detail.sessionId ?? ''),
+            },
+            sink.allowTools,
+          );
           sink.approvals.push(decision);
           sink.log(
             `approval ${decision.outcome}: ${decision.toolName}` +

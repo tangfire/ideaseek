@@ -11,6 +11,9 @@ import {
   recordAgentSession,
   readAgentSessions,
   agentSessionsPath,
+  toolIsAllowListed,
+  executionTurnIsUnapprovable,
+  refusalWhenExecutionCannotBeApproved,
 } from '../src/dsh/session.js';
 import { composeTurnPrompt } from '../src/commands/agent.js';
 
@@ -78,6 +81,126 @@ describe('approval policy (never auto-approve)', () => {
     const no = await resolveApproval('interactive', true, async () => false, detail);
     expect(no.outcome).toBe('rejected');
     expect(no.reason).toContain('rejected');
+  });
+
+  it('pre-grants only what a human enumerated, and says which grant allowed it', async () => {
+    // A non-interactive session is the case that used to be hopeless: an agent
+    // writing research code cannot run any of it without a shell, so the whole
+    // turn spent itself discovering that. The remedy is an explicit grant, not
+    // an implicit approval.
+    const granted = await resolveApproval('interactive', false, null, detail, ['shell.exec']);
+    expect(granted.outcome).toBe('allowed-once');
+    expect(granted.reason).toContain('allowlist');
+    expect(granted.reason).toContain('--allow-tools');
+
+    const other = await resolveApproval('interactive', false, null, detail, ['something-else']);
+    expect(other.outcome).toBe('rejected');
+  });
+
+  it('denies even a listed tool when the operator said no tools at all', async () => {
+    // Precedence is the security property: --deny-tools outranks an allowlist,
+    // or a stray flag would reopen exactly what the operator closed.
+    const decision = await resolveApproval('deny', false, null, detail, ['shell.exec', 'pwsh']);
+    expect(decision.outcome).toBe('rejected');
+    expect(decision.reason).toContain('--deny-tools');
+  });
+
+  it('names shell as a capability without asking the operator to know the OS spelling', () => {
+    // DSH reports `pwsh` on Windows and `bash` on POSIX; granting "shell"
+    // covers the runtime's shell for this confined workspace and nothing else.
+    expect(toolIsAllowListed('pwsh', ['shell'])).toBe(true);
+    expect(toolIsAllowListed('BASH', ['shell'])).toBe(true);
+    expect(toolIsAllowListed('file_write', ['shell'])).toBe(false);
+    expect(toolIsAllowListed('pwsh', [])).toBe(false);
+    expect(toolIsAllowListed('project_read', ['project_read'])).toBe(true);
+  });
+
+  it('points a refused tool at the way to grant it', async () => {
+    const decision = await resolveApproval('interactive', false, null, {
+      ...detail,
+      toolName: 'pwsh',
+    });
+    expect(decision.outcome).toBe('rejected');
+    expect(decision.reason).toContain('--allow-tools shell');
+  });
+});
+
+describe('execution-requiring turns refuse before they are paid for', () => {
+  it('refuses a turn that must run commands with nobody to approve them', () => {
+    // The product path that used to burn four agent rounds: `idea implement`
+    // passed policy 'interactive' on the strength of a TTY, attached no prompt
+    // function, every tool call was refused in silence, and the turn ended with
+    // the agent itself reporting that no shell could execute. The decision is
+    // four inputs, so it is asserted as a decision — spawning DSH to discover
+    // the answer costs half a minute and fails outright without a key.
+    expect(
+      executionTurnIsUnapprovable({
+        needsExecution: true,
+        policy: 'interactive',
+        allowTools: [],
+        canAsk: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not refuse when a human can answer, the shell is granted, or no shell is needed', () => {
+    const base = {
+      needsExecution: true as const,
+      policy: 'interactive' as const,
+      allowTools: [],
+      canAsk: false,
+    };
+    // A channel with somebody holding it is exactly what an interactive TUI run has.
+    expect(executionTurnIsUnapprovable({ ...base, canAsk: true })).toBe(false);
+    // An operator's pre-grant is the other legitimate way, and needs no person.
+    expect(executionTurnIsUnapprovable({ ...base, allowTools: ['shell'] })).toBe(false);
+    // --deny-tools is refused by the approval path itself, never by this gate:
+    // it is an explicit instruction, not a turn that will silently achieve nothing.
+    expect(executionTurnIsUnapprovable({ ...base, policy: 'deny' })).toBe(false);
+    // And a reasoning-only turn (the --no-tools fallback, alignment, verdicts)
+    // must never be blocked by a rule about executing commands.
+    expect(executionTurnIsUnapprovable({ ...base, needsExecution: undefined })).toBe(false);
+  });
+
+  it('names both remedies in the refusal a researcher actually reads', async () => {
+    const text = refusalWhenExecutionCannotBeApproved([]);
+    expect(text).toContain('--allow-tools shell');
+    expect(text).toContain('policy.agent_allow_tools');
+    // The cheaper correct alternative, which needs no model session at all.
+    expect(text).toContain('idea check');
+    expect(refusalWhenExecutionCannotBeApproved(['read_file'])).toContain(
+      'currently granted: read_file',
+    );
+  });
+
+  it('refuses through the real call path before any runtime is spawned', async () => {
+    // The predicate alone would not prove the turn is guarded by it: this calls
+    // runAgentTurn and asserts it throws in milliseconds, having never started
+    // a session (no DSH boot, no token spend, no half-written idea workspace).
+    if (process.stdin.isTTY === true && process.env.IDEASEEK_AGENT_APPROVAL !== 'stdio') {
+      // A runner that attached a real terminal with a prompter would legitimately
+      // be able to ask; this environment is not that, and the test says so.
+      return;
+    }
+    const startedAt = Date.now();
+    const { runAgentTurn } = await import('../src/dsh/session.js');
+    const { IdeaseekError } = await import('../src/core/errors.js');
+    let caught: unknown = null;
+    try {
+      await runAgentTurn({
+        cwd: process.cwd(),
+        prompt: 'implement the idea and run it',
+        policy: 'interactive',
+        needsExecution: true,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(IdeaseekError);
+    const refusal = caught as { code?: string; message: string };
+    expect(refusal.code).toBe('USER_INPUT_REQUIRED');
+    expect(refusal.message).toContain('--allow-tools shell');
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
   });
 });
 
