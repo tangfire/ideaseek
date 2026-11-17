@@ -7,6 +7,7 @@
     "inputs.datasets_dir",
     "inputs.papers_dir",
     "inputs.readonly_datasets",
+    "policy.agent_allow_tools",
     "policy.allow_paper_reimplementation",
     "policy.auto_accept_discovered_comparisons",
     "policy.autonomy_mode",
