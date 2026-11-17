@@ -5,11 +5,15 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DSH_MAX_TOKENS,
+  DEFAULT_DSH_INITIALIZE_ATTEMPTS,
   DSH_SDK_VERSION,
   DshHarnessAdapter,
+  dshHandshakeFailureMessage,
+  dshInitializeAttempts,
   describeJsonFailure,
   extractJson,
   findLlmFailure,
+  handshakeAttempts,
   mapLlmFailureCode,
 } from '../src/dsh/dsh-adapter.js';
 import { REPO_ROOT } from './helpers.js';
@@ -133,6 +137,93 @@ describe('describeJsonFailure (the cause is stated only as far as the evidence g
     const source = await readFile(join('src', 'dsh', 'dsh-adapter.ts'), 'utf8');
     expect(source).toContain('this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS');
     expect(source).toContain('this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,');
+  });
+});
+
+describe('DSH handshake retry (a busy machine is not a missing install)', () => {
+  it('gives a timed-out handshake a second attempt and returns the live client', async () => {
+    const started: number[] = [];
+    const cleaned: number[] = [];
+    const waited: number[] = [];
+    let serial = 0;
+    const outcome = await handshakeAttempts({
+      attempts: 3,
+      create: () => ++serial,
+      start: (client) => {
+        started.push(client);
+        if (client < 2) return Promise.reject(new Error('initialize timed out after 30000ms'));
+        return Promise.resolve();
+      },
+      cleanup: (client) => {
+        cleaned.push(client);
+        return Promise.resolve();
+      },
+      wait: (ms) => {
+        waited.push(ms);
+        return Promise.resolve();
+      },
+    });
+    expect(outcome).toEqual({ ok: true, client: 2 });
+    // The failed runtime is reaped before the next one spawns: two attempts,
+    // one cleanup, one backoff.
+    expect(started).toEqual([1, 2]);
+    expect(cleaned).toEqual([1]);
+    expect(waited).toHaveLength(1);
+  });
+
+  it('reports the last error when every attempt failed, and settles null between them', async () => {
+    const settled: (number | null)[] = [];
+    const outcome = await handshakeAttempts({
+      attempts: 2,
+      create: () => 1,
+      start: () => Promise.reject(new Error('initialize timed out after 30000ms')),
+      cleanup: () => Promise.resolve(),
+      settle: (client) => settled.push(client),
+      wait: () => Promise.resolve(),
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error('unreachable');
+    expect(outcome.lastError.message).toContain('timed out');
+    expect(settled).toEqual([1, null, 1, null]);
+  });
+
+  it('names the observed cause in the failure text, not the one it guessed', () => {
+    const timeout = dshHandshakeFailureMessage({
+      sdkVersion: '0.2.2',
+      timeoutMs: 30_000,
+      attempts: 2,
+      lastError: 'initialize timed out after 30000ms waiting for dsh profile "sdk"',
+    });
+    // The old text asked only about installation; a timeout does not mean the
+    // dependency is missing, and sending the reader to reinstall wastes a run.
+    expect(timeout).toContain('IDEASEEK_DSH_INIT_TIMEOUT_MS');
+    expect(timeout).toContain('loaded or slow machine');
+    expect(timeout).toContain('2 attempts');
+    expect(timeout).not.toContain('is @deepseek-ai/dsh');
+
+    const spawnFailure = dshHandshakeFailureMessage({
+      sdkVersion: '0.2.2',
+      timeoutMs: 30_000,
+      attempts: 2,
+      lastError: 'spawn dsh ENOENT',
+    });
+    expect(spawnFailure).toContain('installed');
+  });
+
+  it('reads the attempt count from the environment inside sane bounds', () => {
+    expect(dshInitializeAttempts({})).toBe(DEFAULT_DSH_INITIALIZE_ATTEMPTS);
+    expect(dshInitializeAttempts({ IDEASEEK_DSH_INIT_ATTEMPTS: '4' })).toBe(4);
+    // An out-of-range or unparseable value must not turn into 0 attempts (no
+    // runtime at all) or an unbounded loop.
+    expect(dshInitializeAttempts({ IDEASEEK_DSH_INIT_ATTEMPTS: '0' })).toBe(
+      DEFAULT_DSH_INITIALIZE_ATTEMPTS,
+    );
+    expect(dshInitializeAttempts({ IDEASEEK_DSH_INIT_ATTEMPTS: '99' })).toBe(
+      DEFAULT_DSH_INITIALIZE_ATTEMPTS,
+    );
+    expect(dshInitializeAttempts({ IDEASEEK_DSH_INIT_ATTEMPTS: 'abc' })).toBe(
+      DEFAULT_DSH_INITIALIZE_ATTEMPTS,
+    );
   });
 });
 

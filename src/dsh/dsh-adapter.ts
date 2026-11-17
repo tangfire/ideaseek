@@ -28,6 +28,9 @@ export const DEFAULT_DSH_MAX_TOKENS = 16_384;
 /** Handshake bound when the caller does not set one; env-overridable. */
 export const DEFAULT_DSH_INITIALIZE_TIMEOUT_MS = 30_000;
 
+/** Handshake attempts before giving up; env-overridable for slow machines. */
+export const DEFAULT_DSH_INITIALIZE_ATTEMPTS = 2;
+
 /**
  * Resolve the handshake bound, from the environment if the operator set one.
  *
@@ -39,12 +42,97 @@ export function dshInitializeTimeoutMs(
   env: NodeJS.ProcessEnv = process.env,
   fallback = DEFAULT_DSH_INITIALIZE_TIMEOUT_MS,
 ): number {
-  const raw = env.IDEASEEK_DSH_INIT_TIMEOUT_MS;
+  return boundedEnvNumber(env, 'IDEASEEK_DSH_INIT_TIMEOUT_MS', fallback, 1_000, 600_000);
+}
+
+/** How many times the runtime spawn plus handshake is attempted. */
+export function dshInitializeAttempts(
+  env: NodeJS.ProcessEnv = process.env,
+  fallback = DEFAULT_DSH_INITIALIZE_ATTEMPTS,
+): number {
+  return boundedEnvNumber(env, 'IDEASEEK_DSH_INIT_ATTEMPTS', fallback, 1, 5);
+}
+
+function boundedEnvNumber(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = env[key];
   if (!raw || !raw.trim()) return fallback;
   const parsed = Number(raw.trim());
-  return Number.isFinite(parsed) && parsed >= 1_000 && parsed <= 600_000
-    ? Math.floor(parsed)
-    : fallback;
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? Math.floor(parsed) : fallback;
+}
+
+/**
+ * The text shown when every handshake attempt failed.
+ *
+ * The old message asked one question — "is @deepseek-ai/dsh installed?" — and
+ * that is not what a timeout means: installation failures are immediate (spawn
+ * ENOENT), while `initialize timed out after 15000ms waiting for dsh profile
+ * "sdk"` is the runtime booting too slowly for the bound, typically because the
+ * machine was busy. Naming only the install theory sent readers to reinstall a
+ * working dependency; the cause that was actually observed goes in the text.
+ */
+export function dshHandshakeFailureMessage(opts: {
+  sdkVersion: string;
+  timeoutMs: number;
+  attempts: number;
+  lastError: string;
+}): string {
+  const slowBoot = /timed out/i.test(opts.lastError);
+  const advice = slowBoot
+    ? `the runtime did not finish booting within ${opts.timeoutMs}ms (${opts.attempts} attempt${
+        opts.attempts === 1 ? '' : 's'
+      }). A timeout is a loaded or slow machine, not a missing install: raise the bound with IDEASEEK_DSH_INIT_TIMEOUT_MS (ms, this run used ${
+        opts.timeoutMs
+      }) or the attempts with IDEASEEK_DSH_INIT_ATTEMPTS.`
+    : `the runtime could not be started (is @deepseek-ai/dsh ${opts.sdkVersion} installed?). This run allowed ${opts.attempts} attempt${
+        opts.attempts === 1 ? '' : 's'
+      } of ${opts.timeoutMs}ms each.`;
+  return `failed to start DSH runtime: ${advice}\nlast error: ${opts.lastError}`;
+}
+
+/**
+ * One retry loop for a runtime that must be spawned, started and — on failure —
+ * cleaned up before the next attempt.
+ *
+ * Extracted because the alternative was testing it by grepping this file for
+ * `for (let attempt`, and the property worth proving (a timeout gets a second
+ * chance, a dead client never gets reused, cleanup always runs) is observable
+ * here with a stub.
+ */
+export async function handshakeAttempts<T>(opts: {
+  attempts: number;
+  create: () => T;
+  start: (client: T) => Promise<void>;
+  cleanup: (client: T) => Promise<unknown>;
+  /** Publish the live client, or null while between attempts. */
+  settle?: (client: T | null) => void;
+  wait?: (ms: number) => Promise<void>;
+  delayMs?: (attempt: number) => number;
+}): Promise<{ ok: true; client: T } | { ok: false; lastError: Error }> {
+  const wait =
+    opts.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const delayMs = opts.delayMs ?? ((attempt: number) => 250 * attempt);
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= opts.attempts; attempt += 1) {
+    const client = opts.create();
+    opts.settle?.(client);
+    try {
+      await opts.start(client);
+      return { ok: true, client };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      opts.settle?.(null);
+      await opts.cleanup(client);
+      if (attempt < opts.attempts) await wait(delayMs(attempt));
+    }
+  }
+  /* v8 ignore next -- the loop only reaches here after a failed attempt set it */
+  return { ok: false, lastError: lastError ?? new Error('runtime handshake failed') };
 }
 
 export interface DshAdapterOptions {
@@ -59,6 +147,8 @@ export interface DshAdapterOptions {
   apiKeyEnv?: string;
   /** Handshake/launch bound; the per-task bound comes from the task budget. */
   initializeTimeoutMs?: number;
+  /** How many spawn+handshake attempts before the runtime is declared unusable. */
+  initializeAttempts?: number;
   /**
    * File path for the raw text of a response that failed to parse, set from
    * IDEASEEK_DSH_RAW. Opt-in by the operator: the alternative is arguing about
@@ -335,41 +425,62 @@ export class DshHarnessAdapter implements HarnessAdapter {
       DSH_PERMISSION_MODE: 'read-only',
       IDEASEEK_WORKSPACE_ROOT: projectRoot,
     };
-    const harness = new DeepSeekHarness({
-      dshHome: this.opts.dshHome,
-      cwd: projectRoot,
-      processCwd: projectRoot,
-      env: childEnv,
-      patches,
-      provider: this.opts.provider ?? 'deepseek-official',
-      model: this.opts.model ?? 'deepseek-v4-flash',
-      // Output cap is a ceiling, not an allocation: raising it costs nothing
-      // unless a response is actually long. It is fixed at spawn, so a
-      // request's budget.maxOutputTokens cannot lift it — which the failure
-      // text now says only when finishReason actually reports a length cut.
-      maxTokens: this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
-      reasoningEffort: ReasoningEffortId(this.opts.reasoningEffort ?? 'off'),
-      // The handshake bound is configurable because it is a machine property,
-      // not a protocol one: a loaded box (concurrent builds, installs and
-      // LaTeX runs) made a real figure session fail with
-      // `initialize timed out after 15000ms waiting for dsh profile "sdk"`,
-      // whose message blames a missing install when the actual cause was
-      // contention. 30s default, overridable for slow environments.
-      initializeTimeoutMs: this.opts.initializeTimeoutMs ?? dshInitializeTimeoutMs(),
+    const timeoutMs = this.opts.initializeTimeoutMs ?? dshInitializeTimeoutMs();
+    const attempts = this.opts.initializeAttempts ?? dshInitializeAttempts();
+    const spawn = () =>
+      new DeepSeekHarness({
+        dshHome: this.opts.dshHome,
+        cwd: projectRoot,
+        processCwd: projectRoot,
+        env: childEnv,
+        patches,
+        provider: this.opts.provider ?? 'deepseek-official',
+        model: this.opts.model ?? 'deepseek-v4-flash',
+        // Output cap is a ceiling, not an allocation: raising it costs nothing
+        // unless a response is actually long. It is fixed at spawn, so a
+        // request's budget.maxOutputTokens cannot lift it — which the failure
+        // text now says only when finishReason actually reports a length cut.
+        maxTokens: this.opts.maxOutputTokens ?? DEFAULT_DSH_MAX_TOKENS,
+        reasoningEffort: ReasoningEffortId(this.opts.reasoningEffort ?? 'off'),
+        // The handshake bound is configurable because it is a machine property,
+        // not a protocol one: a loaded box (concurrent builds, installs and
+        // LaTeX runs) made a real figure session fail with
+        // `initialize timed out after 15000ms waiting for dsh profile "sdk"`.
+        initializeTimeoutMs: timeoutMs,
+      });
+    // One handshake attempt is not a fair test of a busy machine. Booting the
+    // `sdk` profile means loading the runtime's plugin set inside a freshly
+    // spawned process, and while a build, an install or a LaTeX run holds the
+    // disk that can exceed any fixed bound — whereas the second attempt runs
+    // against a warm file cache. A single timeout used to kill every agent
+    // path in the command (figures, alignment, verdicts) and tell the reader
+    // to reinstall a dependency that was working.
+    this.startPromise = handshakeAttempts({
+      attempts,
+      create: spawn,
+      start: (harness) => harness.start(),
+      cleanup: (harness) => harness.close().catch(() => undefined),
+      settle: (harness) => {
+        this.harness = harness;
+      },
+    }).then((outcome) => {
+      if (outcome.ok) return;
+      throw new Error(
+        dshHandshakeFailureMessage({
+          sdkVersion: DSH_SDK_VERSION,
+          timeoutMs,
+          attempts,
+          lastError: outcome.lastError.message,
+        }),
+        { cause: outcome.lastError },
+      );
     });
-    this.harness = harness;
-    this.startPromise = harness.start();
     try {
       await this.startPromise;
     } catch (error) {
-      // A failed handshake must not leave a half-started client behind.
       this.harness = null;
       this.startPromise = null;
-      await harness.close().catch(() => undefined);
-      throw new Error(
-        `failed to start DSH runtime (is @deepseek-ai/dsh ${DSH_SDK_VERSION} installed?): ${(error as Error).message}`,
-        { cause: error },
-      );
+      throw error;
     }
   }
 
