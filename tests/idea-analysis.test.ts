@@ -645,3 +645,86 @@ describe('verdictAdvancesStatus (only the engineering verdict is recorded automa
     }
   });
 });
+
+describe('advanceAnalysisPhase (the platform records what it is doing, not what it means)', () => {
+  let project: string;
+
+  async function ideaAt(status: string, id = 'phase-probe'): Promise<string> {
+    const cardPath = join(project, 'card.json');
+    await writeFile(cardPath, JSON.stringify(makeCard(id)), 'utf8');
+    expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
+    if (status === 'PROPOSED') return id;
+    expect((await runCli(project, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
+    if (status === 'IMPLEMENTING') return id;
+    expect((await runCli(project, ['idea', 'scaffold', id])).code).toBe(0);
+    await implementIdeaSmoke(project, id, 'rare-class recall');
+    expect((await runCli(project, ['idea', 'check', id])).code).toBe(0);
+    return id;
+  }
+
+  beforeEach(async () => {
+    project = await mkdtemp(join(tmpdir(), 'ideaseek-phase-'));
+    expect((await runCli(project, ['init'])).code).toBe(0);
+  }, 60_000);
+
+  it('walks SMOKE_TESTED → RUNNING → ANALYZING along legal edges', async () => {
+    // The real defect this closes: `idea analyze` computed a verdict and never
+    // advanced the status, so an idea stayed at SMOKE_TESTED, whose only legal
+    // exits are RUNNING/NEEDS_REVISION/REJECTED — and INVALID_RUN could not be
+    // recorded at all, which made the documented repair route unreachable on
+    // real projects (found on FDG: the idea sat at SMOKE_TESTED with an
+    // invalid-run verdict and `idea implement` refused to re-open work).
+    const { advanceAnalysisPhase } = await import('../src/idea/analysis.js');
+    const { loadWorkspaceMeta } = await import('../src/idea/workspace.js');
+    const id = await ideaAt('SMOKE_TESTED');
+
+    const note = await advanceAnalysisPhase(project, id);
+    expect(note).toContain('SMOKE_TESTED → ANALYZING');
+    expect(note).toContain('no verdict recorded');
+
+    const meta = await loadWorkspaceMeta(project, id);
+    expect(meta.status).toBe('ANALYZING');
+    const hops = meta.history.map((entry) => `${entry.from}→${entry.to}`);
+    expect(hops).toContain('SMOKE_TESTED→RUNNING');
+    expect(hops).toContain('RUNNING→ANALYZING');
+    // Every hop is a graph edge: a phase tracker that invented an illegal edge
+    // would be caught only at run time by the state machine refusing it.
+    for (const entry of meta.history) {
+      if (entry.from) expect(IDEA_TRANSITIONS[entry.from]).toContain(entry.to);
+    }
+  }, 120_000);
+
+  it('refuses to invent a phase for an idea that never ran', async () => {
+    // PROPOSED has no edge to ANALYZING, and a fixture that "looks analysed"
+    // because a command ran over it would corrupt the record: the reason this
+    // stays a refusal instead of a two-hop detour is that there is no
+    // experiment to point at.
+    const { advanceAnalysisPhase } = await import('../src/idea/analysis.js');
+    const { loadWorkspaceMeta } = await import('../src/idea/workspace.js');
+    const id = await ideaAt('PROPOSED');
+
+    const note = await advanceAnalysisPhase(project, id);
+    expect(note).toContain('PROPOSED');
+    expect((await loadWorkspaceMeta(project, id)).status).toBe('PROPOSED');
+  }, 120_000);
+
+  it('leaves ideas already in ANALYZING untouched', async () => {
+    // Re-analysing must not stack duplicate phase entries: the status is
+    // already correct, and history is an audit trail, not a counter.
+    const { advanceAnalysisPhase } = await import('../src/idea/analysis.js');
+    const { loadWorkspaceMeta, setIdeaStatus } = await import('../src/idea/workspace.js');
+    const id = await ideaAt('SMOKE_TESTED');
+    await advanceAnalysisPhase(project, id);
+    const before = await loadWorkspaceMeta(project, id);
+    expect(before.status).toBe('ANALYZING');
+
+    expect(await advanceAnalysisPhase(project, id)).toBeNull();
+    const after = await loadWorkspaceMeta(project, id);
+    expect(after.history).toHaveLength(before.history.length);
+    expect(after.status).toBe('ANALYZING');
+    // And from ANALYZING the engineering verdict may be recorded by the caller.
+    expect(
+      (await setIdeaStatus(project, id, 'INVALID_RUN', 'deterministic ladder proved it')).status,
+    ).toBe('INVALID_RUN');
+  }, 120_000);
+});
