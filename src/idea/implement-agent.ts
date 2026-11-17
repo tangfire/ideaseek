@@ -143,6 +143,8 @@ export async function implementIdeaWithAgent(opts: {
    * `RunChecksOptions.metricContract`.
    */
   metricContract?: string[];
+  /** runtime.pip_index_url, for the venv the ladder builds (see RunChecksOptions). */
+  pipIndexUrl?: string;
   /**
    * Tools the operator pre-granted for these sessions (capability names). Empty
    * by default, and an implementation turn with no grant and no terminal
@@ -253,6 +255,7 @@ export async function implementIdeaWithAgent(opts: {
 
     report = await runIdeaChecks(opts.projectRoot, opts.ideaId, {
       metricContract: opts.metricContract ?? [],
+      pipIndexUrl: opts.pipIndexUrl,
     });
     const failing = report.phases
       .filter((phase) => !phase.skipped && !phase.ok)

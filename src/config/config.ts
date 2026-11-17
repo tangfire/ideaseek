@@ -34,6 +34,14 @@ export interface ResolvedConfig {
     heartbeatIntervalSeconds: number;
     maxAttempts: number;
     workerPollMs: number;
+    /**
+     * Package index used when the platform builds a Python environment
+     * (comparison venvs, idea check venvs). Empty means pip's own default.
+     * Declared here because `pip install --index-url <any>` would hand the
+     * build over to whatever URL a flag happened to carry; this is an operator
+     * setting in a reviewed file instead.
+     */
+    pipIndexUrl: string;
   };
   resources: {
     maxParallelAgents: number;
@@ -108,6 +116,7 @@ export function defaultConfig(projectName: string): ResolvedConfig {
       heartbeatIntervalSeconds: 8,
       maxAttempts: 3,
       workerPollMs: 200,
+      pipIndexUrl: '',
     },
     resources: {
       maxParallelAgents: 8,
@@ -144,6 +153,7 @@ const SHAPE: Record<string, readonly string[]> = {
     'heartbeat_interval_seconds',
     'max_attempts',
     'worker_poll_ms',
+    'pip_index_url',
   ],
   resources: [
     'max_parallel_agents',
@@ -475,6 +485,40 @@ export async function loadConfig(
     resolved.runtime.maxAttempts,
     coercePositiveNumber,
   );
+  // A package index is where your source distribution comes from, so the
+  // config layer checks it now rather than letting pip find out mid-build. An
+  // unparseable value is an error, not a silent ignore: the alternative meant a
+  // typo could quietly disable a mirror an operator believed was configured —
+  // the same "looks configured, actually inert" failure this project has now
+  // hit three times (read fence roots, docs config keys, handshake timeouts).
+  resolved.runtime.pipIndexUrl = take(
+    'runtime',
+    'pip_index_url',
+    resolved.runtime.pipIndexUrl,
+    (path, raw) => {
+      const base = coerceString(path, raw);
+      if (!base.ok) return base;
+      const value = base.value.trim();
+      if (value === '') return { ok: true, value: '' };
+      let url: URL;
+      try {
+        url = new URL(value);
+      } catch {
+        return { ok: false, message: `${path} is not a URL: ${value}` };
+      }
+      if (url.protocol !== 'https:') {
+        return { ok: false, message: `${path} must be an https:// URL (got ${url.protocol})` };
+      }
+      if (url.username || url.password) {
+        return {
+          ok: false,
+          message: `${path} must not carry credentials in the URL; use pip's own auth config`,
+        };
+      }
+      return { ok: true, value };
+    },
+  );
+
   resolved.runtime.workerPollMs = take(
     'runtime',
     'worker_poll_ms',

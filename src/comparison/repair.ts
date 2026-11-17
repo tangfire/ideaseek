@@ -421,18 +421,28 @@ function venvPathDir(venvDir: string): string {
 }
 
 /**
- * pip mirror from the operator environment (IDEASEEK_PIP_INDEX_URL).
+ * pip mirror from the operator's configuration (runtime.pip_index_url) or, for
+ * emergencies and CI, from IDEASEEK_PIP_INDEX_URL.
  *
  * It arrives as pip's own variable rather than as a requirement spec: an agent
  * that could write --index-url could redirect every install to any host, which
  * is why the spec grammar rejects it. A mirror is infrastructure intent, so it
- * comes from the operator, and an unsafe value is dropped instead of trusted —
- * a slow install beats an install pointed at plaintext http or a URL carrying
- * credentials.
+ * comes from the operator — in the config file now, not only in the ambient
+ * environment, because an environment variable cannot be reviewed, versioned or
+ * audited alongside the project it points at. An unsafe value is dropped
+ * instead of trusted: a slow install beats an install pointed at plaintext http
+ * or a URL carrying credentials. The environment keeps precedence so an
+ * operator can override a committed config without editing it.
  */
 export function pipMirrorEnv(
   value = process.env.IDEASEEK_PIP_INDEX_URL,
+  configValue?: string,
 ): Record<string, string> | undefined {
+  return pipMirrorFor(value?.trim() ? value : configValue);
+}
+
+/** Shared validation for both sources; see `pipMirrorEnv`. */
+export function pipMirrorFor(value?: string): Record<string, string> | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
   let url: URL;
@@ -458,6 +468,8 @@ export async function ensureMethodVenv(
     packages?: string[];
     installTimeoutMs?: number;
     python?: string;
+    /** runtime.pip_index_url of the calling project (see `pipMirrorEnv`). */
+    pipIndexUrl?: string;
   } = {},
 ): Promise<{ ok: boolean; detail: string; venvDir: string }> {
   const venvDir = join(worktreeDir, '.venv');
@@ -494,7 +506,7 @@ export async function ensureMethodVenv(
   // package list would mean an agent could redirect installs to any host, and
   // the spec grammar deliberately rejects it. A mirror is infrastructure
   // intent, so it comes from the operator's environment.
-  const installEnv = pipMirrorEnv();
+  const installEnv = pipMirrorEnv(undefined, opts.pipIndexUrl);
   if (opts.requirementsFile) {
     installArgs.push('-r', opts.requirementsFile);
   } else if (opts.packages && opts.packages.length > 0) {
@@ -523,7 +535,7 @@ export async function ensureMethodVenv(
 export async function applyFix(
   plan: FixPlan,
   worktreeDir: string,
-  opts: { installTimeoutMs?: number; python?: string } = {},
+  opts: { installTimeoutMs?: number; python?: string; pipIndexUrl?: string } = {},
 ): Promise<{ ok: boolean; detail: string }> {
   if (plan.kind !== 'venv-install' && plan.kind !== 'venv-install-inferred') {
     return { ok: true, detail: plan.detail };
@@ -541,6 +553,7 @@ export async function applyFix(
     packages: plan.packages,
     installTimeoutMs: opts.installTimeoutMs,
     python: opts.python,
+    pipIndexUrl: opts.pipIndexUrl,
   });
   return { ok: applied.ok, detail: applied.ok ? plan.detail : applied.detail };
 }
@@ -586,6 +599,8 @@ export interface ExecuteRepairInput {
   ) => Promise<{ packages: string[]; notes: string }>;
   /** False blocks installs that need network egress. */
   allowNetworkInstall?: boolean;
+  /** runtime.pip_index_url: installs use pip's own variable, never a spec flag. */
+  pipIndexUrl?: string;
 }
 
 export interface ExecuteRepairResult {
@@ -702,7 +717,9 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
       record.outcome = 'blocked-no-fix';
       break;
     }
-    const applied = await applyFix(plan, input.worktreeDir);
+    const applied = await applyFix(plan, input.worktreeDir, {
+      pipIndexUrl: input.pipIndexUrl,
+    });
     attempt.fixOk = applied.ok;
     attempt.fixDetail = applied.detail;
     record.updatedAt = Date.now();

@@ -101,6 +101,13 @@ export interface RunChecksOptions {
    * in the loop and can change one line.
    */
   metricContract?: string[];
+  /**
+   * runtime.pip_index_url. Threading it here rather than reading the ambient
+   * environment inside the ladder is the point: the mirror belongs to the
+   * project's reviewed configuration, and a value that only lives in a shell
+   * variable cannot be inspected by whoever reads the check report later.
+   */
+  pipIndexUrl?: string;
 }
 
 /**
@@ -189,7 +196,10 @@ export async function runIdeaChecks(
       // builds venvs that were never needed. The derivation is what decides —
       // stdlib-only code derives nothing and runs on the host python.
       if (requirements.length > 0) {
-        const venv = await ensureMethodVenv(workspace, { packages: requirements });
+        const venv = await ensureMethodVenv(workspace, {
+          packages: requirements,
+          pipIndexUrl: opts.pipIndexUrl,
+        });
         if (venv.ok) venvOverride = venvEnv(workspace);
         else {
           process.stderr.write(

@@ -270,6 +270,8 @@ export async function implementIdeaWithRefine(opts: {
   timeoutMs?: number;
   /** The locked protocol's metric declarations; see `RunChecksOptions.metricContract`. */
   metricContract?: string[];
+  /** runtime.pip_index_url, for the venv the ladder builds. */
+  pipIndexUrl?: string;
   onRound?: (round: number, detail: string) => void;
 }): Promise<IdeaRefineResult> {
   const { runIdeaChecks } = await import('./check.js');
@@ -392,6 +394,7 @@ export async function implementIdeaWithRefine(opts: {
     report = await runIdeaChecks(opts.projectRoot, opts.ideaId, {
       timeoutMs: opts.timeoutMs,
       metricContract: opts.metricContract ?? [],
+      pipIndexUrl: opts.pipIndexUrl,
     });
 
     if (report.outcome === 'passed') {

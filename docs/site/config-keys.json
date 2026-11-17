@@ -33,6 +33,7 @@
     "runtime.lease_ttl_seconds",
     "runtime.max_attempts",
     "runtime.model_route",
+    "runtime.pip_index_url",
     "runtime.profile",
     "runtime.worker_poll_ms"
   ]

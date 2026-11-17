@@ -2553,6 +2553,7 @@ export function registerIdeaCommand(program: Command): void {
                 measuredData,
                 dataPath,
                 metricContract: implementContract,
+                pipIndexUrl: runtime.config.runtime.pipIndexUrl,
                 // The operator's grant for this turn: a flag wins, otherwise the
                 // config default, which is empty by design.
                 allowTools: opts.allowTools ?? runtime.config.policy.agentAllowTools,
@@ -2681,6 +2682,7 @@ export function registerIdeaCommand(program: Command): void {
               dataPath,
               measuredData,
               metricContract: implementContract,
+              pipIndexUrl: runtime.config.runtime.pipIndexUrl,
               runId,
               onRound: (round, detail) => {
                 if (!opts.json) {
@@ -2964,6 +2966,7 @@ export function registerIdeaCommand(program: Command): void {
         const report = await runIdeaChecks(root, ideaId, {
           timeoutMs: opts.timeout,
           metricContract: namesOfCheck((await protocolForCheck(runtime)) ?? null),
+          pipIndexUrl: runtime.config.runtime.pipIndexUrl,
         });
         const reportPath = await saveCheckReport(root, report);
 

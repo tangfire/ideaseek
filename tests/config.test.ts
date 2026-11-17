@@ -168,3 +168,59 @@ describe('config schema and migration', () => {
     expect(loaded.resolved).toMatchObject(defaultConfig('template-test'));
   });
 });
+
+describe('runtime.pip_index_url (mirror is configuration, not a flag)', () => {
+  it('accepts an https mirror and rejects unsafe ones loudly', async () => {
+    // The failure mode this guards has already bitten this project twice: a
+    // security-relevant value that parses to nothing and is quietly dropped,
+    // leaving the operator believing a mirror was configured. So a bad value is
+    // an error, and the shipped default stays pip's own index.
+    const loadedGood = await loadConfig(
+      await projectWithConfig(
+        [
+          'config_version: 1',
+          'runtime:',
+          '  pip_index_url: https://mirrors.aliyun.com/pypi/simple/',
+        ].join('\n'),
+      ),
+    );
+    expect(configIsUsable(loadedGood)).toBe(true);
+    expect(loadedGood.resolved.runtime.pipIndexUrl).toBe('https://mirrors.aliyun.com/pypi/simple/');
+    expect(loadedGood.sources['runtime.pip_index_url']).toBe('file');
+
+    const loadedInsecure = await loadConfig(
+      await projectWithConfig(
+        ['config_version: 1', 'runtime:', '  pip_index_url: http://mirror.internal/pypi/'].join(
+          '\n',
+        ),
+      ),
+    );
+    expect(configIsUsable(loadedInsecure)).toBe(false);
+    expect(loadedInsecure.errors.join(' | ')).toContain('must be an https:// URL');
+    expect(loadedInsecure.resolved.runtime.pipIndexUrl).toBe('');
+
+    const loadedCreds = await loadConfig(
+      await projectWithConfig(
+        [
+          'config_version: 1',
+          'runtime:',
+          '  pip_index_url: https://user:token@mirror.internal/pypi/',
+        ].join('\n'),
+      ),
+    );
+    expect(loadedCreds.errors.join(' | ')).toContain('credentials');
+    expect(loadedCreds.resolved.runtime.pipIndexUrl).toBe('');
+
+    const loadedJunk = await loadConfig(
+      await projectWithConfig(
+        ['config_version: 1', 'runtime:', '  pip_index_url: mirrors.aliyun.com'].join('\n'),
+      ),
+    );
+    expect(loadedJunk.errors.join(' | ')).toContain('not a URL');
+
+    // Absent key: the default, and no error.
+    const loadedPlain = await loadConfig(await projectWithConfig(['config_version: 1'].join('\n')));
+    expect(loadedPlain.errors).toEqual([]);
+    expect(loadedPlain.resolved.runtime.pipIndexUrl).toBe('');
+  });
+});

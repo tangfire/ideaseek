@@ -167,6 +167,7 @@ export function registerBaselineCommand(program: Command): void {
             }
 
             const result = await executeRepair({
+              pipIndexUrl: runtime.config.runtime.pipIndexUrl,
               projectRoot: root,
               methodId: current,
               worktreeDir,
@@ -881,7 +882,10 @@ async function executeReproduction(
         '\n',
     );
     const { ensureMethodVenv, venvEnv } = await import('../comparison/repair.js');
-    const venv = await ensureMethodVenv(worktreeDir, { packages: requirements });
+    const venv = await ensureMethodVenv(worktreeDir, {
+      packages: requirements,
+      pipIndexUrl: runtime.config.runtime.pipIndexUrl,
+    });
     if (!venv.ok) {
       // An unavailable dependency is what the validation phases are built to
       // classify (missing-dependency → blocked, resumable). Turning the helper
