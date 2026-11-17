@@ -77,17 +77,38 @@ export interface ApprovalPrompt {
  * actually use them: grant the capability, or skip the model session entirely
  * and let the deterministic ladder run the code.
  */
-export function refusalWhenExecutionCannotBeApproved(allowTools: readonly string[]): string {
+export function refusalWhenExecutionCannotBeApproved(
+  allowTools: readonly string[],
+  policy: ApprovalPolicy = 'interactive',
+): string {
   const grant = allowTools.length > 0 ? ` (currently granted: ${allowTools.join(', ')})` : '';
+  // Deny arrives two ways with two different remedies, and a message that names
+  // the wrong one sends the reader hunting for a flag they never typed: the
+  // first FDG run of this path printed "its tools are denied (--deny-tools)" at
+  // someone who had passed no such thing, because the CLI chose deny for want of
+  // a terminal to ask the question in.
+  const why =
+    policy === 'deny'
+      ? 'this agent turn must run commands and its tool approvals are denied' +
+        (allowTools.length > 0 ? '' : deniedBecauseNobodyCanBeAsked()) +
+        `, so it can never reach a verdict${grant}`
+      : 'this agent turn must run commands, and nothing can approve them: no approval channel is ' +
+        'attached and no tool was pre-granted' +
+        grant;
   return (
-    'this agent turn must run commands, and nothing can approve them: no approval channel is ' +
-    'attached and no tool was pre-granted' +
-    grant +
-    '. Choose one: run it where a person can ' +
-    'answer (a TTY with the prompt wired, or the TUI), grant the capability explicitly ' +
-    '(--allow-tools shell, or policy.agent_allow_tools), or let the platform execute the check ' +
-    'ladder instead (ideaseek idea check <id>, which needs no model session at all).'
+    `${why}. Choose one: run it where a person can answer (a TTY with the prompt wired, or the ` +
+    'TUI), grant the capability explicitly (--allow-tools shell, or policy.agent_allow_tools), ' +
+    'drop --deny-tools if you passed it, or let the platform execute the check ladder instead ' +
+    '(ideaseek idea check <id>, which needs no model session at all).'
   );
+}
+
+/** The half of the deny explanation that depends on how deny was reached. */
+function deniedBecauseNobodyCanBeAsked(): string {
+  return process.stdin.isTTY === true
+    ? ' (--deny-tools)'
+    : ': no terminal is attached to ask anybody, so the platform defaulted to denying tools' +
+        ' — this is what happens to a background, CI or piped implementation run';
 }
 
 /**
@@ -98,8 +119,9 @@ export function refusalWhenExecutionCannotBeApproved(allowTools: readonly string
  * waiting: the property is a decision over four inputs, and a test that spawns
  * DSH to learn the answer takes half a minute and fails on a machine with no
  * key. `canAsk` is the caller's verdict on whether a human is reachable (a
- * channel *and* something holding it — see `runAgentTurn`), and `deny` outranks
- * everything: an operator who closed the tools asked for exactly this.
+ * channel *and* something holding it — see `runAgentTurn`), and `deny` is the
+ * sharpest case rather than an exception: a turn that must execute commands and
+ * a policy that forbids tools cannot ever pass.
  */
 export function executionTurnIsUnapprovable(opts: {
   needsExecution?: boolean;
@@ -108,7 +130,13 @@ export function executionTurnIsUnapprovable(opts: {
   canAsk: boolean;
 }): boolean {
   if (opts.needsExecution !== true) return false;
-  if (opts.policy === 'deny') return false;
+  // A denied turn is the sharpest case, not an exception to it. The evidence
+  // was a real `idea implement` on FDG with stdin redirected: no terminal meant
+  // policy 'deny', this gate let the turn through because it excluded 'deny',
+  // and four agent rounds later the log still read `approval rejected: pwsh
+  // (denied by --deny-tools policy)`. A task that must execute commands and a
+  // policy that forbids tools can never pass, so saying so costs no tokens.
+  if (opts.policy === 'deny') return true;
   if (toolIsAllowListed('pwsh', opts.allowTools)) return false;
   return !opts.canAsk;
 }
@@ -423,7 +451,7 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
   ) {
     throw new IdeaseekError(
       'USER_INPUT_REQUIRED',
-      refusalWhenExecutionCannotBeApproved(allowTools),
+      refusalWhenExecutionCannotBeApproved(allowTools, policy),
     );
   }
 
@@ -565,7 +593,7 @@ export class WarmAgentHost {
     ) {
       throw new IdeaseekError(
         'USER_INPUT_REQUIRED',
-        refusalWhenExecutionCannotBeApproved(allowTools),
+        refusalWhenExecutionCannotBeApproved(allowTools, policy),
       );
     }
     const nextSig = JSON.stringify({

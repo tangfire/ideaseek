@@ -154,9 +154,17 @@ describe('execution-requiring turns refuse before they are paid for', () => {
     expect(executionTurnIsUnapprovable({ ...base, canAsk: true })).toBe(false);
     // An operator's pre-grant is the other legitimate way, and needs no person.
     expect(executionTurnIsUnapprovable({ ...base, allowTools: ['shell'] })).toBe(false);
-    // --deny-tools is refused by the approval path itself, never by this gate:
-    // it is an explicit instruction, not a turn that will silently achieve nothing.
-    expect(executionTurnIsUnapprovable({ ...base, policy: 'deny' })).toBe(false);
+    // A denied turn is the sharpest case, not an exception: real evidence was
+    // `idea implement` with stdin redirected (so policy 'deny'), which the gate
+    // let through and four agent rounds later still read "approval rejected:
+    // pwsh (denied by --deny-tools policy)". A task that must execute commands
+    // and a policy that forbids tools cannot ever pass, so it is refused here.
+    expect(executionTurnIsUnapprovable({ ...base, policy: 'deny' })).toBe(true);
+    // Deny is also refused when a grant exists, because the flag is the later,
+    // more specific instruction — the operator said no tools for THIS turn.
+    expect(
+      executionTurnIsUnapprovable({ ...base, policy: 'deny', allowTools: ['shell'], canAsk: true }),
+    ).toBe(true);
     // And a reasoning-only turn (the --no-tools fallback, alignment, verdicts)
     // must never be blocked by a rule about executing commands.
     expect(executionTurnIsUnapprovable({ ...base, needsExecution: undefined })).toBe(false);
