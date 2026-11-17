@@ -190,6 +190,11 @@ export interface AnalysisInput {
    * and the second is a vocabulary bug in the entry, not an absence of evidence.
    */
   unmatchableControls?: string[];
+  /**
+   * Controls that deserve a second look before any comparison trusts them
+   * (see `duplicateControlFindings`). Built by `idea/analyze.ts`.
+   */
+  suspiciousControls?: string[];
   /** Primary-metric value of the idea per scale (succeeded mirrors only). */
   ideaByScale?: Record<string, number>;
   /** Distinct scales with a succeeded idea result (smoke/quick/…). */
@@ -427,6 +432,26 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
     );
   }
 
+  // Reported whatever else the ladder concluded. A pair of controls agreeing to
+  // the last bit of a float64 means the comparison may be resting on one
+  // computation counted twice, so it must be visible even when the arithmetic
+  // produced a win — but the platform does not decide on its own whether two
+  // methods were legitimately expected to converge, which is a judgement about
+  // the code. What it will not do is let a `supported` verdict stand silently on
+  // such a pair: the conclusion downgrades to inconclusive with the numbers
+  // quoted, because "beats fedavg" is not evidence when fedavg IS the other
+  // control's own value.
+  if ((input.suspiciousControls ?? []).length > 0) {
+    reasons.push(
+      `suspicious identical control values: ${(input.suspiciousControls ?? []).join(' | ')}`,
+    );
+    nextSteps.push(
+      'check that each control is a genuinely different computation in the entry (not one result ' +
+        'emitted under two method ids), then rerun: ideaseek idea experiment ' +
+        input.ideaId,
+    );
+  }
+
   if (bestDelta !== null && bestDelta <= 0) {
     reasons.push(
       `effect insufficient: primary "${primary.name}"=${ideaValue} does not beat best baseline ` +
@@ -590,6 +615,28 @@ export function analyzeIdea(input: AnalysisInput): IdeaAnalysis {
   const evidencedNecessary = evidence.filter(
     (item) => item.removeComponent !== null && item.supports === true,
   );
+  if ((input.suspiciousControls ?? []).length > 0) {
+    // A win measured against a control that is another control's own number is
+    // not a win, and the platform will not call it one on the strength of the
+    // arithmetic. Downgraded rather than discarded: the numbers stay in the
+    // record, the reason quotes them, and the researcher decides what the entry
+    // actually computed.
+    reasons.push(
+      `the comparison would favour the idea, but it is not reportable as support while the ` +
+        'controls above are identical: verify the entry computes each control separately',
+    );
+    return finish(
+      input,
+      'inconclusive',
+      'none',
+      comparisons,
+      bestDelta,
+      evidence,
+      reasons,
+      nextSteps,
+      missing,
+    );
+  }
   reasons.push(
     `beats best baseline on "${primary.name}" (Δ=${bestDelta?.toFixed(4)}) with ` +
       `${input.seedsCount} seeds across scales [${input.scalesRun.join(', ')}]` +
@@ -759,4 +806,64 @@ export async function advanceAnalysisPhase(
   current = (await setIdeaStatus(projectRoot, ideaId, 'ANALYZING', 'analysis in progress')).status;
   trail.push(current);
   return `status: ${trail[0]} → ${current} (phase tracking only; no verdict recorded)`;
+}
+
+/**
+ * Controls that carry exactly the same number as another control, or as the
+ * subject itself.
+ *
+ * FDG's entry reported `fedavg` and `dp_noise_matched_no_shrinkage` as
+ * 16.896707907604327 — identical to the last digit of a float64. Two genuinely
+ * different federated aggregations agreeing to 17 significant digits is not a
+ * finding; it is one computation printed twice, which turns "beats fedavg" into
+ * "beats itself". The same signature is what #23 caught across records, and
+ * nothing looked for it inside a single run.
+ *
+ * This is reported, never resolved: two methods CAN legitimately converge
+ * (a no-op ablation of a null mechanism is the honest case), and deciding
+ * whether this run did that is a judgement about the code, not an arithmetic
+ * property. So the platform states the numbers, names the records, and leaves
+ * the verdict class alone — it does not discard the values (that would hide
+ * evidence) and does not treat the similarity as proof of a broken method.
+ * Comparison is by exact float equality on purpose: a tolerance would turn
+ * every close pair of accuracies into a false alarm, and 17-digit agreement is
+ * the only signature that cannot be explained by coincidence.
+ */
+export function duplicateControlFindings(
+  entries: { methodId: string; value: number | null; fromSpecId?: string }[],
+  subjectValue: number | null,
+): string[] {
+  const findings: string[] = [];
+  const byValue = new Map<string, { methodId: string; fromSpecId?: string }[]>();
+  for (const entry of entries) {
+    if (entry.value === null) continue;
+    const key = String(entry.value);
+    byValue.set(key, [
+      ...(byValue.get(key) ?? []),
+      { methodId: entry.methodId, fromSpecId: entry.fromSpecId },
+    ]);
+  }
+  for (const [value, group] of byValue) {
+    const distinct = [...new Set(group.map((item) => item.methodId))];
+    if (distinct.length > 1) {
+      findings.push(
+        `${distinct.join(' and ')} recorded the identical value ${value}` +
+          ` (to the last bit of the float)${
+            group[0]?.fromSpecId
+              ? ` in ${[...new Set(group.map((i) => i.fromSpecId).filter(Boolean))].join(', ')}`
+              : ''
+          } — two different methods agreeing to 17 significant digits means one computation was reported twice, not that the methods converge`,
+      );
+    }
+  }
+  if (subjectValue !== null) {
+    const mirrors = entries.filter((entry) => entry.value !== null && entry.value === subjectValue);
+    if (mirrors.length > 0) {
+      findings.push(
+        `${mirrors.map((entry) => entry.methodId).join(', ')} equal the idea's own primary value ` +
+          `${subjectValue} exactly — the same signature as a borrowed baseline (#23), inside one run`,
+      );
+    }
+  }
+  return findings;
 }

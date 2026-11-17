@@ -8,6 +8,7 @@ import {
   analyzeIdea,
   classifyRuntimeFailure,
   deriveAblations,
+  duplicateControlFindings,
   type AnalysisInput,
   type IdeaAnalysis,
 } from './analysis.js';
@@ -298,7 +299,15 @@ export async function collectAnalysisInput(
         if (checked.violation) unitProblems.push(`${doc.specId}: ${checked.violation}`);
       }
     }
-    if (value === null) {
+    // In-run controls are consulted even when a repro already supplied a
+    // number, and a control measured at the subject's own scale then wins: the
+    // independence order (repro > registered > in-run) is right in general, but
+    // FDG showed it wrong in the specific way that matters — `fedavg=18.75` from
+    // a scale-unknown repro outranked the same run's own `fedavg=16.896708` at
+    // smoke, and the review could only answer that the two are not matched
+    // instrumentation. An unrankable comparison is not made honest by
+    // preferring it for provenance.
+    {
       // Last legal source: a control this idea's own run measured and recorded
       // as one (#22② — entries printed these for months and the platform threw
       // the numbers away, then reported "no baseline available"). Admissible
@@ -351,8 +360,17 @@ export async function collectAnalysisInput(
           }
           continue;
         }
+        const candidateScale = scaleOf(candidate.spec);
+        // Override an already-found source only when this control is paired by
+        // scale and the current one is not. Otherwise the more independent
+        // source stands, which is the order that was chosen deliberately.
+        const subjectScale = main ? scaleOf(main.spec) : null;
+        const overrides =
+          value === null ||
+          (valueScale !== subjectScale && candidateScale === subjectScale && subjectScale !== null);
+        if (!overrides) continue;
         value = checked.value;
-        valueScale = scaleOf(candidate.spec);
+        valueScale = candidateScale;
         baselineSource = 'in-run';
         baselineFrom = `${candidate.spec.specId}@v${candidate.spec.version}`;
         break;
@@ -439,6 +457,37 @@ export async function collectAnalysisInput(
     }
   }
 
+  // Identical control values, detected here where the provenance of every
+  // number is still known and reported there where a verdict is written. The
+  // idea's own primary value is the reference because "fedavg equals the
+  // subject" is the #23 signature in its single-run form.
+  const subjectPrimary =
+    main && main.result.status === 'succeeded' ? metricOf(main.result, primary) : null;
+  // Duplicate detection runs over the control group each run actually
+  // recorded, not over the subset the card happened to ask about. The first
+  // version looked at `baselines` and found nothing on FDG while the record
+  // plainly held fedavg = dp_noise_matched_no_shrinkage = 16.896708: the card
+  // never declares dp_matched, so the pair could never meet inside the gathered
+  // list. A check that only inspects what was asked about cannot find what was
+  // not asked about, which is precisely the kind of number that should surface.
+  const allControls: { methodId: string; value: number; fromSpecId: string }[] = [];
+  const collectControls = (spec: ExperimentSpec, result: RunResult): void => {
+    if (result.status !== 'succeeded') return;
+    const from = `${spec.specId}@v${spec.version}`;
+    for (const control of result.baselines ?? []) {
+      if (metricIdentifier(control.metric) !== metricIdentifier(primary ?? '')) continue;
+      if (allControls.some((entry) => entry.fromSpecId === from && entry.methodId === control.methodId))
+        continue;
+      allControls.push({ methodId: control.methodId, value: control.value, fromSpecId: from });
+    }
+  };
+  for (const mirror of succeededMains) collectControls(mirror.spec, mirror.result!);
+  for (const doc of all) {
+    if (!doc.result || !doc.specId.startsWith(`idea-${ideaId}`)) continue;
+    collectControls(asSpec(doc.spec), asResult(doc.result));
+  }
+  const suspiciousControls = duplicateControlFindings(allControls, subjectPrimary);
+
   return {
     ideaId,
     ideaVersion: meta.currentVersion,
@@ -452,6 +501,7 @@ export async function collectAnalysisInput(
     ),
     unitProblems,
     unmatchableControls,
+    suspiciousControls,
     ideaByScale,
     scalesRun: [...scales].sort(),
     datasetsRun: [...datasets].sort(),
