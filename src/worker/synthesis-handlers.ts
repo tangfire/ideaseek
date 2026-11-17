@@ -212,14 +212,39 @@ export const synthMap: TaskHandler = async (ctx: TaskContext) => {
   if (!output) {
     const harness = requireHarness(ctx);
     await harness.initialize();
+    // Project each stored record into the map prompt's input. Every field is
+    // read defensively because these artifacts are re-read from disk years
+    // later, possibly written by an older build: the previous version called
+    // `entry.mechanisms.map(...)` directly, OUTSIDE the per-artifact try/catch
+    // above, so one legacy record without `mechanisms` threw a TypeError out of
+    // `synth.map` and the task failed permanently — re-running never healed it,
+    // because the offending artifact is still in the store.
+    //
+    // `conflicts` is also converted deliberately. Topic synthesis records store
+    // conflicts as plain strings (the topic contract says `[string]`), while the
+    // MAP prompt asks the model for `{"topic","detail"}` objects. Handing it
+    // strings and requiring objects invited a compliant model to echo the
+    // strings back, which the map validator used to accept — and
+    // `renderResearchMap` then printed "- **undefined**: undefined" into
+    // knowledge/research-map.md as a clean success.
     const payload = JSON.stringify(
       syntheses.map((entry) => ({
-        topic: entry.topic,
-        keyFindings: entry.keyFindings,
-        conflicts: entry.conflicts,
-        mechanisms: entry.mechanisms.map((mechanism) => mechanism.name),
-        openQuestions: entry.openQuestions,
-        papers: entry.papers,
+        topic: String(entry.topic ?? ''),
+        keyFindings: Array.isArray(entry.keyFindings) ? entry.keyFindings : [],
+        conflicts: (Array.isArray(entry.conflicts) ? entry.conflicts : []).map(
+          (conflict: string | { topic?: unknown; detail?: unknown }) =>
+            typeof conflict === 'string'
+              ? { topic: conflict, detail: conflict }
+              : {
+                  topic: String(conflict?.topic ?? ''),
+                  detail: String(conflict?.detail ?? ''),
+                },
+        ),
+        mechanisms: (Array.isArray(entry.mechanisms) ? entry.mechanisms : []).map((mechanism) =>
+          String(mechanism?.name ?? mechanism ?? ''),
+        ),
+        openQuestions: Array.isArray(entry.openQuestions) ? entry.openQuestions : [],
+        papers: Array.isArray(entry.papers) ? entry.papers : [],
       })),
     );
     const result = await harness.runTask(

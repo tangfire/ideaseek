@@ -269,8 +269,43 @@ export function validateResearchMap(value: unknown): SynthesisValidation {
   requireStringArray(m.gaps, 'gaps', errors);
   if (!Array.isArray(m.lineages) || m.lineages.length === 0) {
     errors.push('lineages must list at least one method lineage');
+  } else {
+    // Element shape, not just "it is an array". The map prompt asks for
+    // `{"name", "summary"}` objects, and this function checked `citations`
+    // element-wise while leaving lineages and conflicts at the array level, so
+    // a model that echoed back strings passed validation here and `renderResearchMap`
+    // then wrote `- **undefined**: undefined` into knowledge/research-map.md with
+    // zero errors logged. An artifact that reads as garbage and validates as clean
+    // is worse than one that fails: the next stage (idea generation, which consumes
+    // these gaps and conflicts) silently trusts it.
+    m.lineages.forEach((lineage, index) => {
+      const typed = lineage as { name?: unknown; summary?: unknown };
+      if (
+        !typed ||
+        typeof typed.name !== 'string' ||
+        !typed.name ||
+        typeof typed.summary !== 'string' ||
+        !typed.summary
+      ) {
+        errors.push(`lineages[${index}] needs name and summary`);
+      }
+    });
   }
   if (!Array.isArray(m.conflicts)) errors.push('conflicts must be an array');
+  else {
+    m.conflicts.forEach((conflict, index) => {
+      const typed = conflict as { topic?: unknown; detail?: unknown };
+      if (
+        !typed ||
+        typeof typed.topic !== 'string' ||
+        !typed.topic ||
+        typeof typed.detail !== 'string' ||
+        !typed.detail
+      ) {
+        errors.push(`conflicts[${index}] needs topic and detail`);
+      }
+    });
+  }
   if (!Array.isArray(m.citations) || m.citations.length === 0) {
     errors.push('citations must reference the papers behind the map');
   } else {

@@ -217,3 +217,55 @@ describe('CLI: synthesize (fake harness end to end)', () => {
     expect(result.stderr).toContain('ideaseek extract');
   }, 60_000);
 });
+
+describe('research-map rejects the shapes that used to render as undefined', () => {
+  const baseMap = {
+    landscape: 'a field organised around prototype sharing',
+    gaps: ['when does shrinkage hurt?'],
+    citations: [{ source: 'he13a-imbalanced', title: 'Cost-sensitive FL' }],
+    generator: 'test',
+  };
+
+  it('refuses string conflicts and unnamed lineages instead of printing undefined', () => {
+    // The hole was specific: `citations` was validated element-wise while
+    // `lineages` and `conflicts` were only checked as arrays. A model that
+    // echoed the topic-synthesis strings back therefore passed validation, and
+    // `renderResearchMap` dereferenced `.topic`/`.name` on strings, writing
+    // "- **undefined**: undefined" into knowledge/research-map.md as a clean
+    // success — an artifact that reads as garbage and reports as fine, which the
+    // next stage (idea generation over these gaps) then trusts.
+    expect(
+      validateResearchMap({
+        ...baseMap,
+        lineages: [{ name: 'privacy-preserving aggregation', summary: 'shares effects only' }],
+        conflicts: ['shrinkage may hurt calibration'],
+      }).errors,
+    ).toContain('conflicts[0] needs topic and detail');
+    expect(
+      validateResearchMap({
+        ...baseMap,
+        lineages: ['weighted aggregation'],
+        conflicts: [{ topic: 'a', detail: 'b' }],
+      }).errors,
+    ).toContain('lineages[0] needs name and summary');
+    expect(
+      validateResearchMap({
+        ...baseMap,
+        lineages: [{ name: 'a', summary: 'b' }],
+        conflicts: [{ topic: 'a', detail: 'b' }],
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('still accepts a map whose arrays are empty where the contract allows it', () => {
+    // `conflicts` may legitimately be empty ("_none recorded_" is a real
+    // outcome). Requiring shape on elements must not become requiring presence.
+    expect(
+      validateResearchMap({
+        ...baseMap,
+        lineages: [{ name: 'a', summary: 'b' }],
+        conflicts: [],
+      }).ok,
+    ).toBe(true);
+  });
+});
