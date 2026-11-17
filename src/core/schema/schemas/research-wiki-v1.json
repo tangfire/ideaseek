@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/research-wiki-v1.json",
+  "title": "IdeaSeek ResearchWiki build report (research-wiki-v1)",
+  "description": "Structural contract for the research-wiki build report, mirroring the writer: the tagged payload is emitted by `ideaseek wiki --json` (src/commands/wiki.ts) from buildResearchWiki's return value (src/knowledge/wiki.ts) — computed by IdeaSeek itself, no model involved — so this schema accepts exactly what those two writers emit. Checked structurally: the tag, the wiki root path, and that the build reported counts for nodes/edges/pages plus a helper status and stat lines. Note `nodes`, `edges` and (in the CLI payload) `pages` are COUNTS, while the in-process WikiBuildResult.pages is the list of written relPaths — pages therefore accepts either a count or an array of paths, because demanding one of the two would reject a real writer. What stays in TypeScript: the node page shape (WikiNodePage id/kind/relPath/body with the ARIS frontmatter), the graph/edges.jsonl lines ({from,to,type,evidence,added}) and their seven edge types (cites, tested_by, states, supports, contradicts, extends, compares — WikiEdgeType), all written as separate files under knowledge/research-wiki/, not inside this payload. `helper` is typed plain string on purpose: it is 'ok' or an open-ended 'skipped:<reason>' (disabled, python-unavailable, helper-missing, derive-failed), and degrading honestly is the documented behaviour, so freezing the set here would punish a new reason. `stats` is [] whenever the helper did not run.",
+  "type": "object",
+  "required": ["root", "nodes", "edges", "pages", "helper", "stats"],
+  "properties": {
+    "schema": { "const": "research-wiki-v1" },
+    "root": { "type": "string" },
+    "nodes": { "type": "number" },
+    "edges": { "type": "number" },
+    "pages": {
+      "anyOf": [{ "type": "integer" }, { "type": "array", "items": { "type": "string" } }]
+    },
+    "helper": { "type": "string" },
+    "stats": { "type": "array", "items": { "type": "string" } }
+  }
+}

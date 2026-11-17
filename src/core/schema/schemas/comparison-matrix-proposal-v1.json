@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/comparison-matrix-proposal-v1.json",
+  "title": "Comparison Matrix Proposal v1 (comparison-matrix-proposal-v1)",
+  "description": "Structural contract for the Comparison Planner agent output that `comparison plan` persists and `comparison matrix` merges as the reviewed default. What is checked: the envelope names a contract, and every entry carries the four fields the prompt declares with no `?` — methodId, classification, rationale, sources — because a proposal that reaches the researcher has to be a decision per method, not prose. What is deliberately NOT checked here: that methodId is one of the candidates in the context, that each sources id exists in the provided literature (no invented citations), that rationale is non-blank and that relevanceNote is a string when present — all of those need the request context and stay in validateMatrixProposal (src/comparison/planner.ts:264). No length or count ceilings: a longer rationale or an extra citation is not a defect, and an empty entries array is refused by the validator rather than by minItems.",
+  "type": "object",
+  "required": ["contract", "entries"],
+  "properties": {
+    "contract": { "type": "string" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["methodId", "classification", "rationale", "sources"],
+        "properties": {
+          "methodId": { "type": "string" },
+          "classification": {
+            "enum": ["required", "reference-only", "excluded", "blocked"]
+          },
+          "rationale": { "type": "string" },
+          "sources": { "type": "array", "items": { "type": "string" } },
+          "relevanceNote": {
+            "type": "string",
+            "description": "Written `str?` in the prompt, so it stays optional; the matrix stores it as plannerNote."
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "description": "Top-level notes; the prompt writes `[str?]`, so the element type stays unchecked."
+    }
+  }
+}

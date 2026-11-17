@@ -47,6 +47,26 @@ export interface VendoredFile {
 
 /** SHA-256 of every vendored content file (LICENSE/NOTICE excluded). */
 export const VENDORED_FILES: readonly VendoredFile[] = [
+  // >>> aris-vendor:begin
+  // Entries between these sentinels are managed by `node scripts/aris-vendor.mjs
+  // --apply`, which copies from an ARIS checkout at a clean commit and hashes
+  // what it copied. Anything OUTSIDE them is hand-maintained history; the
+  // tool refuses to run when the markers are missing rather than splicing a
+  // table by regex, which is how a hash gets quietly lost.
+  // >>> BEGIN-REGISTERED-ENTRIES
+  {
+    path: 'skills/figure-spec/scripts/figure_renderer.py',
+    sha256: '02b4e01e46b51aeca12722ddd7b21bb7da3c3b175bba5d129c45d671fb07a0bc',
+  },
+  {
+    path: 'skills/figure-spec/SKILL.md',
+    sha256: 'f5b4b8e806a0131b3aef787a7bbfbb395cdfb814a56d3acf2f454bfa4289ee49',
+  },
+  {
+    path: 'skills/result-to-claim/SKILL.md',
+    sha256: 'b12d10bdb51440f65e4112e6643712f172a7e37c1e15066e15d81eaee5838a8f',
+  },
+  // >>> END-REGISTERED-ENTRIES
   {
     path: 'shared-references/acceptance-gate.md',
     sha256: 'acfe2e790d97445396ff4eb605b91e4de756082d617b89cf9278bff76dc25623',

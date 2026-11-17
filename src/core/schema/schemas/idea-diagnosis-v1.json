@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/idea-diagnosis-v1.json",
+  "title": "Idea Diagnosis v1",
+  "description": "The Idea Improvement Agent's diagnosis of an imported idea seed: what the mechanism currently claims, why it fell short, and which improvement routes follow — engineering fixes kept separate from scientific hypothesis changes. What is checked: the payload echoes the question and the seed snapshot it was asked about (that binding is what keeps a stored diagnosis traceable to one import), and that findings and routes come back with the fields the report prints (a route's `stopConditions` is typed but not required — improve.ts rejects a route whose list is missing or empty). What is NOT checked: that each evidence entry carries a source and a location, that those sources were actually offered in the context, that baselineStatus matches the evidence, that a hypothesis change was filed as a new-idea route rather than disguised code polish, and the `contract` name echo itself — improve.ts compares all of them against the request context this file cannot see. The failureCategories/area/kind vocabularies are generated into the prompt from TS consts, so they stay plain strings here rather than a copied enum that would reject valid output the day a category is added.",
+  "type": "object",
+  "required": [
+    "question",
+    "source",
+    "baselineStatus",
+    "mechanismSummary",
+    "failureCategories",
+    "findings",
+    "routes"
+  ],
+  "properties": {
+    "question": { "type": "string" },
+    "source": {
+      "type": "object",
+      "required": ["path", "rootHash"],
+      "properties": {
+        "path": { "type": "string" },
+        "rootHash": { "type": "string" }
+      }
+    },
+    "baselineStatus": { "enum": ["reproduced", "baseline_unavailable", "not_attempted"] },
+    "mechanismSummary": { "type": "string" },
+    "failureCategories": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["area", "finding", "evidence"],
+        "properties": {
+          "area": { "type": "string" },
+          "finding": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "summary", "expectedChange", "risks", "discriminatingExperiment"],
+        "properties": {
+          "kind": { "type": "string" },
+          "summary": { "type": "string" },
+          "expectedChange": { "type": "string" },
+          "risks": { "type": "string" },
+          "discriminatingExperiment": { "type": "string" },
+          "stopConditions": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

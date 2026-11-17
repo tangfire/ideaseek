@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/idea-discuss-v1.json",
+  "title": "Idea Discussion v1",
+  "description": "The Research Discussant's structured pro/con argument over one idea-card version. What is checked: the payload names the idea and card version it argued (the pairing is what makes a revised idea force a fresh discussion), that a position was taken, that at least two arguments came back each with a side, a statement, an evidence list and a numeric confidence, plus open questions and a recommendation. What is NOT checked: that ideaId/cardVersion equal the values in the request context, that each evidence entry pairs a source with a location and that the source was offered in the context or is the literal \"speculation\", that one argument is pro AND one is con, whether the arguments are any good, and the `contract` name echo — discuss.ts holds the context and enforces all of it. `position` stays a plain string rather than an enum because its value list is generated into the prompt from a TS const; a copied enum would reject valid output the day a position is added.",
+  "type": "object",
+  "required": ["ideaId", "cardVersion", "position", "arguments", "openQuestions", "recommendation"],
+  "properties": {
+    "ideaId": { "type": "string" },
+    "cardVersion": { "type": "integer", "minimum": 1 },
+    "position": { "type": "string" },
+    "arguments": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["side", "statement", "evidence", "confidence"],
+        "properties": {
+          "side": { "enum": ["pro", "con"] },
+          "statement": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "object" } },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "openQuestions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "recommendation": { "type": "string" }
+  }
+}

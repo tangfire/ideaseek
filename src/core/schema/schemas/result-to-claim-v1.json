@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/result-to-claim-v1.json",
+  "title": "IdeaSeek ResultToClaim (result-to-claim-v1)",
+  "description": "Structural contract for the deterministic result-to-claim derivation, mirroring the writer: `ideaseek idea result-to-claim` computes and persists this artifact to ideas/<ideaId>/experiments/result-to-claim.json (src/idea/result-to-claim.ts runResultToClaim + writeResultToClaim) with no model in the loop, so the schema accepts exactly what that literal emits. Checked structurally: the tag, ideaId, the nullable planInputHash, one entry per protocol primary metric with its support/direction words, the three delta values as number|null, and each evidence row's specId/specHash/role. What stays in TypeScript: the direction-adjusted delta arithmetic and the support rule (delta>0 -> supported, <=0 -> not-supported, missing evidence -> insufficient), the report<->registry integrity cross-check that turns a ghost spec into a gap, the verbatim (never re-parsed) protocol supportCriteria, and claimId slugification. ideaValue/baselineValue/delta are null whenever one side of the comparison is missing — that is an honest `insufficient` claim, not a malformed one, and `claims`/`gaps` may both be short (no report at all yields empty claims with a recovery gap).",
+  "type": "object",
+  "required": ["contract", "ideaId", "generatedAt", "planInputHash", "claims", "gaps"],
+  "properties": {
+    "contract": { "const": "result-to-claim-v1" },
+    "ideaId": { "type": "string" },
+    "generatedAt": { "type": "number" },
+    "planInputHash": { "type": ["string", "null"] },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "claimId",
+          "statement",
+          "support",
+          "metric",
+          "direction",
+          "ideaValue",
+          "baselineValue",
+          "delta",
+          "evidence",
+          "protocolCriteria"
+        ],
+        "properties": {
+          "claimId": { "type": "string" },
+          "statement": { "type": "string" },
+          "support": { "enum": ["supported", "not-supported", "insufficient"] },
+          "metric": { "type": "string" },
+          "direction": { "enum": ["higher", "lower"] },
+          "ideaValue": { "type": ["number", "null"] },
+          "baselineValue": { "type": ["number", "null"] },
+          "delta": { "type": ["number", "null"] },
+          "evidence": { "type": "array", "items": { "$ref": "#/definitions/claimEvidence" } },
+          "protocolCriteria": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "gaps": { "type": "array", "items": { "type": "string" } }
+  },
+  "definitions": {
+    "claimEvidence": {
+      "type": "object",
+      "required": ["specId", "specHash", "role", "metric", "value"],
+      "properties": {
+        "specId": { "type": "string" },
+        "specHash": { "type": ["string", "null"] },
+        "role": { "enum": ["idea", "baseline"] },
+        "metric": { "type": "string" },
+        "value": { "type": "number" }
+      }
+    }
+  }
+}

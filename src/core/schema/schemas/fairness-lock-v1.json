@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/fairness-lock-v1.json",
+  "title": "IdeaSeek FairnessLock (fairness-lock-v1)",
+  "description": "Structural contract for the full-run comparison fairness lock, mirroring the writer: this artifact is COMPUTED AND PERSISTED BY IdeaSeek ITSELF (`ideaseek full fairness` -> knowledge/fairness-<ideaId>.json, src/full/fairness.ts buildFairnessLock), never produced by a model, so the schema accepts exactly what that literal emits and is deliberately no stricter. Checked structurally: the tag, the idea-side reference block (specId/dataSnapshotId nullable, sliceIds/seeds/metrics arrays), one entry per required method, and each alignment dimension's name and status word. A method entry's `status` is the registry's ComparisonStatus carried verbatim and stays a plain string because FairnessMethodEntry types it that way. What stays in TypeScript: inputHash recomputation and the staleness/confirm gates (assertFairnessApprovable), WHICH dimensions are machine-checked (data-split, metrics, seeds-repeats) versus researcher-declared, the blocker text and recovery ordering, and the rule that generatedAt and the researcher stamp `confirmed` ({at, mode, inputHash}) never enter the hash — which is why neither is required here. `protocol` is null when nothing is locked yet, `status: unknown` is an honest declaration slot rather than a defect, and demanding aligned/deviation would reject every lock that has not over-claimed.",
+  "type": "object",
+  "required": ["contract", "ideaId", "inputHash", "protocol", "reference", "methods", "blockers"],
+  "properties": {
+    "contract": { "const": "fairness-lock-v1" },
+    "ideaId": { "type": "string" },
+    "inputHash": { "type": "string" },
+    "generatedAt": { "type": "number" },
+    "protocol": {
+      "type": ["object", "null"],
+      "required": ["protocolId", "protocolHash"],
+      "properties": { "protocolId": { "type": "string" }, "protocolHash": { "type": "string" } }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["specId", "dataSnapshotId", "sliceIds", "seeds", "metrics"],
+      "properties": {
+        "specId": { "type": ["string", "null"] },
+        "dataSnapshotId": { "type": ["string", "null"] },
+        "sliceIds": { "type": "array", "items": { "type": "string" } },
+        "seeds": { "type": "array", "items": { "type": "number" } },
+        "metrics": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "methods": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["methodId", "status", "dimensions", "deviations"],
+        "properties": {
+          "methodId": { "type": "string" },
+          "status": { "type": "string" },
+          "dimensions": { "type": "array", "items": { "$ref": "#/definitions/dimension" } },
+          "deviations": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "blockers": { "type": "array", "items": { "type": "string" } },
+    "confirmed": { "type": ["object", "null"] }
+  },
+  "definitions": {
+    "dimension": {
+      "type": "object",
+      "required": ["dimension", "status", "detail"],
+      "properties": {
+        "dimension": {
+          "enum": [
+            "data-split",
+            "preprocessing",
+            "metrics",
+            "tuning-budget",
+            "seeds-repeats",
+            "resources",
+            "early-stopping",
+            "model-selection"
+          ]
+        },
+        "status": { "enum": ["aligned", "deviation", "unknown"] },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

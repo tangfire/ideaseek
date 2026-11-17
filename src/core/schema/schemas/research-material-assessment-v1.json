@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/research-material-assessment-v1.json",
+  "title": "Research Material Assessment v1 (research-material-assessment-v1)",
+  "description": "Structural contract for the material-readiness report persisted at knowledge/research-material-assessment.json. It is NOT a model output: buildResearchMaterialAssessment (src/knowledge/assessment.ts:103) computes it from persisted artifacts, and `ask`, `next`, `prepare` and the Analysis→Research mode gate read it — mode.ts even throws USER_INPUT_REQUIRED from it. What is checked: the envelope the reuse rule compares (contract + contextHash), the verdict and per-stage sufficiency the callers print, the stats object `next` indexes into, and gaps with the fields that drive grouping and the printed next command (id, priority, reason, evidence, blocks, fillIn). What is deliberately NOT checked: that a gap's priority or blocks list is the right judgement for this project, that fillIn is a runnable command, that the counts match the filesystem, or that contextHash still describes the live inputs — the gap set, its priorities and the blocking-to-stage mapping are the module's deterministic reasoning and stay in assessment.ts. No ceilings on gaps/covered/boundaries and no minLength on the prose: a longer report is not a defect, and the area/confidence vocabularies grow with the tool, so they stay plain strings.",
+  "type": "object",
+  "required": ["contract", "contextHash", "verdict", "sufficientFor", "stats", "gaps", "covered"],
+  "properties": {
+    "contract": { "type": "string" },
+    "generatedAt": { "type": "number" },
+    "contextHash": { "type": "string" },
+    "question": { "type": "string" },
+    "venue": { "type": ["string", "null"] },
+    "verdict": { "enum": ["ready", "gaps"] },
+    "sufficientFor": {
+      "type": "object",
+      "required": ["protocolDesign", "smokeQuick"],
+      "properties": {
+        "protocolDesign": { "type": "boolean" },
+        "smokeQuick": { "type": "boolean" }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["paperCards", "slices", "comparisons", "protocolProposal"],
+      "properties": {
+        "paperCards": { "type": "number" },
+        "slices": { "type": "number" },
+        "comparisons": { "type": "number" },
+        "protocolProposal": { "type": "string" }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "priority", "reason", "evidence", "blocks", "fillIn"],
+        "properties": {
+          "id": { "type": "string" },
+          "priority": { "enum": ["blocking", "recommended", "optional"] },
+          "area": { "type": "string" },
+          "reason": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "string" },
+          "fillIn": { "type": "string" },
+          "cost": { "type": "string" },
+          "blocks": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "covered": { "type": "array", "items": { "type": "object" } },
+    "boundaries": { "type": "array", "items": { "type": "string" } }
+  }
+}

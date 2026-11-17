@@ -562,10 +562,23 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
         })
       : null;
   if (boot?.fenceWarning) log(boot.fenceWarning);
-  const harness = new DeepSeekHarness({
+  const harnessOptions = {
     cwd: opts.cwd,
     approvalRequests: true,
-    ...(boot ? { patches: boot.patches, env: boot.env, dshHome: boot.dshHome } : {}),
+    ...(boot ? { patches: boot.patches, dshHome: boot.dshHome } : {}),
+    // Passed even when no coding contract is mounted: `env` REPLACES the
+    // child's environment in this SDK, so it is built from a copy of
+    // process.env — dropping the credential variable would have turned a
+    // correctness fix into an outage.
+    env: {
+      ...process.env,
+      // A turn cut off by the output cap must not count as success. The `sdk`
+      // profile layers dsh-sdk-app, whose patch enables maxTokensAsSuccess
+      // unless this variable is defined, and this path never set it — so
+      // truncated subagent work was being reported as ok, including the
+      // "subagent ok" line this module prints. Checked rather than assumed.
+      DSH_MAX_TOKENS_AS_SUCCESS: 'false',
+    },
     ...(opts.provider ? { provider: opts.provider } : {}),
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.dshHome && !boot ? { dshHome: opts.dshHome } : {}),
@@ -576,22 +589,25 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     // one still failing with `initialize timed out after 15000ms` on a loaded
     // machine after the adapter default was raised.
     initializeTimeoutMs: dshInitializeTimeoutMs(),
-  });
+  };
 
-  // Boot with the same bounded retry the adapter uses, but through the harness
-  // rather than around it: `HarnessClient.close` is permanent, so a failed
-  // attempt cannot be retried on the same object — whereas `DeepSeekHarness.start`
-  // is documented to reap the runtime and install a fresh client after a
-  // *successful* cleanup, which makes a second call to it the retry. The
-  // approval handler is installed only once the boot succeeded, on whichever
-  // client then owns the runtime (the SDK refuses a handler on a client that
-  // has not started, and a handler left on a dead client answers nothing).
+  // Boot with the same bounded retry the adapter uses — and, like the adapter,
+  // with a fresh object per attempt rather than calling `start()` again on the
+  // one that failed. DSH documents `HarnessClient.close()` as permanent
+  // (client.ts:220), and `DeepSeekHarness.start` only installs a replacement
+  // client when its own cleanup succeeded (api.ts:92, after the early return at
+  // :85-91). Reusing the object therefore degrades the retry loop to zero
+  // retries exactly in the case that motivates retrying: a runtime that died
+  // messily. The first version of this retried in name only.
   const attempts = dshInitializeAttempts();
   let bootError: Error | null = null;
+  let harness: DeepSeekHarness | null = null;
   let booted = false;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const candidate = new DeepSeekHarness(harnessOptions as never);
     try {
-      await harness.start();
+      await candidate.start();
+      harness = candidate;
       booted = true;
       break;
     } catch (error) {
@@ -599,12 +615,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
       log(
         `dsh handshake attempt ${attempt}/${attempts} failed: ${redactAgentText(bootError.message)}`,
       );
+      await candidate.close().catch(() => undefined);
       if (attempt < attempts) {
         await new Promise<void>((resolve) => setTimeout(resolve, 250 * attempt));
       }
     }
   }
-  if (!booted) {
+  if (!booted || !harness) {
     throw new IdeaseekError(
       'MODEL_UNAVAILABLE',
       dshHandshakeFailureMessage({

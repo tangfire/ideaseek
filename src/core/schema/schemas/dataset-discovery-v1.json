@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/dataset-discovery-v1.json",
+  "title": "Dataset Discovery v1 (dataset-discovery-v1)",
+  "description": "Structural contract for the discovery artifact persisted at knowledge/dataset-candidates.json. It is NOT the model's answer — the Dataset Discovery call is answered against dataset-candidates-v1; this document is what the platform stamps around it: per-source provenance (kind, ref, status, reason, retrievedAt, contentHash, evidenceCount), grounded evidence mentions (evidenceId, kind, sourceKind, ref, name, quote, retrievedAt, contentHash, hashBasis, paperKey, url, indexId) and candidates carrying license/access/authorization state plus task/unit/scale/notes. What is checked: the envelope readDiscoveryArtifact fail-closes on (contract, candidates), the provenance the renderer and the reuse hash dereference (generatedAt, inputHash, sources, evidence), the source/evidence fields the CLI table prints, and per candidate the identity plus the objects the promotion gate and `datasets authorize/acquire/link` mutate (candidateId, name, status, license, access, evidenceIds). What is deliberately NOT checked: that evidenceIds resolve to evidence actually offered, that the candidate name matches its evidence, that relatedPapers came from ProvidedPaperRefs, that a url is backed by a real index hit, or that status/downloadStatus/authorization agree with the access facts — grounding and autonomy rules stay in validateDatasetCandidatesOutput, requiresUserConfirmation and assertCandidateExperimentReady. A candidates array may be empty: nothing grounded is a valid discovery result. The status/acquisition/hashBasis vocabularies are TS consts the collectors grow over time, so they stay plain strings rather than enums copied here, where a new kind would silently start rejecting valid artifacts.",
+  "type": "object",
+  "required": ["contract", "generatedAt", "inputHash", "sources", "evidence", "candidates"],
+  "properties": {
+    "contract": { "type": "string" },
+    "generatedAt": { "type": "number" },
+    "inputHash": { "type": "string" },
+    "mode": { "type": "string" },
+    "question": { "type": ["string", "null"] },
+    "incompleteSources": { "type": "boolean" },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "status"],
+        "properties": {
+          "kind": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["evidenceId", "name"],
+        "properties": {
+          "evidenceId": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidateId", "name", "status", "license", "access", "evidenceIds"],
+        "properties": {
+          "candidateId": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string" },
+          "license": { "type": "object" },
+          "access": { "type": "object" },
+          "evidenceIds": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number" },
+          "downloadStatus": { "type": "string" },
+          "authorization": { "type": "object" },
+          "local": { "type": ["object", "null"] },
+          "relatedPapers": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

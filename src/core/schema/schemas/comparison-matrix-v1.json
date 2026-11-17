@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/comparison-matrix-v1.json",
+  "title": "Comparison Matrix v1 (comparison-matrix-v1)",
+  "description": "Structural contract for the reviewable comparison matrix persisted at knowledge/comparison-matrix.json. It is NOT a model output: buildComparisonMatrix (src/comparison/matrix.ts:113) assembles it deterministically from the registry, PaperCards and the stored manuscript, the researcher edits the file, and `--confirm` applies it — so the required set covers what the writer and the applying code dereference, not what a prompt asked for. What is checked: inputHash (staleness gate), entries with the classification/rationale/origin/sources every apply step reads, blockers (confirm refuses while any exist) and the context block the CLI prints. What is deliberately NOT checked: that a classification agrees with the registry status, that a rationale is non-blank for excluded/blocked, that sources cite existing papers or that inputHash matches current state — those are state-machine and freshness rules in assertMatrixApprovable/applyComparisonMatrix. No minItems on entries: an empty matrix is a real state, reported as a blocker with a recovery command.",
+  "type": "object",
+  "required": ["contract", "inputHash", "context", "entries", "blockers"],
+  "properties": {
+    "contract": { "type": "string" },
+    "inputHash": { "type": "string" },
+    "generatedAt": {
+      "type": "number",
+      "description": "Wall clock; excluded from inputHash on purpose."
+    },
+    "context": {
+      "type": "object",
+      "required": ["questions", "venue", "corpusPaperCards", "researchMapPresent"],
+      "properties": {
+        "questions": { "type": "array", "items": { "type": "string" } },
+        "venue": { "type": ["string", "null"] },
+        "corpusPaperCards": { "type": "number" },
+        "researchMapPresent": { "type": "boolean" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["methodId", "classification", "rationale", "origin", "sources"],
+        "properties": {
+          "methodId": { "type": "string" },
+          "classification": {
+            "enum": ["required", "reference-only", "excluded", "blocked"],
+            "description": "applyComparisonMatrix branches on all four; an unlisted value would silently leave the registry untouched."
+          },
+          "rationale": { "type": "string" },
+          "plannerNote": { "type": "string" },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["source", "detail"],
+              "properties": { "source": { "type": "string" }, "detail": { "type": "string" } }
+            },
+            "description": "Merging a planner proposal pushes into this array, so it must exist."
+          },
+          "origin": { "enum": ["registered", "paper-card"] },
+          "implementation": { "type": "object" },
+          "cardIds": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "blockers": { "type": "array", "items": { "type": "string" } },
+    "agentProposal": { "type": "object" },
+    "confirmed": { "type": "object" }
+  }
+}

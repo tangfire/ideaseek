@@ -424,6 +424,17 @@ export class DshHarnessAdapter implements HarnessAdapter {
       ...process.env,
       DSH_PERMISSION_MODE: 'read-only',
       IDEASEEK_WORKSPACE_ROOT: projectRoot,
+      // A response cut off by the output cap is a FAILURE, here, always.
+      // The `sdk` profile layers @deepseek-ai/dsh-sdk-app, whose patch sets
+      // maxTokensAsSuccess to TRUE unless DSH_MAX_TOKENS_AS_SUCCESS is defined
+      // (packages/bundle/sdk-app/cordis.patch.yml:21), and that flag is what
+      // marks a finished subagent as ok. IdeaSeek never passed profile, never
+      // set the variable, and therefore ran all this time with truncation
+      // inside delegated work reported as success — the belief "we never set
+      // maxTokensAsSuccess, so truncation is always an error" was checked and
+      // found false. Pinning it here makes the platform's intent explicit at
+      // the only place intent can be expressed: the child's environment.
+      DSH_MAX_TOKENS_AS_SUCCESS: 'false',
     };
     const timeoutMs = this.opts.initializeTimeoutMs ?? dshInitializeTimeoutMs();
     const attempts = this.opts.initializeAttempts ?? dshInitializeAttempts();

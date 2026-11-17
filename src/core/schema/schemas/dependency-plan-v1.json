@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/dependency-plan-v1.json",
+  "title": "Dependency Plan v1 (dependency-plan-v1)",
+  "description": "Structural contract for the Baseline Repair Agent's inferred pip requirements, asked of the model when a third-party research repository ships no requirements file. What is checked: the two fields the prompt's output shape declares — a packages array and a notes string — because the runner feeds packages to pip as argv and prints notes to the researcher. What is deliberately NOT checked here: that each spec is a bare distribution name with optional version clauses (no flags, URLs, local paths, `-e`, `-r`, comments or shell metacharacters) — that grammar is a security boundary and lives in validateRequirementSpec (src/comparison/dep-inference.ts:50), which drops offending entries with a visible reason instead of failing the plan; nor the MAX_PACKAGES bound or the notes truncation in parseDependencyPlan. No pattern and no maxItems: a list the platform can sanitize must not be rejected wholesale, and over-many specs are truncated rather than aborted.",
+  "type": "object",
+  "required": ["packages", "notes"],
+  "properties": {
+    "packages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Bare pip requirement specs, e.g. \"torch\", \"numpy>=1.21,<2\". Grammar-checked one by one; only strings that pass become install args."
+    },
+    "notes": {
+      "type": "string",
+      "description": "What the evidence showed and which specs were refused. The parser also stamps rejected-spec counts here, so an empty or absent value is repaired, not rejected."
+    }
+  }
+}

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import type { Dirent } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -161,11 +163,43 @@ export async function readSharedReference(fileName: string): Promise<string> {
 export interface IntegrityReport {
   path: string;
   ok: boolean;
-  expected: string;
+  /** The manifest hash, or null when the file is not in the manifest at all. */
+  expected: string | null;
   actual: string | null;
+  /** Present for an unlisted file: why it exists but is unverified. */
+  detail?: string;
 }
 
 /** Verifies every vendored content file against the manifest. */
+/**
+ * Files that live in `aris-skills/` but are NOT upstream artefacts: the
+ * licence text we must ship to satisfy MIT ("the above copyright notice and
+ * this permission notice shall be included in all copies"), and our own
+ * provenance notice. They are exempt from the manifest requirement because
+ * pinning their hash to an upstream commit would be a category error — but the
+ * exemption is a declared list, not "anything that fails to match".
+ */
+export const PLATFORM_AUTHORED_FILES: readonly string[] = ['LICENSE', 'NOTICE.md'];
+
+async function walkVendoredTree(dir = '', out: string[] = []): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(join(arisSkillsRoot(), dir), { withFileTypes: true });
+  } catch {
+    // An absent tree is not an empty tree, but the callers report missing files
+    // separately (readVerified throws SKILL_NOT_FOUND), so returning what has
+    // been collected so far keeps one unreadable subdirectory from erasing the
+    // whole inventory.
+    return out;
+  }
+  for (const entry of entries) {
+    const rel = dir ? `${dir}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) await walkVendoredTree(rel, out);
+    else if (entry.isFile()) out.push(rel);
+  }
+  return out;
+}
+
 export async function verifyVendoredIntegrity(): Promise<IntegrityReport[]> {
   const reports: IntegrityReport[] = [];
   for (const file of VENDORED_FILES) {
@@ -183,6 +217,30 @@ export async function verifyVendoredIntegrity(): Promise<IntegrityReport[]> {
             : null,
       });
     }
+  }
+
+  // The direction that used to be missing. `verifyVendoredIntegrity` walked the
+  // manifest only, so a file copied into `aris-skills/` without a manifest
+  // entry was invisible to `ideaseek aris` and to the test that counted
+  // reports: the command reported "54 files all match" while an unverified,
+  // unpinned file sat in the tree and `readVerified` would have rejected it at
+  // LOAD time. Integrity tooling that checks what the list says instead of what
+  // the directory holds is the failure shape this project keeps meeting —
+  // configured, green, inert.
+  const listed = new Set(VENDORED_FILES.map((file) => file.path));
+  const onDisk = await walkVendoredTree();
+  for (const rel of onDisk) {
+    if (listed.has(rel) || PLATFORM_AUTHORED_FILES.includes(rel)) continue;
+    reports.push({
+      path: rel,
+      ok: false,
+      expected: null,
+      actual: null,
+      detail:
+        'file exists in aris-skills/ but is not in VENDORED_FILES: it is unverified, not pinned to ' +
+        `the upstream commit (${ARIS_SOURCE.commit}) and would be refused at load time; run ` +
+        'node scripts/aris-vendor.mjs to register it deliberately',
+    });
   }
   return reports;
 }

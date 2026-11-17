@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/overleaf-export-v1.json",
+  "title": "IdeaSeek Overleaf export manifest (overleaf-export-v1)",
+  "description": "Structural contract for the OverleafManifest that src/paper/overleaf.ts buildOverleafExport returns and writes as <bundleDir>/manifest.json. Checked structurally: the contract tag the writer itself sets, where the bundle and the ZIP live, and that every bundled file is listed with a byte count and a content digest — the manifest is the audit trail for what left the project, so an entry without a digest is not an entry. Left in the domain module on purpose: that the ZIP was really produced (a failed zip throws ENV_UNSUPPORTED after the manifest is already written, so zipPath is a claim, not a fact the schema can check), that no secret is inside, and which venue style files were copied. No path in `files` is required: the manifest.json written to disk is serialized before its own entry is appended, so the persisted list omits manifest.json while the returned/printed one contains it — pinning either would reject an artifact the platform legitimately produces.",
+  "type": "object",
+  "required": ["contract", "createdAt", "bundleDir", "zipPath", "files", "provenance", "notes"],
+  "properties": {
+    "contract": { "const": "overleaf-export-v1" },
+    "createdAt": { "type": "number" },
+    "bundleDir": { "type": "string" },
+    "zipPath": { "type": "string" },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "bytes", "sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "bytes": { "type": "integer" },
+          "sha256": { "type": "string" }
+        }
+      }
+    },
+    "provenance": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

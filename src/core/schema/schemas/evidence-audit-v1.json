@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/evidence-audit-v1.json",
+  "title": "IdeaSeek EvidenceAudit (evidence-audit-v1)",
+  "description": "Structural contract for the deterministic claim/citation audit, mirroring the writer: `ideaseek idea claim-audit` computes and persists this artifact to ideas/<ideaId>/evidence-audit.json (src/idea/claim-audit.ts runClaimAudit + writeClaimAudit) with no model in the loop, so the schema accepts exactly what that literal emits. Checked structurally: the tag, the card binding (ideaId + cardVersion), the overall verdict word, each check entry (which of the three evidence kinds it is, its verdict, and page as number|null) and the stats triple. What stays in TypeScript: whether a quote is actually locatable in the indexed paper (locateQuote + NFKC), whether a paperRef resolves to an indexed artifact at all, registry membership of a nearestComparison, and the verdict rule itself (missing>0 -> fail, else unverified>0 -> warn) — recomputing verdict from checks is the domain module's job, not the schema's. `cardHash` is declared optional in the EvidenceAudit interface even though today's only writer always fills it, so it stays out of required. `checks` may be EMPTY: a card with no paperEvidence and no nearestComparisons and no full-run report is a valid, passing audit.",
+  "type": "object",
+  "required": ["contract", "ideaId", "cardVersion", "generatedAt", "verdict", "checks", "stats"],
+  "properties": {
+    "contract": { "const": "evidence-audit-v1" },
+    "ideaId": { "type": "string" },
+    "cardVersion": { "type": "number" },
+    "cardHash": { "type": "string" },
+    "generatedAt": { "type": "number" },
+    "verdict": { "enum": ["pass", "warn", "fail"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "ref", "verdict", "detail", "page"],
+        "properties": {
+          "kind": { "enum": ["paper-evidence", "nearest-comparison", "full-run-result"] },
+          "ref": { "type": "string" },
+          "verdict": { "enum": ["found", "missing", "unverified"] },
+          "detail": { "type": "string" },
+          "page": { "type": ["number", "null"] }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": ["found", "missing", "unverified"],
+      "properties": {
+        "found": { "type": "number" },
+        "missing": { "type": "number" },
+        "unverified": { "type": "number" }
+      }
+    }
+  }
+}

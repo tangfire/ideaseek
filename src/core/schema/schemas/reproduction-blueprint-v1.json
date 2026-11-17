@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/reproduction-blueprint-v1.json",
+  "title": "Reproduction Blueprint v1 (reproduction-blueprint-v1)",
+  "description": "Structural contract for the plan the Baseline Reproduction Agent authors when a comparison method has no official code; `comparison reproduce` validates it, scaffolds the worktree from it and hashes the algorithm block into a fingerprint. methodId is echoed by the model but overwritten by the platform (parseBlueprintOutput), so an id mismatch is never a structural question. What is checked: the six top-level keys the prompt's output shape declares, algorithm.dataInterface and algorithm.metrics (the reproduce phases cannot run without them), and the two vocabularies the prompt itself enumerates — confidence and metric direction. What is deliberately NOT checked: that paperExplicit statements really appear in the papers, that assumptions are not smuggled into paperExplicit, that metric names equal the locked protocol's, that missingDetails are honest or that a claim of equivalence with official code is absent — those need the evidence context and stay in validateReproductionBlueprint (src/comparison/reproduce.ts:62). No minItems: the TS validator's \"at least one paper-explicit statement\" and \"at least one metric\" rules stay there, and a blueprint that fails them is a science gap reported to the user, not a shape error. algorithm.source/entry/hyperparameters are declared by the prompt but optional in the contract: the platform has defaults (--code, ['python','reproduce.py']) and refusing them would abort a run it can still serve.",
+  "type": "object",
+  "required": [
+    "methodId",
+    "paperExplicit",
+    "assumptions",
+    "missingDetails",
+    "confidence",
+    "algorithm"
+  ],
+  "properties": {
+    "methodId": { "type": "string" },
+    "paperExplicit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["statement", "evidence"],
+        "properties": { "statement": { "type": "string" }, "evidence": { "type": "string" } }
+      }
+    },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "missingDetails": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "algorithm": {
+      "type": "object",
+      "required": ["dataInterface", "metrics"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "The prompt says to leave it empty: a plan, not a program."
+        },
+        "entry": { "type": "array", "items": { "type": "string" } },
+        "requirements": { "type": "array", "items": { "type": "string" } },
+        "dataInterface": {
+          "type": "object",
+          "required": ["description"],
+          "properties": { "description": { "type": "string" } }
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "direction"],
+            "properties": {
+              "name": { "type": "string" },
+              "direction": { "enum": ["higher", "lower"] }
+            }
+          }
+        },
+        "hyperparameters": { "type": "object" }
+      }
+    }
+  }
+}

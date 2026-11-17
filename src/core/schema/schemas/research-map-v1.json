@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/research-map-v1.json",
+  "title": "IdeaSeek ResearchMap (research-map-v1)",
+  "description": "Structural contract for the map reduced over a run's topic syntheses, a sound subset of validateResearchMap (src/knowledge/synthesis.ts). `required` holds only the keys the prompt asks the model for AND that survive into the artifact; inputHash, generator and generatedAt are stamped by the worker (src/worker/synthesis-handlers.ts) and never sent by the model, so they are typed but not required — one file validates the raw harness answer and the persisted knowledge/research-map alike; citations stays optional too, because the writer substitutes the topic papers whenever the model omits it. Whether a citation resolves to an indexed paper, whether lineages/gaps really trace to a cited input and how inputHash is reduced over topic hashes stay in TypeScript.",
+  "type": "object",
+  "required": ["landscape", "lineages", "conflicts", "gaps"],
+  "properties": {
+    "landscape": { "type": "string", "minLength": 1 },
+    "lineages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Non-empty is enforced by validateResearchMap and nothing repairs it. The prompt asks for {name, summary} and renderResearchMap reads both keys, yet the validator only checks Array.isArray and length — a model answering with plain lineages strings is accepted today, so no element constraint is encoded here.",
+      "items": {}
+    },
+    "conflicts": {
+      "type": "array",
+      "description": "May be honestly empty. The prompt asks for {topic, detail} objects while the input payload feeds the model plain strings, and validateResearchMap checks only Array.isArray, so no element constraint is encoded here.",
+      "items": {}
+    },
+    "gaps": { "type": "array", "items": { "type": "string" } },
+    "citations": {
+      "type": "array",
+      "description": "Not required: the writer replaces an absent or empty list with the synthesized papers, so a model that omits it is repaired rather than invalid — hence no minimum count either. Per-item source+title is what validateResearchMap checks whenever the model does supply entries.",
+      "items": {
+        "type": "object",
+        "required": ["source", "title"],
+        "properties": { "source": { "type": "string" }, "title": { "type": "string" } }
+      }
+    },
+    "inputHash": { "type": "string" },
+    "generator": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "number" }
+  }
+}

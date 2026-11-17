@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/mechanism-analysis-v1.json",
+  "title": "Mechanism Analysis v1",
+  "description": "The Mechanism Analyst's graph over persisted topic syntheses and failure boundaries: mechanisms, the design principles that support them, and the contradictions between claims. What is checked: the three lists exist with the fields the report prints, every mechanism names its principle, conditions and grounding, and `correlationCaution` is the literal true the prompt demands. What is NOT checked: that a mechanism is a mechanism rather than a correlation, that causalityStatement says exactly what the evidence does and does not establish, that each groundedIn/evidence entry carries a source and a location, that those sources were offered in the context, that every supportsMechanisms name matches a declared mechanism, and the `contract` name echo — cross-referencing the context is a judgement and lives in src/idea/mechanism.ts. `contradictions` may legitimately be empty, so no minimum is set on it.",
+  "type": "object",
+  "required": [
+    "mechanisms",
+    "designPrinciples",
+    "contradictions",
+    "causalityStatement",
+    "correlationCaution"
+  ],
+  "properties": {
+    "mechanisms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "designPrinciple", "conditions", "groundedIn"],
+        "properties": {
+          "name": { "type": "string" },
+          "designPrinciple": { "type": "string" },
+          "conditions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "groundedIn": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    },
+    "designPrinciples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["principle", "supportsMechanisms"],
+        "properties": {
+          "principle": { "type": "string" },
+          "supportsMechanisms": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        }
+      }
+    },
+    "contradictions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claimA", "claimB", "resolution", "evidence"],
+        "properties": {
+          "claimA": { "type": "string" },
+          "claimB": { "type": "string" },
+          "resolution": { "type": "string" },
+          "evidence": { "type": "array", "minItems": 1, "items": { "type": "object" } }
+        }
+      }
+    },
+    "causalityStatement": { "type": "string" },
+    "correlationCaution": { "const": true }
+  }
+}

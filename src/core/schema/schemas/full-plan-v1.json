@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/full-plan-v1.json",
+  "title": "IdeaSeek FullPlan (full-plan-v1)",
+  "description": "Structural contract for the Full Research plan, mirroring the writer: `ideaseek full plan` computes and persists this artifact to knowledge/full-plan-<ideaId>.json from persisted state (src/full/plan.ts buildFullPlan), with no model in the loop, so the schema accepts exactly what that literal emits. Checked structurally: the tag and identity/hash fields, the readiness gate (ready is a boolean because assertApprovable refuses on false, and readiness is required because approval reads it), the lock and fairness blocks, and the comparison entry types (methodId/status strings when present — the entry's presence set and its boolean `required` flag stay declared in FullPlan). What stays in TypeScript: inputHash recomputation (generatedAt and the live `resources` probe are excluded from it by design), the composition of handoff + fairness blockers into readiness, and the approval gate. Members the writer sets to null when a ceiling or binding is absent — lock.protocol, lock.dataSnapshotId, lock.codeCommit, fairness.inputHash, plus budget.maxModelCost/maxGpuHours/ideaMaxGpuMinutes, timeLimit.ceilingHours and resources.diskFreeGiB — are typed nullable or left untyped inside their deliberately loose group, because a null ceiling is a valid plan, not a malformed one; budget/timeLimit/network/resources/licenses are plan-time config and capacity snapshots whose member names stay declared in FullPlan. `approval` is absent until `ideaseek full approve` stamps it ({at, mode, planInputHash}) onto the stored draft.",
+  "type": "object",
+  "required": ["contract", "ideaId", "inputHash", "readiness", "lock", "comparisons", "fairness"],
+  "properties": {
+    "contract": { "const": "full-plan-v1" },
+    "ideaId": { "type": "string" },
+    "ideaVersion": { "type": "number" },
+    "inputHash": { "type": "string" },
+    "generatedAt": { "type": "number" },
+    "question": { "type": "string" },
+    "readiness": {
+      "type": "object",
+      "required": ["ready", "handoffLevel", "blockers"],
+      "properties": {
+        "ready": { "type": "boolean" },
+        "handoffLevel": { "type": "string" },
+        "blockers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "properties": {
+        "protocol": { "type": ["object", "null"] },
+        "dataSnapshotId": { "type": ["string", "null"] },
+        "codeCommit": { "type": ["string", "null"] },
+        "sliceIds": { "type": "array", "items": { "type": "string" } },
+        "seeds": { "type": "array", "items": { "type": "number" } }
+      }
+    },
+    "comparisons": {
+      "type": "object",
+      "properties": {
+        "gateOk": { "type": "boolean" },
+        "blocking": { "type": "array", "items": { "type": "string" } },
+        "required": { "type": "array", "items": { "$ref": "#/definitions/comparisonEntry" } },
+        "inventory": { "type": "array", "items": { "$ref": "#/definitions/comparisonEntry" } }
+      }
+    },
+    "budget": { "type": "object" },
+    "timeLimit": { "type": "object" },
+    "network": { "type": "object" },
+    "resources": { "type": "object" },
+    "licenses": { "type": "object" },
+    "fairness": {
+      "type": "object",
+      "required": ["present", "confirmed", "current", "inputHash", "blockers"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "confirmed": { "type": "boolean" },
+        "current": { "type": "boolean" },
+        "inputHash": { "type": ["string", "null"] },
+        "blockers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "approvalsNeeded": { "type": "array", "items": { "type": "string" } },
+    "boundaries": { "type": "array", "items": { "type": "string" } },
+    "approval": { "type": ["object", "null"] }
+  },
+  "definitions": {
+    "comparisonEntry": {
+      "type": "object",
+      "properties": { "methodId": { "type": "string" }, "status": { "type": "string" } }
+    }
+  }
+}

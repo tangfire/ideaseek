@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/supervisor-intent-v1.json",
+  "title": "Supervisor Intent v1",
+  "description": "One turn of the read-only supervisor in `ask` (research mode) or the material analyst (analysis mode): the model classifies free text as a CLI query, a grounded answer, a pending-approval Decision request, or unclear, and the CLI routes on exactly that value. What is checked: the payload is an object, `kind` is present, and the companion fields carry the types the routing code reads them as. What is deliberately NOT checked: the per-kind conditionals the prompt states in prose (answer optional on a query, cliArgs null unless querying, summary+reason on a pending-action) — a model that drops one still has to be routed, and ask.ts degrades every missing field safely (unknown kind → unclear, argv outside the read-only list → a pending Decision, never an executed change). Whether the answer is really grounded, and whether the classification is right, is judgement that stays with the agent and src/commands/ask.ts.",
+  "type": "object",
+  "required": ["kind"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "description": "The prompt offers query | answer | pending-action | unclear, but no enum is set: ask.ts treats any unrecognised value as unclear rather than failing the turn, and an enum here would turn that graceful degrade into an aborted run."
+    },
+    "answer": {
+      "type": ["string", "null"],
+      "description": "The evidence-grounded reply shown to the user, or the one-line summary of a query."
+    },
+    "cliArgs": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "argv for the read-only CLI to relay (e.g. [\"status\"]). Never trusted as sent: only kind=query uses it and the platform re-sanitizes it against the read-only command list."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Which high-impact area a pending-action touches. Plain string, not the prompt's six labels: the value is only ever written into the Decision text, and the deterministic fake harness reports its own label."
+    },
+    "summary": {
+      "type": "string",
+      "description": "The request restated for the audit log."
+    }
+  }
+}

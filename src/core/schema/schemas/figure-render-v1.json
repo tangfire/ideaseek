@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/figure-render-v1.json",
+  "title": "IdeaSeek figure render report (figure-render-v1)",
+  "description": "Structural contract for the FigureRenderReport that src/paper/render-figures.ts renderFigures returns and `paper render-figures` persists to reports/paper/figure-render.json; `paper review-figure` later rewrites figures[].review in place. Checked structurally: the honest tri-state status, that every figure entry carries both verdicts and the digest trail the report exists to produce (id, ok, outputs, scriptSha256, review, error), and a review block with its append-only history. Left in the domain module on purpose: which figures share bytes (the duplicate-digest demotion to partial), whether a vector output exists, timeout and exit-code reading, and every sha256 computation. Deliberately loose: formats/caption/statistics are written today but copy plan fields that are optional upstream, so they are typed and not required; durationMs is per-figure wall clock that no reader indexes, so it is left unconstrained; outputs[].path takes no pattern because it is `figures/<name>` for scanned files and the script's own savefig string for declared targets; caption and statistics fall back to '' and []; unchanged appears only on the success path.",
+  "type": "object",
+  "required": ["status", "figures", "python", "skill", "planInputHash", "renderedAt"],
+  "properties": {
+    "contract": { "const": "figure-render-v1" },
+    "status": { "enum": ["rendered", "partial", "failed"] },
+    "python": { "type": "string" },
+    "planInputHash": { "type": "string" },
+    "renderedAt": { "type": "number" },
+    "skill": {
+      "type": "object",
+      "required": ["name", "sha256"],
+      "properties": { "name": { "type": "string" }, "sha256": { "type": "string" } }
+    },
+    "figures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "ok", "outputs", "scriptSha256", "review", "error"],
+        "properties": {
+          "id": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "bytes", "sha256"],
+              "properties": {
+                "path": { "type": "string" },
+                "bytes": { "type": "integer" },
+                "sha256": { "type": "string" }
+              }
+            }
+          },
+          "formats": { "type": "array", "items": { "type": "string" } },
+          "caption": { "type": "string" },
+          "statistics": { "type": "array", "items": { "type": "string" } },
+          "scriptSha256": { "type": "string" },
+          "unchanged": { "type": "array", "items": { "type": "string" } },
+          "error": { "anyOf": [{ "type": "null" }, { "type": "string" }] },
+          "review": {
+            "type": "object",
+            "required": ["status", "history"],
+            "properties": {
+              "status": { "enum": ["unreviewed", "approved", "rejected"] },
+              "note": { "anyOf": [{ "type": "null" }, { "type": "string" }] },
+              "at": { "anyOf": [{ "type": "null" }, { "type": "number" }] },
+              "history": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["status", "at"],
+                  "properties": {
+                    "status": { "enum": ["unreviewed", "approved", "rejected"] },
+                    "at": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

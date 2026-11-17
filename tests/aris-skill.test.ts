@@ -183,3 +183,44 @@ describe('ideaseek aris (CLI)', () => {
     );
   });
 });
+
+describe('integrity also walks the directory (#19)', () => {
+  it('reports a file that exists in aris-skills/ but is not in the manifest', async () => {
+    // The positive control, and the reason it is written as one: before this,
+    // `ideaseek aris` compared the manifest against itself, so an unlisted file
+    // — one that `readVerified` would refuse at LOAD time — was invisible to the
+    // check whose whole job is to catch it, while the command still printed
+    // "all match". A guard with no positive control is indistinguishable from a
+    // guard that never fires.
+    const { writeFile, rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const stray = join('aris-skills', 'skills', 'zz-integrity-probe.md');
+    await writeFile(stray, '# probe\n\nnot vendored deliberately\n', 'utf8');
+    try {
+      const reports = await verifyVendoredIntegrity();
+      const found = reports.find((report) => report.path === 'skills/zz-integrity-probe.md');
+      expect(found, 'unlisted file was not reported').toBeDefined();
+      expect(found!.ok).toBe(false);
+      expect(found!.expected).toBeNull();
+      expect(found!.detail).toContain('not in VENDORED_FILES');
+    } finally {
+      await rm(stray, { force: true });
+    }
+    // And the tree is clean again: the check goes back to reporting nothing
+    // unusual, which is what makes the assertion above about the file rather
+    // than about my test's leftovers.
+    const after = await verifyVendoredIntegrity();
+    expect(after.every((report) => report.ok)).toBe(true);
+  });
+
+  it('keeps the two platform-authored files exempt, but only those', async () => {
+    // LICENSE and NOTICE.md are ours, not upstream artefacts: pinning their
+    // hash to an ARIS commit would be a category error. The exemption is a
+    // declared list, so a third unlisted file still gets caught.
+    const { PLATFORM_AUTHORED_FILES } = await import('../src/aris/skill.js');
+    expect(PLATFORM_AUTHORED_FILES).toEqual(['LICENSE', 'NOTICE.md']);
+    const reports = await verifyVendoredIntegrity();
+    expect(reports.some((report) => report.path === 'LICENSE')).toBe(false);
+    expect(reports.every((report) => report.ok)).toBe(true);
+  });
+});

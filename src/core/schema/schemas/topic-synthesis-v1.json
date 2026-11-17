@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/topic-synthesis-v1.json",
+  "title": "IdeaSeek TopicSynthesis (topic-synthesis-v1)",
+  "description": "Structural contract for a topic cluster synthesis, a sound subset of validateTopicSynthesis (src/knowledge/synthesis.ts). `required` holds only the keys the prompt asks the model for AND that survive into the artifact: topicId, inputHash, papers, generator and generatedAt are stamped by the worker (src/worker/synthesis-handlers.ts) and never sent by the model, so they are typed here but not required — one file then validates the raw harness answer and the persisted knowledge/topic-synthesis alike. Whether a cited source really is one of the cluster's papers, verbatim-quote checking and what inputHash keys (the incremental cache) stay in TypeScript.",
+  "type": "object",
+  "required": ["topic", "methodLineage", "keyFindings", "conflicts", "mechanisms", "openQuestions"],
+  "properties": {
+    "topic": { "type": "string", "minLength": 1 },
+    "methodLineage": { "type": "array", "items": { "type": "string" } },
+    "keyFindings": {
+      "type": "array",
+      "description": "text+source are enforced by validateTopicSynthesis; page/quote are declared nullable by the prompt and checked by nothing, so they may also be absent (renderTopicSynthesis skips them).",
+      "items": {
+        "type": "object",
+        "required": ["text", "source"],
+        "properties": {
+          "text": { "type": "string" },
+          "source": { "type": "string" },
+          "page": { "type": ["number", "null"] },
+          "quote": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "conflicts": { "type": "array", "items": { "type": "string" } },
+    "mechanisms": {
+      "type": "array",
+      "description": "May be honestly empty; the prompt's WHY/WHEN-it-fails rule is judgement and is not encoded.",
+      "items": {
+        "type": "object",
+        "required": ["name", "principle", "conditions"],
+        "properties": {
+          "name": { "type": "string" },
+          "principle": { "type": "string" },
+          "conditions": { "type": "string" }
+        }
+      }
+    },
+    "openQuestions": { "type": "array", "items": { "type": "string" } },
+    "topicId": { "type": "string", "pattern": "^topic-" },
+    "inputHash": { "type": "string" },
+    "papers": {
+      "type": "array",
+      "description": "Cluster membership, rebuilt wholesale by the writer from the cluster, so a model-supplied value is never trusted; may legitimately be absent in the raw answer.",
+      "items": {
+        "type": "object",
+        "properties": { "paperId": { "type": "string" }, "title": { "type": "string" } }
+      }
+    },
+    "generator": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "number" }
+  }
+}

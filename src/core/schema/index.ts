@@ -29,6 +29,28 @@ import rebuttalV1 from './schemas/rebuttal-v1.json' with { type: 'json' };
 import paperSlidesV1 from './schemas/paper-slides-v1.json' with { type: 'json' };
 import paperTalkV1 from './schemas/paper-talk-v1.json' with { type: 'json' };
 import protocolProposalV1 from './schemas/protocol-proposal-v1.json' with { type: 'json' };
+import comparisonMatrixProposalV1 from './schemas/comparison-matrix-proposal-v1.json' with { type: 'json' };
+import comparisonMatrixV1 from './schemas/comparison-matrix-v1.json' with { type: 'json' };
+import datasetDiscoveryV1 from './schemas/dataset-discovery-v1.json' with { type: 'json' };
+import dependencyPlanV1 from './schemas/dependency-plan-v1.json' with { type: 'json' };
+import evidenceAuditV1 from './schemas/evidence-audit-v1.json' with { type: 'json' };
+import fairnessLockV1 from './schemas/fairness-lock-v1.json' with { type: 'json' };
+import figureRenderV1 from './schemas/figure-render-v1.json' with { type: 'json' };
+import fullPlanV1 from './schemas/full-plan-v1.json' with { type: 'json' };
+import ideaDiagnosisV1 from './schemas/idea-diagnosis-v1.json' with { type: 'json' };
+import ideaDiscussV1 from './schemas/idea-discuss-v1.json' with { type: 'json' };
+import mechanismAnalysisV1 from './schemas/mechanism-analysis-v1.json' with { type: 'json' };
+import overleafExportV1 from './schemas/overleaf-export-v1.json' with { type: 'json' };
+import pageVisualV1 from './schemas/page-visual-v1.json' with { type: 'json' };
+import paperCompileV1 from './schemas/paper-compile-v1.json' with { type: 'json' };
+import reproductionBlueprintV1 from './schemas/reproduction-blueprint-v1.json' with { type: 'json' };
+import researchMapV1 from './schemas/research-map-v1.json' with { type: 'json' };
+import researchMaterialAssessmentV1 from './schemas/research-material-assessment-v1.json' with { type: 'json' };
+import researchWikiV1 from './schemas/research-wiki-v1.json' with { type: 'json' };
+import resultToClaimV1 from './schemas/result-to-claim-v1.json' with { type: 'json' };
+import supervisorIntentV1 from './schemas/supervisor-intent-v1.json' with { type: 'json' };
+import synthesisLeadV1 from './schemas/synthesis-lead-v1.json' with { type: 'json' };
+import topicSynthesisV1 from './schemas/topic-synthesis-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -57,38 +79,28 @@ export interface SchemaCheck {
 }
 
 /** Registry keys — keep in lockstep with `schemas/*.json`. */
-export type SchemaName =
-  | 'papercard-v1'
-  | 'parsed-paper-v1'
-  | 'experiment-spec-v1'
-  | 'run-result-v1'
-  | 'dataset-profile-v1'
-  | 'image-profile-v1'
-  | 'direction-audit-v1'
-  | 'analysis-verdict-v1'
-  | 'materialization-report-v1'
-  | 'metric-alignment-v1'
-  | 'implementation-program-v1'
-  | 'idea-implementation-v1'
-  | 'failure-diagnosis-v1'
-  | 'experiment-plan-v1'
-  | 'ablation-plan-v1'
-  | 'novelty-check-v1'
-  | 'idea-review-v1'
-  | 'experiment-audit-v1'
-  | 'dataset-candidates-v1'
-  | 'idea-card-v1'
-  | 'idea-candidates-v1'
-  | 'integrity-forensics-v1'
-  | 'paper-plan-v1'
-  | 'paper-figure-v1'
-  | 'paper-write-v1'
-  | 'rebuttal-v1'
-  | 'paper-slides-v1'
-  | 'paper-talk-v1'
-  | 'protocol-proposal-v1';
+/**
+ * Every registered contract name, derived from the registry object itself
+ * rather than hand-maintained beside it.
+ *
+ * The union used to be a separate list of 29 literals next to the object, which
+ * let the two disagree in both directions: register a schema and forget to add
+ * the name (TS shouts), or name one with no file behind it (TS stays silent and
+ * the caller gets Ajv's runtime "no schema with key"). Task #14 added 22
+ * contracts at once, and a hand-maintained list beside a 51-entry registry is
+ * exactly the arrangement where that drift lives. Deriving the type removes
+ * the possibility instead of adding another check for it.
+ *
+ * The union used to be a separate list of 29 literals, which meant the two
+ * could disagree in both directions: register a schema and forget the name
+ * (TS rejects the object, so at least that one shouts), or add a name with no
+ * file behind it (TS stays silent and the caller gets a runtime "no schema with
+ * key" from Ajv). #14 added 22 contracts at once, and a hand-maintained list
+ * next to a 51-entry registry is precisely the arrangement where that drift
+ * lives. Deriving the type removes the possibility instead of checking for it.
+ */
 
-const SCHEMAS: Record<SchemaName, object> = {
+const SCHEMAS = {
   'papercard-v1': papercardV1,
   'parsed-paper-v1': parsedPaperV1,
   'experiment-spec-v1': experimentSpecV1,
@@ -118,7 +130,30 @@ const SCHEMAS: Record<SchemaName, object> = {
   'paper-slides-v1': paperSlidesV1,
   'paper-talk-v1': paperTalkV1,
   'protocol-proposal-v1': protocolProposalV1,
+  'comparison-matrix-proposal-v1': comparisonMatrixProposalV1,
+  'comparison-matrix-v1': comparisonMatrixV1,
+  'dataset-discovery-v1': datasetDiscoveryV1,
+  'dependency-plan-v1': dependencyPlanV1,
+  'evidence-audit-v1': evidenceAuditV1,
+  'fairness-lock-v1': fairnessLockV1,
+  'figure-render-v1': figureRenderV1,
+  'full-plan-v1': fullPlanV1,
+  'idea-diagnosis-v1': ideaDiagnosisV1,
+  'idea-discuss-v1': ideaDiscussV1,
+  'mechanism-analysis-v1': mechanismAnalysisV1,
+  'overleaf-export-v1': overleafExportV1,
+  'page-visual-v1': pageVisualV1,
+  'paper-compile-v1': paperCompileV1,
+  'reproduction-blueprint-v1': reproductionBlueprintV1,
+  'research-map-v1': researchMapV1,
+  'research-material-assessment-v1': researchMaterialAssessmentV1,
+  'research-wiki-v1': researchWikiV1,
+  'result-to-claim-v1': resultToClaimV1,
+  'supervisor-intent-v1': supervisorIntentV1,
+  'synthesis-lead-v1': synthesisLeadV1,
+  'topic-synthesis-v1': topicSynthesisV1,
 };
+export type SchemaName = keyof typeof SCHEMAS;
 
 let ajv: Ajv | null = null;
 const compiled = new Map<string, ValidateFunction>();

@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/paper-compile-v1.json",
+  "title": "IdeaSeek paper compile report (paper-compile-v1)",
+  "description": "Structural contract for the CompileReport that src/paper/compile.ts compileManuscript returns at every exit and `paper compile` persists to reports/paper/compile-report.json. Checked structurally: the tri-state status union the TS type enumerates, that every outcome carries the whole field set a reader indexes (engine, attempts, exitCode, logTail, blockers, provenance), and the one cross-field invariant every write site keeps — a report claiming compiled carries the PDF path and the exit code. Left in the domain module on purpose: which blocker a failing log means (classifyCompileFailure), redaction of the log tail, the page count scraped out of compile.log, whether the vendored template exists, and the figure cross-check (unapprovedFigureIncludes reads reports/paper/figure-render.json) — those are judgement and filesystem facts, not shape. Nothing here constrains how long a log tail or how many blockers a report may carry.",
+  "type": "object",
+  "required": [
+    "status",
+    "venue",
+    "template",
+    "engine",
+    "buildCommand",
+    "attempts",
+    "exitCode",
+    "pdfPath",
+    "pageCount",
+    "logTail",
+    "blockers",
+    "skill",
+    "manuscriptInputHash",
+    "compiledAt"
+  ],
+  "properties": {
+    "contract": { "const": "paper-compile-v1" },
+    "status": { "enum": ["compiled", "failed", "blocked"] },
+    "venue": { "type": "string" },
+    "template": { "anyOf": [{ "type": "null" }, { "type": "string" }] },
+    "engine": { "const": "pdflatex" },
+    "buildCommand": { "type": "array", "items": { "type": "string" } },
+    "attempts": { "type": "number" },
+    "exitCode": { "anyOf": [{ "type": "null" }, { "type": "number" }] },
+    "pdfPath": { "anyOf": [{ "type": "null" }, { "type": "string" }] },
+    "pageCount": { "anyOf": [{ "type": "null" }, { "type": "number" }] },
+    "logTail": { "type": "string" },
+    "blockers": { "type": "array", "items": { "type": "string" } },
+    "skill": {
+      "type": "object",
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "type": "string" },
+        "sha256": { "type": "string" }
+      }
+    },
+    "manuscriptInputHash": { "type": "string" },
+    "compiledAt": { "type": "number" },
+    "mainPath": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "compiled" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "pdfPath": { "type": "string" },
+          "exitCode": { "type": "number" }
+        }
+      }
+    }
+  ]
+}

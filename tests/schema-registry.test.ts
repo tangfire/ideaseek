@@ -42,28 +42,11 @@ const VALIDATED_ELSEWHERE = new Set(['implementation-program-v1']);
  * one is an agent output the platform accepts on trust. Adding a name here is
  * the deliberate step; silently not noticing it is what this test prevents.
  */
-const PROMPT_ONLY_CONTRACTS = new Set([
-  'reproduction-blueprint-v1',
-  'dependency-plan-v1',
-  'comparison-matrix-v1',
-  'comparison-matrix-proposal-v1',
-  'fairness-lock-v1',
-  'full-plan-v1',
-  'dataset-discovery-v1',
-  'mechanism-analysis-v1',
-  'idea-discuss-v1',
-  'idea-diagnosis-v1',
-  'synthesis-lead-v1',
-  'evidence-audit-v1',
-  'result-to-claim-v1',
-  'research-material-assessment-v1',
-  'integrity-audit-v1',
-  'page-visual-v1',
-  'research-wiki-v1',
-  'paper-compile-v1',
-  'overleaf-export-v1',
-  'figure-render-v1',
-]);
+// Task #14 registered 22 of these, so the list shrinks to what genuinely has
+// no schema behind it. The assertion below fails if a name stays here after
+// being registered — debt lists that never shrink become the place a missing
+// validator hides.
+const PROMPT_ONLY_CONTRACTS = new Set(['integrity-audit-v1']);
 
 it('every declared output schema is either registered or declared prompt-only', async () => {
   const files = await sourceFiles(fileURLToPath(new URL('../src', import.meta.url)));
