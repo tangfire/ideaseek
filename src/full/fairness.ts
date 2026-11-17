@@ -1,5 +1,7 @@
 import { sha256Of } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
+import { metricIdentifier } from '../core/metric-id.js';
+import { isBaselineSubjectRun } from '../idea/analyze.js';
 import { stableJson } from '../experiment/spec.js';
 
 /**
@@ -101,6 +103,8 @@ function computeInputHash(
 }
 
 interface SpecShape {
+  /** The idea binding decides whether a run may stand as a method's evidence. */
+  idea?: { ideaId: string; version: number } | null;
   dataSnapshotId?: unknown;
   sliceIds?: unknown;
   seeds?: unknown;
@@ -164,10 +168,13 @@ export async function buildFairnessLock(root: string, ideaId: string): Promise<F
       metrics: metricNames(ideaSpec?.metrics).slice().sort(),
     };
 
-    const protocolMetrics = [
-      ...metricNames(protocol?.record?.primaryMetrics),
-      ...metricNames(protocol?.record?.secondaryMetrics),
-    ]
+    const protocolPrimaries = metricNames(protocol?.record?.primaryMetrics)
+      .filter((name, index, all) => all.indexOf(name) === index)
+      .sort();
+    const protocolSecondaries = metricNames(protocol?.record?.secondaryMetrics)
+      .filter((name, index, all) => all.indexOf(name) === index)
+      .sort();
+    const protocolMetrics = [...protocolPrimaries, ...protocolSecondaries]
       .filter((name, index, all) => all.indexOf(name) === index)
       .sort();
 
@@ -181,6 +188,22 @@ export async function buildFairnessLock(root: string, ideaId: string): Promise<F
       const resultStatus = (doc.result as { status?: unknown } | null)?.status;
       if (resultStatus !== 'succeeded' && resultStatus !== 'partial') continue;
       for (const id of strings(spec.comparisonIds)) {
+        // A run that merely *lists* a method in comparisonIds is not evidence
+        // about that method — it is the idea naming its opponents. Without this
+        // filter the idea's own experiment (created latest, so it always wins)
+        // became "the fedavg run", and the fairness lock compared the idea
+        // against itself: identical seeds, identical snapshot, `aligned`, and a
+        // full run authorised with no baseline evidence at all. Same defect as
+        // #23, which was already closed in the analysis layer by
+        // `isBaselineSubjectRun` — this gate had simply never been audited.
+        if (
+          !isBaselineSubjectRun(
+            { idea: spec.idea ?? null, comparisonIds: strings(spec.comparisonIds) },
+            id,
+            ideaId,
+          )
+        )
+          continue;
         const current = covering.get(id);
         const currentSpec = readSpec(current);
         const currentAt = typeof currentSpec?.createdAt === 'number' ? currentSpec.createdAt : -1;
@@ -239,24 +262,87 @@ export async function buildFairnessLock(root: string, ideaId: string): Promise<F
       }
 
       // metrics: every protocol primary/secondary metric must be produced.
+      //
+      // Matched by metric identifier, not by string equality. The protocol
+      // declares `target_unseen_domain_top1_accuracy (held-out domain value, all
+      // samples, %)` while a method spec records the bare identifier, so exact
+      // comparison called every protocol metric missing on every method — a lock
+      // that reports universal unfairness teaches the operator to confirm past
+      // it, which destroys the only thing a fairness lock is for. This is #15's
+      // vocabulary gap arriving in a layer nobody had looked at.
       const specMetrics = metricNames(spec.metrics);
-      const missing = protocolMetrics.filter((name) => !specMetrics.includes(name));
+      const specIdentifiers = new Set(specMetrics.map(metricIdentifier));
+      // Fairness asks one question: is the quantity being compared produced the
+      // same way on both sides. So only the protocol's PRIMARY metrics can be a
+      // deviation. Requiring every declared secondary turned the lock into a
+      // machine that reported all real baselines as unfair — upstream method
+      // code is not ours to extend, and an idea-specific diagnostic
+      // (`communication_cost_per_round`, a privacy attack score) missing from
+      // fedavg says nothing about whether top-1 accuracy was measured alike.
+      // Secondaries are still reported, because coverage is a fact the
+      // researcher needs; they just do not block, which is what made operators
+      // confirm past a lock that cried wolf every time.
+      const missingPrimaries = protocolPrimaries.filter(
+        (name) => !specIdentifiers.has(metricIdentifier(name)),
+      );
+      const missingSecondaries = protocolSecondaries.filter(
+        (name) => !specIdentifiers.has(metricIdentifier(name)),
+      );
+      const missing = [...missingPrimaries, ...missingSecondaries];
+      const coveredCount = protocolMetrics.length - missing.length;
+      const matchedByName = protocolMetrics.filter(
+        (name) => specMetrics.includes(name) && !missing.includes(name),
+      );
+      const matchedByIdOnly = coveredCount - matchedByName.length;
       if (protocolMetrics.length === 0) {
         dimensions.push({
           dimension: 'metrics',
           status: 'unknown',
           detail: 'locked protocol declares no metrics',
         });
-      } else if (missing.length === 0) {
+      } else if (missingPrimaries.length > 0) {
+        // The compared quantity itself is absent: this is a real deviation and
+        // it blocks, because a delta against a method that did not produce the
+        // primary metric is not a comparison at all.
+        const detail =
+          `method does not produce ${missingPrimaries.length} of ` +
+          `${protocolPrimaries.length} protocol PRIMARY metric(s): ` +
+          `${missingPrimaries.map((name) => metricIdentifier(name)).join(', ')}`;
+        dimensions.push({ dimension: 'metrics', status: 'deviation', detail });
+        deviations.push(`metrics: ${detail}`);
+      } else if (missingSecondaries.length > 0) {
+        // Reported, not blocked: the primaries line up, and a missing
+        // idea-specific diagnostic is coverage information rather than an
+        // unfair comparison.
         dimensions.push({
           dimension: 'metrics',
           status: 'aligned',
-          detail: `produces all protocol metrics: ${protocolMetrics.join(', ')}`,
+          detail:
+            `produces all ${protocolPrimaries.length} primary metric(s); ` +
+            `${missingSecondaries.length} of ${protocolSecondaries.length} secondary metric(s) ` +
+            `not produced by this method (${missingSecondaries
+              .slice(0, 4)
+              .map((name) => metricIdentifier(name))
+              .join(', ')}${
+              missingSecondaries.length > 4 ? ` +${missingSecondaries.length - 4} more` : ''
+            } — information only, the compared quantity is matched)`,
         });
       } else {
-        const detail = `missing protocol metric(s): ${missing.join(', ')}`;
-        dimensions.push({ dimension: 'metrics', status: 'deviation', detail });
-        deviations.push(`metrics: ${detail}`);
+        // Saying "all matched" when nothing matched by the declared string is
+        // misleading in the other direction: the comparison succeeded because
+        // the identifier agreed while the prose differed, which is worth
+        // knowing before someone treats the two names as interchangeable.
+        const proseNote =
+          matchedByIdOnly > 0
+            ? ` — ${matchedByIdOnly} matched by identifier only, where the method spec omits the ` +
+              'protocol definition prose: identity rests on the name, not on the stated ' +
+              'population or aggregation'
+            : '';
+        dimensions.push({
+          dimension: 'metrics',
+          status: 'aligned',
+          detail: `produces all ${protocolMetrics.length} protocol metric(s)${proseNote}`,
+        });
       }
 
       // seeds/repeats: identical seed set to the idea's own spec.

@@ -437,3 +437,57 @@ describe('ideaseek full fairness (e2e)', () => {
     expect((JSON.parse(recovered.stdout) as { confirmed: boolean }).confirmed).toBe(true);
   }, 300_000);
 });
+
+describe('a baseline row must come from a run whose subject is that baseline', () => {
+  it('refuses to grade the idea against itself', async () => {
+    // The defect: `covering` indexed experiments by comparisonIds, and the
+    // idea's own experiment lists the baselines it faces. Being the newest
+    // succeeded run, it always won — so the fairness lock compared
+    // `idea-alpha` to `idea-alpha`: identical seeds, identical snapshot, and
+    // `aligned` on every dimension. A full run would have been authorised with
+    // no baseline evidence behind the lock at all. This is #23's contamination
+    // in the gate that is supposed to prevent exactly that.
+    const dir = await makeProjectDir();
+    await setupIdeaWithSpec(dir);
+    expect(
+      (
+        await runCli(dir, [
+          'comparison',
+          'register',
+          'fedavg',
+          '--repo',
+          'https://example.org/fedavg.git',
+        ])
+      ).code,
+    ).toBe(0);
+    await seedProtocolProposal(dir);
+    expect((await runCli(dir, ['confirm', 'protocol', '--json'])).code).toBe(0);
+    expect(
+      (await runCli(dir, ['run', '--question', 'fairness self-compare run', '--enqueue-only']))
+        .code,
+    ).toBe(0);
+
+    // Only the idea's own run exists, so the lock must NOT claim fedavg is
+    // aligned: there is no run whose subject is fedavg.
+    const draft = await runCli(dir, ['full', 'fairness', '--idea', 'alpha', '--json']);
+    const payload = JSON.parse(draft.stdout) as {
+      blockers: string[];
+      methods: { methodId: string; deviations: string[]; unknowns: string[] }[];
+    };
+    const fedavg = payload.methods.find((entry) => entry.methodId === 'fedavg');
+    expect(fedavg).toBeDefined();
+    expect(payload.blockers.join(' ')).toContain('no succeeded experiment');
+    // The honest shape: nothing to compare is reported as *unknown*, not
+    // invented as a deviation and not smoothed into alignment. A gate that
+    // manufactures either flavour teaches the operator to ignore it.
+    expect(fedavg!.deviations).toEqual([]);
+    // Every fairness dimension is unknown here — including the two that the
+    // old code claimed were aligned by reading the idea's own spec.
+    // Asserted by content, not by an exact array: what matters for this defect
+    // is that the two dimensions the old code claimed were aligned by reading
+    // the idea's own spec are now honestly unknown.
+    expect(fedavg!.unknowns).toContain('data-split');
+    expect(fedavg!.unknowns).toContain('seeds-repeats');
+    expect(fedavg!.unknowns.join(' ')).not.toContain('same slices');
+  }, 180_000);
+});
