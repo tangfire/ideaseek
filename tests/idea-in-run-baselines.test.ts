@@ -262,3 +262,56 @@ describe('in-run controls as a baseline source (gathering)', () => {
     expect(verdict.nextSteps.join(' ')).toContain('primary metric name as the key');
   });
 });
+
+describe('persistAnalysis (the file downstream gates read must carry the final conclusion)', () => {
+  it('writes both the versioned copy and analysis.json, and refuses paths outside the idea workspace', async () => {
+    // The bug this pins is not cosmetic: `analysis.json` held the deterministic
+    // ladder's `rejected` while the command printed the review's `inconclusive`,
+    // and `full plan` blocked handoff on the stale word — the platform acted on
+    // one verdict and showed the researcher another. In CI the harness is fake so
+    // no review ever adopts a different conclusion, and this path had no
+    // automated coverage at all until now.
+    const { persistAnalysis } = await import('../src/idea/analyze.js');
+    const { readFile, mkdir, writeFile } = await import('node:fs/promises');
+    const persistId = 'persist-probe';
+    const root = await mkdtemp(join(tmpdir(), 'ideaseek-persist-'));
+    const idea = join(root, 'ideas', persistId);
+    await mkdir(join(idea, 'experiments'), { recursive: true });
+    await writeFile(
+      join(idea, 'workspace.json'),
+      JSON.stringify({ ideaId: persistId, currentVersion: 3, status: 'ANALYZING' }),
+      'utf8',
+    );
+
+    const paths = await persistAnalysis(root, {
+      ideaId: persistId,
+      ideaVersion: 3,
+      codeHash: 'sha256:aa',
+      verdict: 'inconclusive',
+      failureClass: 'unknown',
+      deterministicVerdict: 'rejected',
+      deterministicFailureClass: 'effect-insufficient',
+      reviewAdopted: { confidence: 0.6, comparable: true },
+      baselineComparison: [],
+      primaryDelta: null,
+      mechanismEvidence: [],
+      coverage: { scales: ['smoke'], datasets: ['inputs:fdg'], seeds: 2, missing: [] },
+      failures: [],
+      resources: [],
+    } as unknown as Parameters<typeof persistAnalysis>[1]);
+
+    expect(paths).toHaveLength(2);
+    const stored = JSON.parse(
+      await readFile(join(idea, 'experiments', 'analysis.json'), 'utf8'),
+    ) as {
+      verdict: string;
+      deterministicVerdict: string;
+      reviewAdopted: { confidence: number };
+    };
+    expect(stored.verdict).toBe('inconclusive');
+    // Both conclusions stay on the record, each attributed to whoever owned it.
+    expect(stored.deterministicVerdict).toBe('rejected');
+    expect(stored.reviewAdopted.confidence).toBe(0.6);
+    expect(JSON.parse(await readFile(paths[0]!, 'utf8'))).toEqual(stored);
+  });
+});

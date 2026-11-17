@@ -3661,6 +3661,14 @@ export function registerIdeaCommand(program: Command): void {
             if (!review.comparable && review.verdict === 'rejected') {
               review.verdict = 'inconclusive';
             }
+            // Snapshot before anything is overwritten: after the assignment
+            // below, `analysis.verdict` no longer holds the ladder's conclusion,
+            // and a field named `deterministic` that carries the adopted one is
+            // worse than no field — it misfiles the provenance of a verdict.
+            const deterministic = {
+              verdict: analysis.verdict,
+              failureClass: analysis.failureClass,
+            };
             if (analysis.verdict !== 'invalid-run' && review.verdict !== 'invalid-run') {
               // The agent owns the comparative conclusion; the code keeps the
               // one boundary no model may cross — a crashed or metric-less run
@@ -3670,6 +3678,12 @@ export function registerIdeaCommand(program: Command): void {
               // against a fraction is not a contest), and printing the ladder's
               // word anyway would have recorded a lost hypothesis that was
               // never actually tested.
+              analysis.deterministicVerdict = deterministic.verdict;
+              analysis.deterministicFailureClass = deterministic.failureClass;
+              analysis.reviewAdopted = {
+                confidence: review.confidence,
+                comparable: review.comparable,
+              };
               analysis.verdict = review.verdict;
               analysis.failureClass = review.comparable
                 ? review.verdict === 'supported'
@@ -3688,9 +3702,28 @@ export function registerIdeaCommand(program: Command): void {
             const { writeFile } = await import('node:fs/promises');
             await writeFile(
               paths[paths.length - 1]!.replace('analysis.json', 'analysis-agent-review.json'),
-              `${JSON.stringify({ ideaId, review, deterministic: analysis.verdict }, null, 2)}\n`,
+              `${JSON.stringify(
+                {
+                  ideaId,
+                  review,
+                  deterministic: deterministic.verdict,
+                  deterministicFailureClass: deterministic.failureClass,
+                  adopted: analysis.verdict,
+                },
+                null,
+                2,
+              )}\n`,
               'utf8',
             ).catch(() => undefined);
+            if (analysis.verdict !== deterministic.verdict) {
+              // Persist what the command actually concluded. The file is what
+              // `idea handoff`, `full plan` and the paper chain read, so leaving
+              // the superseded ladder verdict on disk meant the platform kept
+              // acting on a conclusion it had just publicly revised — on FDG that
+              // stale word was the stated reason handoff was unavailable.
+              const { persistAnalysis } = await import('../idea/analyze.js');
+              await persistAnalysis(root, analysis).catch(() => undefined);
+            }
           }
           if (opts.json) {
             process.stdout.write(jsonLine({ analysis, paths, review, reviewNote }));

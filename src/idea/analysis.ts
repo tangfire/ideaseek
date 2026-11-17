@@ -215,6 +215,18 @@ export interface IdeaAnalysis {
   codeHash: string | null;
   verdict: AnalysisVerdict;
   failureClass: FailureClass;
+  /**
+   * What the deterministic ladder concluded, kept beside `verdict` when a model
+   * review changes the comparative conclusion. Without it the artifact claimed a
+   * verdict nobody could attribute: `analysis.json` held the ladder's `rejected`
+   * while the command printed the review's `inconclusive`, and the downstream
+   * gates read the file — so the platform acted on one conclusion and showed the
+   * researcher another. Both are recorded, each attributed to its owner.
+   */
+  deterministicVerdict?: AnalysisVerdict;
+  deterministicFailureClass?: FailureClass;
+  /** Set when a model review's conclusion was adopted over the ladder's. */
+  reviewAdopted?: { confidence: number; comparable: boolean } | null;
   /** Primary metric comparison against the best available baseline. */
   baselineComparison: BaselineComparison[];
   primaryDelta: number | null;

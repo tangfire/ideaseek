@@ -476,7 +476,11 @@ export async function collectAnalysisInput(
     const from = `${spec.specId}@v${spec.version}`;
     for (const control of result.baselines ?? []) {
       if (metricIdentifier(control.metric) !== metricIdentifier(primary ?? '')) continue;
-      if (allControls.some((entry) => entry.fromSpecId === from && entry.methodId === control.methodId))
+      if (
+        allControls.some(
+          (entry) => entry.fromSpecId === from && entry.methodId === control.methodId,
+        )
+      )
         continue;
       allControls.push({ methodId: control.methodId, value: control.value, fromSpecId: from });
     }
@@ -529,16 +533,35 @@ export async function runAnalysis(
 ): Promise<AnalysisOutcome> {
   const input = await collectAnalysisInput(projectRoot, ideaId, db, protocolMetricNames);
   const analysis = analyzeIdea(input);
-  const dir = join(ideaDir(projectRoot, ideaId), 'experiments');
+  const paths = await persistAnalysis(projectRoot, analysis);
+  return { analysis, paths };
+}
+
+/**
+ * Write the analysis into the idea workspace: the versioned copy and the
+ * `analysis.json` every downstream gate reads.
+ *
+ * Exported because the conclusion a command displays is not always the one it
+ * first persisted: a comparability review may adopt a different comparative
+ * verdict, and a file that still holds the superseded conclusion makes the
+ * platform act on one verdict while showing the researcher another — which is
+ * what happened on FDG, where `analysis.json` said `rejected` and the command
+ * printed `inconclusive`, and `full plan` then blocked handoff on the stale word.
+ */
+export async function persistAnalysis(
+  projectRoot: string,
+  analysis: IdeaAnalysis,
+): Promise<string[]> {
+  const dir = join(ideaDir(projectRoot, analysis.ideaId), 'experiments');
   await ensureDir(dir);
   const { assertIdeaWorkspacePath } = await import('./workspace.js');
   const versioned = join(dir, `analysis-v${analysis.ideaVersion}.json`);
   const latest = join(dir, 'analysis.json');
-  assertIdeaWorkspacePath(projectRoot, ideaId, versioned);
+  assertIdeaWorkspacePath(projectRoot, analysis.ideaId, versioned);
   const payload = `${JSON.stringify(analysis, null, 2)}\n`;
   await writeFileAtomic(versioned, payload);
   await writeFileAtomic(latest, payload);
-  return { analysis, paths: [versioned, latest] };
+  return [versioned, latest];
 }
 
 /** Validates the idea exists before analysis (fail fast with clear errors). */
