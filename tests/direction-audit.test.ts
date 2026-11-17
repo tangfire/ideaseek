@@ -1,7 +1,13 @@
-import { expect, it } from 'vitest';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import {
   auditMetricDirections,
+  directionAuditInputHash,
   directionIsFlagged,
+  readDirectionAudit,
+  writeDirectionAudit,
   type DirectionAudit,
 } from '../src/experiment/direction-audit.js';
 import type { LockedProtocol } from '../src/experiment/protocol-source.js';
@@ -151,4 +157,69 @@ it('treats an unexamined metric as unverified, and an unsupported finding as inc
   expect((audit as unknown as DirectionAudit).findings[0]!.evidence[0]).toMatch(
     /quoted no definition text/,
   );
+});
+
+describe('direction audit caching (a verdict must not depend on which sample answered)', () => {
+  const audit = {
+    findings: [
+      {
+        metric: 'loss (lower is better)',
+        declared: 'higher',
+        expected: 'lower',
+        consistent: false,
+        evidence: ['definition says a lower value is better'],
+        confidence: 0.9,
+      },
+    ],
+    inconsistent: ['loss (lower is better)'],
+    summary: 'one declared direction contradicts its own definition',
+  } as unknown as DirectionAudit;
+
+  it('keys the cache on the protocol it examined and round-trips through disk', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ideaseek-dir-audit-'));
+    await mkdir(join(root, 'knowledge'), { recursive: true });
+
+    const before = directionAuditInputHash(PROTOCOL);
+    expect(await readDirectionAudit(root, PROTOCOL)).toBeNull();
+    const path = await writeDirectionAudit(root, PROTOCOL, audit);
+    const stored = await readDirectionAudit(root, PROTOCOL);
+    expect(stored).not.toBeNull();
+    expect(stored!.audit.inconsistent).toEqual(['loss (lower is better)']);
+    expect(stored!.protocolHash).toBe(before);
+    expect(stored!.auditedAt).toBeGreaterThan(0);
+
+    // A different protocol must not read this cache, though the file sits in
+    // the same directory: the key is what was audited, not where it landed.
+    const changed: LockedProtocol = {
+      ...PROTOCOL,
+      primaryMetrics: [declaredMetric('accuracy (held-out, %)', 'higher')],
+    };
+    expect(directionAuditInputHash(changed)).not.toBe(before);
+    expect(await readDirectionAudit(root, changed)).toBeNull();
+
+    // Declaring the unit the definition prose already stated is NOT a new
+    // question for the direction audit, so the cached verdict is reused rather
+    // than re-sampled: same name, same direction, same unit value.
+    const proseSaidPercent = PROTOCOL.primaryMetrics[0]!.name.includes('%');
+    expect(proseSaidPercent).toBe(true);
+    const withDeclaredUnit: LockedProtocol = {
+      ...PROTOCOL,
+      primaryMetrics: [declaredMetric(PROTOCOL.primaryMetrics[0]!.name, 'higher', 'percent')],
+    };
+    expect(directionAuditInputHash(withDeclaredUnit)).toBe(before);
+
+    // What does invalidate it: a different direction on the same metric, or a
+    // unit value that disagrees with the prose.
+    const flipped: LockedProtocol = {
+      ...PROTOCOL,
+      primaryMetrics: [declaredMetric(PROTOCOL.primaryMetrics[0]!.name, 'lower')],
+    };
+    expect(directionAuditInputHash(flipped)).not.toBe(before);
+    const wrongUnit: LockedProtocol = {
+      ...PROTOCOL,
+      primaryMetrics: [declaredMetric(PROTOCOL.primaryMetrics[0]!.name, 'higher', 'ratio')],
+    };
+    expect(directionAuditInputHash(wrongUnit)).not.toBe(before);
+    expect(JSON.parse(await readFile(path, 'utf8'))).toHaveProperty('auditedAt');
+  }, 60_000);
 });

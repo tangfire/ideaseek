@@ -3465,368 +3465,404 @@ export function registerIdeaCommand(program: Command): void {
     )
     .argument('<ideaId>', 'idea id')
     .option('--harness <kind>', 'harness backend for the comparability review (dsh by default)')
+    .option(
+      '--force-directions',
+      're-ask the direction audit even when this exact protocol was already audited',
+      false,
+    )
     .option('--json', 'machine-readable output')
     .action(
-      action(async (ideaId: string, opts: { harness?: string; json?: boolean }) => {
-        const root = await openRoot();
-        const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const runtime = await ProjectRuntime.open({
-          cwd: root,
-          harness: (await import('./shared.js')).buildHarness(
-            (await import('./shared.js')).resolveHarnessKind(opts.harness),
-          ),
-        });
-        try {
-          // The protocol's declared metric names go in with the input, so the
-          // deterministic unit guard has something to check against rather than
-          // relying on the agent review alone. Read before the ladder runs.
-          const { protocolMetricNames, readLockedProtocol } =
-            await import('../experiment/protocol-source.js');
-          const declaredProtocol = await readLockedProtocol(runtime);
-          const declaredMetricNames = protocolMetricNames(declaredProtocol ?? null);
-          const declaredMetrics = declaredProtocol
-            ? [...declaredProtocol.primaryMetrics, ...declaredProtocol.secondaryMetrics]
-            : [];
-          const { analysis, paths } = await runAnalysis(
-            root,
-            ideaId,
-            runtime.db,
-            declaredMetricNames,
-            declaredMetrics,
-          );
-
-          // The comparability of the numbers is a judgement, so it is asked of
-          // an agent working from the vendored ARIS analyze-results skill; the
-          // deterministic ladder above owns the facts (values, coverage, which
-          // runs crashed). Without this the platform wrote
-          // "does not beat best baseline (fedavg=18.75)" against a 0-1 metric
-          // and recorded a hypothesis as having lost an arithmetic contest.
-          // Set when the direction audit contradicts the protocol's own metric
-          // definitions: no comparative conclusion may be issued this round.
-          let directionBlocked = false;
-          let review: ComparativeVerdict | null = null;
-          let reviewNote = '';
-          let directionNote = '';
-          // Set when a model-backed check could not run at all (harness down, quota, network).
-          let agentUnavailable: string | null = null;
-          const harness = runtime.harness;
-          const comparableFacts = analysis.baselineComparison.filter(
-            (entry) => entry.baselineValue !== null && entry.ideaValue !== null,
-          );
-          if (harness && harness.kind !== 'fake' && comparableFacts.length > 0) {
-            const { readLockedProtocol, protocolMetricNames } =
+      action(
+        async (
+          ideaId: string,
+          opts: { harness?: string; json?: boolean; forceDirections?: boolean },
+        ) => {
+          const root = await openRoot();
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({
+            cwd: root,
+            harness: (await import('./shared.js')).buildHarness(
+              (await import('./shared.js')).resolveHarnessKind(opts.harness),
+            ),
+          });
+          try {
+            // The protocol's declared metric names go in with the input, so the
+            // deterministic unit guard has something to check against rather than
+            // relying on the agent review alone. Read before the ladder runs.
+            const { protocolMetricNames, readLockedProtocol } =
               await import('../experiment/protocol-source.js');
-            const protocol = await readLockedProtocol(runtime);
-            const primaryName = protocolMetricNames(protocol ?? null)[0] ?? '';
-            if (primaryName) {
-              // Direction first: a metric whose declared direction contradicts
-              // its own definition makes every comparison meaningless, whatever
-              // the units turn out to be. On this protocol every metric —
-              // including a principal-angle mismatch where 79 degrees is
-              // near-orthogonal — was declared "higher", so the ladder was
-              // reading a worsening as an improvement before any agent spoke.
-              const directions = await import('../experiment/direction-audit.js');
-              // Best effort by construction. The deterministic ladder above has
-              // already produced the verdict, and a harness that cannot start
-              // must not take the facts down with it: on FDG a DSH handshake
-              // timeout made `idea analyze` print a stack trace and no numbers
-              // at all, which is the worst behaviour for the one command a
-              // researcher runs when the model is unavailable.
-              const directionAudit = await directions
-                .auditMetricDirections({
-                  harness,
-                  protocol: protocol!,
-                  runId: `directions-${ideaId}`,
-                })
-                .catch((error: unknown) => {
-                  agentUnavailable = redactSecrets((error as Error).message).slice(0, 160);
-                  return null;
-                });
-              if (!directionAudit && agentUnavailable) {
-                directionNote =
-                  'direction audit not performed: the harness could not answer (' +
-                  agentUnavailable +
-                  '), so declared metric directions are unverified this run';
-              }
-              if (directionAudit) {
-                // A verification that passes or fails quietly is worse than no
-                // verification: the first FDG run of this audit flagged the two
-                // error-like secondaries and correctly left the primary alone,
-                // printed nothing, and so looked like it had not run at all.
-                directionNote =
-                  directionAudit.inconsistent.length > 0
-                    ? `direction audit (agent): ${directionAudit.inconsistent.length} metric(s) ` +
-                      `contradict their own definitions — ${directionAudit.inconsistent.slice(0, 4).join(', ')}` +
-                      `${directionAudit.inconsistent.length > 4 ? ' …' : ''}`
-                    : `direction audit (agent): all ${directionAudit.findings.length} declared direction(s) consistent with their definitions`;
-              } else {
-                directionNote =
-                  'direction audit unavailable (no usable answer): declared directions are unverified, ' +
-                  'so any error-like metric may be read backwards by the comparisons below';
-              }
-              if (directionAudit && directionAudit.inconsistent.length > 0) {
-                analysis.nextSteps.unshift(
-                  `fix the metric directions before drawing mechanism conclusions: ` +
-                    `ideaseek protocol propose then ideaseek confirm (${directionAudit.summary.slice(0, 200)})`,
-                );
-              }
-              if (directionAudit && directions.directionIsFlagged(directionAudit, primaryName)) {
-                const finding = directionAudit.findings.find(
-                  (entry) =>
-                    entry.metric === primaryName ||
-                    directions.directionIsFlagged(directionAudit, entry.metric),
-                );
-                analysis.verdict = 'inconclusive';
-                analysis.failureClass = 'metric';
-                analysis.reasons.unshift(
-                  `direction audit (agent): "${(finding?.metric ?? primaryName).slice(0, 90)}" is declared ` +
-                    `${finding?.declared ?? 'unknown'} but the definition says otherwise` +
-                    `${finding?.expected && finding.expected !== 'unknown' ? ` (should be ${finding.expected})` : ''}: ` +
-                    `${finding?.reasoning ?? ''}` +
-                    `${finding?.evidence?.[0] ? ` — evidence: ${finding.evidence[0]}` : ''}`,
-                );
-                analysis.nextSteps.unshift(
-                  directionAudit.inconsistent.length > 1
-                    ? `re-lock the protocol with corrected directions; flagged metrics: ${directionAudit.inconsistent.join(', ')}`
-                    : 're-lock the protocol with the corrected direction: ideaseek protocol propose then ideaseek confirm',
-                );
-                // Not a return: the headline verdict and the coverage facts are
-                // exactly what the reader must see, and hiding the report to
-                // show the audit would lose the evidence that motivated it. The
-                // comparability call is skipped instead — with a wrong direction
-                // there is nothing for it to compare.
-                directionBlocked = true;
-              }
-              const agent = await import('../idea/analysis-agent.js');
-              review = directionBlocked
-                ? null
-                : await agent
-                    .compareWithAgent({
+            const declaredProtocol = await readLockedProtocol(runtime);
+            const declaredMetricNames = protocolMetricNames(declaredProtocol ?? null);
+            const declaredMetrics = declaredProtocol
+              ? [...declaredProtocol.primaryMetrics, ...declaredProtocol.secondaryMetrics]
+              : [];
+            const { analysis, paths } = await runAnalysis(
+              root,
+              ideaId,
+              runtime.db,
+              declaredMetricNames,
+              declaredMetrics,
+            );
+
+            // The comparability of the numbers is a judgement, so it is asked of
+            // an agent working from the vendored ARIS analyze-results skill; the
+            // deterministic ladder above owns the facts (values, coverage, which
+            // runs crashed). Without this the platform wrote
+            // "does not beat best baseline (fedavg=18.75)" against a 0-1 metric
+            // and recorded a hypothesis as having lost an arithmetic contest.
+            // Set when the direction audit contradicts the protocol's own metric
+            // definitions: no comparative conclusion may be issued this round.
+            let directionBlocked = false;
+            let review: ComparativeVerdict | null = null;
+            let reviewNote = '';
+            let directionNote = '';
+            // Set when a model-backed check could not run at all (harness down, quota, network).
+            let agentUnavailable: string | null = null;
+            const harness = runtime.harness;
+            const comparableFacts = analysis.baselineComparison.filter(
+              (entry) => entry.baselineValue !== null && entry.ideaValue !== null,
+            );
+            if (harness && harness.kind !== 'fake' && comparableFacts.length > 0) {
+              const { readLockedProtocol, protocolMetricNames } =
+                await import('../experiment/protocol-source.js');
+              const protocol = await readLockedProtocol(runtime);
+              const primaryName = protocolMetricNames(protocol ?? null)[0] ?? '';
+              if (primaryName) {
+                // Direction first: a metric whose declared direction contradicts
+                // its own definition makes every comparison meaningless, whatever
+                // the units turn out to be. On this protocol every metric —
+                // including a principal-angle mismatch where 79 degrees is
+                // near-orthogonal — was declared "higher", so the ladder was
+                // reading a worsening as an improvement before any agent spoke.
+                const directions = await import('../experiment/direction-audit.js');
+                // Best effort by construction. The deterministic ladder above has
+                // already produced the verdict, and a harness that cannot start
+                // must not take the facts down with it: on FDG a DSH handshake
+                // timeout made `idea analyze` print a stack trace and no numbers
+                // at all, which is the worst behaviour for the one command a
+                // researcher runs when the model is unavailable.
+                // Reuse the audit for this exact protocol unless --force asks for
+                // a new one. The same locked protocol produced contradictory
+                // verdicts on successive FDG runs — one flagged
+                // `number_of_prototypes`, the next called all eight consistent —
+                // and a conclusion that decides whether a comparison may be
+                // published cannot be allowed to depend on which sample of the
+                // model answered. Judgement is still the agent's; what the
+                // platform fixes is that it is asked once per protocol.
+                let directionAudit: Awaited<ReturnType<typeof directions.auditMetricDirections>> =
+                  null;
+                let directionCacheNote = '';
+                const cached = opts.forceDirections
+                  ? null
+                  : await directions.readDirectionAudit(root, protocol!).catch(() => null);
+                if (cached) {
+                  directionAudit = cached.audit;
+                  directionCacheNote =
+                    ` (reused from the audit of ${new Date(cached.auditedAt).toISOString().slice(0, 10)}; ` +
+                    '--force-directions re-asks)';
+                } else {
+                  directionAudit = await directions
+                    .auditMetricDirections({
                       harness,
-                      ideaId,
-                      runId: `analyze-${ideaId}`,
-                      protocolText: [
-                        `protocol ${protocol?.protocolId ?? '(unknown)'}`,
-                        `primary metric: ${primaryName}`,
-                        `secondary metrics: ${
-                          protocolMetricNames(protocol ?? null)
-                            .slice(1)
-                            .join(', ') || '(none)'
-                        }`,
-                        `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
-                      ].join('\n'),
-                      coverageText:
-                        `scales=[${analysis.coverage.scales.join(', ')}] ` +
-                        `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
-                        `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
-                      facts: comparableFacts.flatMap((entry) => [
-                        {
-                          source: 'idea-main',
-                          metric: primaryName,
-                          value: entry.ideaValue as number,
-                          scale: entry.scale ?? null,
-                          provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
-                        },
-                        {
-                          source: entry.methodId,
-                          metric: primaryName,
-                          value: entry.baselineValue as number,
-                          scale: entry.scale ?? null,
-                          provenance: 'recorded baseline result',
-                        },
-                      ]),
+                      protocol: protocol!,
+                      runId: `directions-${ideaId}`,
                     })
                     .catch((error: unknown) => {
                       agentUnavailable = redactSecrets((error as Error).message).slice(0, 160);
                       return null;
                     });
-            }
-          }
-          // Silence here would be the worst outcome: a REJECTED verdict printed
-          // as if it had been independently checked. Every path that does not
-          // produce a review says so, with the command that would change it.
-          if (comparableFacts.length > 0) {
-            if (agentUnavailable) {
-              reviewNote =
-                `agent checks unavailable (${agentUnavailable}) — the verdict above is the ` +
-                'platform arithmetic only and has not been reviewed for comparability';
-            } else if (directionBlocked) {
-              reviewNote =
-                'comparability not reviewed: the direction audit contradicts the protocol metric ' +
-                'definitions, so no comparative conclusion is issued this run';
-            } else if (!harness || harness.kind === 'fake') {
-              reviewNote =
-                'comparability NOT reviewed: no real harness configured, so the verdict above is the ' +
-                'platform arithmetic alone (run: ideaseek models setup, or --harness dsh)';
-            } else if (!review) {
-              reviewNote =
-                'comparability review discarded: the agent answer was unparseable, quoted no evidence, ' +
-                `or cited a value that is not in the records — the verdict above was not independently checked`;
-            }
-          }
-          if (review) {
-            if (!review.comparable && review.verdict === 'rejected') {
-              review.verdict = 'inconclusive';
-            }
-            // Snapshot before anything is overwritten: after the assignment
-            // below, `analysis.verdict` no longer holds the ladder's conclusion,
-            // and a field named `deterministic` that carries the adopted one is
-            // worse than no field — it misfiles the provenance of a verdict.
-            const deterministic = {
-              verdict: analysis.verdict,
-              failureClass: analysis.failureClass,
-            };
-            if (analysis.verdict !== 'invalid-run' && review.verdict !== 'invalid-run') {
-              // The agent owns the comparative conclusion; the code keeps the
-              // one boundary no model may cross — a crashed or metric-less run
-              // is decided above and never argued with. Ignoring a returned
-              // verdict was itself the bug: on this idea the ladder said
-              // REJECTED, the skill-backed review said INCONCLUSIVE (a percent
-              // against a fraction is not a contest), and printing the ladder's
-              // word anyway would have recorded a lost hypothesis that was
-              // never actually tested.
-              analysis.deterministicVerdict = deterministic.verdict;
-              analysis.deterministicFailureClass = deterministic.failureClass;
-              analysis.reviewAdopted = {
-                confidence: review.confidence,
-                comparable: review.comparable,
-              };
-              analysis.verdict = review.verdict;
-              analysis.failureClass = review.comparable
-                ? review.verdict === 'supported'
-                  ? 'none'
-                  : review.verdict === 'rejected'
-                    ? 'effect-insufficient'
-                    : 'unknown'
-                : 'metric';
-              analysis.reasons.unshift(
-                `comparability review (ARIS analyze-results, confidence ` +
-                  `${review.confidence.toFixed(2)}): ${review.comparable ? 'comparable' : 'NOT comparable'} ` +
-                  `— ${review.unitAssessment}`,
-              );
-              if (review.recommendedNext) analysis.nextSteps.unshift(review.recommendedNext);
-            }
-            const { writeFile } = await import('node:fs/promises');
-            await writeFile(
-              paths[paths.length - 1]!.replace('analysis.json', 'analysis-agent-review.json'),
-              `${JSON.stringify(
-                {
-                  ideaId,
-                  review,
-                  deterministic: deterministic.verdict,
-                  deterministicFailureClass: deterministic.failureClass,
-                  adopted: analysis.verdict,
-                },
-                null,
-                2,
-              )}\n`,
-              'utf8',
-            ).catch(() => undefined);
-            if (analysis.verdict !== deterministic.verdict) {
-              // Persist what the command actually concluded. The file is what
-              // `idea handoff`, `full plan` and the paper chain read, so leaving
-              // the superseded ladder verdict on disk meant the platform kept
-              // acting on a conclusion it had just publicly revised — on FDG that
-              // stale word was the stated reason handoff was unavailable.
-              const { persistAnalysis } = await import('../idea/analyze.js');
-              await persistAnalysis(root, analysis).catch(() => undefined);
-            }
-          }
-          if (opts.json) {
-            process.stdout.write(jsonLine({ analysis, paths, review, reviewNote }));
-            return 0;
-          }
-          // The one verdict the platform records by itself, and only when the
-          // idea is parked in a state that can legally leave it. A research
-          // verdict (SUPPORTED/REJECTED) still belongs to the researcher; an
-          // invalid run is an engineering fact the deterministic ladder proved,
-          // and leaving it unrecorded is what made the documented repair route
-          // (INVALID_RUN → IMPLEMENTING) unreachable.
-          // State tracking before verdicts: analysing recorded results means
-          // experiments happened, and an idea parked at SMOKE_TESTED or RUNNING
-          // while its analysis completes leaves the record describing a phase
-          // the pipeline already left. Both edges are legal in the lifecycle
-          // graph, and neither is a scientific judgement: RUNNING and ANALYZING
-          // name what the platform is doing, SUPPORTED/REJECTED name what the
-          // evidence means and still belong to the researcher.
-          const { advanceAnalysisPhase } = await import('../idea/analysis.js');
-          const phaseNote = await advanceAnalysisPhase(root, ideaId);
-
-          const { verdictAdvancesStatus } = await import('../idea/analysis.js');
-          const advanceTo = verdictAdvancesStatus(analysis.verdict);
-          let statusNote = '';
-          if (advanceTo) {
-            const before = await loadWorkspaceMeta(root, ideaId);
-            if (before.status === 'ANALYZING' || before.status === 'RUNNING') {
-              try {
-                const after = await setIdeaStatus(
-                  root,
-                  ideaId,
-                  advanceTo,
-                  `recorded by ideaseek idea analyze: ${analysis.reasons[0] ?? 'run cannot support a conclusion'}`.slice(
-                    0,
-                    300,
-                  ),
-                );
-                statusNote =
-                  `status: ${before.status} → ${after.status} (engineering verdict, ` +
-                  `not a judgement about the hypothesis)`;
-              } catch (error) {
-                // An illegal transition here is information, not a reason to
-                // lose the analysis that just completed.
-                statusNote = `status not advanced: ${(error as Error).message}`;
+                  if (directionAudit) {
+                    await directions
+                      .writeDirectionAudit(root, protocol!, directionAudit)
+                      .catch(() => undefined);
+                  }
+                }
+                if (!directionAudit && agentUnavailable) {
+                  directionNote =
+                    'direction audit not performed: the harness could not answer (' +
+                    agentUnavailable +
+                    '), so declared metric directions are unverified this run';
+                }
+                if (directionAudit) {
+                  // A verification that passes or fails quietly is worse than no
+                  // verification: the first FDG run of this audit flagged the two
+                  // error-like secondaries and correctly left the primary alone,
+                  // printed nothing, and so looked like it had not run at all.
+                  directionNote =
+                    directionAudit.inconsistent.length > 0
+                      ? `direction audit (agent)${directionCacheNote}: ${directionAudit.inconsistent.length} metric(s) ` +
+                        `contradict their own definitions — ${directionAudit.inconsistent.slice(0, 4).join(', ')}` +
+                        `${directionAudit.inconsistent.length > 4 ? ' …' : ''}`
+                      : `direction audit (agent): all ${directionAudit.findings.length} declared direction(s) consistent with their definitions`;
+                } else {
+                  directionNote =
+                    'direction audit unavailable (no usable answer): declared directions are unverified, ' +
+                    'so any error-like metric may be read backwards by the comparisons below';
+                }
+                if (directionAudit && directionAudit.inconsistent.length > 0) {
+                  analysis.nextSteps.unshift(
+                    `fix the metric directions before drawing mechanism conclusions: ` +
+                      `ideaseek protocol propose then ideaseek confirm (${directionAudit.summary.slice(0, 200)})`,
+                  );
+                }
+                if (directionAudit && directions.directionIsFlagged(directionAudit, primaryName)) {
+                  const finding = directionAudit.findings.find(
+                    (entry) =>
+                      entry.metric === primaryName ||
+                      directions.directionIsFlagged(directionAudit, entry.metric),
+                  );
+                  analysis.verdict = 'inconclusive';
+                  analysis.failureClass = 'metric';
+                  analysis.reasons.unshift(
+                    `direction audit (agent): "${(finding?.metric ?? primaryName).slice(0, 90)}" is declared ` +
+                      `${finding?.declared ?? 'unknown'} but the definition says otherwise` +
+                      `${finding?.expected && finding.expected !== 'unknown' ? ` (should be ${finding.expected})` : ''}: ` +
+                      `${finding?.reasoning ?? ''}` +
+                      `${finding?.evidence?.[0] ? ` — evidence: ${finding.evidence[0]}` : ''}`,
+                  );
+                  analysis.nextSteps.unshift(
+                    directionAudit.inconsistent.length > 1
+                      ? `re-lock the protocol with corrected directions; flagged metrics: ${directionAudit.inconsistent.join(', ')}`
+                      : 're-lock the protocol with the corrected direction: ideaseek protocol propose then ideaseek confirm',
+                  );
+                  // Not a return: the headline verdict and the coverage facts are
+                  // exactly what the reader must see, and hiding the report to
+                  // show the audit would lose the evidence that motivated it. The
+                  // comparability call is skipped instead — with a wrong direction
+                  // there is nothing for it to compare.
+                  directionBlocked = true;
+                }
+                const agent = await import('../idea/analysis-agent.js');
+                review = directionBlocked
+                  ? null
+                  : await agent
+                      .compareWithAgent({
+                        harness,
+                        ideaId,
+                        runId: `analyze-${ideaId}`,
+                        protocolText: [
+                          `protocol ${protocol?.protocolId ?? '(unknown)'}`,
+                          `primary metric: ${primaryName}`,
+                          `secondary metrics: ${
+                            protocolMetricNames(protocol ?? null)
+                              .slice(1)
+                              .join(', ') || '(none)'
+                          }`,
+                          `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
+                        ].join('\n'),
+                        coverageText:
+                          `scales=[${analysis.coverage.scales.join(', ')}] ` +
+                          `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
+                          `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
+                        facts: comparableFacts.flatMap((entry) => [
+                          {
+                            source: 'idea-main',
+                            metric: primaryName,
+                            value: entry.ideaValue as number,
+                            scale: entry.scale ?? null,
+                            provenance: `idea main run, delta=${entry.delta ?? 'n/a'}`,
+                          },
+                          {
+                            source: entry.methodId,
+                            metric: primaryName,
+                            value: entry.baselineValue as number,
+                            scale: entry.scale ?? null,
+                            provenance: 'recorded baseline result',
+                          },
+                        ]),
+                      })
+                      .catch((error: unknown) => {
+                        agentUnavailable = redactSecrets((error as Error).message).slice(0, 160);
+                        return null;
+                      });
               }
-            } else {
-              statusNote =
-                `status left at ${before.status}: an invalid-run verdict only ` +
-                're-opens work from ANALYZING/RUNNING, and nothing else may be overruled silently';
             }
-          }
-          process.stdout.write(
-            `analysis ${ideaId} v${analysis.ideaVersion}: ${analysis.verdict.toUpperCase()}` +
-              `${analysis.failureClass !== 'none' ? ` (failure class: ${analysis.failureClass})` : ''}\n`,
-          );
-          process.stdout.write(
-            `  coverage: scales=[${analysis.coverage.scales.join(', ')}] ` +
-              `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds}` +
-              `${analysis.coverage.missing.length > 0 ? ` · missing: ${analysis.coverage.missing.join('; ')}` : ''}\n`,
-          );
-          if (analysis.primaryDelta !== null) {
-            process.stdout.write(`  primary delta vs best baseline: ${analysis.primaryDelta}\n`);
-          }
-          for (const reason of analysis.reasons) process.stdout.write(`  reason: ${reason}\n`);
-          if (directionNote)
-            process.stdout.write(`  ${directionNote}
-`);
-          if (reviewNote) process.stdout.write(`  ${reviewNote}\n`);
-          if (review) {
+            // Silence here would be the worst outcome: a REJECTED verdict printed
+            // as if it had been independently checked. Every path that does not
+            // produce a review says so, with the command that would change it.
+            if (comparableFacts.length > 0) {
+              if (agentUnavailable) {
+                reviewNote =
+                  `agent checks unavailable (${agentUnavailable}) — the verdict above is the ` +
+                  'platform arithmetic only and has not been reviewed for comparability';
+              } else if (directionBlocked) {
+                reviewNote =
+                  'comparability not reviewed: the direction audit contradicts the protocol metric ' +
+                  'definitions, so no comparative conclusion is issued this run';
+              } else if (!harness || harness.kind === 'fake') {
+                reviewNote =
+                  'comparability NOT reviewed: no real harness configured, so the verdict above is the ' +
+                  'platform arithmetic alone (run: ideaseek models setup, or --harness dsh)';
+              } else if (!review) {
+                reviewNote =
+                  'comparability review discarded: the agent answer was unparseable, quoted no evidence, ' +
+                  `or cited a value that is not in the records — the verdict above was not independently checked`;
+              }
+            }
+            if (review) {
+              if (!review.comparable && review.verdict === 'rejected') {
+                review.verdict = 'inconclusive';
+              }
+              // Snapshot before anything is overwritten: after the assignment
+              // below, `analysis.verdict` no longer holds the ladder's conclusion,
+              // and a field named `deterministic` that carries the adopted one is
+              // worse than no field — it misfiles the provenance of a verdict.
+              const deterministic = {
+                verdict: analysis.verdict,
+                failureClass: analysis.failureClass,
+              };
+              if (analysis.verdict !== 'invalid-run' && review.verdict !== 'invalid-run') {
+                // The agent owns the comparative conclusion; the code keeps the
+                // one boundary no model may cross — a crashed or metric-less run
+                // is decided above and never argued with. Ignoring a returned
+                // verdict was itself the bug: on this idea the ladder said
+                // REJECTED, the skill-backed review said INCONCLUSIVE (a percent
+                // against a fraction is not a contest), and printing the ladder's
+                // word anyway would have recorded a lost hypothesis that was
+                // never actually tested.
+                analysis.deterministicVerdict = deterministic.verdict;
+                analysis.deterministicFailureClass = deterministic.failureClass;
+                analysis.reviewAdopted = {
+                  confidence: review.confidence,
+                  comparable: review.comparable,
+                };
+                analysis.verdict = review.verdict;
+                analysis.failureClass = review.comparable
+                  ? review.verdict === 'supported'
+                    ? 'none'
+                    : review.verdict === 'rejected'
+                      ? 'effect-insufficient'
+                      : 'unknown'
+                  : 'metric';
+                analysis.reasons.unshift(
+                  `comparability review (ARIS analyze-results, confidence ` +
+                    `${review.confidence.toFixed(2)}): ${review.comparable ? 'comparable' : 'NOT comparable'} ` +
+                    `— ${review.unitAssessment}`,
+                );
+                if (review.recommendedNext) analysis.nextSteps.unshift(review.recommendedNext);
+              }
+              const { writeFile } = await import('node:fs/promises');
+              await writeFile(
+                paths[paths.length - 1]!.replace('analysis.json', 'analysis-agent-review.json'),
+                `${JSON.stringify(
+                  {
+                    ideaId,
+                    review,
+                    deterministic: deterministic.verdict,
+                    deterministicFailureClass: deterministic.failureClass,
+                    adopted: analysis.verdict,
+                  },
+                  null,
+                  2,
+                )}\n`,
+                'utf8',
+              ).catch(() => undefined);
+              if (analysis.verdict !== deterministic.verdict) {
+                // Persist what the command actually concluded. The file is what
+                // `idea handoff`, `full plan` and the paper chain read, so leaving
+                // the superseded ladder verdict on disk meant the platform kept
+                // acting on a conclusion it had just publicly revised — on FDG that
+                // stale word was the stated reason handoff was unavailable.
+                const { persistAnalysis } = await import('../idea/analyze.js');
+                await persistAnalysis(root, analysis).catch(() => undefined);
+              }
+            }
+            if (opts.json) {
+              process.stdout.write(jsonLine({ analysis, paths, review, reviewNote }));
+              return 0;
+            }
+            // The one verdict the platform records by itself, and only when the
+            // idea is parked in a state that can legally leave it. A research
+            // verdict (SUPPORTED/REJECTED) still belongs to the researcher; an
+            // invalid run is an engineering fact the deterministic ladder proved,
+            // and leaving it unrecorded is what made the documented repair route
+            // (INVALID_RUN → IMPLEMENTING) unreachable.
+            // State tracking before verdicts: analysing recorded results means
+            // experiments happened, and an idea parked at SMOKE_TESTED or RUNNING
+            // while its analysis completes leaves the record describing a phase
+            // the pipeline already left. Both edges are legal in the lifecycle
+            // graph, and neither is a scientific judgement: RUNNING and ANALYZING
+            // name what the platform is doing, SUPPORTED/REJECTED name what the
+            // evidence means and still belong to the researcher.
+            const { advanceAnalysisPhase } = await import('../idea/analysis.js');
+            const phaseNote = await advanceAnalysisPhase(root, ideaId);
+
+            const { verdictAdvancesStatus } = await import('../idea/analysis.js');
+            const advanceTo = verdictAdvancesStatus(analysis.verdict);
+            let statusNote = '';
+            if (advanceTo) {
+              const before = await loadWorkspaceMeta(root, ideaId);
+              if (before.status === 'ANALYZING' || before.status === 'RUNNING') {
+                try {
+                  const after = await setIdeaStatus(
+                    root,
+                    ideaId,
+                    advanceTo,
+                    `recorded by ideaseek idea analyze: ${analysis.reasons[0] ?? 'run cannot support a conclusion'}`.slice(
+                      0,
+                      300,
+                    ),
+                  );
+                  statusNote =
+                    `status: ${before.status} → ${after.status} (engineering verdict, ` +
+                    `not a judgement about the hypothesis)`;
+                } catch (error) {
+                  // An illegal transition here is information, not a reason to
+                  // lose the analysis that just completed.
+                  statusNote = `status not advanced: ${(error as Error).message}`;
+                }
+              } else {
+                statusNote =
+                  `status left at ${before.status}: an invalid-run verdict only ` +
+                  're-opens work from ANALYZING/RUNNING, and nothing else may be overruled silently';
+              }
+            }
             process.stdout.write(
-              `  comparability (agent, ARIS analyze-results): ` +
-                `${review.comparable ? 'comparable' : 'NOT comparable'} · verdict ${review.verdict} · ` +
-                `confidence ${review.confidence.toFixed(2)}\n` +
-                `    ${review.unitAssessment.slice(0, 300)}\n`,
+              `analysis ${ideaId} v${analysis.ideaVersion}: ${analysis.verdict.toUpperCase()}` +
+                `${analysis.failureClass !== 'none' ? ` (failure class: ${analysis.failureClass})` : ''}\n`,
             );
-            for (const citation of review.citedValues) {
+            process.stdout.write(
+              `  coverage: scales=[${analysis.coverage.scales.join(', ')}] ` +
+                `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds}` +
+                `${analysis.coverage.missing.length > 0 ? ` · missing: ${analysis.coverage.missing.join('; ')}` : ''}\n`,
+            );
+            if (analysis.primaryDelta !== null) {
+              process.stdout.write(`  primary delta vs best baseline: ${analysis.primaryDelta}\n`);
+            }
+            for (const reason of analysis.reasons) process.stdout.write(`  reason: ${reason}\n`);
+            if (directionNote)
+              process.stdout.write(`  ${directionNote}
+`);
+            if (reviewNote) process.stdout.write(`  ${reviewNote}\n`);
+            if (review) {
               process.stdout.write(
-                `    cited ${citation.source} ${citation.metric} = ${citation.value}` +
-                  `${citation.unit ? ` ${citation.unit}` : ''}\n`,
+                `  comparability (agent, ARIS analyze-results): ` +
+                  `${review.comparable ? 'comparable' : 'NOT comparable'} · verdict ${review.verdict} · ` +
+                  `confidence ${review.confidence.toFixed(2)}\n` +
+                  `    ${review.unitAssessment.slice(0, 300)}\n`,
+              );
+              for (const citation of review.citedValues) {
+                process.stdout.write(
+                  `    cited ${citation.source} ${citation.metric} = ${citation.value}` +
+                    `${citation.unit ? ` ${citation.unit}` : ''}\n`,
+                );
+              }
+            }
+            for (const failure of analysis.failures) {
+              process.stdout.write(
+                `  failure kept: ${failure.specId} ${failure.category ?? '?'} → ${failure.class}\n`,
               );
             }
+            for (const step of analysis.nextSteps) process.stdout.write(`  next: ${step}\n`);
+            if (phaseNote) process.stdout.write(`  ${phaseNote}\n`);
+            if (statusNote) process.stdout.write(`  ${statusNote}\n`);
+            process.stdout.write(`  written: ${paths.join(', ')}\n`);
+            return 0;
+          } finally {
+            await runtime.close();
           }
-          for (const failure of analysis.failures) {
-            process.stdout.write(
-              `  failure kept: ${failure.specId} ${failure.category ?? '?'} → ${failure.class}\n`,
-            );
-          }
-          for (const step of analysis.nextSteps) process.stdout.write(`  next: ${step}\n`);
-          if (phaseNote) process.stdout.write(`  ${phaseNote}\n`);
-          if (statusNote) process.stdout.write(`  ${statusNote}\n`);
-          process.stdout.write(`  written: ${paths.join(', ')}\n`);
-          return 0;
-        } finally {
-          await runtime.close();
-        }
-      }),
+        },
+      ),
     );
 
   idea

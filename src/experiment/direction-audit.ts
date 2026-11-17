@@ -2,6 +2,7 @@ import { sha256Of } from '../core/hash.js';
 import { redactSecrets } from '../core/redact.js';
 import { assertAgainstSchema } from '../core/schema/index.js';
 import { metricIdentifier } from '../core/metric-id.js';
+import { stableJson } from './spec.js';
 import type { LockedProtocol } from './protocol-source.js';
 import type { HarnessAdapter } from '../dsh/adapter.js';
 
@@ -199,4 +200,86 @@ export function directionIsFlagged(audit: DirectionAudit, metricName: string): b
   return audit.inconsistent.some(
     (name) => name === metricName || metricIdentifier(name) === identifier,
   );
+}
+
+/**
+ * A cached direction audit, keyed by the exact protocol it examined.
+ *
+ * Why this exists: on FDG the same locked protocol produced different verdicts
+ * on successive `idea analyze` runs (one run flagged `number_of_prototypes`,
+ * the next called all eight consistent). A conclusion that decides whether a
+ * comparison may be reported cannot be allowed to depend on which sampling of
+ * the model answered, because the researcher then learns that the gate is a
+ * coin and confirms past it. The audit is expensive judgement, so it is done
+ * once per protocol and reused until the protocol changes: same metrics, same
+ * declared directions, same unit fields. `force` re-runs it, and `auditedAt`
+ * plus `protocolHash` make what was reused visible.
+ */
+export interface CachedDirectionAudit {
+  protocolHash: string;
+  auditedAt: number;
+  audit: DirectionAudit;
+}
+
+export function directionAuditInputHash(protocol: LockedProtocol): string {
+  // The key is (name, direction, unit-value), and deliberately NOT
+  // `unitDeclared`: declaring out loud the unit the definition prose already
+  // stated changes nothing about whether a direction matches that definition,
+  // so invalidating the cached audit for it would re-ask a question whose
+  // inputs did not move. What does invalidate it is the prose itself (a
+  // re-worded metric), the direction, or a different unit value.
+  return sha256Of(
+    stableJson({
+      protocolId: protocol.protocolId,
+      metrics: [...protocol.primaryMetrics, ...protocol.secondaryMetrics].map((metric) => [
+        metric.name,
+        metric.direction,
+        metric.unit,
+      ]),
+    }),
+  );
+}
+
+/** Read the cached audit for this exact protocol, or null when it must be redone. */
+export async function readDirectionAudit(
+  projectRoot: string,
+  protocol: LockedProtocol,
+): Promise<CachedDirectionAudit | null> {
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const hash = directionAuditInputHash(protocol);
+  try {
+    const stored = JSON.parse(
+      await readFile(
+        join(projectRoot, 'knowledge', `direction-audit-${hash.slice(7, 23)}.json`),
+        'utf8',
+      ),
+    ) as CachedDirectionAudit;
+    // Only a cache of the SAME protocol counts. Recomputing the key from the
+    // stored record's own input would let a stale file for another protocol be
+    // accepted because it was read from a path that happened to match.
+    return stored && stored.protocolHash === hash ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeDirectionAudit(
+  projectRoot: string,
+  protocol: LockedProtocol,
+  audit: DirectionAudit,
+): Promise<string> {
+  const { writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { ensureDir } = await import('../core/atomic.js');
+  const hash = directionAuditInputHash(protocol);
+  const path = join(projectRoot, 'knowledge', `direction-audit-${hash.slice(7, 23)}.json`);
+  await ensureDir(join(projectRoot, 'knowledge'));
+  await writeFile(
+    path,
+    `${JSON.stringify({ protocolHash: hash, auditedAt: Date.now(), audit }, null, 2)}
+`,
+    'utf8',
+  );
+  return path;
 }
