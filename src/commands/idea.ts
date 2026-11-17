@@ -2556,9 +2556,26 @@ export function registerIdeaCommand(program: Command): void {
                 // The operator's grant for this turn: a flag wins, otherwise the
                 // config default, which is empty by design.
                 allowTools: opts.allowTools ?? runtime.config.policy.agentAllowTools,
-                // Same convention as `ideaseek agent`: interactive where a
-                // person can answer, declined where nobody can.
-                policy: process.stdin.isTTY === true ? 'interactive' : 'deny',
+                // Same convention as `ideaseek agent`, with one correction this
+                // command needed: the absence of a terminal is not an
+                // instruction to refuse. Deriving `deny` from it silently killed
+                // the automation route (a real run with `--allow-tools shell`
+                // still refused, because the TTY-derived deny outranked the
+                // operator's grant). A grant IS a human decision, just one made
+                // ahead of time instead of at a prompt, so it wins over the
+                // inferred default — and only an explicit `--deny-tools` beats it.
+                // The reasoning-only fallback the flag promises, kept honest:
+                // `--no-tools` used to be accepted and then ignored, so the
+                // command still opened a coding session and reported the agent's
+                // own inability to execute. With the flag, the turn is refused
+                // up front and the alternative named (see below).
+                policy:
+                  opts.tools === false
+                    ? 'deny'
+                    : process.stdin.isTTY === true ||
+                        (opts.allowTools ?? runtime.config.policy.agentAllowTools).length > 0
+                      ? 'interactive'
+                      : 'deny',
                 // The human channel itself: a TTY is only a surface if
                 // something can ask over it. Without this wiring the command
                 // claimed interactivity it did not have, and every tool call in

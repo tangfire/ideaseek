@@ -467,9 +467,23 @@ export async function ensureMethodVenv(
     // Some hosts only expose python3.
     const retry = await runRepairCommand(['python3', '-m', 'venv', '.venv'], worktreeDir, 180_000);
     if (retry.exitCode !== 0) {
+      // An empty output is itself a fact worth stating. FDG's idea runs logged
+      // `venv create failed: ` with nothing after the colon — the reader could
+      // not tell "python produced no diagnostic" from "we never ran anything",
+      // and neither remedy follows. Exit codes and the interpreters actually
+      // attempted are what makes the failure actionable on a host where the
+      // failure is invisible (group policy, missing store alias, sandbox denial).
+      const evidence = (retry.out || create.out).trim();
       return {
         ok: false,
-        detail: redactSecrets(`venv create failed: ${(retry.out || create.out).slice(-400)}`),
+        detail: redactSecrets(
+          `venv create failed: "${python} -m venv .venv" exited ${create.exitCode} and ` +
+            `"python3 -m venv .venv" exited ${retry.exitCode}; ` +
+            (evidence
+              ? `last output: ${evidence.slice(-400)}`
+              : 'neither produced any output, which usually means the interpreter is a Windows ' +
+                'store alias or venv is blocked by policy rather than the project being broken'),
+        ),
         venvDir,
       };
     }
