@@ -290,9 +290,19 @@ export function normalizeEscapedLayout(text: string): string {
   // Decided by what FOLLOWS, not by a list of LaTeX macros: a control word
   // after `\n` must be lowercase (`\newtheorem`, `\normalsize`, `\times`),
   // while an escaped newline from double-escaped model output is followed by
-  // prose — a capital, a space, punctuation or the end. An allowlist of names
-  // would need extending for every package; this needs nothing.
+  // prose. An allowlist of names would need extending for every package; this
+  // needs nothing.
+  //
+  // The comment this function carried claimed that prose starts with "a
+  // capital, a space, punctuation or the end". A test fixture proved that
+  // wrong: `…show\nthat this works` is prose starting with a lowercase word,
+  // and the rule left it broken. Two escape characters in a row, by contrast,
+  // cannot be two control words (`\n\n` is never valid LaTeX), so the doubled
+  // pair — the paragraph break that double-encoding actually produces — is
+  // repaired unconditionally, and what stays ambiguous is reported by
+  // `ambiguousEscapes` in paper/write.ts rather than guessed at.
   return text
+    .replace(/\\n\\n/g, '\n\n')
     .replace(/\\n(?![a-z])/g, '\n')
     .replace(/\\t(?![a-z])/g, '\t')
     .replace(/\\r(?![a-z])/g, '\r');

@@ -313,6 +313,31 @@ export function parseManuscriptOutput(output: string, context: WriteContext): Ma
 }
 
 /**
+ * Escape pairs whose meaning cannot be decided from the text alone.
+ *
+ * `
+` followed by a lowercase letter is the ambiguous case: it is either a
+ * broken escape (`...
+that this works`) or a real control word
+ * (`
+ewtheorem`, `$
+u$`). Only a reader who knows LaTeX can tell, and the
+ * platform refuses to guess with a name list that would need extending per
+ * package — so the ambiguous residue is reported, naming the surrounding text,
+ * and a human decides. Reporting rather than guessing matters because a silent
+ * half-repair leaves the stored artifact neither clean nor visibly broken.
+ */
+export function ambiguousEscapes(text: string): string[] {
+  const found: string[] = [];
+  const pattern = new RegExp('\\\\[ntr][a-z][^\\\\]{0,24}', 'g');
+  for (const match of text.matchAll(pattern)) {
+    found.push(match[0].slice(0, 40));
+    if (found.length >= 3) break;
+  }
+  return found;
+}
+
+/**
  * Repair double-escaped layout before anything is stored.
  *
  * The model's answer arrives with literal `
@@ -326,9 +351,29 @@ export function parseManuscriptOutput(output: string, context: WriteContext): Ma
  * that makes the stored evidence trustworthy; the assembly-side rule stays for
  * artifacts written before it.
  */
-export function normalizeManuscriptLayout(manuscript: Manuscript): Manuscript {
+/**
+ * Repairs and reports: the returned manuscript is what is stored, and the
+ * second element lists escape pairs whose meaning could not be decided.
+ *
+ * Returning the residue rather than swallowing it matters for the same reason
+ * the platform reports discarded baseline values: an operator looking at a
+ * "clean" result has no way to know that part of the text was neither repaired
+ * nor examined.
+ */
+export function normalizeManuscriptLayout(manuscript: Manuscript): Manuscript & {
+  ambiguousEscapes: string[];
+} {
+  // Every stored text field is scanned, bibliography included: an entry whose
+  // escaped comma-newline survives is exactly as unreadable as a broken
+  // paragraph, and reporting only the prose would suggest the artifact is clean.
+  const residue = [
+    manuscript.abstract,
+    ...manuscript.sections.map((section) => section.latex),
+    ...manuscript.bibliography.map((entry) => entry.bibtex),
+  ].flatMap((text) => ambiguousEscapes(text));
   return {
     ...manuscript,
+    ambiguousEscapes: residue,
     abstract: normalizeEscapedLayout(manuscript.abstract),
     sections: manuscript.sections.map((section) => ({
       ...section,
