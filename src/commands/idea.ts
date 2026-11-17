@@ -2524,6 +2524,13 @@ export function registerIdeaCommand(program: Command): void {
                   ).status
                 : current;
             };
+            // The unit the locked protocol declares for each metric, handed to
+            // whoever writes the code: an idea whose entry printed 0.1686 for a
+            // metric declared in percent passed every check and was refused
+            // only at analysis, after the experiment had been paid for.
+            const { protocolMetricNames: metricNamesOf, readLockedProtocol } =
+              await import('../experiment/protocol-source.js');
+            const implementContract = metricNamesOf((await readLockedProtocol(runtime)) ?? null);
             if (agentMode) {
               const agent = await implementIdeaWithAgent({
                 projectRoot: root,
@@ -2531,6 +2538,7 @@ export function registerIdeaCommand(program: Command): void {
                 card,
                 measuredData,
                 dataPath,
+                metricContract: implementContract,
                 // Same convention as `ideaseek agent`: interactive where a
                 // person can answer, declined where nobody can.
                 policy: process.stdin.isTTY === true ? 'interactive' : 'deny',
@@ -2629,6 +2637,7 @@ export function registerIdeaCommand(program: Command): void {
               projectRoot: root,
               dataPath,
               measuredData,
+              metricContract: implementContract,
               runId,
               onRound: (round, detail) => {
                 if (!opts.json) {
@@ -2905,7 +2914,14 @@ export function registerIdeaCommand(program: Command): void {
         if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
           throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
         }
-        const report = await runIdeaChecks(root, ideaId, { timeoutMs: opts.timeout });
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        const { protocolMetricNames: namesOfCheck, readLockedProtocol: protocolForCheck } =
+          await import('../experiment/protocol-source.js');
+        const report = await runIdeaChecks(root, ideaId, {
+          timeoutMs: opts.timeout,
+          metricContract: namesOfCheck((await protocolForCheck(runtime)) ?? null),
+        });
         const reportPath = await saveCheckReport(root, report);
 
         // Queue discipline: a full pass from IMPLEMENTING advances to

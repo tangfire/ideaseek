@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { sha256Of, type ContentHash } from '../core/hash.js';
 import { redactSecrets } from '../core/redact.js';
-import { metricIdentifier, metricKey } from '../core/metric-id.js';
+import { metricKey } from '../core/metric-id.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import {
   classifyRepairFailure,

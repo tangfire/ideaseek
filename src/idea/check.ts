@@ -2,6 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { classifyRepairFailure, runRepairCommand, writeRepairLog } from '../comparison/repair.js';
+import { metricIdentifier, metricUnit, unitViolation } from '../core/metric-id.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
 import type { IdeaCard } from './card.js';
 
@@ -86,6 +87,45 @@ async function pathExists(path: string): Promise<boolean> {
 
 export interface RunChecksOptions {
   timeoutMs?: number;
+  /**
+   * The locked protocol's metric declarations, verbatim: `target_unseen_domain_top1_accuracy
+   * (held-out domain value, all samples, %)`.
+   *
+   * The unit an experiment must report in is written there and nowhere else, and
+   * until now it only reached the analysis ladder — long after the code was
+   * written, the smoke run had passed and a full experiment had been paid for.
+   * Two FDG ideas therefore ended in `INVALID-RUN (metric)` because their entry
+   * printed 0.1686 for a metric the protocol declares in percent: the guard was
+   * right, and it was also three steps too late to be useful. Given here, the
+   * contradiction fails the smoke check, where the implementing agent is still
+   * in the loop and can change one line.
+   */
+  metricContract?: string[];
+}
+
+/**
+ * Values that cannot be read as the unit the protocol declares for that metric.
+ *
+ * Matched by identifier, because the card declares prose and the protocol
+ * declares prose-and-identifier; the same measurement is written both ways
+ * throughout this platform (#15). Returns nothing when no contract was handed
+ * over — a project without a locked protocol has no unit to violate.
+ */
+export function unitContractViolations(
+  metricValues: Record<string, unknown>,
+  contract: string[],
+): { name: string; problem: string }[] {
+  if (contract.length === 0) return [];
+  const problems: { name: string; problem: string }[] = [];
+  for (const [name, value] of Object.entries(metricValues)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    const identifier = metricIdentifier(name);
+    const declared = contract.find((entry) => metricIdentifier(entry) === identifier);
+    if (!declared) continue;
+    const problem = unitViolation(metricUnit(declared), value);
+    if (problem) problems.push({ name, problem: `${problem} (declared as "${declared}")` });
+  }
+  return problems;
 }
 
 /** Executes the check ladder and returns the report (caller persists it). */
@@ -419,6 +459,19 @@ export async function runIdeaChecks(
             }
           } catch {
             // no config — metrics object alone is enough
+          }
+        }
+        // The unit the locked protocol declares, checked while the author of
+        // the code is still in the loop (see RunChecksOptions.metricContract).
+        if (!failed) {
+          const problems = unitContractViolations(metricValues, opts.metricContract ?? []);
+          if (problems.length > 0) {
+            failed = true;
+            failureKind = 'unit';
+            summary = problems
+              .map((problem) => `smoke metric ${problem.name}: ${problem.problem}`)
+              .join('; ')
+              .slice(0, 300);
           }
         }
       }

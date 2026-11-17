@@ -268,6 +268,8 @@ export async function implementIdeaWithRefine(opts: {
   measuredData: string | null;
   runId: string;
   timeoutMs?: number;
+  /** The locked protocol's metric declarations; see `RunChecksOptions.metricContract`. */
+  metricContract?: string[];
   onRound?: (round: number, detail: string) => void;
 }): Promise<IdeaRefineResult> {
   const { runIdeaChecks } = await import('./check.js');
@@ -387,7 +389,10 @@ export async function implementIdeaWithRefine(opts: {
     );
     written = outcome.written;
     kept = [...new Set([...kept, ...outcome.kept])];
-    report = await runIdeaChecks(opts.projectRoot, opts.ideaId, { timeoutMs: opts.timeoutMs });
+    report = await runIdeaChecks(opts.projectRoot, opts.ideaId, {
+      timeoutMs: opts.timeoutMs,
+      metricContract: opts.metricContract ?? [],
+    });
 
     if (report.outcome === 'passed') {
       attempts.push({ round, mode, detail: 'check passed' });

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { IdeaCard } from '../src/idea/card.js';
 import { hashIdeaSource } from '../src/idea/workspace.js';
 import type { IdeaCheckReport } from '../src/idea/check.js';
+import { runIdeaChecks, unitContractViolations } from '../src/idea/check.js';
 import { CLI_BIN } from './helpers.js';
 
 function makeCard(ideaId: string): IdeaCard {
@@ -479,4 +480,56 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(staticPhase.ok).toBe(false);
     expect(staticPhase.summary).toContain('bad.json');
   }, 120_000);
+
+  it('fails the smoke phase when the value contradicts the locked protocol unit', async () => {
+    // Two FDG ideas passed every phase and were refused only at analysis, with
+    // an experiment already spent: the unit lives in the protocol and never
+    // reached the gate that runs while the author can still change one line.
+    await implementRealSmoke();
+    const report = await runIdeaChecks(project, 'calib-reweight', {
+      metricContract: ['rare-class recall (per-rare-class mean, %)'],
+    });
+    const smoke = report.phases.find((phase) => phase.phase === 'smoke')!;
+    expect(smoke.ok).toBe(false);
+    expect(smoke.failureKind).toBe('unit');
+    expect(smoke.summary).toContain('declared percent');
+    expect(report.outcome).toBe('failed');
+  }, 120_000);
+
+  it('passes the same code once the value is in the declared unit', async () => {
+    await writeFile(
+      join(project, 'ideas', 'calib-reweight', 'src', 'smoke.py'),
+      [
+        'import json',
+        '',
+        '# 12 correct of 40 rare-class samples, reported as the protocol declares: percent',
+        'print(json.dumps({"metrics": {"rare-class recall": 30.0}}))',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const report = await runIdeaChecks(project, 'calib-reweight', {
+      metricContract: ['rare-class recall (per-rare-class mean, %)'],
+    });
+    expect(report.phases.find((phase) => phase.phase === 'smoke')!.ok).toBe(true);
+  }, 120_000);
+
+  it('checks nothing it was not told, and matches across the prose gap', () => {
+    // A project with no locked protocol has no unit to violate: an empty
+    // contract must not refuse a value that happens to lie in 0-1.
+    expect(unitContractViolations({ 'rare-class recall': 0.3 }, [])).toEqual([]);
+    // #15's vocabulary gap on the checking side: the card declares prose, the
+    // protocol declares identifier-plus-definition, and requiring the strings
+    // to be equal would skip the gate for exactly the metrics it exists for.
+    expect(
+      unitContractViolations({ 'unseen-domain top-1 accuracy': 0.1686 }, [
+        'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
+      ]),
+    ).toEqual([]);
+    expect(
+      unitContractViolations({ target_unseen_domain_top1_accuracy: 0.1686 }, [
+        'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
+      ]),
+    ).toHaveLength(1);
+  });
 });

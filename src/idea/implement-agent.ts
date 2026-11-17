@@ -131,6 +131,12 @@ export async function implementIdeaWithAgent(opts: {
   provider?: string;
   maxRounds?: number;
   requestTimeoutMs?: number;
+  /**
+   * The locked protocol's metric declarations, verbatim. Handed to the agent as
+   * what to emit and to the ladder as what to check — see
+   * `RunChecksOptions.metricContract`.
+   */
+  metricContract?: string[];
   onStep?: (line: string) => void;
   onLog?: (message: string) => void;
 }): Promise<AgentImplementationResult> {
@@ -170,6 +176,14 @@ export async function implementIdeaWithAgent(opts: {
       .map((step, index) => `${index + 1}. [${step.kind}] ${step.text}`)
       .join('\n')}`,
     `## minimal experiment (scope)\ncode: ${opts.card.minimalExperiment.code}\ndata: ${opts.card.minimalExperiment.data}\nbaselines: ${opts.card.minimalExperiment.baselines.join(', ')}\nmetrics: ${opts.card.minimalExperiment.metrics.join(', ')}`,
+    opts.metricContract && opts.metricContract.length > 0
+      ? `## metric contract (the locked protocol declares the unit)\n` +
+        opts.metricContract.map((metric) => `- ${metric}`).join('\n') +
+        `\nEvery metric key your code prints must appear here or be one of the card metrics above; ` +
+        `where a contract entry denotes the same measurement as a card metric, print the CONTRACT ` +
+        `identifier and report the value in the unit it declares (a metric declared "%" is 0-100, ` +
+        `not 0-1). The platform refuses a recorded value that contradicts the declared unit.`
+      : '',
     `## nearest comparisons\n${
       opts.card.nearestComparisons
         .map((item) => `- ${item.methodId}: ${item.difference}`)
@@ -212,7 +226,9 @@ export async function implementIdeaWithAgent(opts: {
     sessionId = turn.sessionId;
     const authored = await recordAuthoredIdeaFiles(workspace, baseline);
 
-    report = await runIdeaChecks(opts.projectRoot, opts.ideaId);
+    report = await runIdeaChecks(opts.projectRoot, opts.ideaId, {
+      metricContract: opts.metricContract ?? [],
+    });
     const failing = report.phases
       .filter((phase) => !phase.skipped && !phase.ok)
       .map((phase) => ({
