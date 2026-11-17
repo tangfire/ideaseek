@@ -181,8 +181,41 @@ function escapeLatex(text: string): string {
   return text.replace(/([&%$#_])/g, '\\$1');
 }
 
+/** Why one included figure is not trustworthy, in the platform's own records. */
+export type UnapprovedReason =
+  /** A human recorded a verdict that is not an approval. */
+  | 'review-rejected'
+  /**
+   * The renderer hashed these bytes but recorded them outside `figures/`, so
+   * the manuscript's `figures/…` include can never name them: nothing the
+   * researcher can approve, and re-running the render will not change it.
+   */
+  | 'outside-figures-tree'
+  /** The renderer did not accept the figure (no entry, or `ok: false`). */
+  | 'not-rendered';
+
+export interface UnapprovedFigure {
+  /** The path exactly as the manuscript includes it, extension filled in. */
+  path: string;
+  /** The figure the render report attributes these bytes to, when it can. */
+  figureId: string | null;
+  /** `figures[].review.status` of that figure, when the report carries one. */
+  reviewStatus: string | null;
+  reason: UnapprovedReason;
+  /**
+   * Whether `--allow-figures` may excuse it. False for a review verdict: that
+   * flag exists for hand-made files the renderer never judged, and letting it
+   * wave a researcher's rejection through would turn an escape hatch into a
+   * way of ignoring the record.
+   */
+  overridable: boolean;
+  /** What the render report says about this path, quoted by the blocker. */
+  detail: string | null;
+}
+
 /**
- * Figure files the manuscript includes that the renderer did not accept.
+ * Figure files the manuscript includes that the platform's own records do not
+ * vouch for.
  *
  * The hole this closes was observed on FDG: `paper render-figures` reported
  * `partial: 0/6` because six scripts drew identical placeholder bars, and
@@ -194,43 +227,226 @@ function escapeLatex(text: string): string {
  * Presence, not hash: an included figure must be listed as an output of a
  * figure the renderer marked ok. That also catches stale files left by an older
  * plan, which is what happened here. A human-drawn figure is reported rather
- * than silently trusted, and `--allow-figure` names the ones you mean.
+ * than silently trusted, and `--allow-figures` names the ones you mean.
+ *
+ * The human verdict is obeyed the same way (DEFECT: `review.status` used to be
+ * written by `paper review-figure` and read by nobody, so a figure explicitly
+ * REJECTED still reached the PDF). `unreviewed` is deliberately NOT a veto: it
+ * is what the renderer itself writes for every freshly rendered figure, so
+ * treating absence of a verdict as a rejection would block every ordinary
+ * compile until someone approved each file one by one — a check that gets
+ * deleted under pressure is worth less than one that survives. Anything other
+ * than `approved`/`unreviewed` blocks, because an unrecognized status is not an
+ * approval either.
  */
 export async function unapprovedFigureIncludes(
   root: string,
   mainTexText: string,
   allowed: string[] = [],
-): Promise<string[]> {
+): Promise<UnapprovedFigure[]> {
   const includes = [...mainTexText.matchAll(/\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/g)]
     .map((match) => (match[1] ?? '').trim())
     .filter((path) => path.startsWith('figures/'))
     .map((path) => (/\.[a-z]+$/i.test(path) ? path : `${path}.pdf`));
   if (includes.length === 0) return [];
 
+  interface ReportOutput {
+    path?: unknown;
+    declared?: unknown;
+    unmatchable?: unknown;
+  }
+  interface ReportFigure {
+    id?: unknown;
+    ok?: unknown;
+    outputs?: ReportOutput[];
+    review?: { status?: unknown };
+  }
   const accepted = new Set<string>();
+  /** Every recorded output path, so a block can name the figure it belongs to. */
+  const recorded = new Map<
+    string,
+    {
+      figureId: string;
+      status: string;
+      note: string | null;
+      unmatchable: string | null;
+      ok: boolean;
+    }
+  >();
+  /** By figure id, for the case where the recorded path can never be the include. */
+  const byId = new Map<
+    string,
+    { status: string; outputs: { path: string; unmatchable: string | null }[] }
+  >();
   try {
     const report = JSON.parse(
       await readFile(join(root, 'reports', 'paper', 'figure-render.json'), 'utf8'),
-    ) as {
-      figures?: { ok?: boolean; outputs?: { path?: unknown }[] }[];
-    };
+    ) as { figures?: ReportFigure[] };
     for (const figure of report.figures ?? []) {
-      if (figure?.ok !== true) continue;
-      for (const output of figure.outputs ?? []) {
-        if (typeof output?.path === 'string') accepted.add(output.path);
+      const id = typeof figure?.id === 'string' ? figure.id : '';
+      const status = typeof figure?.review?.status === 'string' ? figure.review.status : null;
+      const entries: { path: string; unmatchable: string | null }[] = [];
+      for (const output of figure?.outputs ?? []) {
+        const path = typeof output?.path === 'string' ? output.path : '';
+        if (!path) continue;
+        const declared = typeof output.declared === 'string' ? output.declared : null;
+        const unmatchable = typeof output.unmatchable === 'string' ? output.unmatchable : null;
+        const note = unmatchable
+          ? `the render report records these bytes as ${path} — ${unmatchable}`
+          : declared
+            ? `the render report records these bytes as ${path}, from savefig(${JSON.stringify(
+                declared,
+              )}); the script's working directory is figures/, which is why the two strings differ`
+            : null;
+        entries.push({ path, unmatchable });
+        recorded.set(path, {
+          figureId: id,
+          status: status ?? 'unreviewed',
+          note,
+          unmatchable,
+          ok: figure?.ok === true,
+        });
       }
+      if (id) byId.set(id, { status: status ?? 'unreviewed', outputs: entries });
+      if (figure?.ok !== true) continue;
+      if (status && status !== 'approved' && status !== 'unreviewed') continue;
+      for (const output of entries) accepted.add(output.path);
     }
   } catch {
     // No report means nothing in figures/ has ever been accepted — the honest
     // reading, since an unrendered figure is not a figure.
   }
+
   const allowedNames = new Set(allowed);
-  return [...new Set(includes)].filter(
-    (path) =>
-      !accepted.has(path) &&
-      !allowedNames.has(path) &&
-      !allowedNames.has(path.replace(/^figures\//, '')),
+  const isNamed = (path: string): boolean =>
+    allowedNames.has(path) || allowedNames.has(path.replace(/^figures\//, ''));
+
+  const findings = new Map<string, UnapprovedFigure>();
+  for (const path of [...new Set(includes)]) {
+    if (accepted.has(path)) continue;
+    const entry = recorded.get(path);
+    // The id convention is used only to EXPLAIN a block, never to grant one:
+    // the renderer writes each script to `figures/<id>.py`, so an include's stem
+    // names the figure that produced it even when no recorded output matches.
+    const stem = (path.split('/').pop() ?? '').replace(/\.[a-z]+$/i, '');
+    const figure = entry ? byId.get(entry.figureId) : byId.get(stem);
+    const figureId = entry?.figureId ?? (byId.has(stem) ? stem : null);
+    const status = entry?.status ?? figure?.status ?? null;
+    const rejected = status !== null && status !== 'approved' && status !== 'unreviewed';
+    // An output recorded outside the figures tree cannot be named by any
+    // `\includegraphics{figures/…}`, so this is not a missing approval and the
+    // blocker must not pretend the researcher only needs to run the render
+    // again: the bytes are somewhere the manuscript cannot point at.
+    const unmatchable =
+      entry?.unmatchable ??
+      (figure && figure.outputs.length > 0 && figure.outputs.every((o) => o.unmatchable !== null)
+        ? (figure.outputs[0]?.unmatchable ?? null)
+        : null);
+    // A hand-made file may be named on the command line; a verdict may not be
+    // overruled by a flag whose documentation says nothing about review, so
+    // `--allow-figures` is consulted only where nothing was ever judged.
+    const overridable = !rejected;
+    if (overridable && isNamed(path)) continue;
+    const reason: UnapprovedReason = rejected
+      ? 'review-rejected'
+      : unmatchable
+        ? 'outside-figures-tree'
+        : 'not-rendered';
+    // Each cause gets its own sentence, because each has a different fixer: a
+    // verdict is changed by `review-figure`, a path basis by the script's
+    // savefig target, and an unaccepted render by `render-figures` itself.
+    let detail: string | null = null;
+    if (reason === 'review-rejected') {
+      detail = `figure ${figureId ?? 'unknown'} carries review.status "${status}" in the render report`;
+    } else if (entry) {
+      // The exact path the manuscript names IS in the report, so the only
+      // remaining reading is that the renderer recorded it without accepting it.
+      detail =
+        entry.note ??
+        `the render report records figure ${entry.figureId || 'unknown'} at ${path} with ok: ` +
+          `${entry.ok} — an output the renderer did not accept is not an approved figure, rerun: ` +
+          'ideaseek paper render-figures';
+    } else if (unmatchable) {
+      detail = `${path} is not a recorded path; ${unmatchable}`;
+    } else if (figure && figure.outputs.length > 0) {
+      detail =
+        `the render report knows figure ${figureId ?? stem} only at ${figure.outputs
+          .map((output) => output.path)
+          .join(', ')} — the manuscript includes ${path} instead, which is what a savefig string ` +
+        'beginning with figures/ produces (the script already runs in figures/), so either place ' +
+        'the recorded path or drop the prefix in the script';
+    }
+    findings.set(path, {
+      path,
+      figureId,
+      reviewStatus: status,
+      reason,
+      overridable,
+      detail,
+    });
+  }
+  return [...findings.values()];
+}
+
+/**
+ * The blocker sentences for the findings above, grouped by who can fix them.
+ *
+ * Grouping is the point: one message for three different causes is how a
+ * researcher ends up being told to re-render a figure whose bytes are in
+ * `/tmp`, or to fix a script that the platform's own path basis made
+ * unmatchable. Each group names the artifact that decides it and the command
+ * that changes it.
+ */
+export function unapprovedFigureBlockers(findings: UnapprovedFigure[]): string[] {
+  const blockers: string[] = [];
+  const rejected = findings.filter((finding) => finding.reason === 'review-rejected');
+  if (rejected.length > 0) {
+    blockers.push(
+      rejected
+        .map(
+          (finding) =>
+            `${finding.path} is included but figure ${finding.figureId ?? 'unknown'} was reviewed ` +
+            `"${finding.reviewStatus}" — the verdict of record is changed with ` +
+            `ideaseek paper review-figure ${finding.figureId ?? '<id>'} --status approved; ` +
+            '--allow-figures cannot overrule it, because that flag is for hand-made files the ' +
+            'renderer never judged',
+        )
+        .join('; '),
+    );
+  }
+  const outside = findings.filter((finding) => finding.reason === 'outside-figures-tree');
+  if (outside.length > 0) {
+    blockers.push(
+      outside
+        .map(
+          (finding) =>
+            `${finding.path} is included but was never recorded under figures/ — ` +
+            `${finding.detail ?? 'the render report has no such path'}. This is the recorded path, ` +
+            'not a missing approval: point the script savefig at a file under figures/ (its ' +
+            'working directory already is figures/) and rerun: ideaseek paper render-figures',
+        )
+        .join('; '),
+    );
+  }
+  const unaccepted = findings.filter(
+    (finding) => finding.reason === 'not-rendered' && !finding.detail,
   );
+  const explained = findings.filter(
+    (finding) => finding.reason === 'not-rendered' && finding.detail,
+  );
+  if (unaccepted.length > 0) {
+    blockers.push(
+      `figures included but not accepted by the renderer: ${unaccepted
+        .map((finding) => finding.path)
+        .join(', ')} — ` +
+        'rerun: ideaseek paper render-figures (it reports ok per figure), or name deliberately ' +
+        'hand-made files with: ideaseek paper compile --allow-figures <path>',
+    );
+  }
+  for (const finding of explained) {
+    blockers.push(`${finding.path} — ${finding.detail}`);
+  }
+  return blockers;
 }
 
 /** Classifies a failed latexmk log into an actionable blocker. */
@@ -511,11 +727,7 @@ export async function compileManuscript(
       pdfPath: null,
       pageCount: null,
       logTail: '',
-      blockers: [
-        `figures included but not accepted by the renderer: ${unapprovedFigures.join(', ')} — ` +
-          'rerun: ideaseek paper render-figures (it reports ok per figure), or name deliberately ' +
-          'hand-made files with: ideaseek paper compile --allow-figure <path>',
-      ],
+      blockers: unapprovedFigureBlockers(unapprovedFigures),
       skill: skillMeta,
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),

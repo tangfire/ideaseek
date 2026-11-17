@@ -82,6 +82,82 @@ async function readStoredPlan(root: string): Promise<StoredPlan | null> {
   }
 }
 
+interface StoredReview {
+  status: string;
+  note: string | null;
+  at: number | null;
+  history: { status: string; note: string | null; at: number }[];
+}
+
+const REVIEW_STATUSES = ['unreviewed', 'approved', 'rejected'];
+
+/**
+ * The review block of one stored figure, as a value this command may extend.
+ *
+ * WHY a guard rather than `figure.review ?? {…}` plus a spread: `paper compile`
+ * now obeys `review.status`, so this record is load-bearing, and a stored block
+ * that is half-present used to reach `...previous.history` and throw a bare
+ * TypeError — a crash with no code, no next step, and (worse) the appearance of
+ * a broken platform in front of a user whose artifact is the broken thing. The
+ * contract (figure-render-v1) requires `review.status` and `review.history`, so
+ * an artifact missing either was not written by `render-figures`: it is corrupt,
+ * and the honest answer is INVALID_ARTIFACT with the repair command — not a
+ * silently restarted history, which would erase the append-only trail the
+ * verdict exists to keep.
+ */
+function storedReview(figure: { id: string; review?: unknown }, location: string): StoredReview {
+  const where = `${location} → figures[].review of ${figure.id}`;
+  if (figure.review === undefined || figure.review === null) {
+    // No verdict recorded is the renderer's own starting state, not damage.
+    return { status: 'unreviewed', note: null, at: null, history: [] };
+  }
+  if (typeof figure.review !== 'object' || Array.isArray(figure.review)) {
+    throw new IdeaseekError(
+      'INVALID_ARTIFACT',
+      `${where} is not an object — repair it with: ideaseek paper render-figures`,
+    );
+  }
+  const block = figure.review as Record<string, unknown>;
+  if (typeof block.status !== 'string' || !REVIEW_STATUSES.includes(block.status)) {
+    throw new IdeaseekError(
+      'INVALID_ARTIFACT',
+      `${where}.status is ${JSON.stringify(block.status ?? null)}, expected ` +
+        `${REVIEW_STATUSES.join(' | ')} — repair it with: ideaseek paper render-figures`,
+    );
+  }
+  if (!Array.isArray(block.history)) {
+    throw new IdeaseekError(
+      'INVALID_ARTIFACT',
+      `${where}.history is ${
+        block.history === undefined ? 'missing' : `not an array (` + `${typeof block.history})`
+      } — the append-only review trail is part of ` +
+        'figure-render-v1, so rerun: ideaseek paper render-figures (this rewrites the report and ' +
+        'clears the verdicts) and review the figures again',
+    );
+  }
+  const history = block.history.map((entry, index) => {
+    const record = (entry ?? {}) as Record<string, unknown>;
+    if (typeof record.status !== 'string' || typeof record.at !== 'number') {
+      throw new IdeaseekError(
+        'INVALID_ARTIFACT',
+        `${where}.history[${index}] needs a string status and a numeric at — repair it with: ` +
+          'ideaseek paper render-figures',
+      );
+    }
+    return {
+      status: record.status,
+      note: typeof record.note === 'string' ? record.note : null,
+      at: record.at,
+    };
+  });
+  return {
+    status: block.status,
+    note: typeof block.note === 'string' ? block.note : null,
+    at: typeof block.at === 'number' ? block.at : null,
+    history,
+  };
+}
+
 export function registerPaperCommand(program: Command): void {
   const paper = program
     .command('paper')
@@ -655,7 +731,8 @@ export function registerPaperCommand(program: Command): void {
     )
     .option(
       '--allow-figures <paths>',
-      'comma-separated figures/ files to include without an accepted render (hand-made figures)',
+      'comma-separated figures/ files to include without an accepted render (hand-made figures; ' +
+        'cannot overrule a paper review-figure verdict)',
     )
     .action(
       action(async (opts: { json?: boolean; styleDir?: string; allowFigures?: string }) => {
@@ -904,6 +981,15 @@ export function registerPaperCommand(program: Command): void {
             'reports/paper/figure-render.json is not a figure-render-v1 artifact',
           );
         }
+        // Same reasoning as the review block below: without this, a hand-edited
+        // report reaches `.find` and crashes instead of naming the artifact.
+        if (!Array.isArray(stored.figures)) {
+          throw new IdeaseekError(
+            'INVALID_ARTIFACT',
+            'reports/paper/figure-render.json has no figures[] array — rerun: ' +
+              'ideaseek paper render-figures',
+          );
+        }
         const figure = stored.figures.find((entry) => entry.id === id);
         if (!figure) {
           const known = stored.figures.map((entry) => entry.id).join(', ') || 'none';
@@ -913,12 +999,7 @@ export function registerPaperCommand(program: Command): void {
           );
         }
         const now = Date.now();
-        const previous = figure.review ?? {
-          status: 'unreviewed',
-          note: null,
-          at: null,
-          history: [],
-        };
+        const previous = storedReview(figure, 'reports/paper/figure-render.json');
         figure.review = {
           status: opts.status,
           note: opts.note ?? null,
@@ -938,6 +1019,14 @@ export function registerPaperCommand(program: Command): void {
           );
           process.stdout.write(
             `  previous: ${previous.status} · history kept in reports/paper/figure-render.json\n`,
+          );
+          // Spell out what the verdict now does: this record is read by
+          // `paper compile`, and a rejection it obeys is not a suggestion.
+          process.stdout.write(
+            opts.status === 'approved'
+              ? '  effect: paper compile accepts this figure while the render report marks it ok\n'
+              : '  effect: paper compile now refuses to build while the manuscript includes this ' +
+                  'figure; --allow-figures does not overrule this verdict\n',
           );
           process.stdout.write(
             'next: include the caption in the paper; re-render only after regenerating the plan\n',

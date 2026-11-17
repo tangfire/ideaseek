@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sha256OfFile } from '../core/hash.js';
 import { IdeaseekError } from '../core/errors.js';
@@ -31,11 +31,37 @@ export interface OverleafManifest {
   contract: typeof OVERLEAF_EXPORT_SCHEMA;
   createdAt: number;
   bundleDir: string;
+  /**
+   * Where the ZIP is created. `status` decides whether it exists: the path is
+   * a target, and `overleaf-export-v1` requires the field to be a string, so
+   * the state — not an empty string — carries the difference.
+   */
   zipPath: string;
+  /** Whether the bundle finished; `incomplete` must never be read as a submission-ready ZIP. */
+  status: 'complete' | 'incomplete';
+  /** Why the bundle is unfinished (the ZIP step's own failure text), else null. */
+  reason: string | null;
   files: OverleafFileEntry[];
   provenance: string[];
   notes: string[];
 }
+
+/**
+ * Recorded in the artifact, because the persisted file and the emitted one
+ * differ in exactly one entry and a reader with both on screen is entitled to
+ * know why rather than having to guess which is broken: a manifest cannot
+ * carry the digest of the bytes it is written into, so `files` lists every
+ * bundled file except `manifest.json`, and the returned (printed) copy appends
+ * that entry with the digest of the persisted file.
+ */
+const SELF_ENTRY_NOTE =
+  'files lists every bundled file except manifest.json (a file cannot carry its own digest); ' +
+  'the copy printed by --json appends that entry, digesting the persisted file';
+
+/** The ZIP step describes itself, so `reason` is never a guess. */
+const PRE_ZIP_REASON =
+  'the ZIP had not been created when this copy was written; the manifest.json inside the ZIP is ' +
+  'this pre-zip copy, marked incomplete on purpose so a half-done bundle cannot be read as done';
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -60,6 +86,19 @@ async function listFiles(dir: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * The entry for `manifest.json` itself, computed from the bytes as persisted.
+ *
+ * Only the returned (printed) manifest carries it: writing it into the file
+ * would change the file it describes, so the persisted copy documents the rule
+ * instead (`SELF_ENTRY_NOTE`). Both copies otherwise agree field for field,
+ * which is what makes the emitted one safe to diff against the artifact.
+ */
+async function manifestEntry(manifestPath: string): Promise<OverleafFileEntry> {
+  const info = await stat(manifestPath);
+  return { path: 'manifest.json', bytes: info.size, sha256: await sha256OfFile(manifestPath) };
 }
 
 export interface OverleafExportOptions {
@@ -161,11 +200,14 @@ export async function buildOverleafExport(
     fs.writeFile(join(bundleDir, 'README.md'), readme, 'utf8'),
   );
 
-  // 5) Manifest with sha256 per file (excluding the manifest itself).
+  // 5) Manifest with sha256 per file. `manifest.json` is skipped by the walk:
+  //    its own bytes cannot be digested inside itself, and a rerun into an
+  //    existing bundle directory would otherwise list the previous run's copy.
   const files: OverleafFileEntry[] = [];
   const walk = async (rel: string): Promise<void> => {
     for (const name of (await listFiles(join(bundleDir, rel))).sort()) {
       const childRel = rel ? `${rel}/${name}` : name;
+      if (childRel === 'manifest.json') continue;
       const full = join(bundleDir, ...childRel.split('/'));
       const info = await stat(full);
       if (info.isDirectory()) await walk(childRel);
@@ -180,41 +222,82 @@ export async function buildOverleafExport(
   };
   await walk('');
   const manifestPath = join(bundleDir, 'manifest.json');
-  const manifest: OverleafManifest = {
-    contract: OVERLEAF_EXPORT_SCHEMA,
-    createdAt: now,
-    bundleDir,
-    zipPath: `${bundleDir}.zip`,
-    files,
-    provenance,
-    notes: ['no secrets; originals read-only; full-scale runs are user-executed (handoff package)'],
+  const zipPath = `${bundleDir}.zip`;
+  const notes = [
+    'no secrets; originals read-only; full-scale runs are user-executed (handoff package)',
+    SELF_ENTRY_NOTE,
+  ];
+
+  const writeManifest = async (
+    status: OverleafManifest['status'],
+    reason: string | null,
+  ): Promise<OverleafManifest> => {
+    const manifest: OverleafManifest = {
+      contract: OVERLEAF_EXPORT_SCHEMA,
+      createdAt: now,
+      bundleDir,
+      zipPath,
+      status,
+      reason,
+      files,
+      provenance,
+      notes,
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    return manifest;
   };
-  await import('node:fs/promises').then((fs) =>
-    fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8'),
-  );
-  files.push({
-    path: 'manifest.json',
-    bytes: (await stat(manifestPath)).size,
-    sha256: await sha256OfFile(manifestPath),
-  });
+  // The persisted state is written before the ZIP is attempted, so every
+  // outcome — including a process killed mid-bundle — leaves a manifest whose
+  // `status` is behind the claim it makes. `zipPath` used to be advertised up
+  // front and the ZIP created afterwards: when that step threw
+  // (ENV_UNSUPPORTED: no python, zipfile failure) the file on disk kept
+  // promising a bundle that did not exist, and nothing marked the bundle
+  // half-done.
+  await writeManifest('incomplete', PRE_ZIP_REASON);
 
   // 6) Zip via the Python stdlib (no new npm dependency).
-  const python = await pythonBinary();
-  const zipPath = `${bundleDir}.zip`;
-  await import('node:fs/promises').then((fs) => fs.rm(zipPath, { force: true }));
-  const topLevel = (await listFiles(bundleDir)).filter((name) => name !== 'manifest.json');
-  const result = await runProcess(
-    python,
-    ['-m', 'zipfile', '-c', zipPath, ...topLevel, 'manifest.json'],
-    { cwd: bundleDir, timeoutMs: 120_000, env: { ...process.env, PYTHONUTF8: '1' } },
-  );
-  if (result.timedOut || result.code !== 0) {
+  try {
+    const python = await pythonBinary();
+    await rm(zipPath, { force: true });
+    const topLevel = (await listFiles(bundleDir)).filter((name) => name !== 'manifest.json');
+    const result = await runProcess(
+      python,
+      ['-m', 'zipfile', '-c', zipPath, ...topLevel, 'manifest.json'],
+      { cwd: bundleDir, timeoutMs: 120_000, env: { ...process.env, PYTHONUTF8: '1' } },
+    );
+    if (result.timedOut || result.code !== 0) {
+      throw new IdeaseekError(
+        'ENV_UNSUPPORTED',
+        `could not create the Overleaf ZIP: ${redactSecrets(
+          (result.stderr || result.stdout || 'zipfile failed').slice(0, 300),
+        )}`,
+      );
+    }
+    // A zero exit is not the fact: mark the bundle complete only once the ZIP is
+    // readable where it was promised.
+    const zipInfo = await stat(zipPath).catch(() => null);
+    if (!zipInfo?.isFile() || zipInfo.size === 0) {
+      throw new IdeaseekError(
+        'ENV_UNSUPPORTED',
+        `zipfile exited 0 but ${zipPath} is not a readable non-empty file`,
+      );
+    }
+  } catch (error) {
+    const why = redactSecrets((error as Error).message).slice(0, 400);
+    await writeManifest('incomplete', why);
+    if (error instanceof IdeaseekError) throw error;
+    // A filesystem failure at the ZIP path (`rm` refusing a directory, an
+    // unwritable target) is still "the bundle could not be finished": it gets
+    // the same coded error as a missing python, and the manifest on disk has
+    // already been marked incomplete before this throws.
     throw new IdeaseekError(
       'ENV_UNSUPPORTED',
-      `could not create the Overleaf ZIP: ${redactSecrets(
-        (result.stderr || result.stdout || 'zipfile failed').slice(0, 300),
-      )}`,
+      `could not create the Overleaf ZIP at ${zipPath}: ${why} — ` +
+        `${manifestPath} is written and marked incomplete; the bundle directory itself is complete`,
+      { bundleDir, zipPath },
     );
   }
-  return manifest;
+
+  const final = await writeManifest('complete', null);
+  return { ...final, files: [...files, await manifestEntry(manifestPath)] };
 }

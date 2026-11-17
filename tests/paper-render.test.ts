@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { access, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CLI_BIN, makeProjectDir } from './helpers.js';
 
@@ -238,4 +238,215 @@ describe('declared save targets', () => {
     ).toEqual(['figures/Fig 1.pdf', 'figures/Fig 1.png']);
     expect(parseSaveTargets('plt.plot([1, 2])')).toEqual([]);
   });
+});
+
+/**
+ * One basis for a recorded output: where the bytes actually are, relative to
+ * the project. The compile gate compares these strings against
+ * `\includegraphics{figures/…}`, so a second basis inside the same array
+ * silently made whole classes of figure unapprovable — and the blocker that
+ * followed blamed the script for the platform's own mismatch.
+ */
+describe('canonicalOutputPath', () => {
+  const cases: { target: string; path: string; declared: string | null }[] = [
+    // A bare name is what the shipped scripts write; it resolves inside the
+    // figures tree, so the record gains the prefix and the script's string is
+    // not worth repeating.
+    { target: 'fig-1.pdf', path: 'figures/fig-1.pdf', declared: null },
+    { target: 'sub/fig-1.pdf', path: 'figures/sub/fig-1.pdf', declared: 'sub/fig-1.pdf' },
+    { target: 'plots/x.pdf', path: 'figures/plots/x.pdf', declared: 'plots/x.pdf' },
+    // A target that already carries the prefix lands one level deeper than the
+    // name suggests: recorded where it lands, with both strings kept.
+    {
+      target: 'figures/fig-1.pdf',
+      path: 'figures/figures/fig-1.pdf',
+      declared: 'figures/fig-1.pdf',
+    },
+    // Windows-authored scripts may use backslashes; the record carries one
+    // spelling only — the slash form — because two spellings of one file is the
+    // bug this function exists to remove.
+    { target: 'sub\\fig-1.pdf', path: 'figures/sub/fig-1.pdf', declared: 'sub/fig-1.pdf' },
+  ];
+  for (const testCase of cases) {
+    it(`records ${testCase.target} where the file really is`, async () => {
+      const { canonicalOutputPath } = await import('../src/paper/render-figures.js');
+      const figuresDir = resolve('ideaseek-basis-test', 'figures');
+      const basis = canonicalOutputPath(testCase.target, figuresDir, 'figures');
+      expect(basis.path).toBe(testCase.path);
+      expect(basis.declared).toBe(testCase.declared);
+      expect(basis.unmatchable).toBeNull();
+      expect(basis.abs.startsWith(figuresDir)).toBe(true);
+    });
+  }
+
+  it('keeps the declared string and says it can never match when the bytes are elsewhere', async () => {
+    const { canonicalOutputPath } = await import('../src/paper/render-figures.js');
+    const figuresDir = resolve('ideaseek-basis-test', 'figures');
+    for (const target of ['/tmp/fig-1.pdf', '../outside/fig-1.pdf']) {
+      const basis = canonicalOutputPath(target, figuresDir, 'figures');
+      expect(basis.unmatchable).toContain('outside the figures tree');
+      // Not a fabricated `figures/…` name for a file that is not there.
+      expect(basis.path.startsWith('figures/')).toBe(false);
+    }
+  });
+});
+
+describe('rendering into a subdirectory (e2e)', () => {
+  it('records the file where it is instead of crashing on the directory', async () => {
+    // The scan loop treated every entry of `readdir(figures/)` as a file, so
+    // the `sub` directory a subdirectory-saving script creates reached
+    // sha256OfFile and threw EISDIR: the whole render failed on a figure that
+    // had worked. This script draws nothing with matplotlib on purpose — the
+    // platform judges the artifact, not the plotting library.
+    const dir = await makeProjectDir();
+    await seedFigurePlan(dir);
+    const subdirectory = JSON.stringify({
+      style: 'publication',
+      dpi: 300,
+      format: 'pdf',
+      figures: [
+        {
+          id: 'fig-1',
+          type: 'bar',
+          title: 'Into a subdirectory',
+          caption: 'Written under figures/sub by the script itself.',
+          statistics: ['stub vector written for this test'],
+          dataSources: [{ kind: 'context', ref: 'x' }],
+          script: [
+            '# no matplotlib here on purpose: the platform judges the saved bytes,',
+            '# not which plotting library wrote them (the figure plan validator says so).',
+            'import os',
+            'class _Canvas:',
+            '    def savefig(self, path):',
+            '        directory = os.path.dirname(path)',
+            '        if directory:',
+            '            os.makedirs(directory, exist_ok=True)',
+            '        with open(path, "wb") as handle:',
+            '            handle.write(b"%PDF-1.4\\n% stub vector\\n")',
+            'fig = _Canvas()',
+            'fig.savefig("sub/fig-1.pdf")',
+          ].join('\n'),
+          latexInclude: '\\includegraphics{figures/sub/fig-1}',
+          claims: ['the stub file is the figure under test'],
+        },
+      ],
+      preservedExisting: [],
+      manualRemaining: [],
+      reviewerFeedback: { verdict: 'REVIEW_UNAVAILABLE', notes: ['none'] },
+    });
+    const planned = await runCli(dir, ['paper', 'figure', '--harness', 'fake', '--force'], {
+      IDEASEEK_FAKE_PAPER_FIGURE_OUTPUT: subdirectory,
+    });
+    expect(planned.code, planned.stdout + planned.stderr).toBe(0);
+
+    const rendered = await runCli(dir, ['paper', 'render-figures', '--json']);
+    expect(rendered.code, rendered.stdout + rendered.stderr).toBe(0);
+    const report = JSON.parse(rendered.stdout) as {
+      status: string;
+      figures: { id: string; ok: boolean; outputs: { path: string; declared?: string }[] }[];
+    };
+    expect(report.figures[0]!.ok).toBe(true);
+    const paths = report.figures[0]!.outputs.map((output) => output.path);
+    expect(paths).toContain('figures/sub/fig-1.pdf');
+    // One basis only: never the bare script string, never the directory name.
+    expect(paths).not.toContain('sub/fig-1.pdf');
+    expect(paths).not.toContain('figures/sub');
+    const recorded = report.figures[0]!.outputs.find(
+      (output) => output.path === 'figures/sub/fig-1.pdf',
+    );
+    expect(recorded!.declared).toBe('sub/fig-1.pdf');
+    expect(await exists(join(dir, 'figures', 'sub', 'fig-1.pdf'))).toBe(true);
+  }, 300_000);
+});
+
+describe('review-figure refuses a damaged render report instead of crashing', () => {
+  async function projectWithReport(report: unknown): Promise<string> {
+    const dir = await makeProjectDir();
+    await seedFigurePlan(dir);
+    expect((await runCli(dir, ['paper', 'render-figures'])).code).toBe(0);
+    await writeFile(
+      join(dir, 'reports', 'paper', 'figure-render.json'),
+      `${JSON.stringify(report, null, 2)}\n`,
+      'utf8',
+    );
+    return dir;
+  }
+
+  const figureWithoutHistory = {
+    contract: 'figure-render-v1',
+    status: 'rendered',
+    figures: [
+      {
+        id: 'fig-1',
+        ok: true,
+        outputs: [{ path: 'figures/fig-1.pdf', bytes: 1, sha256: `sha256:${'0'.repeat(64)}` }],
+        // A review block that lost its append-only trail: the shape that used
+        // to reach `...previous.history` and throw a TypeError.
+        review: { status: 'approved', note: 'hand edited', at: 1_760_000_000_000 },
+      },
+    ],
+  };
+
+  it('reports INVALID_ARTIFACT naming the missing history, not a TypeError', async () => {
+    const dir = await projectWithReport(figureWithoutHistory);
+    const result = await runCli(dir, ['paper', 'review-figure', 'fig-1', '--status', 'rejected']);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain('[INVALID_ARTIFACT]');
+    expect(result.stderr).toContain('history');
+    expect(result.stderr).toContain('ideaseek paper render-figures');
+    // The point of the guard: a crash would report an internal fault instead.
+    expect(result.stderr).not.toMatch(/is not iterable|TypeError/);
+  }, 300_000);
+
+  it('reports INVALID_ARTIFACT for a non-array history and a damaged figures list', async () => {
+    const damaged = structuredClone(figureWithoutHistory);
+    (damaged.figures[0] as { review: Record<string, unknown> }).review.history = 'seen it';
+    const dir = await projectWithReport(damaged);
+    const badHistory = await runCli(dir, [
+      'paper',
+      'review-figure',
+      'fig-1',
+      '--status',
+      'approved',
+    ]);
+    expect(badHistory.stderr).toContain('[INVALID_ARTIFACT]');
+    expect(badHistory.stderr).toContain('history');
+
+    const noList = { contract: 'figure-render-v1', status: 'rendered', figures: {} };
+    const other = await projectWithReport(noList);
+    const badFigures = await runCli(other, [
+      'paper',
+      'review-figure',
+      'fig-1',
+      '--status',
+      'approved',
+    ]);
+    expect(badFigures.stderr).toContain('[INVALID_ARTIFACT]');
+    expect(badFigures.stderr).not.toMatch(/is not a function|TypeError/);
+  }, 300_000);
+
+  it('still records a verdict on a figure whose review block is simply absent', async () => {
+    // The guard must not become the bug class it fixes: `review` is optional in
+    // older reports, and refusing to record an approval there would block valid
+    // work — and a guard that rejects valid work gets removed under pressure.
+    const noReview = structuredClone(figureWithoutHistory);
+    delete (noReview.figures[0] as { review?: unknown }).review;
+    const dir = await projectWithReport(noReview);
+    const recorded = await runCli(dir, [
+      'paper',
+      'review-figure',
+      'fig-1',
+      '--status',
+      'approved',
+      '--note',
+      'checked against the protocol',
+    ]);
+    expect(recorded.code).toBe(0);
+    const stored = JSON.parse(
+      await readFile(join(dir, 'reports', 'paper', 'figure-render.json'), 'utf8'),
+    ) as { figures: { id: string; review: { status: string; history: unknown[] } }[] };
+    const review = stored.figures.find((entry) => entry.id === 'fig-1')!.review;
+    expect(review.status).toBe('approved');
+    expect(review.history).toHaveLength(1);
+  }, 300_000);
 });
