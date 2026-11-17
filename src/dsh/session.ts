@@ -1,5 +1,7 @@
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { DeepSeekHarness, HarnessSession } from '@deepseek-ai/dsh-sdk-client';
 import { IdeaseekError } from '../core/errors.js';
 import {
@@ -396,9 +398,106 @@ async function executeTurnOnSession(
 }
 
 /**
- * Runs ONE real agent turn on a DSH session. Throws IdeaseekError with
- * recovery on boot/session failures; never fabricates a response.
+ * Capability wiring for a tool-enabled coding session.
+ *
+ * Two things happen here that never happened before, and the absence of the
+ * second is why the first was invisible: coding turns constructed their own
+ * `DeepSeekHarness` with no `patches` and no `env`, so the IdeaSeek capability
+ * patch — the only place our guard is mounted — applied to analysis calls and
+ * never to the flagship implementation path.
+ *
+ * `env` replaces the child's whole environment in this SDK, so it is built from
+ * a copy of `process.env`: dropping that would hide the credential variable DSH
+ * reads and turn a security improvement into an outage.
+ *
+ * The fence denies reads of the platform's own source tree, not a project's
+ * research inputs: `src`/`dist` under the IdeaSeek install, rather than its
+ * root, because an `npm link`-style dev install would otherwise fence a
+ * researcher's own project directory. Papers, datasets and comparison upstreams
+ * are outside the session cwd on purpose and stay readable — the read roots the
+ * guard uses default to "nothing declared", so the only rule in force is the one
+ * this function states.
  */
+export async function codingSessionBoot(opts: { cwd: string; dshHome?: string }): Promise<{
+  patches: string[];
+  env: NodeJS.ProcessEnv;
+  dshHome: string;
+  patchPath: string;
+  denyRoots: string[];
+  fenceWarning: string | null;
+}> {
+  const home = opts.dshHome ?? join(homedir(), '.dsh');
+  // The platform's own tree, derived from where this module was loaded from
+  // rather than from a path somebody remembered. The two layouts differ in more
+  // than cosmetics: a development checkout puts this file at
+  // `<repo>/dist/dsh/session.js` (source two levels up), while the installed
+  // CLI lives under the global npm directory, where the same arithmetic lands
+  // nowhere. The first version filtered those misses silently, and a real FDG
+  // run then went looking through `D:\Node\node_global\node_modules` with
+  // nothing in the way — a fence that reports success while protecting nothing
+  // is worse than none, because it makes the reader stop checking. So the
+  // misses come back as a warning the caller prints.
+  const moduleRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const denyRoots = [join(moduleRoot, 'src'), join(moduleRoot, 'dist'), moduleRoot].filter((path) =>
+    existsSync(path),
+  );
+  const projectRoot = projectRootFor(opts.cwd);
+  // Data handed to the session is a declared input, wherever it physically
+  // lives: researchers keep corpora outside the project tree all the time, and
+  // a fence that denied IDEASEEK_DATA_PATH would refuse the one thing the task
+  // exists to do. So the declared roots join the allow list rather than being
+  // assumed to sit under it.
+  const declaredData = [
+    ...(process.env.IDEASEEK_DATA_PATH ? [process.env.IDEASEEK_DATA_PATH] : []),
+    ...(process.env.IDEASEEK_DATASET_ROOTS ?? '').split(delimiter),
+  ].filter((path) => path.trim().length > 0 && isAbsolute(path) && existsSync(path));
+  const allowRoots = [projectRoot, tmpdir(), ...declaredData].filter((path) => existsSync(path));
+  const fenceWarning =
+    denyRoots.length === 0
+      ? `read fence inactive: no platform tree located from ${moduleRoot}, so a coding session ` +
+        'can read the platform source — report this (ideaseek doctor) before trusting session ' +
+        'isolation'
+      : null;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    IDEASEEK_CAPABILITY_ROLE: 'coding',
+    IDEASEEK_WORKSPACE_ROOT: opts.cwd,
+    IDEASEEK_READ_DENY_ROOTS: denyRoots.join(delimiter),
+    // Declaring the project (plus the scratch directory a session legitimately
+    // needs) is what turns the fence into a scope instead of a list of things to
+    // avoid: research inputs live outside the session cwd on purpose, so a rule
+    // that only names denials would either miss them or fence the wrong thing.
+    IDEASEEK_READ_ROOTS: allowRoots.join(delimiter),
+  };
+  const { writeCapabilityPatch } = await import('./capability.js');
+  const patch = await writeCapabilityPatch({ dshHome: home, role: 'coding' });
+  return {
+    patches: [patch.patchPath],
+    env,
+    dshHome: home,
+    patchPath: patch.patchPath,
+    denyRoots,
+    fenceWarning,
+  };
+}
+
+/**
+ * The directory holding `ideas/`, falling back to the session cwd.
+ *
+ * Walks up because a coding session's cwd is `ideas/<id>` while the inputs it
+ * must keep reading (papers/, datasets/, comparisons/upstream/, reports/) sit
+ * at the project root.
+ */
+export function projectRootFor(cwd: string): string {
+  let current = resolve(cwd);
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (existsSync(join(current, 'ideas'))) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return resolve(cwd);
+}
 export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnResult> {
   const { DeepSeekHarness } = await import('@deepseek-ai/dsh-sdk-client');
   const policy = opts.policy ?? 'interactive';
@@ -455,12 +554,21 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurnRes
     );
   }
 
+  const boot =
+    opts.needsExecution === true
+      ? await codingSessionBoot({
+          cwd: opts.cwd,
+          ...(opts.dshHome ? { dshHome: opts.dshHome } : {}),
+        })
+      : null;
+  if (boot?.fenceWarning) log(boot.fenceWarning);
   const harness = new DeepSeekHarness({
     cwd: opts.cwd,
     approvalRequests: true,
+    ...(boot ? { patches: boot.patches, env: boot.env, dshHome: boot.dshHome } : {}),
     ...(opts.provider ? { provider: opts.provider } : {}),
     ...(opts.model ? { model: opts.model } : {}),
-    ...(opts.dshHome ? { dshHome: opts.dshHome } : {}),
+    ...(opts.dshHome && !boot ? { dshHome: opts.dshHome } : {}),
     ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
     // The bound the rest of the platform already honours (env-overridable, and
     // 30s by default) instead of a second, tighter literal living here: this is
@@ -603,8 +711,12 @@ export class WarmAgentHost {
       dshHome: opts.dshHome ?? '',
       timeout: opts.requestTimeoutMs ?? null,
       // A different grant is a different runtime contract, so the warm client
-      // must not be reused across turns that allow different tools.
+      // must not be reused across turns that allow different tools. The same
+      // holds for the capability mount: a runtime booted without the coding
+      // patch has no read fence, and reusing it for a turn that must have one
+      // would make the security property depend on which turn came first.
       allowTools: [...allowTools].sort().join(','),
+      capabilityMount: opts.needsExecution === true ? 'coding' : 'none',
     });
 
     if (this.harness && this.sig !== nextSig) {
@@ -623,12 +735,21 @@ export class WarmAgentHost {
 
     try {
       if (!this.harness) {
+        const boot =
+          opts.needsExecution === true
+            ? await codingSessionBoot({
+                cwd: opts.cwd,
+                ...(opts.dshHome ? { dshHome: opts.dshHome } : {}),
+              })
+            : null;
+        if (boot?.fenceWarning) log(boot.fenceWarning);
         const harness = new DeepSeekHarness({
           cwd: opts.cwd,
           approvalRequests: true,
+          ...(boot ? { patches: boot.patches, env: boot.env, dshHome: boot.dshHome } : {}),
           ...(opts.provider ? { provider: opts.provider } : {}),
           ...(opts.model ? { model: opts.model } : {}),
-          ...(opts.dshHome ? { dshHome: opts.dshHome } : {}),
+          ...(opts.dshHome && !boot ? { dshHome: opts.dshHome } : {}),
           ...(opts.requestTimeoutMs !== undefined
             ? { requestTimeoutMs: opts.requestTimeoutMs }
             : {}),

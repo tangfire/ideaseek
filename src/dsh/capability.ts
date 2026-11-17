@@ -6,6 +6,22 @@ import { stringify } from 'yaml';
 
 export const EXTRACTOR_PRESET_ID = 'ideaseek-extractor';
 
+/**
+ * Which capability rows to mount.
+ *
+ * `extractor` is the Phase 1-2 profile: the read-only research tool surface
+ * plus the preset that makes it the agent's default.
+ *
+ * `coding` deliberately omits the preset-registry row. That row sets the
+ * *default agent preset*, and a coding session whose tools were restricted to
+ * the extractor surface could not write or run anything — which is exactly how
+ * the capability guard ended up never applying to the flagship path at all: the
+ * implementation turns mounted no patch rather than mount a disabling one. The
+ * coding role keeps DSH's own tool visibility and takes only the guard, whose
+ * read fence is what the session actually needs.
+ */
+export type CapabilityRole = 'extractor' | 'coding';
+
 export interface CapabilityPatch {
   /** Absolute path of the generated patch YAML for DeepSeekHarness.patches. */
   patchPath: string;
@@ -40,39 +56,59 @@ export async function writeCapabilityPatch(opts: {
   dshHome: string;
   /** Defaults to the directory of this module (src/dsh or dist/dsh). */
   moduleDir?: string;
+  role?: CapabilityRole;
 }): Promise<CapabilityPatch> {
   const moduleDir = opts.moduleDir ?? dirname(fileURLToPath(import.meta.url));
+  const role = opts.role ?? 'extractor';
   const researchTools = siblingSource(moduleDir, 'research-tools');
   const extractorProfile = siblingSource(moduleDir, 'extractor-profile');
   const capabilityGuard = siblingSource(moduleDir, 'capability-guard');
 
-  const rows = [
+  // One file per role, because two harnesses in the same DSH home can be
+  // mounting different contracts: the analysis adapter runs extractor-profile
+  // sessions while an implementation session must keep DSH's own visibility.
+  // Sharing one patch path would make the second writer silently redefine the
+  // first, and the yml on disk would describe neither.
+  const patchPath = join(
+    opts.dshHome,
+    role === 'coding' ? 'ideaseek-coding.cordis.yml' : 'ideaseek.cordis.yml',
+  );
+
+  const rows: Record<string, unknown>[] = [
     {
       insert: [
         { id: 'ideaseek-research-tools', name: researchTools },
         { id: 'ideaseek-capability-guard', name: capabilityGuard },
-        {
-          id: 'ideaseek-agent-preset-registry',
-          name: '@deepseek-ai/dsh-agent-preset-registry',
-          config: { default: EXTRACTOR_PRESET_ID },
-        },
-        {
-          id: `ideaseek-preset-${EXTRACTOR_PRESET_ID}`,
-          name: '@deepseek-ai/dsh-agent-preset',
-          config: {
-            id: EXTRACTOR_PRESET_ID,
-            name: 'IdeaSeek Paper Extractor',
-            description:
-              'Model-only extraction with a read-only project tool surface (Phase 1 capability profile).',
-            plugins: [{ id: 'ideaseek-extractor-profile', name: extractorProfile }],
-          },
-        },
+        ...(role === 'coding'
+          ? []
+          : [
+              {
+                id: 'ideaseek-agent-preset-registry',
+                name: '@deepseek-ai/dsh-agent-preset-registry',
+                config: { default: EXTRACTOR_PRESET_ID },
+              },
+            ]),
+        ...(role === 'coding'
+          ? []
+          : [
+              {
+                id: `ideaseek-preset-${EXTRACTOR_PRESET_ID}`,
+                name: '@deepseek-ai/dsh-agent-preset',
+                config: {
+                  id: EXTRACTOR_PRESET_ID,
+                  name: 'IdeaSeek Paper Extractor',
+                  description:
+                    'Model-only extraction with a read-only project tool surface ' +
+                    '(Phase 1 capability profile).',
+                  plugins: [{ id: 'ideaseek-extractor-profile', name: extractorProfile }],
+                },
+              },
+            ]),
       ],
     },
   ];
 
   const yaml = `${stringify(rows).trimEnd()}\n`;
-  const patchPath = join(opts.dshHome, 'ideaseek.cordis.yml');
   await mkdir(dirname(patchPath), { recursive: true });
   await writeFile(patchPath, yaml, 'utf8');
   return {
