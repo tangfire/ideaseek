@@ -3829,6 +3829,24 @@ export function registerIdeaCommand(program: Command): void {
             if (analysis.primaryDelta !== null) {
               process.stdout.write(`  primary delta vs best baseline: ${analysis.primaryDelta}\n`);
             }
+            if (analysis.selection) {
+              // Which run this verdict rests on, and what the pairing rule
+              // rejected. Printed ahead of the reasons because every reason is
+              // computed against that choice: a reader who cannot see the
+              // choice cannot check any of them (#25).
+              process.stdout.write(
+                `  basis: ${analysis.selection.chosen} ` +
+                  `(scale ${analysis.selection.chosenScale ?? 'unknown'}) — ${analysis.selection.rule}\n`,
+              );
+              for (const skipped of analysis.selection.skipped.slice(0, 3)) {
+                process.stdout.write(`    not used: ${skipped}\n`);
+              }
+              if (analysis.selection.skipped.length > 3) {
+                process.stdout.write(
+                  `    and ${analysis.selection.skipped.length - 3} more rejected by the same rule\n`,
+                );
+              }
+            }
             for (const reason of analysis.reasons) process.stdout.write(`  reason: ${reason}\n`);
             if (directionNote)
               process.stdout.write(`  ${directionNote}

@@ -202,7 +202,7 @@ describe('analyzeIdea verdict ladder', () => {
   it('stays inconclusive without a valid control (no superiority claims)', () => {
     const analysis = analyzeIdea(baseInput({ baselines: [{ methodId: 'fedavg', value: null }] }));
     expect(analysis.verdict).toBe('inconclusive');
-    expect(analysis.reasons.join(' ')).toContain('缺少有效对照');
+    expect(analysis.reasons.join(' ')).toContain('no baseline result available');
     expect(analysis.nextSteps.join(' ')).toContain('baseline');
   });
 
@@ -469,7 +469,7 @@ describe('ideaseek idea ablate + analyze (CLI)', () => {
     };
     expect(payload.analysis.verdict).toBe('inconclusive');
     expect(payload.analysis.failureClass).toBe('none');
-    expect(payload.analysis.reasons.join(' ')).toContain('缺少有效对照');
+    expect(payload.analysis.reasons.join(' ')).toContain('no baseline result available');
     expect(payload.analysis.coverage.scales).toContain('smoke');
     expect(payload.analysis.coverage.seeds).toBe(1);
     // Both ablations produced mechanism observations (equal scaffold values

@@ -222,3 +222,102 @@ describe('scale pairing outranks nominal provenance', () => {
     expect(input.baselines[0]).toMatchObject({ value: 18.75, source: 'repro', scale: 'smoke' });
   });
 });
+
+describe('selection attestation (which run the verdict rests on, and what was rejected)', () => {
+  async function workspaceWithMains(
+    mains: { version: number; scale: string; status: string; value: number }[],
+  ): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'ideaseek-select-'));
+    const idea = join(root, 'ideas', ideaId);
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    await mkdir(join(idea, 'experiments'), { recursive: true });
+    await mkdir(join(idea, 'src'), { recursive: true });
+    await writeFile(join(idea, 'src', 'train.py'), 'print(1)\n', 'utf8');
+    await writeFile(
+      join(idea, 'workspace.json'),
+      JSON.stringify({ ideaId, currentVersion: 3, status: 'ANALYZING' }),
+      'utf8',
+    );
+    await writeFile(join(idea, 'idea.json'), JSON.stringify(cardFixture(['fedavg'])), 'utf8');
+    for (const main of mains) {
+      const spec = { ...specFor(main.scale, main.version) };
+      const result = {
+        ...resultFixture(undefined, main.value),
+        status: main.status,
+      };
+      await writeFile(
+        join(idea, 'experiments', `idea-${ideaId}-v${main.version}.json`),
+        JSON.stringify({ spec, result }),
+        'utf8',
+      );
+    }
+    return root;
+  }
+
+  it('names the chosen run, the rule, and each rejected candidate with its reason', async () => {
+    // #25's core: the pairing rule was real but silent. A reader could see the
+    // delta and the record it came from, but not that v3 was dropped because
+    // its scale did not match the baseline's — which is the whole reason the
+    // delta is admissible.
+    const root = await workspaceWithMains([
+      { version: 1, scale: 'smoke', status: 'succeeded', value: 20 },
+      { version: 2, scale: 'smoke', status: 'succeeded', value: 25 },
+      { version: 3, scale: 'quick', status: 'succeeded', value: 30 },
+    ]);
+    const baselineAtSmoke = {
+      getExperiment: async (specId: string) =>
+        specId === 'repro-fedavg'
+          ? {
+              specId,
+              spec: { ...specFor('smoke', 1), specId, idea: null } as unknown as Record<
+                string,
+                unknown
+              >,
+              result: {
+                ...resultFixture(undefined, 24),
+                specId,
+              } as unknown as Record<string, unknown>,
+            }
+          : null,
+      // The pairing rule reads the registry LIST to learn the baseline's
+      // scale, so a fixture that only answers getExperiment() silently exercises
+      // the fallback branch instead — which is exactly what the first version of
+      // this test did, picking v3 (quick) and reporting "newest succeeded".
+      listExperiments: async () => [
+        {
+          specId: 'repro-fedavg',
+          spec: { ...specFor('smoke', 1), specId: 'repro-fedavg', idea: null } as unknown as Record<
+            string,
+            unknown
+          >,
+          result: {
+            ...resultFixture(undefined, 24),
+            specId: 'repro-fedavg',
+          } as unknown as Record<string, unknown>,
+          status: 'succeeded',
+        },
+      ],
+    };
+    const input = await collectAnalysisInput(root, ideaId, baselineAtSmoke, [DECLARED]);
+    expect(input.selection?.chosen).toBe(`idea-${ideaId}@v2`);
+    expect(input.selection?.chosenScale).toBe('smoke');
+    expect(input.selection?.rule).toContain('baseline scale (smoke)');
+    expect(input.selection?.considered).toBe(3);
+    expect(input.selection?.skipped.join(' ')).toContain('idea-');
+    expect(input.selection?.skipped.join(' ')).toContain('quick');
+    expect(input.selection?.skipped.join(' ')).toContain('not a comparison');
+  });
+
+  it('records the fallback rule when nothing shares the baseline scale', async () => {
+    const root = await workspaceWithMains([
+      { version: 1, scale: 'quick', status: 'succeeded', value: 20 },
+      { version: 2, scale: 'standard', status: 'failed', value: 0 },
+    ]);
+    const input = await collectAnalysisInput(root, ideaId, dbWithoutRepro, [DECLARED]);
+    expect(input.selection?.rule).toContain('newest succeeded');
+    expect(input.selection?.chosen).toBe(`idea-${ideaId}@v1`);
+    // A failed run is still enumerated, so the absence of a v2 basis is visible
+    // rather than implied.
+    expect(input.selection?.considered).toBe(2);
+  });
+});

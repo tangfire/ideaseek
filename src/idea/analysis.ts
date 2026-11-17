@@ -138,7 +138,31 @@ export interface FailureObservation {
   /** Never 'hypothesis' for runtime failures — enforced by classifyRuntimeFailure. */
 }
 
+/**
+ * How the gathering layer chose the run a verdict rests on.
+ *
+ * Declared here, in the layer that owns the artifact, and imported by
+ * `idea/analyze.ts`. The reverse direction would have the analysis layer import
+ * the gatherer that imports it — the cycle this project fell into earlier today
+ * and `tsc` accepted without complaint.
+ *
+ * Recorded rather than implied: the choice is a methodological decision (pair
+ * at the baseline's scale, else newest success, else newest record carrying any
+ * result), and a delta cannot be audited by someone who cannot see which
+ * pairing rule fired or which candidates it dropped. That silence was #25.
+ */
+export interface AnalysisSelection {
+  rule: string;
+  chosen: string;
+  chosenScale: string | null;
+  baselineScale: string | null;
+  considered: number;
+  skipped: string[];
+}
+
 export interface AnalysisInput {
+  /** The pairing rule that chose the governing run, and what it rejected. */
+  selection?: AnalysisSelection;
   ideaId: string;
   ideaVersion: number;
   codeHash: string | null;
@@ -218,6 +242,8 @@ export interface AnalysisInput {
 
 export interface IdeaAnalysis {
   ideaId: string;
+  /** Which recorded run the verdict rests on, and the rule that chose it. */
+  selection?: AnalysisSelection;
   ideaVersion: number;
   codeHash: string | null;
   verdict: AnalysisVerdict;
@@ -772,6 +798,11 @@ function finish(
 ): IdeaAnalysis {
   return {
     ideaId: input.ideaId,
+    // The pairing decision travels into the persisted artifact: an audit of a
+    // delta has to be able to reach the run it was computed from and the rule
+    // that selected it, which the gather step knows and the reader otherwise
+    // cannot reconstruct.
+    selection: input.selection,
     ideaVersion: input.ideaVersion,
     codeHash: input.codeHash,
     verdict,

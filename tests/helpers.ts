@@ -115,3 +115,26 @@ export async function implementIdeaSmoke(
     'utf8',
   );
 }
+/**
+ * A budget multiplier for interactive e2e, not a weaker assertion.
+ *
+ * These tests drive a real child process: node boot, the TUI, and in two cases
+ * a DSH handshake. The handshake now retries (one cold start under load is not
+ * evidence the runtime is broken), which is the right product behaviour and
+ * lengthens the worst case by design — so a fixed deadline set when the worst
+ * case was a single 30s attempt would report a reliability improvement as a
+ * test failure. On a loaded machine that is exactly what the full suite did:
+ * `models setup …` timed out at 120s while the same file passes in 56s alone.
+ *
+ * The multiplier scales the clock, never a wait condition or an expectation:
+ * a test that cannot finish in `budget * scale` still fails, and the reason it
+ * prints is the child's own output tail rather than a bare "test timed out".
+ * CI machines with less headroom set IDEASEEK_TEST_TIMEOUT_SCALE=2 or 3.
+ */
+export const TIMEOUT_SCALE = (() => {
+  const raw = Number((process.env.IDEASEEK_TEST_TIMEOUT_SCALE ?? '1').trim());
+  return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? Math.floor(raw * 100) / 100 : 1;
+})();
+
+/** One test budget, scaled. */
+export const budget = (ms: number): number => Math.round(ms * TIMEOUT_SCALE);

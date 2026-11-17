@@ -15,6 +15,7 @@ import {
   deriveAblations,
   duplicateControlFindings,
   type AnalysisInput,
+  type AnalysisSelection,
   type IdeaAnalysis,
 } from './analysis.js';
 import { hashIdeaSource, ideaDir, loadIdeaCard, loadWorkspaceMeta } from './workspace.js';
@@ -200,11 +201,55 @@ export async function collectAnalysisInput(
   const sameScaleMains = baselineScale
     ? succeededMains.filter((m) => scaleOf(m.spec) === baselineScale)
     : [];
-  const mainPick =
-    sameScaleMains[sameScaleMains.length - 1] ??
-    succeededMains[succeededMains.length - 1] ??
-    [...mainMirrors].reverse().find((m) => m.result) ??
-    null;
+  // Which run the verdict will rest on, and why that one. This used to be a
+  // `??` chain, which meant the chosen record was visible in the output while
+  // the REASON for choosing it was not — the selection rule (prefer the
+  // baseline's scale, then the newest success, then the newest record carrying
+  // anything) is a methodological decision, and a reader auditing a delta
+  // cannot check a pairing they cannot see. Every rejected candidate is listed
+  // with the rule that dropped it, because "v3 was skipped because its scale
+  // differs from the baseline's" is the fact that makes the chosen pairing
+  // verifiable — and the absence of such a note is what #25 recorded.
+  const skippedCandidates: string[] = [];
+  let mainPick: MirrorFile | null = null;
+  let selectionRule = 'none';
+  if (sameScaleMains.length > 0) {
+    mainPick = sameScaleMains[sameScaleMains.length - 1]!;
+    selectionRule = `newest succeeded at the baseline scale (${baselineScale})`;
+    for (const candidate of succeededMains) {
+      if (scaleOf(candidate.spec) !== baselineScale) {
+        skippedCandidates.push(
+          `${candidate.spec.specId}@v${candidate.spec.version}: scale ${scaleOf(candidate.spec)} ` +
+            `!= baseline scale ${baselineScale} (a cross-scale delta is not a comparison)`,
+        );
+      }
+    }
+  } else if (succeededMains.length > 0) {
+    mainPick = succeededMains[succeededMains.length - 1]!;
+    selectionRule = baselineScale
+      ? `newest succeeded (no succeeded run shares the baseline scale ${baselineScale})`
+      : 'newest succeeded (no registered baseline to pair scale with)';
+  } else if (mainMirrors.some((m) => m.result)) {
+    mainPick = [...mainMirrors].reverse().find((m) => m.result)!;
+    selectionRule = 'newest record carrying a result (nothing succeeded)';
+    for (const candidate of mainMirrors) {
+      if (candidate.result && candidate.result.status !== 'succeeded') {
+        skippedCandidates.push(
+          `${candidate.spec.specId}@v${candidate.spec.version}: status ${candidate.result.status}`,
+        );
+      }
+    }
+  }
+  const selection: AnalysisSelection = {
+    rule: selectionRule,
+    chosen: mainPick
+      ? `${mainPick.spec.specId}@v${mainPick.spec.version}`
+      : '(no experiment recorded)',
+    chosenScale: mainPick ? scaleOf(mainPick.spec) : null,
+    baselineScale,
+    considered: mainMirrors.length,
+    skipped: skippedCandidates,
+  };
   const main = mainPick?.result ? { spec: mainPick.spec, result: mainPick.result } : null;
   const primarySpec = main && main.result.status === 'succeeded' ? primaryName(main.spec) : null;
   // Prefer the protocol's declared form of the same metric: it is the only
@@ -516,6 +561,7 @@ export async function collectAnalysisInput(
   const suspiciousControls = duplicateControlFindings(allControls, subjectPrimary);
 
   return {
+    selection,
     ideaId,
     ideaVersion: meta.currentVersion,
     codeHash,
