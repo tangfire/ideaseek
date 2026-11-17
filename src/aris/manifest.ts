@@ -66,6 +66,22 @@ export const VENDORED_FILES: readonly VendoredFile[] = [
     path: 'skills/result-to-claim/SKILL.md',
     sha256: 'b12d10bdb51440f65e4112e6643712f172a7e37c1e15066e15d81eaee5838a8f',
   },
+  {
+    path: 'skills/paper-claim-audit/SKILL.md',
+    sha256: '3cf3ecdf14899aa011c7f5baf5efcba7a67e940a65e7938170426f4af2b032ea',
+  },
+  {
+    path: 'skills/citation-crosscheck/scripts/cx_verify.py',
+    sha256: 'ae731cb5bfbc26bfa12f007516e4b0b8591c9384d4512d1d5c4d74737d3f250f',
+  },
+  {
+    path: 'skills/citation-crosscheck/SKILL.md',
+    sha256: '8556f29c677b93d465df6b7309914e0b1c387213f73d132b5182fa4d0af42758',
+  },
+  {
+    path: 'skills/overleaf-sync/SKILL.md',
+    sha256: 'f3c1f35a77a81ebf902eb2e9434cb61e7494e0152b8d29fe337e75d2d7524557',
+  },
   // >>> END-REGISTERED-ENTRIES
   {
     path: 'shared-references/acceptance-gate.md',
