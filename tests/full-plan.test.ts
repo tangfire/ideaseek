@@ -493,5 +493,43 @@ describe('ideaseek full plan / approve (e2e)', () => {
     expect(autoPayload.approved).toBe(true);
     expect(autoPayload.mode).toBe('autonomous');
     expect(autoPayload.decisionSeq).not.toBeNull();
+
+    // A fairness file that does not match fairness-lock-v1 is not a lock. Before
+    // src/full/plan.ts consulted the contract, the bare cast credited whatever
+    // `confirmed` member the file happened to carry, so garbage satisfied the
+    // gate that authorises a full run. `full plan` is a report, so it still
+    // builds — and the violation becomes a blocker carrying the rebuild command.
+    const fairnessPath = join(dir, 'knowledge', 'fairness-alpha.json');
+    const goodFairness = await readFile(fairnessPath, 'utf8');
+    await writeFile(
+      fairnessPath,
+      JSON.stringify({ confirmed: { at: 1, mode: 'autonomous', inputHash: 'sha256:deadbeef' } }),
+      'utf8',
+    );
+    const malformed = await runCli(dir, ['full', 'plan', '--idea', 'alpha', '--json']);
+    expect(malformed.code, malformed.stdout + malformed.stderr).toBe(0);
+    const malformedPayload = JSON.parse(malformed.stdout) as {
+      plan: {
+        readiness: { ready: boolean; blockers: string[] };
+        fairness: { confirmed: boolean; current: boolean };
+      };
+    };
+    expect(malformedPayload.plan.fairness.confirmed).toBe(false);
+    expect(malformedPayload.plan.fairness.current).toBe(false);
+    expect(malformedPayload.plan.readiness.ready).toBe(false);
+    expect(malformedPayload.plan.readiness.blockers.join(' ')).toContain(
+      'violates fairness-lock-v1',
+    );
+
+    // Put the real lock back and the blocker is gone: the gate reads structure,
+    // not the file's age or its provenance.
+    await writeFile(fairnessPath, goodFairness, 'utf8');
+    const restored = await runCli(dir, ['full', 'plan', '--idea', 'alpha', '--json']);
+    expect(restored.code, restored.stdout + restored.stderr).toBe(0);
+    const restoredPayload = JSON.parse(restored.stdout) as {
+      plan: { readiness: { ready: boolean }; fairness: { confirmed: boolean } };
+    };
+    expect(restoredPayload.plan.fairness.confirmed).toBe(true);
+    expect(restoredPayload.plan.readiness.ready).toBe(true);
   }, 600_000);
 });

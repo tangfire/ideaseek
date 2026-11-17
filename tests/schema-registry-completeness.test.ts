@@ -91,6 +91,7 @@ describe('schema registry completeness (a named contract must exist)', () => {
     // than discovered in production.
     const { FakeHarnessAdapter } = (await import('../src/dsh/fake-adapter.js')) as unknown as {
       FakeHarnessAdapter: new (options?: Record<string, unknown>) => {
+        initialize: () => Promise<void>;
         runTask: (request: Record<string, unknown>) => Promise<{ output: string }>;
       };
     };
