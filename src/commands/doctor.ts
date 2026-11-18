@@ -242,6 +242,47 @@ export function registerDoctorCommand(program: Command): void {
         } else {
           checks.push({ level: 'warn', name: 'disk', detail: 'could not stat filesystem' });
         }
+        // LaTeX is required for `paper compile`; without it the paper pipeline
+        // stops at compile with a blocker naming the missing binary.
+        const { execSync } = await import('node:child_process');
+        const hasLatex = (() => {
+          try {
+            execSync(
+              process.platform === 'win32' ? 'where pdflatex' : 'which pdflatex',
+              { stdio: 'pipe', timeout: 3000 },
+            );
+            return true;
+          } catch { return false; }
+        })();
+        checks.push({
+          level: hasLatex ? 'ok' : 'warn',
+          name: 'latex',
+          detail: hasLatex
+            ? 'pdflatex available (needed by paper compile)'
+            : 'pdflatex not found — install TeX Live (https://tug.org/texlive/) for `ideaseek paper compile`',
+        });
+        // SVG→PDF converter: `paper diagram` produces SVG, and graphicx cannot
+        // include SVG without a converter. Windows `convert` is the disk utility,
+        // not ImageMagick — do not trust it.
+        const hasSvgConverter = (() => {
+          for (const bin of ['inkscape', 'rsvg-convert']) {
+            try {
+              execSync(
+                process.platform === 'win32' ? `where ${bin}` : `which ${bin}`,
+                { stdio: 'pipe', timeout: 3000 },
+              );
+              return true;
+            } catch { /* try next */ }
+          }
+          return false;
+        })();
+        checks.push({
+          level: hasSvgConverter ? 'ok' : 'info',
+          name: 'svg-converter',
+          detail: hasSvgConverter
+            ? 'SVG→PDF converter available (inkscape or rsvg-convert)'
+            : 'no SVG→PDF converter — `paper diagram` SVGs will be skipped by `paper compile --place-figures` (install Inkscape: https://inkscape.org/)',
+        });
         const apiKeySet = Boolean(process.env.DEEPSEEK_API_KEY);
         checks.push({
           level: apiKeySet ? 'ok' : 'info',

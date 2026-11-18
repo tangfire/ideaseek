@@ -372,9 +372,9 @@ export async function placeVerifiedFigures(root: string): Promise<PlacementResul
     const extension = (includePath.match(/\.[a-z]+$/i)?.[0] ?? '').toLowerCase();
     if (!INCLUDABLE.has(extension)) {
       // graphicx includes PDF/PNG/JPG under pdflatex and xelatex; SVG needs a
-      // converter (Inkscape/rsvg/cairosvg), none of which this machine has —
-      // Windows `convert` is the disk utility, not ImageMagick. Inserting the
-      // include anyway produces a build failure three layers from its cause.
+      // converter. This machine has none — Windows `convert` is the disk utility,
+      // not ImageMagick. Inserting the include anyway produces a build failure
+      // three layers from its cause, so we say what to install instead.
       results.push({
         id: candidate.id,
         includePath,
@@ -382,7 +382,8 @@ export async function placeVerifiedFigures(root: string): Promise<PlacementResul
         action: 'skipped',
         reason:
           `${extension || 'no extension'} cannot be included by pdflatex/xelatex graphicx — ` +
-          'convert it to PDF with Inkscape or rsvg-convert, or export the figure as PDF/PNG',
+          'install a converter (Inkscape: https://inkscape.org, or rsvg-convert), ' +
+          'then re-run: ideaseek paper compile --place-figures',
       });
       continue;
     }
