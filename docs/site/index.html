@@ -972,6 +972,10 @@
           <a href="#recovery">暂停与恢复</a><a href="#troubleshoot">故障排除</a
           ><a href="#limits">状态与边界</a>
         </div>
+        <div class="navgroup">
+          <div class="navtitle">命令参考</div>
+          <a href="#cli-commands">CLI 命令</a><a href="#tui-commands">TUI 快捷命令</a>
+        </div>
       </aside>
       <main>
         <div class="hero">
@@ -1539,6 +1543,229 @@ ideaseek attach --run &lt;runId&gt;               # 观察长任务</code></pre>
             <a href="../CLI_SPEC.md">CLI 参考</a>；模型路由见
             <a href="../MODEL_ROUTING.md">模型指南</a>。
           </p>
+        </section>
+
+        <section id="cli-commands" data-search="CLI 命令 command reference init start setup doctor scan ingest extract run status paper full report">
+          <div class="eyebrow">13 · CLI Reference</div>
+          <h2>CLI 命令参考</h2>
+          <p>
+            所有命令在当前目录寻找 <code>.research/</code>。大多数命令支持
+            <code>--json</code> 机器可读输出。
+          </p>
+
+          <h3>开始与配置</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek init</code></td><td>初始化项目目录、配置模板和工作流数据库</td></tr>
+              <tr><td><code>ideaseek start --question "..."</code></td><td>一键启动：init + setup + 首次扫描，然后告诉你下一步</td></tr>
+              <tr><td><code>ideaseek setup</code></td><td>自动检测环境并持久化规范化 research.yaml</td></tr>
+              <tr><td><code>ideaseek doctor</code></td><td>检查配置、项目状态和主机环境（只读）</td></tr>
+              <tr><td><code>ideaseek config</code></td><td>查看生效配置</td></tr>
+              <tr><td><code>ideaseek mode [research|analysis]</code></td><td>显示/切换研究档位</td></tr>
+              <tr><td><code>ideaseek open [target]</code></td><td>选择项目（两步确认）或读取文档</td></tr>
+              <tr><td><code>ideaseek models</code></td><td>查看模型路由、角色绑定和凭据状态（从不显示密钥值）</td></tr>
+              <tr><td><code>ideaseek models setup</code></td><td>配置 API key（隐藏输入，写入 DSH credential store）</td></tr>
+              <tr><td><code>ideaseek projects</code></td><td>列出已注册的 IdeaSeek 项目</td></tr>
+              <tr><td><code>ideaseek interactive</code></td><td>启动交互式 TUI 界面</td></tr>
+            </tbody>
+          </table>
+
+          <h3>读懂已有输入</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek scan</code></td><td>发现 papers/code/data 目录下的文件到输入清单</td></tr>
+              <tr><td><code>ideaseek ingest</code></td><td>解析所有新 PDF（按内容哈希增量）并索引</td></tr>
+              <tr><td><code>ideaseek extract</code></td><td>K 个并行 worker 批量提取解析后的论文</td></tr>
+              <tr><td><code>ideaseek evaluate</code></td><td>在采样 gold set 上测量文献质量指标</td></tr>
+              <tr><td><code>ideaseek synthesize</code></td><td>聚类 PaperCard、综合主题、构建研究地图</td></tr>
+              <tr><td><code>ideaseek mech</code></td><td>机制/设计原则/矛盾图（Mechanism Analyst 角色）</td></tr>
+              <tr><td><code>ideaseek intake</code></td><td>显示未分类输入和候选分组</td></tr>
+              <tr><td><code>ideaseek organize [--apply]</code></td><td>预览/应用平台索引（只创建链接/副本）</td></tr>
+              <tr><td><code>ideaseek wiki</code></td><td>构建研究 wiki 图（papers/ideas/experiments/claims）</td></tr>
+              <tr><td><code>ideaseek prepare</code></td><td>运行 Analysis 只读准备管线</td></tr>
+              <tr><td><code>ideaseek search &lt;query&gt;</code></td><td>全文搜索（FTS5/BM25）已解析的论文</td></tr>
+              <tr><td><code>ideaseek assessment</code></td><td>研究材料缺口报告</td></tr>
+              <tr><td><code>ideaseek papers</code></td><td>论文索引进度和解析失败</td></tr>
+            </tbody>
+          </table>
+
+          <h3>协议与数据</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek protocol</code></td><td>实验协议工作流</td></tr>
+              <tr><td><code>ideaseek data describe</code></td><td>数据集清单和切片</td></tr>
+              <tr><td><code>ideaseek datasets discover --question "..."</code></td><td>发现数据集候选（推荐，非实验输入）</td></tr>
+              <tr><td><code>ideaseek datasets list</code></td><td>列出数据集候选</td></tr>
+              <tr><td><code>ideaseek datasets acquire &lt;id&gt;</code></td><td>获取数据集（需授权确认）</td></tr>
+              <tr><td><code>ideaseek datasets link &lt;id&gt; --path &lt;file&gt;</code></td><td>链接本地数据文件</td></tr>
+              <tr><td><code>ideaseek confirm protocol</code></td><td>确认待处理的提案</td></tr>
+              <tr><td><code>ideaseek pending</code></td><td>列出等待你的审批</td></tr>
+              <tr><td><code>ideaseek comparison</code></td><td>对比方法：导入、检查、状态转换</td></tr>
+              <tr><td><code>ideaseek baseline</code></td><td>基线修复和复现</td></tr>
+              <tr><td><code>ideaseek capacity</code></td><td>探测主机资源并计算安全并发数</td></tr>
+            </tbody>
+          </table>
+
+          <h3>想法与实验</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek idea generate</code></td><td>生成候选 IdeaCard（ARIS idea-creator 后端）</td></tr>
+              <tr><td><code>ideaseek idea implement &lt;id&gt;</code></td><td>用 DSH agent 实现 idea 代码</td></tr>
+              <tr><td><code>ideaseek idea check &lt;id&gt;</code></td><td>运行检查阶梯（static/data/metrics/smoke）</td></tr>
+              <tr><td><code>ideaseek idea experiment &lt;id&gt;</code></td><td>运行有界实验并记录结果</td></tr>
+              <tr><td><code>ideaseek idea analyze &lt;id&gt;</code></td><td>分析实验结果，产生判定</td></tr>
+              <tr><td><code>ideaseek idea handoff &lt;id&gt;</code></td><td>生成全量实验复现包</td></tr>
+              <tr><td><code>ideaseek ideate --round new</code></td><td>创建/继续 IdeationRound（去重+变更检测）</td></tr>
+              <tr><td><code>ideaseek rounds list</code></td><td>检查 ideation 轮次</td></tr>
+              <tr><td><code>ideaseek feedback &lt;label&gt; --idea &lt;id&gt;</code></td><td>记录用户反馈标签</td></tr>
+              <tr><td><code>ideaseek experiment run-ready</code></td><td>并行运行所有 SMOKE_TESTED 的 idea</td></tr>
+            </tbody>
+          </table>
+
+          <h3>运行与监控</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek run --question "..."</code></td><td>创建或恢复工作流并执行</td></tr>
+              <tr><td><code>ideaseek run --detach</code></td><td>后台运行</td></tr>
+              <tr><td><code>ideaseek status</code></td><td>显示运行状态、任务进度、worker 和最近事件</td></tr>
+              <tr><td><code>ideaseek next</code></td><td>状态感知的下一步建议（不启动高成本工作）</td></tr>
+              <tr><td><code>ideaseek plan --question "..."</code></td><td>干跑：显示输入、任务量、门禁状态、资源</td></tr>
+              <tr><td><code>ideaseek attach --run &lt;id&gt;</code></td><td>回放运行事件并实时跟随</td></tr>
+              <tr><td><code>ideaseek watch --run &lt;id&gt;</code></td><td>跟随事件直到运行完成/暂停</td></tr>
+              <tr><td><code>ideaseek pause [--hard]</code></td><td>停止领取新任务；进行中的任务在安全检查点完成</td></tr>
+              <tr><td><code>ideaseek resume</code></td><td>恢复暂停的运行</td></tr>
+              <tr><td><code>ideaseek continue</code></td><td>继续被配额/网络阻塞的运行</td></tr>
+              <tr><td><code>ideaseek cancel --run &lt;id&gt;</code></td><td>取消运行；已提交的产物保留</td></tr>
+              <tr><td><code>ideaseek monitor</code></td><td>快照运行心跳、最近日志、主机资源</td></tr>
+              <tr><td><code>ideaseek agent "指令"</code></td><td>运行一次真实 DSH 编码会话</td></tr>
+              <tr><td><code>ideaseek ask "问题"</code></td><td>自由文本：查询从状态回答，高影响请求变为待审批 Decision</td></tr>
+            </tbody>
+          </table>
+
+          <h3>交付与报告</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek paper plan</code></td><td>从持久化结果生成论文大纲</td></tr>
+              <tr><td><code>ideaseek paper write</code></td><td>起草绑定到存储计划的稿件</td></tr>
+              <tr><td><code>ideaseek paper compile</code></td><td>组装稿件+模板，编译为 PDF</td></tr>
+              <tr><td><code>ideaseek paper results</code></td><td>导出实验结果到 results.json（确定性）</td></tr>
+              <tr><td><code>ideaseek paper diagram</code></td><td>渲染 FigureSpec JSON 为 SVG（确定性）</td></tr>
+              <tr><td><code>ideaseek paper export-overleaf</code></td><td>打包 main.tex + 图表 + 溯源为 Overleaf ZIP</td></tr>
+              <tr><td><code>ideaseek report</code></td><td>渲染事实运行报告（md | json | bibtex）</td></tr>
+              <tr><td><code>ideaseek full plan --idea &lt;id&gt;</code></td><td>构建全量研究锁</td></tr>
+              <tr><td><code>ideaseek full approve --idea &lt;id&gt; --confirm</code></td><td>批准全量计划</td></tr>
+              <tr><td><code>ideaseek render</code></td><td>渲染 wiki/review/audit/plan 为 HTML</td></tr>
+            </tbody>
+          </table>
+
+          <h3>备份与恢复</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>ideaseek backup</code></td><td>快照工作流 DB + 配置 + 产物（sha256 清单）</td></tr>
+              <tr><td><code>ideaseek restore &lt;backupDir&gt;</code></td><td>恢复备份到全新目录（哈希验证）</td></tr>
+              <tr><td><code>ideaseek export --run &lt;id&gt;</code></td><td>导出运行产物、事件和任务（含哈希清单）</td></tr>
+              <tr><td><code>ideaseek archive --run &lt;id&gt;</code></td><td>写只读归档包</td></tr>
+              <tr><td><code>ideaseek cleanup</code></td><td>预览/删除可重建的平台文件（不动原始文件）</td></tr>
+              <tr><td><code>ideaseek logs &lt;taskId&gt;</code></td><td>任务详情（脱敏错误和日志尾部）</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="tui-commands" data-search="TUI slash command palette help init status next mode models agent open pause resume">
+          <div class="eyebrow">14 · TUI Commands</div>
+          <h2>TUI 快捷命令</h2>
+          <p>
+            在交互式 TUI 中输入 <code>/</code> 打开命令面板，支持模糊匹配和 Tab 补全。以下命令等价于对应的 CLI 形式。
+          </p>
+
+          <h3>概览</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>/help</code></td><td>显示帮助</td></tr>
+              <tr><td><code>/init</code></td><td>在当前目录创建 IdeaSeek 项目</td></tr>
+              <tr><td><code>/status</code></td><td>运行状态、任务、worker、最近事件</td></tr>
+              <tr><td><code>/next</code></td><td>状态感知的下一步建议</td></tr>
+              <tr><td><code>/assessment</code></td><td>材料就绪度和缺口报告</td></tr>
+              <tr><td><code>/prepare</code></td><td>运行只读 Analysis 准备管线</td></tr>
+              <tr><td><code>/drift</code></td><td>预览输入漂移和失效的下游产物</td></tr>
+            </tbody>
+          </table>
+
+          <h3>审批</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>/pending</code></td><td>等待你的审批（协议、代码修订、请求）</td></tr>
+              <tr><td><code>/approve [n]</code></td><td>批准待处理项（或从 /pending 选择第 n 项）</td></tr>
+              <tr><td><code>/reject &lt;reason&gt;</code></td><td>拒绝待处理提案并给出原因</td></tr>
+            </tbody>
+          </table>
+
+          <h3>研究</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>/papers</code></td><td>论文索引进度和解析失败</td></tr>
+              <tr><td><code>/comparisons</code></td><td>对比方法、来源和阻塞</td></tr>
+              <tr><td><code>/ideas</code></td><td>idea 列表（状态和版本）</td></tr>
+              <tr><td><code>/experiments</code></td><td>已记录的实验规格和结果</td></tr>
+              <tr><td><code>/rounds</code></td><td>检查 ideation 轮次</td></tr>
+              <tr><td><code>/ideate</code></td><td>创建/继续 IdeationRound</td></tr>
+              <tr><td><code>/feedback</code></td><td>记录用户反馈标签</td></tr>
+            </tbody>
+          </table>
+
+          <h3>会话</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>/models [list|setup]</code></td><td>模型路由/角色/凭据状态；配置 API key</td></tr>
+              <tr><td><code>/mode [research|analysis]</code></td><td>显示/切换研究档位</td></tr>
+              <tr><td><code>/agent &lt;指令&gt;</code></td><td>运行一次 DSH 编码会话</td></tr>
+              <tr><td><code>/open [target]</code></td><td>选择项目或读取文档</td></tr>
+              <tr><td><code>/report</code></td><td>写事实运行报告</td></tr>
+            </tbody>
+          </table>
+
+          <h3>控制</h3>
+          <table>
+            <thead><tr><th>命令</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>/pause</code></td><td>停止领取新任务</td></tr>
+              <tr><td><code>/resume</code></td><td>恢复暂停的运行</td></tr>
+              <tr><td><code>/continue</code></td><td>继续被阻塞的运行</td></tr>
+              <tr><td><code>/cancel</code></td><td>取消运行（产物保留）</td></tr>
+              <tr><td><code>/quit</code></td><td>退出 TUI（不取消后台运行）</td></tr>
+            </tbody>
+          </table>
+
+          <h3>快捷键</h3>
+          <table>
+            <thead><tr><th>按键</th><th>功能</th></tr></thead>
+            <tbody>
+              <tr><td><code>/</code></td><td>打开命令面板（模糊匹配）</td></tr>
+              <tr><td><code>Tab</code></td><td>补全命令</td></tr>
+              <tr><td><code>↑ / ↓</code></td><td>在命令面板中选择</td></tr>
+              <tr><td><code>Shift+Tab</code></td><td>切换 Research / Analysis / Coding 模式</td></tr>
+              <tr><td><code>Alt+C</code></td><td>进入 Coding 模式</td></tr>
+              <tr><td><code>Ctrl+F</code></td><td>在转录中搜索</td></tr>
+              <tr><td><code>Ctrl+Y</code></td><td>复制最近一条回复</td></tr>
+              <tr><td><code>Ctrl+L</code></td><td>插入分界线清屏</td></tr>
+              <tr><td><code>Ctrl+R</code></td><td>反向历史搜索</td></tr>
+              <tr><td><code>Ctrl+O</code></td><td>展开/收起调试行</td></tr>
+              <tr><td><code>?</code></td><td>显示快捷键速查</td></tr>
+              <tr><td><code>Ctrl+C</code></td><td>中断当前命令（不退出）</td></tr>
+              <tr><td><code>Ctrl+D</code> 或 <code>/quit</code></td><td>退出 TUI</td></tr>
+            </tbody>
+          </table>
         </section>
       </main>
       <aside class="toc" aria-label="本页目录">

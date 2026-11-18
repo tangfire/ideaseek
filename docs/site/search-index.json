@@ -85,6 +85,18 @@
       "title": "如何判断一个功能是否已完成",
       "search": "limits status roadmap implemented planned future",
       "excerpt": "12 · Product status 如何判断一个功能是否已完成 看 开发进度 ：只有有实现、测试和提交证据的条目才勾选。最终能力规划见 实施路线 ；命令和退出码见 CLI 参考 ；模型路由见 模型指南 。"
+    },
+    {
+      "id": "cli-commands",
+      "title": "CLI 命令参考",
+      "search": "CLI 命令 command reference init start setup doctor scan ingest extract run status paper full report backup restore",
+      "excerpt": "所有命令在当前目录寻找 .research/。大多数命令支持 --json 机器可读输出。开始与配置：init, start, setup, doctor, config, mode, open, models, projects, interactive。读懂已有输入：scan, ingest, extract, evaluate, synthesize, mech, intake, organize, wiki, prepare, search, assessment, papers。协议与数据：protocol, data, datasets, confirm, pending, comparison, baseline, capacity。想法与实验：idea generate, idea implement, idea check, idea experiment, idea analyze, idea handoff, ideate, rounds, feedback, experiment run-ready。运行与监控：run, status, next, plan, attach, watch, pause, resume, continue, cancel, monitor, agent, ask。交付与报告：paper plan, paper write, paper compile, paper results, paper diagram, paper export-overleaf, report, full plan, full approve, render。备份与恢复：backup, restore, export, archive, cleanup, logs。"
+    },
+    {
+      "id": "tui-commands",
+      "title": "TUI 快捷命令",
+      "search": "TUI slash command palette help init status next mode models agent open pause resume approve reject feedback ideate rounds",
+      "excerpt": "在交互式 TUI 中输入 / 打开命令面板，支持模糊匹配和 Tab 补全。概览：/help, /init, /status, /next, /assessment, /prepare, /drift。审批：/pending, /approve, /reject。研究：/papers, /comparisons, /ideas, /experiments, /rounds, /ideate, /feedback。会话：/models, /mode, /agent, /open, /report。控制：/pause, /resume, /continue, /cancel, /quit。快捷键：/ 打开面板, Tab 补全, Shift+Tab 切换模式, Ctrl+F 搜索, Ctrl+Y 复制, Ctrl+L 清屏, Ctrl+R 历史搜索, ? 快捷键速查。"
     }
   ]
 }
