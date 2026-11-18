@@ -121,10 +121,10 @@ describe('computeAdmission', () => {
   it('admits heterogeneous 4-GPU workstation without over-assigning or starving', () => {
     const workstation = probe({
       gpus: [
-        { index: 0, memTotalMiB: 24576, memFreeMiB: 24000, utilizationPct: 0 },  // big, free
-        { index: 1, memTotalMiB: 24576, memFreeMiB: 8000, utilizationPct: 75 },  // big, mostly used
-        { index: 2, memTotalMiB: 8192,  memFreeMiB: 7500, utilizationPct: 10 },  // small, free
-        { index: 3, memTotalMiB: 8192,  memFreeMiB: 2000, utilizationPct: 90 },  // small, busy
+        { index: 0, memTotalMiB: 24576, memFreeMiB: 24000, utilizationPct: 0 }, // big, free
+        { index: 1, memTotalMiB: 24576, memFreeMiB: 8000, utilizationPct: 75 }, // big, mostly used
+        { index: 2, memTotalMiB: 8192, memFreeMiB: 7500, utilizationPct: 10 }, // small, free
+        { index: 3, memTotalMiB: 8192, memFreeMiB: 2000, utilizationPct: 90 }, // small, busy
       ],
       nvidiaSmiAvailable: true,
       cpuCores: 16,
@@ -277,6 +277,24 @@ describe('ideaseek capacity (CLI)', () => {
       0,
     );
     expect((await runCli(project, ['idea', 'scaffold', 'ready-idea'])).code).toBe(0);
+    // Scaffold contract first, while it still holds: a fresh scaffold declares
+    // the conservative 1 GiB admission reservation.
+    const scaffoldCfg = JSON.parse(
+      await readFile(join(project, 'ideas', 'ready-idea', 'config', 'train.json'), 'utf8'),
+    ) as { resources: { gpus: number; memoryGiB: number } };
+    expect(scaffoldCfg.resources).toEqual({ gpus: 0, memoryGiB: 1 });
+    // The admission probe reads LIVE host memory: two reservations plus the
+    // 1 GiB headroom meant this test needed 2 GiB free at the probe instant,
+    // and the full parallel gate dips below that (observed: queued
+    // "insufficient free memory"). computeAdmission's math is pinned by the
+    // unit tests above with synthetic probes; this CLI test owns discovery
+    // and config wiring, so the fixture declares its true (~100 MB) need.
+    scaffoldCfg.resources = { gpus: 0, memoryGiB: 0.1 };
+    await writeFile(
+      join(project, 'ideas', 'ready-idea', 'config', 'train.json'),
+      `${JSON.stringify(scaffoldCfg, null, 2)}\n`,
+      'utf8',
+    );
     // A ready idea has to earn SMOKE_TESTED with real code: the scaffold's
     // smoke declares itself synthetic and is refused.
     await implementIdeaSmoke(project, 'ready-idea', 'm');
@@ -294,12 +312,13 @@ describe('ideaseek capacity (CLI)', () => {
     };
     expect(payload.plan.admitted.map((entry) => entry.ideaId)).toEqual(['ready-idea']);
     expect(payload.plan.queued.map((entry) => entry.ideaId)).not.toContain('idle-idea');
-    expect(payload.plan.admitted[0]).toMatchObject({ gpus: 0, memoryGiB: 1 });
+    // Admission read the patched config, not the default: wiring proven.
+    expect(payload.plan.admitted[0]).toMatchObject({ gpus: 0, memoryGiB: 0.1 });
 
     // The spec side carries the same resource request (wiring check).
     const cfg = JSON.parse(
       await readFile(join(project, 'ideas', 'ready-idea', 'config', 'train.json'), 'utf8'),
     ) as { resources: { gpus: number; memoryGiB: number } };
-    expect(cfg.resources).toEqual({ gpus: 0, memoryGiB: 1 });
+    expect(cfg.resources).toEqual({ gpus: 0, memoryGiB: 0.1 });
   }, 180_000);
 });

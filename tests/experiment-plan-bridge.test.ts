@@ -202,6 +202,16 @@ describe('ARIS experiment-plan / experiment-bridge conformance (Phase 4.5)', () 
     const check = await runCli(dir, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
     expect((JSON.parse(check.stdout) as { outcome: string }).outcome).toBe('passed');
+    // The bridge admits through the LIVE capacity probe: the scaffold's 1 GiB
+    // reservation plus 1 GiB headroom needs 2 GiB free at the probe instant,
+    // and the full parallel gate dips below that (observed: admitted=false,
+    // bridge refused to execute). computeAdmission's math is unit-tested with
+    // synthetic probes; these fixtures declare their true (~100 MB) need so
+    // the bridge tests exercise the bridge, not the host's free-RAM curve.
+    const cfgPath = join(dir, 'ideas', id, 'config', 'train.json');
+    const cfg = JSON.parse(await readFile(cfgPath, 'utf8')) as Record<string, unknown>;
+    cfg.resources = { gpus: 0, memoryGiB: 0.1 };
+    await writeFile(cfgPath, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
   }
 
   async function plan(id = 'calib-reweight', env: Record<string, string> = {}): Promise<CliResult> {
@@ -556,6 +566,10 @@ if __name__ == "__main__":
     const configPath = join(worktree, 'config', 'train.json');
     const cfg = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
     cfg.checkpoint = { kind: 'steps', every: 5 };
+    // Live-probe admission needs free RAM ≥ reservation + headroom; the
+    // parallel gate dips below the scaffold default's 2 GiB band (see the
+    // setupCheckedIdea note), so this fixture declares its true need too.
+    cfg.resources = { gpus: 0, memoryGiB: 0.1 };
     await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf8');
 
     const check = await runCli(dir, ['idea', 'check', id, '--json']);

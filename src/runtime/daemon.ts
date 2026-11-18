@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,12 +32,31 @@ export function daemonPath(researchDir: string): string {
 
 /**
  * Writes daemon metadata. Sync on purpose: supervisors call this from
- * process exit handlers where async writes would be dropped.
+ * process exit handlers where async writes would be dropped. The write
+ * itself is atomic (temp file + rename): `attach`/`watch` and the
+ * supervisor test poll this file every 250 ms, and a plain truncate-
+ * write let a reader parse a half-written JSON (observed under the
+ * parallel gate: "Expected double-quoted property name at position
+ * 260"). Readers now always see the previous or the new document,
+ * never a torn one.
  */
 export function writeDaemonInfo(researchDir: string, info: DaemonInfo): void {
   const path = daemonPath(researchDir);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(info, null, 2)}\n`, 'utf8');
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(info, null, 2)}\n`, 'utf8');
+    renameSync(tmp, path);
+  } catch {
+    // Rename can lose a race with a concurrent reader on some filesystems;
+    // fall back to the historical direct write rather than drop metadata
+    // from an exit handler.
+    try {
+      writeFileSync(path, `${JSON.stringify(info, null, 2)}\n`, 'utf8');
+    } catch {
+      // best-effort: daemon metadata must never break the exiting process
+    }
+  }
 }
 
 export function readDaemonInfo(researchDir: string): DaemonInfo | null {
