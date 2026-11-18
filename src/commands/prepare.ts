@@ -44,9 +44,10 @@ export function registerPrepareCommand(program: Command): void {
     )
     .option('--skip-model', 'skip model-backed extract/synthesize steps (deterministic prep only)')
     .option('--harness <kind>', 'model harness for extract/synthesize: fake | dsh')
+    .option('--question <text>', 'research question for the assessment step')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { skipModel?: boolean; harness?: string; json?: boolean }) => {
+      action(async (opts: { skipModel?: boolean; harness?: string; question?: string; json?: boolean }) => {
         const { findProjectRoot } = await import('../config/paths.js');
         const root = await findProjectRoot(process.cwd());
         if (!root) {
@@ -165,7 +166,9 @@ export function registerPrepareCommand(program: Command): void {
 
         // 5. Rebuild/reuse ResearchMaterialAssessment.
         const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
-        const { assessment, reused } = await loadOrBuildAssessment(root);
+        const { assessment, reused } = await loadOrBuildAssessment(root, {
+          question: opts.question,
+        });
         const blocking = assessment.gaps.filter((g) => g.priority === 'blocking');
         steps.push({
           step: 'assessment',

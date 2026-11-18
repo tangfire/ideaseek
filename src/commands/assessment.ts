@@ -18,9 +18,10 @@ export function registerAssessmentCommand(program: Command): void {
     )
     .option('--question <text>', 'override the research question for this assessment')
     .option('--force', 'rebuild even when the stored report matches current inputs')
+    .option('--detail', 'show detailed gap descriptions with evidence and next commands')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { question?: string; force?: boolean; json?: boolean }) => {
+      action(async (opts: { question?: string; force?: boolean; detail?: boolean; json?: boolean }) => {
         const { findProjectRoot } = await import('../config/paths.js');
         const root = await findProjectRoot(process.cwd());
         if (!root) {
@@ -99,6 +100,10 @@ export function registerAssessmentCommand(program: Command): void {
             );
             if (item.blocks.length > 0) {
               process.stdout.write(`          blocks  : ${item.blocks.join(', ')}\n`);
+            }
+            if (opts.detail) {
+              // Full gap object for debugging and agent consumption.
+              process.stdout.write(`          detail  : ${JSON.stringify(item, null, 2)}\n`);
             }
           }
         }
