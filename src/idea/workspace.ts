@@ -31,9 +31,14 @@ export const IDEA_TRANSITIONS: Record<IdeaRunStatus, readonly IdeaRunStatus[]> =
   PROPOSED: ['IMPLEMENTING', 'REJECTED'],
   IMPLEMENTING: ['SMOKE_TESTED', 'NEEDS_REVISION', 'REJECTED'],
   SMOKE_TESTED: ['RUNNING', 'NEEDS_REVISION', 'REJECTED'],
-  RUNNING: ['ANALYZING', 'INVALID_RUN'],
+  // A failed run can go straight to revision or rejection without waiting for
+  // a full analysis pass — the operator already knows it failed.
+  RUNNING: ['ANALYZING', 'NEEDS_REVISION', 'REJECTED', 'INVALID_RUN'],
   ANALYZING: ['SUPPORTED', 'NEEDS_REVISION', 'REJECTED', 'INVALID_RUN'],
   NEEDS_REVISION: ['IMPLEMENTING', 'REJECTED'],
+  // SUPPORTED and REJECTED are terminal: reopening an idea is done by creating
+  // a new version (which starts at PROPOSED), not by mutating the state.
+  // This keeps the version chain as the single source of "what changed".
   SUPPORTED: [],
   REJECTED: [],
   INVALID_RUN: ['IMPLEMENTING', 'REJECTED'],

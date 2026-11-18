@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DeepSeekHarness, HarnessSession } from '@deepseek-ai/dsh-sdk-client';
@@ -451,7 +451,13 @@ export async function codingSessionBoot(opts: { cwd: string; dshHome?: string })
     ...(process.env.IDEASEEK_DATA_PATH ? [process.env.IDEASEEK_DATA_PATH] : []),
     ...(process.env.IDEASEEK_DATASET_ROOTS ?? '').split(delimiter),
   ].filter((path) => path.trim().length > 0 && isAbsolute(path) && existsSync(path));
-  const allowRoots = [projectRoot, tmpdir(), ...declaredData].filter((path) => existsSync(path));
+  // Use a project-scoped temp directory, not the shared system tmpdir.
+  // The shared tmpdir lets any session read/write every other project's
+  // scratch files — a cross-project information leak in a multi-project
+  // environment. The platform's own temp files live under .research/tmp/
+  // which is already inside projectRoot.
+  const projectTmp = join(projectRoot, '.research', 'tmp');
+  const allowRoots = [projectRoot, projectTmp, ...declaredData].filter((path) => existsSync(path));
   const fenceWarning =
     denyRoots.length === 0
       ? `read fence inactive: no platform tree located from ${moduleRoot}, so a coding session ` +

@@ -316,6 +316,16 @@ export class FakeWorker {
         retryable: !permanent,
         at: runtime.clock.now(),
       });
+      // Advance the clock past the exponential backoff so the retry is
+      // claimable. In production the real clock advances naturally; in tests
+      // with ManualClock it would otherwise block the retry forever.
+      if (result.willRetry) {
+        const backoffMs = Math.min(1000 * Math.pow(2, result.task.attempt - 1), 60_000);
+        const clock = runtime.clock as { advance?: (ms: number) => void };
+        if (typeof clock.advance === 'function') {
+          clock.advance(backoffMs + 1);
+        }
+      }
       this.onLog(`${task.type} failed (${error.code}), retry=${result.willRetry}`);
       return;
     }
@@ -328,6 +338,13 @@ export class FakeWorker {
       retryable: !failure.permanent,
       at: runtime.clock.now(),
     });
+    if (result.willRetry) {
+      const backoffMs = Math.min(1000 * Math.pow(2, result.task.attempt - 1), 60_000);
+      const clock = runtime.clock as { advance?: (ms: number) => void };
+      if (typeof clock.advance === 'function') {
+        clock.advance(backoffMs + 1);
+      }
+    }
     this.onLog(`${task.type} failed (${failure.message}), retry=${result.willRetry}`);
   }
 }

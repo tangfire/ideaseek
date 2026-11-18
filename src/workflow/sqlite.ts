@@ -629,6 +629,16 @@ export class SqliteWorkflowDb implements WorkflowDb {
       } catch {
         // Rollback of an already-aborted transaction; original error wins.
       }
+      // Classify SQLITE_BUSY (code 5) as a retryable IdeaseekError instead
+      // of letting it escape as a raw SQLite error with an unhelpful message.
+      const sqliteCode = (error as { code?: number | string }).code;
+      if (sqliteCode === 5 || sqliteCode === 'SQLITE_BUSY' || sqliteCode === 'SQLITE_LOCKED') {
+        throw new IdeaseekError(
+          'ENV_UNSUPPORTED',
+          'database is locked by another process — wait a moment and retry, ' +
+            'or close other IdeaSeek sessions using this project',
+        );
+      }
       throw error;
     }
     this.depth = level;

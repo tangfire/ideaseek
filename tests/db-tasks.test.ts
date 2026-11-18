@@ -156,6 +156,8 @@ describe('task queue and leases', () => {
     expect(first.willRetry).toBe(true);
     expect(first.task.status).toBe('queued');
 
+    // Advance past the exponential backoff (1s for attempt 1).
+    clock.advance(1001);
     task = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
     expect(task?.attempt).toBe(2);
     await runtime.db.failAttempt(task!.taskId, 'w1', {
@@ -164,6 +166,8 @@ describe('task queue and leases', () => {
       retryable: true,
       at: clock.now(),
     });
+    // Advance past the exponential backoff (2s for attempt 2).
+    clock.advance(2001);
     task = await runtime.db.claimNextTask(single.runId, 'w1', LEASE);
     expect(task?.attempt).toBe(3);
     const last = await runtime.db.failAttempt(task!.taskId, 'w1', {
