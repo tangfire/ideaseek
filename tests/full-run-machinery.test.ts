@@ -1254,20 +1254,36 @@ describe('full-run execution machinery (genuine computation, temporary project)'
    * bans at every other door (idea check's synthetic smoke, reproduce's
    * self-declared skip, the analysis unit guard).
    */
-  // OPEN, NOT CLAIMED FIXED. With the baseline entry sabotaged to exit 3
-  // unconditionally, `full run` still reports COMPLETED with 4 succeeded and 0
-  // failed. Two explanations remain and neither is proven: either
-  // `buildFullComparisonSpec` reuses the RECORDED reproduction entry (seen
-  // elsewhere in this repo as `python -c pass`) so the worktree script this
-  // fixture breaks is never executed — a fixture that cannot fail, the same
-  // mistake this file already made once — or the full run really does not
-  // propagate a required item's failure. The next step is to log the built
-  // spec's `command` and `cwd` inside the item loop and read which program
-  // actually ran, then assert against that. It stays skipped rather than being
-  // deleted or softened, because the property it wants ("a required method
-  // that failed must not produce a green full run") is exactly the one a
-  // research platform cannot get wrong.
-  it.skip('does not report a full run as completed when a required work item failed', async () => {
+  // RESOLVED, and neither of the two hypotheses above was the cause.
+  //
+  // Logging the built spec's command/notes inside the item loop showed the
+  // broken entry WAS the program that ran (`python reproduce.py`, worktree cwd,
+  // `worktree-digest:4:ff6123…`), and the first attempt DID fail — the task
+  // retried, and on attempt 2 the item was skipped as
+  // `already succeeded, spec unchanged`. Two separate defects, both in the
+  // retry path:
+  //
+  // 1. the full run treated `prepareSpecRecording`'s "this spec has a result"
+  //     as "this item is done". A spec that ran and failed has run — so the
+  //     retry reported the whole list executed over a failed required method.
+  //     Idempotent recovery must key on the recorded STATUS, not on existence:
+  //     succeeded is skipped, anything else is re-executed (bounded by the
+  //     attempt ceiling).
+  // 2. the unified registry refused to attach a new result over any existing
+  //     one, so re-executing a failed item died on ALREADY_COMMITTED instead of
+  //     actually running. A recorded success is append-only (needs a version
+  //     bump); a recorded failure is only a fact about one attempt, and
+  //     refusing to supersede it made a required item permanently un-runnable.
+  //
+  // Also added while proving this: comparison full-run specs now carry a digest
+  // of the worktree's own bytes, because `codeCommit` is what the method record
+  // DECLARES — an edited worktree kept the identity unchanged, which is how a
+  // stale success can outlive the code that produced it.
+  //
+  // This test stays enabled: the property ("a required method that failed must
+  // not produce a green full run") is one a research platform cannot get wrong,
+  // and it was wrong here while four other tests in this file were green.
+  it('does not report a full run as completed when a required work item failed', async () => {
     const dir = await makeProjectDir('machinery-item-failure');
     await setupApprovedProject(dir);
 

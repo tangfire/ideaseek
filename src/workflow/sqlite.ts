@@ -2769,11 +2769,20 @@ export class SqliteWorkflowDb implements WorkflowDb {
       this.tx(() => {
         const current = this.requireExperiment(specId);
         if (current.result) {
-          throw new IdeaseekError(
-            'ALREADY_COMMITTED',
-            `experiment ${specId} already has a result (status ${current.status}); record a new spec version instead`,
-            { specId },
-          );
+          // A recorded SUCCESS is an append-only fact: overwriting it would
+          // rewrite what the project claims was measured, so it needs a new
+          // spec version. A recorded FAILURE is not a fact about the world,
+          // only about one attempt — refusing here made a required work item
+          // permanently un-re-runnable, which turned the full run's retry into a
+          // bookkeeping error instead of an actual re-execution.
+          const supersedeable = current.status !== 'succeeded' && current.status !== 'planned';
+          if (!supersedeable) {
+            throw new IdeaseekError(
+              'ALREADY_COMMITTED',
+              `experiment ${specId} already has a result (status ${current.status}); record a new spec version instead`,
+              { specId },
+            );
+          }
         }
         const now = Date.now();
         this.db

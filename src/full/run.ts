@@ -1,4 +1,5 @@
 import { sha256Of } from '../core/hash.js';
+import { join } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
 import { stableJson } from '../experiment/spec.js';
 import type { ExperimentSpec } from '../experiment/spec.js';
@@ -178,6 +179,17 @@ export async function buildFullComparisonSpec(
       ? (ideaSpec.seeds as unknown[]).filter((s): s is number => typeof s === 'number')
       : [42];
 
+    // Spec identity has to cover the code that will actually RUN.
+    //
+    // `codeCommit` is what the method record DECLARES, and a worktree edited
+    // after a successful full run leaves it unchanged: measured in the
+    // machinery suite, a sabotaged `reproduce.py` was skipped as "already
+    // succeeded, spec unchanged" and the full run went green without executing
+    // the broken entry. A required item's failure must be discoverable by
+    // running it, so the worktree's bytes join the identity.
+    const sourceDigest = await digestWorktreeSources(
+      join(root, 'comparisons', methodId, 'worktree'),
+    );
     const spec: ExperimentSpec = {
       specId: `full-${methodId}`,
       version: 1, // caller rewrites after hash comparison
@@ -194,7 +206,11 @@ export async function buildFullComparisonSpec(
         python: process.version,
         // Spec identity = the work itself (scale + method), NOT the
         // approval instance — re-approvals must not invalidate skips.
-        notes: [`scale:full`, `method:${methodId}`],
+        notes: [
+          `scale:full`,
+          `method:${methodId}`,
+          ...(sourceDigest ? [`worktree-digest:${sourceDigest}`] : []),
+        ],
       },
       command: entry,
       metrics,
@@ -218,4 +234,73 @@ export async function buildFullComparisonSpec(
 export function fullSpecInputHash(spec: ExperimentSpec): string {
   const { createdAt: _ts, version: _v, ...stable } = spec;
   return sha256Of(stableJson(stable));
+}
+
+/**
+ * A digest of the runnable bytes in a comparison worktree, or null when there
+ * is no worktree to digest (the run will fail on the missing entry and say so).
+ *
+ * Deliberately content-based rather than git-based: a paper reimplementation is
+ * a plain directory, and "the code changed" is the fact that matters for whether
+ * a recorded success may be reused — not whether a VCS happens to be watching.
+ * `.git` and generated paths are skipped (the same list the repair classifier
+ * uses, so the two do not disagree about what counts as the author's code).
+ */
+const DIGEST_FILE_LIMIT = 20_000;
+/** Above this, a file is identified by size+mtime rather than its bytes. */
+const DIGEST_CONTENT_LIMIT = 8 * 1024 * 1024;
+
+async function digestWorktreeSources(worktree: string): Promise<string | null> {
+  const { readdirSync, readFileSync, statSync } = await import('node:fs');
+  const { isGeneratedPath } = await import('../comparison/repair.js');
+  let seen = 0;
+  const hash = await import('node:crypto').then((crypto) => crypto.createHash('sha256'));
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 24) return;
+    for (const name of readdirSync(dir).sort()) {
+      if (name === '.git' || name.startsWith('.ipynb_checkpoints')) continue;
+      const path = join(dir, name);
+      const between = worktree.split('\\').join('/');
+      const relativePath = path
+        .split('\\')
+        .join('/')
+        .slice(between.length + 1);
+      let stats;
+      try {
+        stats = statSync(path);
+      } catch {
+        continue;
+      }
+      if (stats.isFile()) {
+        if (isGeneratedPath(relativePath)) continue;
+        if (++seen > DIGEST_FILE_LIMIT) {
+          throw new IdeaseekError(
+            'ENV_UNSUPPORTED',
+            `the worktree at ${worktree} holds more than ${DIGEST_FILE_LIMIT} files, which the ` +
+              'full run will not digest: trim vendored or generated material from the worktree',
+          );
+        }
+        hash.update(`${relativePath}\0`);
+        if (stats.size > DIGEST_CONTENT_LIMIT) {
+          // Reading gigabytes of vendored weights or datasets to decide "did the
+          // code change" is not what this guard is for, and would make every
+          // full run pay for it. Big files still cannot pass unnoticed: their
+          // size and mtime enter the digest.
+          hash.update(`big:${stats.size}:${Math.round(stats.mtimeMs)}\0`);
+        } else {
+          hash.update(readFileSync(path));
+          hash.update('\0');
+        }
+        continue;
+      }
+      walk(path, depth + 1);
+    }
+  };
+  try {
+    walk(worktree, 0);
+  } catch (error) {
+    if (error instanceof IdeaseekError) throw error;
+    return null; // no worktree directory: nothing to digest
+  }
+  return `${seen}:${hash.digest('hex').slice(0, 32)}`;
 }

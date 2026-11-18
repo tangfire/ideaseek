@@ -104,15 +104,30 @@ async function runFull(ctx: TaskContext): Promise<{
     const existing = await runtime.db.getExperiment(item.specId);
     const prepared = await prepareSpecRecording(spec, existing);
 
-    // Idempotent recovery: an unchanged, already-succeeded item is
-    // skipped (pause → resume, crashed attempt, retried task).
-    if (prepared.alreadyRecorded && existing?.result) {
+    // Idempotent recovery: an unchanged, already-SUCCEEDED item is skipped
+    // (pause → resume, crashed attempt, retried task).
+    //
+    // "already recorded" is not the same fact. `prepareSpecRecording` answers
+    // "has this spec been run", and a spec that ran and FAILED has been run —
+    // treating that as done let a retry of the full run report the list as
+    // executed after a required method exited nonzero, which is exactly the
+    // fabricated completion this platform bans everywhere else. The failure is
+    // re-executed instead, which the attempt ceiling bounds.
+    const recordedStatus = (existing?.result as { status?: unknown } | undefined)?.status;
+    if (prepared.alreadyRecorded && recordedStatus === 'succeeded') {
       const storedMetrics = (
-        (existing.result as { metrics?: { name: unknown; value: unknown }[] }).metrics ?? []
+        (existing?.result as { metrics?: { name: unknown; value: unknown }[] } | undefined)
+          ?.metrics ?? []
       ).filter((m): m is { name: string; value: number } => typeof m.value === 'number');
       items.push({ ...item, status: 'skipped', metrics: storedMetrics });
       ctx.log(`skip ${item.specId} (already succeeded, spec unchanged)`);
       continue;
+    }
+    if (prepared.alreadyRecorded && recordedStatus && recordedStatus !== 'succeeded') {
+      ctx.log(
+        `re-run ${item.specId} (recorded status ${recordedStatus} is not a success; ` +
+          'a required item cannot be counted from its own failure)',
+      );
     }
 
     await recordPlannedSpec(runtime.db, prepared, existing);
