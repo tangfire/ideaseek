@@ -47,9 +47,32 @@ const PATH_ARGUMENTS: Record<string, string[]> = {
   apply_patch: ['path', 'file_path'],
   grep: ['path', 'paths', 'root', 'dir'],
   glob: ['path', 'paths', 'root', 'dir'],
+  shell: ['command'],
+  exec: ['command'],
 };
 
 const PATH_LIST_KEYS = new Set(['paths', 'root', 'dir']);
+
+/**
+ * Extract file paths from a shell command string.
+ *
+ * Shell commands can reference paths in many ways: `cat /path/to/file`,
+ * `grep pattern /path/to/dir`, `ls -la /path`, etc. This does a best-effort
+ * extraction of absolute-looking paths from the command string. It is not
+ * perfect — a shell command can construct paths dynamically — but it catches
+ * the common case of a model trying to read a denied path via shell.
+ */
+export function shellCommandPaths(command: string): string[] {
+  const paths: string[] = [];
+  // Match absolute-looking paths (POSIX or Windows drive letter)
+  const pathPattern = /(?:^|[\s=:])(\/[^\s;&|><"'`]+|[A-Za-z]:[\\/][^\s;&|><"'`]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pathPattern.exec(command)) !== null) {
+    const path = match[1]?.trim();
+    if (path && path.length > 1) paths.push(path);
+  }
+  return paths;
+}
 
 /** Pure decision helper (unit-tested without a Cordis context). */
 export function capabilityDecision(
@@ -103,7 +126,9 @@ export function allowedToolsForRole(role: string): Set<string> {
   // A coding session legitimately needs DSH's own file and shell tools; the
   // read fence still applies to it. Empty set = skip the allowlist rule, which
   // is what keeps this change from breaking the implementation path it secures.
-  if (role === 'coding') return new Set();
+  // Worker tasks also need file tools (they execute experiment code), but the
+  // read fence still constrains them to the project root.
+  if (role === 'coding' || role === 'worker') return new Set();
   return new Set(DEFAULT_ALLOWED);
 }
 
@@ -203,7 +228,14 @@ export function pathArgumentsOf(toolName: string, args: unknown): string[] {
   const found: string[] = [];
   for (const key of keys) {
     const value = record[key];
-    if (typeof value === 'string' && value.trim()) found.push(value.trim());
+    if (typeof value === 'string' && value.trim()) {
+      // For shell/exec tools, extract file paths from the command string
+      if ((toolName.toLowerCase() === 'shell' || toolName.toLowerCase() === 'exec') && key === 'command') {
+        found.push(...shellCommandPaths(value.trim()));
+      } else {
+        found.push(value.trim());
+      }
+    }
     else if (PATH_LIST_KEYS.has(key) && Array.isArray(value)) {
       for (const entry of value)
         if (typeof entry === 'string' && entry.trim()) found.push(entry.trim());

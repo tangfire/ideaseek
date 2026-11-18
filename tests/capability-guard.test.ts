@@ -117,6 +117,18 @@ describe('read fence (a research session reads research, not the platform)', () 
     expect(pathArgumentsOf('skill', { name: 'diagnose-acl' })).toEqual([]);
     expect(pathArgumentsOf('read', 'not-an-object')).toEqual([]);
   });
+
+  it('extracts file paths from shell commands for the read fence', () => {
+    // Shell commands can reference denied paths: the fence must see them.
+    expect(pathArgumentsOf('shell', { command: 'cat /etc/passwd' })).toEqual(['/etc/passwd']);
+    expect(pathArgumentsOf('shell', { command: 'cat D:/FDG/.research/workflow.db' })).toEqual([
+      'D:/FDG/.research/workflow.db',
+    ]);
+    expect(pathArgumentsOf('shell', { command: 'ls -la /tmp' })).toEqual(['/tmp']);
+    // Commands without absolute paths produce no targets to fence.
+    expect(pathArgumentsOf('shell', { command: 'echo hello' })).toEqual([]);
+    expect(pathArgumentsOf('shell', { command: 'python --version' })).toEqual([]);
+  });
 });
 
 describe('capability roles', () => {

@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import { delimiter } from 'node:path';
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
 import type { RunResult } from '@deepseek-ai/dsh-sdk-client';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
@@ -169,6 +170,10 @@ export interface DshAdapterOptions {
   maxOutputTokens?: number;
   /** deepseek reasoning effort: off (default) keeps output inside the JSON cap. */
   reasoningEffort?: string;
+  /** Extra read roots for the capability fence (beyond the project root). */
+  extraReadRoots?: string[];
+  /** Deny roots for the capability fence (platform source, other projects). */
+  denyRoots?: string[];
 }
 
 /** Stable DSH LlmFailure.code → IdeaSeek handling (docs: never parse messages). */
@@ -424,6 +429,13 @@ export class DshHarnessAdapter implements HarnessAdapter {
       ...process.env,
       DSH_PERMISSION_MODE: 'read-only',
       IDEASEEK_WORKSPACE_ROOT: projectRoot,
+      // Fence the read scope for worker tasks the same way coding sessions do.
+      // Without these, readFenceDecision sees an empty allow list and returns
+      // allow for everything — the fence sits there looking configured while
+      // denying nothing, which is the worst shape a security rule can have.
+      IDEASEEK_CAPABILITY_ROLE: 'worker',
+      IDEASEEK_READ_ROOTS: [projectRoot, ...this.opts.extraReadRoots ?? []].join(delimiter),
+      IDEASEEK_READ_DENY_ROOTS: this.opts.denyRoots?.join(delimiter) ?? '',
       // A response cut off by the output cap is a FAILURE, here, always.
       // The `sdk` profile layers @deepseek-ai/dsh-sdk-app, whose patch sets
       // maxTokensAsSuccess to TRUE unless DSH_MAX_TOKENS_AS_SUCCESS is defined
