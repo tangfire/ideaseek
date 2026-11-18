@@ -228,10 +228,16 @@ export class InteractiveSession {
   private secretCapture = false;
   private secretLabel: string | null = null;
   private secretResolve: ((value: string | null) => void) | null = null;
+  private onSecretPromptChange: (() => void) | null = null;
 
   /** Enables masked key capture (called by the Ink renderer at startup). */
   enableSecretCapture(): void {
     this.secretCapture = true;
+  }
+
+  /** Register a callback for secret prompt state changes (for UI re-render). */
+  setOnSecretPromptChange(callback: (() => void) | null): void {
+    this.onSecretPromptChange = callback;
   }
 
   /** Active secret prompt for renderers (null when idle). */
@@ -241,6 +247,7 @@ export class InteractiveSession {
 
   private beginSecretPrompt(label: string): Promise<string | null> {
     this.secretLabel = label;
+    if (this.onSecretPromptChange) this.onSecretPromptChange();
     return new Promise((resolve) => {
       this.secretResolve = resolve;
     });
@@ -252,6 +259,7 @@ export class InteractiveSession {
     const resolve = this.secretResolve;
     this.secretResolve = null;
     this.secretLabel = null;
+    if (this.onSecretPromptChange) this.onSecretPromptChange();
     resolve(value);
     return true;
   }

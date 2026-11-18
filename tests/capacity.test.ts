@@ -106,6 +106,54 @@ describe('computeAdmission', () => {
     expect(plan.queued).toEqual([]);
     expect(plan.constraints.join(' ')).toContain('demand');
   });
+
+  /**
+   * Multi-GPU admission with heterogeneous hardware: 4 GPUs of different sizes
+   * and mixed utilization. The planner must bind each idea to a device that has
+   * enough FREE memory (not total), respect the user limit, and queue what it
+   * cannot fit — without over-assigning any single GPU.
+   *
+   * This mirrors a real workstation: a big GPU for training, small ones for
+   * inference, some busy with other work. The bug this guards against is
+   * admitting an idea to a GPU that has enough total memory but not enough
+   * free memory after other workloads.
+   */
+  it('admits heterogeneous 4-GPU workstation without over-assigning or starving', () => {
+    const workstation = probe({
+      gpus: [
+        { index: 0, memTotalMiB: 24576, memFreeMiB: 24000, utilizationPct: 0 },  // big, free
+        { index: 1, memTotalMiB: 24576, memFreeMiB: 8000, utilizationPct: 75 },  // big, mostly used
+        { index: 2, memTotalMiB: 8192,  memFreeMiB: 7500, utilizationPct: 10 },  // small, free
+        { index: 3, memTotalMiB: 8192,  memFreeMiB: 2000, utilizationPct: 90 },  // small, busy
+      ],
+      nvidiaSmiAvailable: true,
+      cpuCores: 16,
+      freeMemGiB: 64,
+    });
+    // 5 ideas: two need 16GiB (only GPU 0 fits), two need 4GiB (GPU 2 fits one,
+    // GPU 1 has 8GiB free but only after GPU 0 is taken), one needs 2GiB.
+    const requests = [
+      request('big-a', 1, 16, 1),
+      request('big-b', 1, 16, 2),
+      request('mid-a', 1, 4, 3),
+      request('mid-b', 1, 4, 4),
+      request('small', 1, 2, 5),
+    ];
+    const plan = computeAdmission(workstation, requests, { maxParallelIdeas: 5 });
+    // At most one 16GiB idea fits (GPU 0). GPU 1 has 8GiB free but utilization
+    // is 75% — the planner should still admit if memory is enough (utilization
+    // is informational, not a hard gate).
+    expect(plan.admitted.length).toBeGreaterThanOrEqual(1);
+    expect(plan.admitted.length).toBeLessThanOrEqual(3);
+    // No GPU is assigned to two ideas simultaneously.
+    const allIndices = plan.admitted.flatMap((entry) => entry.deviceIndices);
+    expect(new Set(allIndices).size).toBe(allIndices.length);
+    // Ideas that need more than any single GPU's free memory are queued.
+    const queuedIds = plan.queued.map((entry) => entry.ideaId);
+    expect(queuedIds.length).toBeGreaterThanOrEqual(1);
+    // The big-b idea (16GiB) cannot fit on any GPU after big-a takes GPU 0.
+    expect(queuedIds).toContain('big-b');
+  });
 });
 
 function makeCard(ideaId: string): IdeaCard {

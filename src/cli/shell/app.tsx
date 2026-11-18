@@ -352,6 +352,12 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStatusRefreshRef = useRef(0);
   const [secretBuf, setSecretBuf] = useState('');
+  // Trigger re-render when secret prompt state changes (beginSecretPrompt / answerSecret)
+  const [secretPromptVersion, setSecretPromptVersion] = useState(0);
+  useEffect(() => {
+    session.setOnSecretPromptChange(() => setSecretPromptVersion((v) => v + 1));
+    return () => session.setOnSecretPromptChange(null);
+  }, [session]);
   useSyncExternalStore(bus.subscribe, () => bus.version);
   const stateRef = useRef({ offset: 0, chromeRows: 6, visible: 20 });
   const inputGenRef = useRef(0);
@@ -629,7 +635,7 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         session.answerSecret(null);
         return;
       }
-      if (key.backspace || input === '\x7f' || input === '\b') {
+      if (key.backspace || key.delete || input === '\x7f' || input === '\b') {
         setSecretBuf((value) => value.slice(0, -1));
         return;
       }
@@ -936,9 +942,11 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const toastPart = toast ? `${toast} · ` : '';
   const telemetry = formatStatusTelemetry(liveStatus, Math.max(16, Math.floor(cols * 0.42)));
   const telemetrySuffix = telemetry ? ` · ${telemetry}` : '';
-  const statusSegment = busy
-    ? ` ${SPINNER[spin % SPINNER.length]} ${activeApproval ? 'waiting for approval…' : `running…${elapsed}`} · `
-    : ` ${toastPart}${detailBadge}`;
+  const statusSegment = session.secretPrompt
+    ? ` ${SPINNER[spin % SPINNER.length]} enter API key… · `
+    : busy
+      ? ` ${SPINNER[spin % SPINNER.length]} ${activeApproval ? 'waiting for approval…' : `running…${elapsed}`} · `
+      : ` ${toastPart}${detailBadge}`;
   const badgeText = ` ${modeLabel.toUpperCase()} `;
   const footerTail = truncateVisual(
     `${statusSegment}${FOOTER_HINTS}${telemetrySuffix}`,
