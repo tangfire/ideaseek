@@ -180,6 +180,13 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     }
     return JSON.stringify({ kind: 'unknown', summary: 'fake harness cannot read logs' });
   }
+  if (request.outputSchema === 'run-strategy-v1') {
+    // Echo the threshold prior: e2e exercises the full agent path while
+    // producing exactly the tier the scale rule computed.
+    const context = readJsonContext(request) as { prior?: unknown };
+    const prior = typeof context.prior === 'string' ? context.prior : 'starter';
+    return JSON.stringify({ strategy: prior });
+  }
   if (request.outputSchema === 'idea-candidates-v1') {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_IDEA_OUTPUT;

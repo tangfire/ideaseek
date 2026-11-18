@@ -1,5 +1,9 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { sha256Of } from '../core/hash.js';
+import { redactSecrets } from '../core/redact.js';
+import { assertAgainstSchema } from '../core/schema/index.js';
+import type { HarnessAdapter } from '../dsh/adapter.js';
 
 export type RunStrategy = 'starter' | 'standard' | 'research';
 
@@ -111,6 +115,105 @@ export const STRATEGY_WORDING: Record<RunStrategy, StrategyWording> = {
 
 export function strategyWording(strategy: string): StrategyWording {
   return STRATEGY_WORDING[strategy as RunStrategy] ?? STRATEGY_WORDING.standard;
+}
+
+export const RUN_STRATEGY_SCHEMA = 'run-strategy-v1';
+
+export const STRATEGY_INSTRUCTION = `You are IdeaSeek's run strategy judge. A research run is being created; choose its evidence tier from the input scale and the research question.
+
+Output ONLY one JSON object:
+{"strategy": "...", "rationale": "..."}
+
+strategy — exactly one of: starter, standard, research.
+- starter: small exploratory corpus; conclusions are directional only.
+- standard: mid-scale corpus; conclusions scoped to the input snapshot.
+- research: large corpus under high evidence demands; the report must list uncovered ranges and evidence gaps.
+
+The input carries "prior", the mechanical tier from file-count thresholds. Confirm it when the scale says the same; override it when the question or the counts say the heuristic misjudged the project (a narrow replication over many files is not a research-scale survey; a focused question with ten papers is not automatically starter work).
+rationale — one sentence justifying the choice, at most 200 characters, no secret values.`;
+
+export interface StrategyChoice {
+  strategy: RunStrategy;
+  /** How the tier was decided: explicit config, the agent, or the scale rule. */
+  source: 'config' | 'agent' | 'thresholds';
+  rationale?: string;
+}
+
+/** Validates one agent tier choice against the schema; null on anything unusable. */
+export function parseStrategyChoice(
+  output: string,
+): { strategy: RunStrategy; rationale?: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return null;
+  }
+  try {
+    assertAgainstSchema(RUN_STRATEGY_SCHEMA, parsed);
+  } catch {
+    return null;
+  }
+  const record = parsed as { strategy: RunStrategy; rationale?: string };
+  const choice: { strategy: RunStrategy; rationale?: string } = { strategy: record.strategy };
+  if (typeof record.rationale === 'string' && record.rationale.trim()) {
+    const rationale = redactSecrets(record.rationale).slice(0, 300).trim();
+    if (rationale) choice.rationale = rationale;
+  }
+  return choice;
+}
+
+/**
+ * Chooses the run's evidence tier (P2 判断面 agent 化): explicit
+ * `research.mode` is a decision, not a judgment, and always wins without a
+ * model call. In `auto`, the agent sees the counts, the question and the
+ * threshold rule's answer as `prior`, and may confirm or override it; no
+ * harness, a harness failure, or invalid output all fall back to
+ * `resolveStrategy`, so the documented scale policy remains the floor.
+ */
+export async function chooseStrategy(opts: {
+  mode: string;
+  counts: InputCounts;
+  question: string;
+  harness?: HarnessAdapter | null;
+  runId?: string;
+}): Promise<StrategyChoice> {
+  if (opts.mode === 'starter' || opts.mode === 'standard' || opts.mode === 'research') {
+    return { strategy: opts.mode, source: 'config' };
+  }
+  const prior = resolveStrategy(opts.mode, opts.counts);
+  if (!opts.harness) return { strategy: prior, source: 'thresholds' };
+  const context = JSON.stringify({
+    counts: opts.counts,
+    question: opts.question.slice(0, 500),
+    prior,
+  });
+  try {
+    await opts.harness.initialize();
+    const result = await opts.harness.runTask({
+      runId: opts.runId ?? 'strategy-select',
+      taskId: 'strategy-select',
+      // Tool-less reasoning: this call weighs counts and a question and
+      // returns JSON; it must not gain tools to inspect the corpus.
+      profile: 'demo',
+      instruction: STRATEGY_INSTRUCTION,
+      inputs: [{ kind: 'text', name: 'project-scale', content: context }],
+      outputSchema: RUN_STRATEGY_SCHEMA,
+      budget: { timeoutMs: 30_000, maxOutputTokens: 300 },
+      idempotencyKey: `strategy:${sha256Of(context)}`,
+    });
+    const choice = parseStrategyChoice(result.output);
+    if (choice) {
+      return {
+        strategy: choice.strategy,
+        source: 'agent',
+        ...(choice.rationale ? { rationale: choice.rationale } : {}),
+      };
+    }
+  } catch {
+    // Harness unavailable, blocked or timed out: the scale rule stands.
+  }
+  return { strategy: prior, source: 'thresholds' };
 }
 
 export async function pathExists(path: string): Promise<boolean> {

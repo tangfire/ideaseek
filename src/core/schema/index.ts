@@ -49,6 +49,7 @@ import researchMapV1 from './schemas/research-map-v1.json' with { type: 'json' }
 import researchMaterialAssessmentV1 from './schemas/research-material-assessment-v1.json' with { type: 'json' };
 import researchWikiV1 from './schemas/research-wiki-v1.json' with { type: 'json' };
 import resultToClaimV1 from './schemas/result-to-claim-v1.json' with { type: 'json' };
+import runStrategyV1 from './schemas/run-strategy-v1.json' with { type: 'json' };
 import supervisorIntentV1 from './schemas/supervisor-intent-v1.json' with { type: 'json' };
 import synthesisLeadV1 from './schemas/synthesis-lead-v1.json' with { type: 'json' };
 import topicSynthesisV1 from './schemas/topic-synthesis-v1.json' with { type: 'json' };
@@ -151,6 +152,7 @@ const SCHEMAS = {
   'research-material-assessment-v1': researchMaterialAssessmentV1,
   'research-wiki-v1': researchWikiV1,
   'result-to-claim-v1': resultToClaimV1,
+  'run-strategy-v1': runStrategyV1,
   'supervisor-intent-v1': supervisorIntentV1,
   'synthesis-lead-v1': synthesisLeadV1,
   'topic-synthesis-v1': topicSynthesisV1,

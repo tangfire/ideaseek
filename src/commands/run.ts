@@ -9,7 +9,7 @@ import { readCliVersion, writeDaemonInfo } from '../runtime/daemon.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve as resolvePath } from 'node:path';
-import { countInputs, resolveStrategy } from '../workflow/strategy.js';
+import { chooseStrategy, countInputs } from '../workflow/strategy.js';
 import {
   action,
   assertConfigUsable,
@@ -115,12 +115,24 @@ export function registerRunCommand(program: Command): void {
                 datasets: runtime.config.inputs.datasetsDir,
                 comparisons: runtime.config.inputs.comparisonsDir,
               });
+              // Agent-first tier choice: `run` always carries a harness, so in
+              // auto mode the model weighs counts + question against the
+              // threshold rule (validated, with the rule as fallback).
+              const choice = await chooseStrategy({
+                mode: runtime.config.research.mode,
+                counts,
+                question,
+                harness: runtime.harness,
+              });
               run = await db.createRun({
                 projectId: runtime.project.id,
                 question,
                 config: runtime.config,
-                strategy: resolveStrategy(runtime.config.research.mode, counts),
+                strategy: choice.strategy,
               });
+              if (choice.source === 'agent' && choice.rationale) {
+                actions.push(`strategy ${choice.strategy} chosen by agent: ${choice.rationale}`);
+              }
               await enqueueDemoPipeline(runtime, run, question, faults);
               if (opts.paper) {
                 await enqueuePaperExtract(runtime, run.runId, opts.paper);

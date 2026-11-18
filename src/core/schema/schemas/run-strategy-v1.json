@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.local/schema/run-strategy-v1.json",
+  "title": "Run Strategy Choice v1",
+  "description": "An agent's evidence-tier choice for one research run: starter, standard or research. The mechanical tier from file counts travels in the prompt as `prior`; the agent confirms it or overrides when the research question says the scale heuristic misjudged the project. Anything that fails validation falls back to the threshold rule, so the documented scale policy (WORKFLOW_SPEC 门槛) remains the floor. The tier changes default budgets and report wording only — never evidence, audit or safety requirements.",
+  "type": "object",
+  "required": ["strategy"],
+  "additionalProperties": false,
+  "properties": {
+    "strategy": {
+      "type": "string",
+      "enum": ["starter", "standard", "research"],
+      "description": "Must be one of the RunStrategy values — an unrecognised tier invalidates the whole output rather than being coerced to the prior."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 300,
+      "description": "One sentence justifying the tier, redacted of secret shapes before it is surfaced."
+    }
+  }
+}

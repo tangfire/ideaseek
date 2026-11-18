@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
-import { countInputs, resolveStrategy } from '../workflow/strategy.js';
+import { chooseStrategy, countInputs } from '../workflow/strategy.js';
 import { performScan } from './inputs.js';
 import { LATEX_PARSER_VERSION } from '../knowledge/latex.js';
 import {
@@ -133,11 +133,20 @@ export async function ensureActiveRun(
     datasets: runtime.config.inputs.datasetsDir,
     comparisons: runtime.config.inputs.comparisonsDir,
   });
+  // Agent-first tier choice: the harness this command already carries (if
+  // any) may refine the threshold rule; a model-less creator (parse-only
+  // ingest) keeps the documented scale policy.
+  const choice = await chooseStrategy({
+    mode: runtime.config.research.mode,
+    counts,
+    question,
+    harness: runtime.harness ?? null,
+  });
   const run = await runtime.db.createRun({
     projectId: runtime.project.id,
     question,
     config: runtime.config,
-    strategy: resolveStrategy(runtime.config.research.mode, counts),
+    strategy: choice.strategy,
   });
   return { runId: run.runId, created: true, resumed: false };
 }
