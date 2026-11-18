@@ -243,12 +243,18 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       DROP TABLE IF EXISTS paper_embedding;
     `,
   },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE task ADD COLUMN not_before INTEGER;
+    `,
+  },
 ];
 
 const TASK_COLUMNS = `
   task_id, run_id, type, status, phase, payload_json, depends_on_json, idempotency_key,
   attempt, max_attempts, lease_owner, lease_expires_at, heartbeat_at, cancel_requested,
-  result_json, error_json, created_at, updated_at, started_at, finished_at
+  result_json, error_json, created_at, updated_at, started_at, finished_at, not_before
 `;
 
 interface TaskRow {
@@ -272,6 +278,7 @@ interface TaskRow {
   updated_at: number;
   started_at: number | null;
   finished_at: number | null;
+  not_before: number | null;
 }
 
 interface RunRow {
@@ -378,6 +385,7 @@ function rowToTask(row: TaskRow): TaskRecord {
     updatedAt: row.updated_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
+    notBefore: row.not_before,
   };
 }
 
@@ -1352,6 +1360,8 @@ export class SqliteWorkflowDb implements WorkflowDb {
         const now = this.clock.now();
         for (const task of tasks) {
           if (task.status !== 'queued' || task.cancelRequested) continue;
+          // Skip tasks still waiting out their exponential backoff.
+          if (task.notBefore !== null && task.notBefore > now) continue;
           const depsOk = task.dependsOn.every((dep) => byId.get(dep)?.status === 'succeeded');
           if (!depsOk) continue;
           const claim = this.db
@@ -1653,13 +1663,18 @@ export class SqliteWorkflowDb implements WorkflowDb {
           .run(JSON.stringify(error), taskId);
         const willRetry = error.retryable && task.attempt < task.maxAttempts;
         if (willRetry) {
+          // Exponential backoff: 1s, 2s, 4s, ... capped at 60s. Without this,
+          // one provider 5xx burns all 3 attempts in milliseconds and the run
+          // fails permanently. The backoff is stored in not_before so the
+          // claim query can skip tasks that are still waiting.
+          const backoffMs = Math.min(1000 * Math.pow(2, task.attempt - 1), 60_000);
           this.db
             .prepare(
               `UPDATE task SET status = 'queued', lease_owner = NULL, lease_expires_at = NULL,
-                               updated_at = ?
+                               not_before = ?, updated_at = ?
                WHERE task_id = ?`,
             )
-            .run(now, taskId);
+            .run(now + backoffMs, now, taskId);
         } else {
           this.db
             .prepare(

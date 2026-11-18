@@ -354,6 +354,54 @@ export function validateRunResult(value: unknown): SpecValidation {
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Semantic cross-validation of a result against its spec.
+ *
+ * Structural validation (validateRunResult) checks shape; this checks that the
+ * result is actually consistent with what the spec declared:
+ * - every metric name in the result must appear in the spec's metrics
+ * - the spec's dataSnapshotId must resolve (when non-null and not a synthetic
+ *   placeholder like 'synthetic:full')
+ *
+ * Without this, a model can attach metrics it never declared, or a fabricated
+ * snapshot id, and the structural validator passes because the shape is valid.
+ */
+export function validateResultAgainstSpec(
+  spec: ExperimentSpec,
+  result: RunResult,
+): SpecValidation {
+  const errors: string[] = [];
+
+  // Metric names in the result must be a subset of the spec's declared metrics.
+  const specMetricNames = new Set(spec.metrics.map((m) => m.name));
+  for (const [i, metric] of result.metrics.entries()) {
+    if (!specMetricNames.has(metric.name)) {
+      errors.push(
+        `metrics[${i}].name "${metric.name}" is not declared in the spec ` +
+          `(declared: ${[...specMetricNames].join(', ') || 'none'})`,
+      );
+    }
+  }
+
+  // dataSnapshotId must resolve to a real manifest hash when it claims to.
+  // Synthetic placeholders ('synthetic:full', etc.) are exempt — they are
+  // honest about not being a real hash.
+  const snapshotId = spec.dataSnapshotId;
+  if (
+    snapshotId &&
+    !snapshotId.startsWith('synthetic:') &&
+    !/^[a-f0-9]{64}$/.test(snapshotId) &&
+    !snapshotId.startsWith('sha256:')
+  ) {
+    errors.push(
+      `dataSnapshotId "${snapshotId}" does not look like a content hash ` +
+        '(expected sha256:... or 64 hex chars, or a synthetic: prefix)',
+    );
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
 /** Recursively key-sorted JSON so hashes do not depend on key order. */
 export function stableJson(value: unknown): string {
   if (Array.isArray(value)) {

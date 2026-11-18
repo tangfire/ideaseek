@@ -197,6 +197,10 @@ describe('idempotent two-phase commit', () => {
     const artifacts = await runtime.db.listArtifacts(task!.taskId);
     expect(artifacts.every((artifact) => artifact.status === 'aborted')).toBe(true);
 
+    // Advance past the exponential backoff (1s for attempt 1) so the retry
+    // is claimable. Without this, claimNextTask would skip the task.
+    clock.advance(1001);
+
     // A fresh attempt can stage and commit again without unique-key collisions.
     const next = await runtime.db.claimNextTask(run.runId, 'w2', LEASE);
     expect(next?.attempt).toBe(2);

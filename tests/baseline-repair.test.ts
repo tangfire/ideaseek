@@ -119,7 +119,15 @@ describe('change classification', () => {
   it('classifies none / environment / code-review', () => {
     expect(classifyChange([])).toBe('none');
     expect(classifyChange(['.venv/', '__pycache__/'])).toBe('none');
-    expect(classifyChange(['requirements.txt', 'pyproject.toml'])).toBe('environment');
+    // Lockfiles and pure dependency lists are safe — they only declare versions.
+    expect(classifyChange(['requirements.txt', 'package-lock.json'])).toBe('environment');
+    expect(classifyChange(['poetry.lock', 'yarn.lock'])).toBe('environment');
+    // Packaging files that can carry executable code require review —
+    // a Dockerfile RUN or package.json scripts can inject arbitrary execution.
+    expect(classifyChange(['requirements.txt', 'pyproject.toml'])).toBe('code-review');
+    expect(classifyChange(['package.json'])).toBe('code-review');
+    expect(classifyChange(['Dockerfile'])).toBe('code-review');
+    // Source code changes always require review.
     expect(classifyChange(['requirements.txt', 'train.py'])).toBe('code-review');
     expect(classifyChange(['src/data/loader.py'])).toBe('code-review');
   });

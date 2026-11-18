@@ -173,23 +173,42 @@ export function isGeneratedPath(path: string): boolean {
   );
 }
 
-/** Dependency/environment files whose edits are safe compatibility fixes. */
+/**
+ * Dependency/environment files whose edits are safe compatibility fixes.
+ *
+ * Split into two categories because the line matters for security:
+ * - LOCKFILES and pure dependency lists: only declare versions, cannot execute
+ *   code. Safe to auto-accept.
+ * - PACKAGING files: `package.json` can carry `scripts`, `Dockerfile` carries
+ *   `RUN`, `setup.py`/`pyproject.toml` carry build code. An agent editing
+ *   these can inject arbitrary execution. These require code-review.
+ */
+const SAFE_ENVIRONMENT = /(^|\/)(requirements[^/]*\.txt|constraints[^/]*\.txt|[^/]*\.lock|package-lock\.json|yarn\.lock|poetry\.lock|Pipfile\.lock)$/i;
+const PACKAGING_CODE = /(^|\/)(package\.json|Dockerfile[^/]*|setup\.(py|cfg)|pyproject\.toml|environment[^/]*\.ya?ml|conda\.ya?ml)$/i;
+
 export function isEnvironmentFile(path: string): boolean {
-  return /(^|\/)(requirements[^/]*\.txt|constraints[^/]*\.txt|environment[^/]*\.ya?ml|pyproject\.toml|setup\.(py|cfg)|Pipfile(\.lock)?|poetry\.lock|package\.json|package-lock\.json|yarn\.lock|conda\.ya?ml|Dockerfile[^/]*|[^/]*\.lock)$/i.test(
-    path,
-  );
+  return SAFE_ENVIRONMENT.test(path) || PACKAGING_CODE.test(path);
+}
+
+/** True when the file can carry executable code (requires code-review). */
+export function isPackagingCodeFile(path: string): boolean {
+  return PACKAGING_CODE.test(path);
 }
 
 /**
  * Classifies the worktree diff relative to baseline trust:
  * - `none`: no meaningful changes,
- * - `environment`: only dependency/packaging files changed,
- * - `code-review`: any source/config change → user confirmation required
- *   (plan §C.7: semantic changes must not pass as the original baseline).
+ * - `environment`: only lockfiles/dependency lists changed (safe),
+ * - `code-review`: any source/config/packaging-code change → user confirmation
+ *   required (plan §C.7: semantic changes must not pass as the original
+ *   baseline).
  */
 export function classifyChange(paths: string[]): RepairChangeClass {
   const meaningful = paths.filter((p) => !isGeneratedPath(p));
   if (meaningful.length === 0) return 'none';
+  // If ANY file can carry executable code, the whole diff needs review —
+  // a lockfile-only change is safe, but a single Dockerfile edit is not.
+  if (meaningful.some((p) => isPackagingCodeFile(p))) return 'code-review';
   if (meaningful.every((p) => isEnvironmentFile(p))) return 'environment';
   return 'code-review';
 }

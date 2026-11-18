@@ -194,7 +194,10 @@ export async function buildIdeaSpec(
     version: 1, // caller rewrites after hash comparison
     idea: { ideaId, version: meta.currentVersion },
     comparisonIds: card.nearestComparisons.map((item) => item.methodId),
-    codeCommit: null,
+    // Bind the idea's source hash as the code commit so exported results
+    // carry code provenance. Without this, results show a null code hash
+    // and the reader cannot tell which code produced them.
+    codeCommit: codeHash ?? null,
     dataSnapshotId,
     sliceIds: [],
     environment: {

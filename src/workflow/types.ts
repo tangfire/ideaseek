@@ -73,6 +73,8 @@ export interface TaskRecord {
   updatedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  /** Earliest time this task may be claimed (exponential backoff on retry). */
+  notBefore: number | null;
 }
 
 export interface RunRecord {
