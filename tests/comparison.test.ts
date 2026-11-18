@@ -609,7 +609,11 @@ describe('ideaseek comparison gate', () => {
     expect(ref.code).toBe(0);
 
     const gate = await runCli(project, ['comparison', 'gate', '--json']);
-    expect(gate.code).toBe(0);
+    // Carried with the output, because this assertion failed once in a full
+    // parallel run and passed in isolation — and with a bare `toBe(0)` the
+    // failure said nothing about WHY the gate was not ok. A flake that cannot
+    // explain itself is only ever fixed by luck.
+    expect(gate.code, `stdout=${gate.stdout} stderr=${gate.stderr}`).toBe(0);
     const payload = JSON.parse(gate.stdout) as {
       ok: boolean;
       skipped: { methodId: string; reason: string | null }[];

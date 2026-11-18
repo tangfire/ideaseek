@@ -432,8 +432,17 @@ elif cmd == 'smoke':
     await registerReimpl('fedavg');
     await writeBlueprint('fedavg', blueprint('fedavg', MISSING_DEP_SOURCE));
 
-    const repro = await runCli(project, ['baseline', 'reproduce', '--method', 'fedavg', '--json']);
-    expect(repro.code).toBe(1);
+    // The platform gives a pip install up to 600s (repair.ts installTimeoutMs);
+    // this helper's default was 60s, so on a slow index the child was SIGKILLed
+    // long before the platform's own bound expired and the test reported a
+    // "timeout" instead of the dependency classification it was checking. The
+    // budget here dominates the platform bound rather than the machine's mood.
+    const repro = await runCli(
+      project,
+      ['baseline', 'reproduce', '--method', 'fedavg', '--json'],
+      660_000,
+    );
+    expect(repro.code, repro.stdout + repro.stderr).toBe(1);
     const payload = JSON.parse(repro.stdout) as {
       outcome: string;
       failedPhase: string;
@@ -459,7 +468,7 @@ elif cmd == 'smoke':
     ) as ReproductionRecord;
     expect(record.outcome).toBe('failed');
     expect(record.phases.at(-1)).toMatchObject({ phase: 'check-code', ok: false });
-  }, 120_000);
+  }, 720_000);
 
   it('fails at the data interface check, then recovers to smoke-tested after data arrives', async () => {
     await registerReimpl('fedavg');

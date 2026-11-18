@@ -21,4 +21,31 @@ export default function globalSetup(): void {
     cwd: root,
     stdio: 'inherit',
   });
+  // Then prove the artifact every e2e child is about to exec can actually boot.
+  //
+  // Observed in a full run: three spawn-heavy files failed while each passed in
+  // isolation, and one of them said why — a child died on
+  // `SyntaxError: the requested module './commands/idea.js' does not provide an
+  // export named 'registerIdeaCommand'`, i.e. it read dist while it was not a
+  // coherent whole. A torn dist does not fail the build; it fails an unrelated
+  // test minutes later as a timeout, which is how a harness problem gets filed
+  // as a product bug. Checking here turns "3 flaky files" into one loud,
+  // explained failure.
+  try {
+    execSync('node dist/cli.js --help', { cwd: root, stdio: 'pipe', timeout: 120_000 });
+  } catch (error) {
+    const detail = (error as { stdout?: Buffer; stderr?: Buffer; message?: string }) ?? {};
+    const output = `${detail.stderr?.toString() ?? detail.message ?? ''}`.slice(-600);
+    execSync('node scripts/build.mjs', { cwd: root, stdio: 'inherit' }); // one rebuild attempt
+    try {
+      execSync('node dist/cli.js --help', { cwd: root, stdio: 'pipe', timeout: 120_000 });
+    } catch (retryError) {
+      throw new Error(
+        `the built CLI cannot boot, so every e2e spawn would fail — dist is not a coherent ` +
+          `build. First failure:\n${output}\nAfter rebuilding:\n${String(
+            (retryError as { stderr?: Buffer })?.stderr ?? (retryError as Error).message,
+          ).slice(-600)}`,
+      );
+    }
+  }
 }
