@@ -9,6 +9,7 @@ import {
   repairStore,
 } from '../comparison/repair.js';
 import { inferDependencies } from '../comparison/dep-inference.js';
+import { classifyFailureWithAgent } from '../comparison/failure-judge.js';
 import {
   blueprintMetricNames,
   checkMetricFeasibility,
@@ -192,6 +193,24 @@ export function registerBaselineCommand(program: Command): void {
                         (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
                         `repair-${current}`,
                       taskId: `repair-${current}`,
+                      now: Date.now(),
+                    })
+                : undefined,
+              // Agent-first failure classification: the keyword table stays
+              // as prior and fallback (see failure-judge.ts), so a configured
+              // model may correct a misreading without ever being able to
+              // override a fact or invent a kind.
+              classifyFailure: runtime.harness
+                ? async (log, exitCode, timedOut) =>
+                    classifyFailureWithAgent({
+                      harness: runtime.harness!,
+                      log,
+                      exitCode,
+                      timedOut,
+                      runId:
+                        (await runtime.db.getLatestRun(runtime.project.id))?.runId ??
+                        `repair-${current}`,
+                      taskId: `repair-${current}-classify`,
                       now: Date.now(),
                     })
                 : undefined,

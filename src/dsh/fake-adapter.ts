@@ -170,6 +170,16 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
       summary: `supervisor classified: ${firstTextInput(request).slice(0, 120)}`,
     });
   }
+  if (request.outputSchema === 'failure-classification-v1') {
+    // Deterministic echo of the mechanical prior: e2e exercises the full
+    // agent path (call → schema validation → accept) while producing the
+    // same classification the keyword table computed.
+    const context = readJsonContext(request) as { prior?: unknown };
+    if (context.prior && typeof context.prior === 'object' && !Array.isArray(context.prior)) {
+      return JSON.stringify(context.prior);
+    }
+    return JSON.stringify({ kind: 'unknown', summary: 'fake harness cannot read logs' });
+  }
   if (request.outputSchema === 'idea-candidates-v1') {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_IDEA_OUTPUT;

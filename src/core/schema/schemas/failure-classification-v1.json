@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.local/schema/failure-classification-v1.json",
+  "title": "Repair Failure Classification v1",
+  "description": "An agent's reading of one failed baseline-repair round, over the deterministic failure taxonomy. The keyword classifier's first pass travels in the prompt as `prior`; the agent confirms or corrects it from the log tail. Anything that fails validation falls back to the prior, so a model outage or a hallucinated kind can never change what the repair loop does with a log the platform already read. `timeout` is decided by the executor's own timer, never by the model.",
+  "type": "object",
+  "required": ["kind", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "missing-dependency",
+        "path-error",
+        "syntax-error",
+        "permission-error",
+        "device-error",
+        "timeout",
+        "unknown"
+      ],
+      "description": "Must be one of the RepairFailureKind values — the taxonomy the fix planner keys off. An unrecognised kind invalidates the whole output rather than being coerced."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "description": "The single most diagnostic line from the log, redacted of secret shapes before it is stored."
+    },
+    "module": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+      "maxLength": 200,
+      "description": "Dotted Python module name, only for missing-dependency. The pattern rejects paths and shell fragments so a module name can never steer the fix planner outside the worktree."
+    }
+  }
+}

@@ -13,6 +13,7 @@ import metricAlignmentV1 from './schemas/metric-alignment-v1.json' with { type: 
 import implementationProgramV1 from './schemas/implementation-program-v1.json' with { type: 'json' };
 import ideaImplementationV1 from './schemas/idea-implementation-v1.json' with { type: 'json' };
 import failureDiagnosisV1 from './schemas/failure-diagnosis-v1.json' with { type: 'json' };
+import failureClassificationV1 from './schemas/failure-classification-v1.json' with { type: 'json' };
 import experimentPlanV1 from './schemas/experiment-plan-v1.json' with { type: 'json' };
 import ablationPlanV1 from './schemas/ablation-plan-v1.json' with { type: 'json' };
 import noveltyCheckV1 from './schemas/novelty-check-v1.json' with { type: 'json' };
@@ -114,6 +115,7 @@ const SCHEMAS = {
   'implementation-program-v1': implementationProgramV1,
   'idea-implementation-v1': ideaImplementationV1,
   'failure-diagnosis-v1': failureDiagnosisV1,
+  'failure-classification-v1': failureClassificationV1,
   'experiment-plan-v1': experimentPlanV1,
   'ablation-plan-v1': ablationPlanV1,
   'novelty-check-v1': noveltyCheckV1,

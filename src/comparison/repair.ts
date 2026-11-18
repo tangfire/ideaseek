@@ -149,6 +149,21 @@ export function classifyRepairFailure(
   };
 }
 
+const REPAIR_FAILURE_KINDS: readonly RepairFailureKind[] = [
+  'missing-dependency',
+  'path-error',
+  'syntax-error',
+  'permission-error',
+  'device-error',
+  'timeout',
+  'unknown',
+];
+
+/** Runtime guard for agent- or test-injected failure classifications. */
+export function isRepairFailureKind(value: unknown): value is RepairFailureKind {
+  return typeof value === 'string' && (REPAIR_FAILURE_KINDS as readonly string[]).includes(value);
+}
+
 /** Parses `git status --porcelain` into repo-relative changed paths. */
 export function parsePorcelainPaths(porcelain: string): string[] {
   const paths: string[] = [];
@@ -183,8 +198,10 @@ export function isGeneratedPath(path: string): boolean {
  *   `RUN`, `setup.py`/`pyproject.toml` carry build code. An agent editing
  *   these can inject arbitrary execution. These require code-review.
  */
-const SAFE_ENVIRONMENT = /(^|\/)(requirements[^/]*\.txt|constraints[^/]*\.txt|[^/]*\.lock|package-lock\.json|yarn\.lock|poetry\.lock|Pipfile\.lock)$/i;
-const PACKAGING_CODE = /(^|\/)(package\.json|Dockerfile[^/]*|setup\.(py|cfg)|pyproject\.toml|environment[^/]*\.ya?ml|conda\.ya?ml)$/i;
+const SAFE_ENVIRONMENT =
+  /(^|\/)(requirements[^/]*\.txt|constraints[^/]*\.txt|[^/]*\.lock|package-lock\.json|yarn\.lock|poetry\.lock|Pipfile\.lock)$/i;
+const PACKAGING_CODE =
+  /(^|\/)(package\.json|Dockerfile[^/]*|setup\.(py|cfg)|pyproject\.toml|environment[^/]*\.ya?ml|conda\.ya?ml)$/i;
 
 export function isEnvironmentFile(path: string): boolean {
   return SAFE_ENVIRONMENT.test(path) || PACKAGING_CODE.test(path);
@@ -616,6 +633,18 @@ export interface ExecuteRepairInput {
     failure: RepairFailure,
     runOutput: string,
   ) => Promise<{ packages: string[]; notes: string }>;
+  /**
+   * Optional agent classifier for failed rounds (P2 判断面 agent 化). The
+   * caller receives the log, exit code and timeout flag and may return a
+   * classification; null, a throw, or anything that fails validation here
+   * leaves the keyword classifier's answer in place. Timeout never reaches
+   * the hook — a fired timer is a fact, not a judgment.
+   */
+  classifyFailure?: (
+    log: string,
+    exitCode: number,
+    timedOut: boolean,
+  ) => Promise<RepairFailure | null>;
   /** False blocks installs that need network egress. */
   allowNetworkInstall?: boolean;
   /** runtime.pip_index_url: installs use pip's own variable, never a spec flag. */
@@ -632,6 +661,39 @@ export interface ExecuteRepairResult {
 
 function isTerminal(outcome: RepairRoundOutcome): boolean {
   return outcome !== 'in-progress';
+}
+
+/**
+ * Classifies one failed round: the keyword table is the mechanical prior and
+ * the fallback, an injected agent hook may correct it, and the hook's output
+ * is re-validated here — this file trusts no classifier blindly. Timeout
+ * short-circuits before the hook: the executor's timer decided it, and a
+ * classifier claiming timeout without a fired timer asserts something the
+ * executor already knows to be false.
+ */
+async function classifyRoundFailure(
+  input: ExecuteRepairInput,
+  run: RunCommandResult,
+): Promise<RepairFailure> {
+  const mechanical = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+  if (run.timedOut || !input.classifyFailure) return mechanical;
+  try {
+    const judged = await input.classifyFailure(run.out, run.exitCode, run.timedOut);
+    if (!judged || !isRepairFailureKind(judged.kind)) return mechanical;
+    if (judged.kind === 'timeout') return mechanical;
+    if (typeof judged.summary !== 'string') return mechanical;
+    const summary = redactSecrets(judged.summary).slice(0, 300).trim();
+    if (!summary) return mechanical;
+    const module =
+      typeof judged.module === 'string' &&
+      /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(judged.module)
+        ? judged.module
+        : undefined;
+    return { kind: judged.kind, summary, ...(module ? { module } : {}) };
+  } catch {
+    // Any agent failure leaves the mechanical classification in place.
+    return mechanical;
+  }
 }
 
 /**
@@ -709,7 +771,7 @@ export async function executeRepair(input: ExecuteRepairInput): Promise<ExecuteR
       break;
     }
 
-    const failure = classifyRepairFailure(run.out, run.exitCode, run.timedOut);
+    const failure = await classifyRoundFailure(input, run);
     lastFailure = failure;
     const plan = await planFix(failure, input.worktreeDir, {
       infer: input.inferDependencies,
