@@ -95,12 +95,29 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
       const body = await readFile(path, 'utf8');
       await writeFile(
         path,
-        body.replace('import json', `import json\nimport time\n\ntime.sleep(${smokeSleepMs / 1000})`),
+        body.replace(
+          'import json',
+          `import json\nimport time\n\ntime.sleep(${smokeSleepMs / 1000})`,
+        ),
         'utf8',
       );
     }
     const check = await runCli(project, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
+    // The scaffold's 1 GiB admission reservation assumes a real training
+    // host; these fixtures are synthetic smoke prints needing ~nothing.
+    // Under a full parallel gate the two reservations plus 1 GiB headroom
+    // (3 GiB band) exceeded free memory at the probe instant — observed
+    // queued: "insufficient free memory … 2.3GiB free" while the machine
+    // idles at 4.2 — and the planner correctly withheld the second idea.
+    // capacity.test.ts owns the admission math; this file owns parallel
+    // execution, so the fixtures declare their true (~100 MB) need. The
+    // report binds src/smoke.py, not config, so patching after check is
+    // safe (scaffold never overwrites existing files either).
+    const trainPath = join(project, 'ideas', id, 'config', 'train.json');
+    const train = JSON.parse(await readFile(trainPath, 'utf8')) as Record<string, unknown>;
+    train.resources = { gpus: 0, memoryGiB: 0.1 };
+    await writeFile(trainPath, `${JSON.stringify(train, null, 2)}\n`, 'utf8');
   }
 
   beforeEach(async () => {
@@ -117,11 +134,19 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
     expect(run.code, run.stdout + run.stderr).toBe(0);
     const payload = JSON.parse(run.stdout) as {
       admitted: string[];
-      queued: unknown[];
+      queued: { ideaId: string; reason: string }[];
+      constraints: string[];
       allOk: boolean;
       outcomes: { ideaId: string; ok: boolean; resultStatus: string; statusAfter: string }[];
     };
-    expect(payload.admitted.sort()).toEqual(['alpha-idea', 'beta-idea']);
+    // The queued/constraints detail is the diagnosis: a capacity queue
+    // (probe saw degraded free memory / GPU at the instant of admission)
+    // and a vanished ready idea (status never reached SMOKE_TESTED) produce
+    // the same admitted=[alpha] shape, and only the reasons tell them apart.
+    expect(
+      payload.admitted.sort(),
+      `queued=${JSON.stringify(payload.queued)} constraints=${JSON.stringify(payload.constraints)}`,
+    ).toEqual(['alpha-idea', 'beta-idea']);
     expect(payload.queued).toEqual([]);
     expect(payload.allOk).toBe(true);
     expect(payload.outcomes).toHaveLength(2);
@@ -261,10 +286,7 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
     const windows: { ideaId: string; start: number; finish: number }[] = [];
     for (const id of ['alpha-idea', 'beta-idea']) {
       const artifact = JSON.parse(
-        await readFile(
-          join(project, 'ideas', id, 'experiments', `idea-${id}-v1.json`),
-          'utf8',
-        ),
+        await readFile(join(project, 'ideas', id, 'experiments', `idea-${id}-v1.json`), 'utf8'),
       ) as { result?: { startedAt?: number; finishedAt?: number } };
       expect(artifact.result?.startedAt, id).toBeTypeOf('number');
       expect(artifact.result?.finishedAt, id).toBeTypeOf('number');

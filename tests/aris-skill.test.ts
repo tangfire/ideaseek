@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -192,10 +192,19 @@ describe('integrity also walks the directory (#19)', () => {
     // check whose whole job is to catch it, while the command still printed
     // "all match". A guard with no positive control is indistinguishable from a
     // guard that never fires.
-    const { writeFile, rm } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    const stray = join('aris-skills', 'skills', 'zz-integrity-probe.md');
+    //
+    // The probe goes into a TEMP COPY of the tree, not the shared repo one:
+    // writing into aris-skills/ raced a concurrent suite's recursive `cp` of
+    // the same directory under the full parallel gate (the walker lstat'd the
+    // probe a millisecond after this test's finally removed it → ENOENT).
+    // arisSkillsRoot() honours IDEASEEK_ARIS_SKILLS, so scanning the copy
+    // proves exactly the same property without mutating shared state.
+    const root = await mkdtemp(join(tmpdir(), 'aris-probe-'));
+    await cp(arisSkillsRoot(), root, { recursive: true });
+    const stray = join(root, 'skills', 'zz-integrity-probe.md');
+    const saved = process.env.IDEASEEK_ARIS_SKILLS;
     await writeFile(stray, '# probe\n\nnot vendored deliberately\n', 'utf8');
+    process.env.IDEASEEK_ARIS_SKILLS = root;
     try {
       const reports = await verifyVendoredIntegrity();
       const found = reports.find((report) => report.path === 'skills/zz-integrity-probe.md');
@@ -204,7 +213,9 @@ describe('integrity also walks the directory (#19)', () => {
       expect(found!.expected).toBeNull();
       expect(found!.detail).toContain('not in VENDORED_FILES');
     } finally {
-      await rm(stray, { force: true });
+      if (saved === undefined) delete process.env.IDEASEEK_ARIS_SKILLS;
+      else process.env.IDEASEEK_ARIS_SKILLS = saved;
+      await rm(root, { recursive: true, force: true });
     }
     // And the tree is clean again: the check goes back to reporting nothing
     // unusual, which is what makes the assertion above about the file rather
