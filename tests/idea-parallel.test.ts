@@ -107,16 +107,19 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
     // The scaffold's 1 GiB admission reservation assumes a real training
     // host; these fixtures are synthetic smoke prints needing ~nothing.
     // Under a full parallel gate the two reservations plus 1 GiB headroom
-    // (3 GiB band) exceeded free memory at the probe instant — observed
-    // queued: "insufficient free memory … 2.3GiB free" while the machine
-    // idles at 4.2 — and the planner correctly withheld the second idea.
+    // exceeded free memory at the probe instant — observed queued:
+    // "insufficient free memory … 2.3GiB free" while the machine idles at
+    // 4.2 — and the planner correctly withheld the second idea.
     // capacity.test.ts owns the admission math; this file owns parallel
-    // execution, so the fixtures declare their true (~100 MB) need. The
-    // report binds src/smoke.py, not config, so patching after check is
-    // safe (scaffold never overwrites existing files either).
+    // execution, so the fixtures declare their true (~50 MB) need. The
+    // probe rounds free memory to 0.1 GiB, so 0.05×2+1 puts this test on
+    // the same admission floor as the single-idea fixtures (admit iff
+    // rounded free ≥ 1.1), the lowest floor any observed gate dip stayed
+    // above. The report binds src/smoke.py, not config, so patching after
+    // check is safe (scaffold never overwrites existing files either).
     const trainPath = join(project, 'ideas', id, 'config', 'train.json');
     const train = JSON.parse(await readFile(trainPath, 'utf8')) as Record<string, unknown>;
-    train.resources = { gpus: 0, memoryGiB: 0.1 };
+    train.resources = { gpus: 0, memoryGiB: 0.05 };
     await writeFile(trainPath, `${JSON.stringify(train, null, 2)}\n`, 'utf8');
   }
 
