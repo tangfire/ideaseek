@@ -223,4 +223,38 @@ describe('integrity also walks the directory (#19)', () => {
     expect(reports.some((report) => report.path === 'LICENSE')).toBe(false);
     expect(reports.every((report) => report.ok)).toBe(true);
   });
+
+  /**
+   * The registry is the gate, so an unlisted skill is a skill that does not
+   * exist — even when its files are on disk, hash-pinned and verified.
+   *
+   * Five skills (figure-spec among them) sat in exactly that state: `aris`
+   * reported "21 skills, integrity: all files match" and was truthful about the
+   * hashes while undercounting what the project actually carries, and
+   * loadArisSkill('figure-spec') refused to load the deterministic renderer
+   * whose bytes it had already verified. A parity assertion is the only shape
+   * of check that fails when the list and the tree drift apart in either
+   * direction.
+   */
+  it('lists every skill on disk, and nothing that is not on disk', async () => {
+    const { readdirSync, existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { arisSkillsRoot } = await import('../src/aris/skill.js');
+    const { VENDORED_SKILLS } = await import('../src/aris/manifest.js');
+    const skillsDir = join(arisSkillsRoot(), 'skills');
+    const onDisk = readdirSync(skillsDir)
+      .filter((name) => existsSync(join(skillsDir, name, 'SKILL.md')))
+      .sort();
+    expect([...VENDORED_SKILLS].sort(), 'VENDORED_SKILLS must be kept sorted').toEqual(
+      [...VENDORED_SKILLS].sort(),
+    );
+    expect([...VENDORED_SKILLS].sort()).toEqual(onDisk);
+    // And every registered skill must actually load: a name alone is not
+    // capability, which is what made the deterministic figure route unusable.
+    for (const name of VENDORED_SKILLS) {
+      const skill = await loadArisSkill(name);
+      expect(skill.name).toBe(name);
+      expect(skill.body.length).toBeGreaterThan(0);
+    }
+  }, 120_000);
 });

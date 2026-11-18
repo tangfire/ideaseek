@@ -9,7 +9,7 @@ on the machine.
 - License: MIT — see `LICENSE` in this directory (Copyright (c) 2026 wanshuiyin)
 - Vendored: 2026-11-11
 
-Contents: 21 skill definitions (`skills/<name>/SKILL.md`), the
+Contents: 26 skill definitions (`skills/<name>/SKILL.md`), the
 `shared-references/*.md` files those skills link to, the pure-stdlib
 `tools/research_wiki.py` helper (research-wiki), the pure-stdlib
 `skills/render-html/scripts/` renderer with its templates, and the

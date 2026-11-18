@@ -1028,6 +1028,11 @@ export function registerPaperCommand(program: Command): void {
           : join(figuresDir, `${stem}.svg`);
 
         const { renderDiagram } = await import('../paper/diagram.js');
+        // Integrity first, and the same gate the model routes use: the vendored
+        // renderer is the skill's own script, so a tampered SKILL.md must stop a
+        // render rather than be reported afterwards in a provenance field.
+        const { loadArisSkill } = await import('../aris/skill.js');
+        const skill = await loadArisSkill('figure-spec');
         type DiagramRender = Awaited<ReturnType<typeof renderDiagram>>;
         let render: DiagramRender;
         try {
@@ -1062,6 +1067,7 @@ export function registerPaperCommand(program: Command): void {
           sha256: render.sha256,
           rendererPath: render.rendererPath,
           rendererSha256: render.rendererSha256,
+          skill: { name: skill.name, sha256: skill.sha256 },
           renderedAt: Date.now(),
         };
         record.renders = [

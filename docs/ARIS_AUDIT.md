@@ -31,3 +31,29 @@
 4. **取消/重启**：任务取消与进程重启后幂等（同 idempotencyKey 不重复产出）。
 5. **skill 完整性**：vendored 文件被篡改 → 拒绝加载（SKILL_TAMPERED），不执行。
 6. **删除旧默认入口**：迁移后旧的重复生成/计划/审查入口移除，历史 artifact/run/Decision 保持可读。
+
+## 技能清单比对（2026-11-18 实测）
+
+来源两侧都只读枚举，不采信任何"应当已接入"的说法：
+
+| 口径 | 数量 | 依据 |
+|---|---|---|
+| 上游含 SKILL.md 的 skill 目录 | 87（另有 4 个无 SKILL.md 的 references/后端目录） | `D:\aris/skills/`，HEAD `8f49392`（与 manifest pin 一致，工作树干净） |
+| 已 vendoring 且哈希入 manifest | 26 个 skill 目录、63 个内容文件 | `aris-skills/skills/`、`src/aris/manifest.ts:VENDORED_FILES` |
+| 本次之前 `VENDORED_SKILLS` 登记 | 21 | 同名清单；差额 5 个（citation-crosscheck、figure-spec、overleaf-sync、paper-claim-audit、result-to-claim）文件已校验但 `loadArisSkill()` 直接拒绝加载 |
+
+那 5 个"已入库未登记"是本节存在的理由：`aris` 当时报"21 skills, integrity: all files match"——对哈希是真话，对覆盖面是漏报；`paper diagram` 用的确定性渲染器正属于被拒的 figure-spec。修法是登记，不是重新抓取；tests/aris-skill.test.ts 新增双向平价断言（清单=磁盘、每个登记项都能加载）。
+
+未 vendoring 的 61 个按与本项目的关系分组：
+
+- **可能相关（29）**：run-experiment、training-check、dse-loop、experiment-queue、research-pipeline、research-lit、research-review、research-refine(+pipeline)、resubmit-pipeline、research-implement-feature、citation-audit、paper-writing、paper-illustration(+image2)、paper-poster(+html)、mermaid-diagram、figure-description、kill-argument、meta-apply、meta-optimize、specification-writing、writing-systems-papers、system-profile、slides-polish、idea-discovery-robot、auto-paper-improvement-loop 等。判断依据是它覆盖的动作 IdeaSeek 是否已有契约：多数已被确定性实现或 DSH 会话覆盖，缺的是"上游编排细节更丰富"，不是能力缺失。
+- **不相关/重复（32）**：patent-*(5)、claims-drafting、embodiment-description、invention-structuring、jurisdiction-format（专利线）；各检索/算力/通知适配器（arxiv、openalex、semantic-scholar、exa-search、firecrawl-search、gemini-search、deepxiv、keenable-search、qzcli、vast-gpu、serverless-modal、feishu-notify、web-debug-search…）；auto-review-loop-llm/-minimax（已 vendored 同名的后端变体）；proof-*、lean-formalize、formula-derivation（形式化线）；interview-cheatsheet、pixel-art。
+
+已登记 skill 的实际接线（`loadArisSkill` 调用点）：idea-creator `src/commands/idea.ts:724`、ablation-planner `:925`、novelty-check+prior-art-search `:1128/1129`、integrity-forensics `:1715`、experiment-plan `src/commands/experiment.ts:334` 与 `src/worker/experiment-handlers.ts:68`、paper-plan `src/commands/paper.ts:180`、paper-figure `:401/:939`、paper-write `:594`、paper-compile `:769`、rebuttal/paper-slides/paper-talk 经 `ENGAGEMENT_META`（`:1423-1430`）在 `:1455`、auto-review-loop/experiment-audit 经 `SKILL_BY_KIND`（`src/commands/review/review.ts:123-126`，`:567`）、analyze-results `src/idea/analysis-agent.ts:110`；脚本型复用：render-html `src/commands/render.ts:159`、research_wiki.py `src/knowledge/wiki.ts:290`、figure_renderer.py `src/paper/diagram.ts:71`。
+
+**登记但零调用者（本轮仍未接）**：experiment-bridge、idea-discovery、monitor-experiment、overleaf-sync、paper-claim-audit、result-to-claim、citation-crosscheck（含 `scripts/cx_verify.py`）、research-wiki 的 SKILL.md 正文。其中 result-to-claim / paper-claim-audit 的同名能力由平台确定性实现（`ideaseek idea result-to-claim|claim-audit`），skill 正文是提示词参考而非执行路径；citation-crosscheck 需要"双盲+联网重取+第三方向字段 diff"的多 agent 会话，属尚未接入的真实缺口（不是遗漏的接线）。
+
+### figure / compile 双实现结论
+
+- figure：`src/paper/figure.ts`（模型出 matplotlib 脚本，只产计划不执行，且已把结构图明确让给确定性路线 `:308`）与 `src/paper/diagram.ts`（vendored figure-spec 的 JSON→SVG 确定性渲染，命令 `paper diagram`）**按产出类型互斥**，共用一个下游：`src/paper/place-figures.ts` 同时读 `figure-render.json` 与 `diagram-render.json`。因此不是两套实现，而是一条链的两个入口；剩余环境约束：graphicx 只能嵌 pdf/png/jpg，本机无 SVG→PDF 转换器（Windows 的 `convert` 是磁盘工具），故 SVG 产物在放置阶段报 SKIP 并给原因，而不是让 latex 在三层之外失败。
+- compile：LaTeX 引擎路径只有一条（`src/paper/compile.ts`：latexmk/pdflatex，模板取自 vendored `paper-write/templates`）；`render-figures.ts` 只调 `pdftoppm` 做栅格化，`overleaf.ts` 只打印构建提示，均不构成第二实现。唯一"模型写+平台装配"重叠的是模板本身，属 integration plan 允许的 sanctioned 薄实现。
