@@ -106,6 +106,19 @@ describe('overleaf-export-v1 manifest', () => {
 
   it('bundles the figures and the provenance chain it claims to', async () => {
     const dir = await projectWithPaper();
+    // The deterministic routes write INTO the document, so their records have
+    // to leave with the bundle: a reviewer who cannot re-derive the results
+    // table or the FigureSpec diagram has nothing to check.
+    await writeFile(
+      join(dir, 'reports', 'paper', 'results.json'),
+      JSON.stringify({ schemaVersion: 1, rows: [], identicalValueGroups: [] }),
+      'utf8',
+    );
+    await writeFile(
+      join(dir, 'reports', 'paper', 'diagram-render.json'),
+      JSON.stringify({ contract: 'diagram-render-v1', renders: [] }),
+      'utf8',
+    );
     const bundleDir = join(dir, 'reports', 'paper', 'overleaf-content');
     const emitted = await buildOverleafExport(dir, { to: bundleDir, now: 1_760_000_000_000 });
     const paths = emitted.files.map((file) => file.path);
@@ -114,5 +127,14 @@ describe('overleaf-export-v1 manifest', () => {
     );
     expect(paths).toContain('provenance/compile-report.json');
     expect(emitted.provenance.join(' ')).toContain('provenance/compile-report.json');
+    expect(paths).toContain('provenance/results.json');
+    expect(paths).toContain('provenance/diagram-render.json');
+    const listed = emitted.provenance.join(' ');
+    expect(listed).toContain('recorded runs the results table cites');
+    expect(listed).toContain('deterministic FigureSpec renders');
+    // The bundled bytes must be the project's, not a re-serialized copy.
+    expect(emitted.files.find((file) => file.path === 'provenance/results.json')!.sha256).toBe(
+      await sha256OfFile(join(dir, 'reports', 'paper', 'results.json')),
+    );
   }, 180_000);
 });

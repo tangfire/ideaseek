@@ -163,12 +163,19 @@ export async function buildOverleafExport(
   }
 
   // 3b) Provenance chain (plan → figure plan → manuscript → compile → render).
+  //
+  // results.json and diagram-render.json are listed because the deterministic
+  // routes put their output INTO the document: a bundled paper whose table and
+  // FigureSpec diagram have no shipped record is a claim the reviewer cannot
+  // re-derive, which is precisely what this bundle exists to avoid.
   const provenanceSources = [
     ['plan.json', 'paper plan (claims/structure/figure plan)'],
     ['figures-plan.json', 'figure plan (ids/captions/statistics)'],
+    ['results.json', 'recorded runs the results table cites, with input hash'],
     ['manuscript.json', 'manuscript content contract'],
     ['compile-report.json', 'compile status + skill hash'],
     ['figure-render.json', 'figure outputs + sha256 + review status'],
+    ['diagram-render.json', 'deterministic FigureSpec renders (spec/renderer/output hashes)'],
   ] as const;
   for (const [name, label] of provenanceSources) {
     const copied = await copyIfPresent(

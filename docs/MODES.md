@@ -59,6 +59,8 @@ Research 档位负责论文知识、Protocol Synthesis、comparison gate、IdeaC
 
 保持硬的只有一条，而且是存储语义而非工具限制：已提交实验结果、锁定协议和 handoff 记录 append-only，重试保留 attempt 历史。这样通用 agent 拿到全部能力，报告仍然不说谎。
 
+精确到可执行的程度（2026-11-18 与 `attachExperimentResult` 的实现核对）："append-only"约束的是**已经成功记录的结果**——要改它必须产生新的 spec 版本，覆盖成功记录仍然是 ALREADY_COMMITTED 拒绝。失败结果不是关于世界的结论，只是关于某次尝试的结论：`experiment` 表按 spec_id 只存一行，因此 full run 的重试允许取代同 spec 的失败记录（否则必需项永远无法重跑，见 140d53a），尝试次数、退出码与失败分类仍在 task 表、task log 与事件流里可追。
+
 `PROGRESS.md` 的 Agent 真机验收与 conformance tests 完成前，不承诺完整的 Claude Code 式跨回合工具审批体验。
 
 ## Full Research / Publication 模式

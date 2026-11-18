@@ -1110,8 +1110,8 @@ export function registerPaperCommand(program: Command): void {
             `  record: ${recordPath}\n`,
         );
         process.stdout.write(
-          'next: ideaseek paper compile   （SVG 已放入 figures/，LaTeX 直接引用；' +
-            'export-overleaf 会把 figures/ 全部打包）\n',
+          'next: ideaseek paper compile --place-figures   （表格与可嵌入的矢量图由放置步骤写进稿件；' +
+            'SVG 需要 Inkscape/rsvg 转换成 PDF 才能被 graphicx 引入，缺失时这一步会报 SKIP 并说明原因）\n',
         );
         return 0;
       }),
