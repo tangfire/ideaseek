@@ -72,7 +72,15 @@ describe('release pack + version/update (packaging)', () => {
     expect(reported.node).toBe(process.version);
 
     const prefix = join(await mkdtemp(join(tmpdir(), 'ideaseek-update-')), 'prefix');
-    const updated = await runCli(['update', '--prefix', prefix, '--json'], 300_000);
+    // update rebuilds the SOURCE checkout's dist in place — mid-suite that
+    // rewrites the very files sibling suites are spawning, and a reader can
+    // catch a half-written module (torn dist: missing exports). Emit into a
+    // throwaway outDir instead: tsc still type-checks the whole project, so
+    // `build: ok` keeps its meaning, while the shared dist stays coherent.
+    const buildOut = await mkdtemp(join(tmpdir(), 'ideaseek-update-build-'));
+    const updated = await runCli(['update', '--prefix', prefix, '--json'], 300_000, {
+      IDEASEEK_BUILD_OUT: buildOut,
+    });
     expect(updated.code, updated.stdout + updated.stderr).toBe(0);
     const updateReport = JSON.parse(updated.stdout) as {
       ok: boolean;

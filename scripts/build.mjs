@@ -9,6 +9,13 @@
  * lock whose owner pid is dead (or that is older than two minutes) is
  * stolen instead of waited on. `ideaseek update` and the vitest global
  * setup share this script so every dist writer serializes on one lock.
+ *
+ * The lock serializes WRITERS, not readers: arbitrary `node dist/cli.js`
+ * spawns never take it, so a mid-suite rebuild still tears dist for them
+ * (observed: pack.test's `update` rebuild raced sibling suites and their
+ * children read half-written modules). IDEASEEK_BUILD_OUT redirects the
+ * emit into a throwaway directory — tsc still type-checks the whole
+ * project, the shared dist is left alone.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -78,9 +85,12 @@ function release() {
 await acquire();
 process.on('exit', release);
 try {
+  const tscArgs = ['-p', 'tsconfig.build.json'];
+  const outDir = process.env.IDEASEEK_BUILD_OUT;
+  if (outDir) tscArgs.push('--outDir', outDir);
   const result = spawnSync(
     process.execPath,
-    [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.build.json'],
+    [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), ...tscArgs],
     { cwd: root, stdio: 'inherit' },
   );
   if (result.error) throw result.error;
