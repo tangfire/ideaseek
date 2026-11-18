@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.local/schema/next-advice-v1.json",
+  "title": "Next Advice v1",
+  "description": "The agent's next-step recommendation for one project state: which candidate command to run, how to phrase it, and why. Candidates are supplied by the deterministic gap ladder — the agent re-ranks and rephrases, it never invents commands; the command is validated against that candidate list on every read. The artifact is keyed to the assessment's contextHash, so a stale report or an absent model falls back to the ladder and `next` always answers.",
+  "type": "object",
+  "required": ["command", "suggestion", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400,
+      "description": "Exactly one of the candidate commands the gap ladder supplied, copied verbatim."
+    },
+    "suggestion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400,
+      "description": "One sentence telling the user what to do and what it unlocks, redacted of secret shapes before display."
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 300,
+      "description": "One sentence justifying why this candidate beats the others right now, redacted of secret shapes."
+    }
+  }
+}

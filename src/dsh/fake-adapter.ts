@@ -187,6 +187,21 @@ function buildFakeOutput(request: HarnessTaskRequest, call: number): string {
     const prior = typeof context.prior === 'string' ? context.prior : 'starter';
     return JSON.stringify({ strategy: prior });
   }
+  if (request.outputSchema === 'next-advice-v1') {
+    // Echo the ladder's current pick: e2e exercises build → validation →
+    // persist → load while producing exactly the command the rules chose.
+    const context = readJsonContext(request) as {
+      current?: { command?: unknown; suggestion?: unknown };
+    };
+    const command = typeof context.current?.command === 'string' ? context.current.command : '';
+    const suggestion =
+      typeof context.current?.suggestion === 'string' ? context.current.suggestion : '';
+    return JSON.stringify({
+      command,
+      suggestion,
+      rationale: 'fake harness echo of the mechanical advice (synthetic)',
+    });
+  }
   if (request.outputSchema === 'idea-candidates-v1') {
     // Test hook: raw override exercises parse/validation failure paths.
     const override = process.env.IDEASEEK_FAKE_IDEA_OUTPUT;

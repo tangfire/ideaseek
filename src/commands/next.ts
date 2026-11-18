@@ -2,7 +2,17 @@ import type { Command } from 'commander';
 import { IdeaseekError } from '../core/errors.js';
 import { ProjectRuntime } from '../workflow/runtime.js';
 import type { RunRecord } from '../workflow/types.js';
-import { action, countByStatus, isBlockedRun, jsonLine, resolveRun } from './shared.js';
+import type { HarnessAdapter } from '../dsh/adapter.js';
+import type { ResearchMaterialAssessment } from '../knowledge/assessment.js';
+import { buildNextAdvice, loadNextAdvice } from '../knowledge/next-advice.js';
+import {
+  action,
+  buildHarness,
+  countByStatus,
+  isBlockedRun,
+  jsonLine,
+  resolveRun,
+} from './shared.js';
 
 export interface NextAdvice {
   stage: string;
@@ -11,6 +21,11 @@ export interface NextAdvice {
   suggestion: string;
   command: string;
   exitCode: number;
+  /** Validated option set for gap branches: what agent advice may choose among. */
+  candidates?: string[];
+  /** Present only when stored agent advice replaced the ladder pick. */
+  adviceSource?: 'agent';
+  adviceRationale?: string;
 }
 
 async function liveWorkersOf(runtime: ProjectRuntime, runId: string): Promise<number> {
@@ -46,8 +61,17 @@ async function withAlerts(runtime: ProjectRuntime, advice: NextAdvice): Promise<
  * command whose job is to tell a user what to do next pointed them away from
  * their own inputs. `next` now asks the material assessment, which is
  * deterministic and needs no model call.
+ *
+ * Facts stay mechanical: stage, blockers, done and exit code are projections
+ * of persisted state, and scripts depend on the exit codes. The judgment —
+ * which open gap to tackle first and how to phrase it — is layered on top by
+ * `applyAgentAdvice`: stored agent advice keyed to this assessment state,
+ * built on the spot when a harness is available, ladder otherwise.
  */
-export async function materialAdvice(runtime: ProjectRuntime): Promise<NextAdvice | null> {
+export async function materialAdvice(
+  runtime: ProjectRuntime,
+  opts: { harness?: HarnessAdapter | null } = {},
+): Promise<NextAdvice | null> {
   const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
   let assessment;
   try {
@@ -66,28 +90,38 @@ export async function materialAdvice(runtime: ProjectRuntime): Promise<NextAdvic
   const nextGap = [...blocking, ...recommended][0];
 
   if (blocking.length > 0 && nextGap) {
-    return {
-      stage: 'MATERIAL_INCOMPLETE',
-      blockers: blocking.map((gap) => `${gap.area}: ${gap.reason}`),
-      done: `${count('paperCards')} PaperCard(s), ${count('slices')} slice(s), ${count('comparisons')} comparison(s)`,
-      suggestion: `${nextGap.reason}${nextGap.cost ? ` (${nextGap.cost})` : ''}`,
-      command: nextGap.fillIn ?? 'ideaseek assessment',
-      // Exit 0: `next` succeeded at being an advisor. 2 is reserved for the
-      // CLI being unable to answer at all (invalid config), because using it
-      // for "this project is early" turns every young project into a script
-      // failure — the blockers and stage fields already carry that news.
-      exitCode: 0,
-    };
+    return applyAgentAdvice(
+      runtime,
+      {
+        stage: 'MATERIAL_INCOMPLETE',
+        blockers: blocking.map((gap) => `${gap.area}: ${gap.reason}`),
+        done: `${count('paperCards')} PaperCard(s), ${count('slices')} slice(s), ${count('comparisons')} comparison(s)`,
+        suggestion: `${nextGap.reason}${nextGap.cost ? ` (${nextGap.cost})` : ''}`,
+        command: nextGap.fillIn ?? 'ideaseek assessment',
+        // Exit 0: `next` succeeded at being an advisor. 2 is reserved for the
+        // CLI being unable to answer at all (invalid config), because using it
+        // for "this project is early" turns every young project into a script
+        // failure — the blockers and stage fields already carry that news.
+        exitCode: 0,
+      },
+      assessment,
+      opts.harness,
+    );
   }
   if (recommended.length > 0 && nextGap) {
-    return {
-      stage: 'MATERIAL_PARTIAL',
-      blockers: [],
-      done: `${count('paperCards')} PaperCard(s), ${count('slices')} slice(s), ${count('comparisons')} comparison(s)`,
-      suggestion: `${nextGap.reason}${nextGap.cost ? ` (${nextGap.cost})` : ''}`,
-      command: nextGap.fillIn ?? 'ideaseek assessment',
-      exitCode: 0,
-    };
+    return applyAgentAdvice(
+      runtime,
+      {
+        stage: 'MATERIAL_PARTIAL',
+        blockers: [],
+        done: `${count('paperCards')} PaperCard(s), ${count('slices')} slice(s), ${count('comparisons')} comparison(s)`,
+        suggestion: `${nextGap.reason}${nextGap.cost ? ` (${nextGap.cost})` : ''}`,
+        command: nextGap.fillIn ?? 'ideaseek assessment',
+        exitCode: 0,
+      },
+      assessment,
+      opts.harness,
+    );
   }
   // Nothing blocking: walk the research chain in order and name the step that
   // has not happened yet. Each of these is a real command with real effects,
@@ -132,10 +166,60 @@ export async function materialAdvice(runtime: ProjectRuntime): Promise<NextAdvic
   };
 }
 
+/**
+ * The judgment layer over the gap ladder: re-rank and rephrase within the
+ * ladder's own candidate set (the open gaps' fill-ins plus its pick).
+ *
+ * Stored advice keyed to this assessment's contextHash is used when fresh;
+ * otherwise a harness builds it on the spot. A command outside the current
+ * candidate set, a stale artifact, a blocked harness or invalid output all
+ * leave the ladder's answer in place — stage, blockers and exit code are
+ * never touched, so `next` always answers and scripts keep their contract.
+ * One candidate means nothing to choose: no model call, ladder as-is.
+ */
+async function applyAgentAdvice(
+  runtime: ProjectRuntime,
+  advice: NextAdvice,
+  assessment: ResearchMaterialAssessment,
+  harness?: HarnessAdapter | null,
+): Promise<NextAdvice> {
+  const fillIns = assessment.gaps
+    .filter((gap) => gap.priority === 'blocking' || gap.priority === 'recommended')
+    .map((gap) => gap.fillIn.trim())
+    .filter(Boolean);
+  const candidates = [...new Set([advice.command, ...fillIns])].slice(0, 12);
+  const base = { ...advice, candidates };
+  if (candidates.length < 2) return base;
+  const stored = await loadNextAdvice(runtime.paths.root, assessment.contextHash, candidates);
+  const picked =
+    stored ??
+    (harness
+      ? await buildNextAdvice({
+          harness,
+          root: runtime.paths.root,
+          contextHash: assessment.contextHash,
+          question: assessment.question,
+          stats: assessment.stats as Record<string, unknown>,
+          gaps: assessment.gaps,
+          candidates,
+          current: { command: advice.command, suggestion: advice.suggestion },
+        })
+      : null);
+  if (!picked) return base;
+  return {
+    ...base,
+    command: picked.command,
+    suggestion: picked.suggestion,
+    adviceSource: 'agent',
+    adviceRationale: picked.rationale,
+  };
+}
+
 /** Single source of route advice: `ideaseek next` and `ideaseek start` both ask this. */
 export async function adviseNext(
   runtime: ProjectRuntime,
   run: RunRecord | null,
+  opts: { harness?: HarnessAdapter | null } = {},
 ): Promise<NextAdvice> {
   if (runtime.configLoad.errors.length > 0) {
     return {
@@ -148,7 +232,7 @@ export async function adviseNext(
     };
   }
   if (!run) {
-    const fromMaterial = await materialAdvice(runtime);
+    const fromMaterial = await materialAdvice(runtime, opts);
     if (fromMaterial) return fromMaterial;
     const question = runtime.config.research.question;
     return {
@@ -173,7 +257,7 @@ export async function adviseNext(
     // could only say "all tasks done", which in a project sitting at the start
     // of the research chain read as "you are finished" — the first thing a
     // user asked, and the wrong answer.
-    const fromMaterial = await materialAdvice(runtime);
+    const fromMaterial = await materialAdvice(runtime, opts);
     if (fromMaterial && fromMaterial.stage !== 'MATERIAL_READY') {
       return {
         ...fromMaterial,
@@ -274,14 +358,42 @@ export function registerNextCommand(program: Command): void {
     .command('next')
     .description('state-aware suggestion for the next command; never starts expensive work')
     .option('--run <runId>', 'specific run id')
+    .option(
+      '--harness <kind>',
+      'model harness for next-step advice: fake | dsh (default: dsh when a key is configured, else the deterministic ladder)',
+    )
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { run?: string; json?: boolean }) => {
+      action(async (opts: { run?: string; harness?: string; json?: boolean }) => {
         let runtime: ProjectRuntime | null = null;
+        let harness: HarnessAdapter | null = null;
         try {
+          // Quiet harness resolution — deliberately NOT resolveHarnessKind:
+          // a keyless `next` must stay instant and silent (no fake warning,
+          // no model attempt), while a configured route gets agent advice
+          // with the ladder as the always-available fallback. An explicit
+          // --harness that fails to start is user error and surfaces; an
+          // implicit route that fails degrades to the ladder, because `next`
+          // must always answer.
+          if (opts.harness) {
+            harness = buildHarness(opts.harness);
+            await harness.initialize();
+          } else {
+            const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+            const implicit = process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : null);
+            if (implicit) {
+              try {
+                const built = buildHarness(implicit);
+                await built.initialize();
+                harness = built;
+              } catch {
+                harness = null;
+              }
+            }
+          }
           runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           const run = await resolveRun(runtime, opts.run);
-          const advice = await withAlerts(runtime, await adviseNext(runtime, run));
+          const advice = await withAlerts(runtime, await adviseNext(runtime, run, { harness }));
           printAdvice(advice, opts.json);
           return advice.exitCode;
         } catch (error) {
@@ -303,12 +415,15 @@ export function registerNextCommand(program: Command): void {
             !opts.run &&
             runtime
           ) {
-            const advice = await withAlerts(runtime, await adviseNext(runtime, null));
+            // Same harness as the main path: a fresh project's first `next`
+            // arrives here (no run yet), and advice must build the same way.
+            const advice = await withAlerts(runtime, await adviseNext(runtime, null, { harness }));
             printAdvice(advice, opts.json);
             return advice.exitCode;
           }
           throw error;
         } finally {
+          await harness?.shutdown().catch(() => undefined);
           await runtime?.close();
         }
       }),
@@ -326,5 +441,8 @@ function printAdvice(advice: NextAdvice, json?: boolean): void {
   }
   process.stdout.write(`已完成：${advice.done}\n`);
   process.stdout.write(`建议：${advice.suggestion}\n`);
+  if (advice.adviceSource === 'agent' && advice.adviceRationale) {
+    process.stdout.write(`依据：${advice.adviceRationale}\n`);
+  }
   process.stdout.write(`下一条命令：${advice.command}\n`);
 }

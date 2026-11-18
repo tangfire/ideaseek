@@ -10,6 +10,7 @@ import directionAuditV1 from './schemas/direction-audit-v1.json' with { type: 'j
 import analysisVerdictV1 from './schemas/analysis-verdict-v1.json' with { type: 'json' };
 import materializationReportV1 from './schemas/materialization-report-v1.json' with { type: 'json' };
 import metricAlignmentV1 from './schemas/metric-alignment-v1.json' with { type: 'json' };
+import nextAdviceV1 from './schemas/next-advice-v1.json' with { type: 'json' };
 import implementationProgramV1 from './schemas/implementation-program-v1.json' with { type: 'json' };
 import ideaImplementationV1 from './schemas/idea-implementation-v1.json' with { type: 'json' };
 import failureDiagnosisV1 from './schemas/failure-diagnosis-v1.json' with { type: 'json' };
@@ -113,6 +114,7 @@ const SCHEMAS = {
   'analysis-verdict-v1': analysisVerdictV1,
   'materialization-report-v1': materializationReportV1,
   'metric-alignment-v1': metricAlignmentV1,
+  'next-advice-v1': nextAdviceV1,
   'implementation-program-v1': implementationProgramV1,
   'idea-implementation-v1': ideaImplementationV1,
   'failure-diagnosis-v1': failureDiagnosisV1,
