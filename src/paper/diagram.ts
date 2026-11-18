@@ -38,6 +38,15 @@ export interface DiagramRender {
   sha256: string;
   /** The renderer's own validation verdict, kept for the report. */
   validated: boolean;
+  /**
+   * Which vendored renderer produced the SVG and its digest. The determinism
+   * claim is "same spec + same renderer → same bytes", so a record without the
+   * renderer hash cannot be re-checked after a vendor update — it would look
+   * like the platform lost the plot, when the plot's author changed.
+   */
+  rendererPath: string;
+  rendererSha256: string;
+  specSha256: string;
 }
 
 function pythonBinary(): string {
@@ -160,10 +169,14 @@ export async function renderDiagram(opts: {
   const digest = createHash('sha256')
     .update(await readFile(opts.outputPath))
     .digest('hex');
+  const [rendererBytes, specBytes] = await Promise.all([readFile(script), readFile(opts.specPath)]);
   return {
     path: opts.outputPath,
     bytes: size,
     sha256: `sha256:${digest}`,
     validated: true,
+    rendererPath: script,
+    rendererSha256: `sha256:${createHash('sha256').update(rendererBytes).digest('hex')}`,
+    specSha256: `sha256:${createHash('sha256').update(specBytes).digest('hex')}`,
   };
 }

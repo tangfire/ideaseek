@@ -734,91 +734,122 @@ export function registerPaperCommand(program: Command): void {
       'comma-separated figures/ files to include without an accepted render (hand-made figures; ' +
         'cannot overrule a paper review-figure verdict)',
     )
+    .option(
+      '--place-figures',
+      'insert LaTeX floats for figures the render records verify and the manuscript does not place',
+    )
     .action(
-      action(async (opts: { json?: boolean; styleDir?: string; allowFigures?: string }) => {
-        const root = await findRoot();
-        const { loadArisSkill } = await import('../aris/skill.js');
-        // Provenance only: this workflow is deterministic platform code that
-        // follows the vendored skill — no model call, integrity still checked.
-        const skill = await loadArisSkill('paper-compile');
-        const { PAPER_COMPILE_SCHEMA, compileManuscript } = await import('../paper/compile.js');
-        const { report, mainPath } = await compileManuscript(
-          root,
-          {
-            name: skill.name,
-            sha256: skill.sha256,
-          },
-          {
-            ...(opts.styleDir ? { styleDir: opts.styleDir } : {}),
-            ...(opts.allowFigures?.trim()
-              ? { allowFigures: opts.allowFigures.split(',').map((entry) => entry.trim()) }
-              : {}),
-          },
-        );
-
-        await ensureDir(join(root, 'reports', 'paper'));
-        await writeFileAtomic(
-          join(root, 'reports', 'paper', 'compile-report.json'),
-          `${JSON.stringify({ contract: PAPER_COMPILE_SCHEMA, mainPath, ...report }, null, 2)}\n`,
-        );
-
-        let eventSeq: number | null = null;
-        const { ProjectRuntime } = await import('../workflow/runtime.js');
-        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
-        try {
-          const run = await runtime.db.getLatestRun(runtime.project.id);
-          if (run) {
-            const event = await runtime.db.appendEvent({
-              runId: run.runId,
-              phase: 'PAPER',
-              objectId: 'paper-compile',
-              role: 'system',
-              eventType: 'paper_compile',
-              summary:
-                report.status === 'compiled'
-                  ? `paper compiled to PDF (${report.pageCount ?? '?'} page(s), venue ${report.venue}, template ${report.template})`
-                  : `paper compile ${report.status}: ${(report.blockers[0] ?? 'see report').slice(0, 120)}`,
-              status: report.status,
-            });
-            eventSeq = event.seq;
+      action(
+        async (opts: {
+          json?: boolean;
+          styleDir?: string;
+          allowFigures?: string;
+          placeFigures?: boolean;
+        }) => {
+          const root = await findRoot();
+          const { loadArisSkill } = await import('../aris/skill.js');
+          // Provenance only: this workflow is deterministic platform code that
+          // follows the vendored skill — no model call, integrity still checked.
+          const skill = await loadArisSkill('paper-compile');
+          const { PAPER_COMPILE_SCHEMA, compileManuscript } = await import('../paper/compile.js');
+          const { report, mainPath, placement } = await compileManuscript(
+            root,
+            {
+              name: skill.name,
+              sha256: skill.sha256,
+            },
+            {
+              ...(opts.styleDir ? { styleDir: opts.styleDir } : {}),
+              ...(opts.allowFigures?.trim()
+                ? { allowFigures: opts.allowFigures.split(',').map((entry) => entry.trim()) }
+                : {}),
+              ...(opts.placeFigures ? { placeFigures: true } : {}),
+            },
+          );
+          if (placement && !opts.json) {
+            process.stdout.write(
+              `figure placement: ${placement.inserted} inserted, ${placement.already} already in the ` +
+                `manuscript, ${placement.skipped} skipped → ${placement.mainTexPath}\n`,
+            );
+            for (const figure of placement.figures) {
+              if (figure.action === 'skipped') {
+                process.stdout.write(
+                  `  SKIP  ${figure.id}: ${(figure.reason ?? '').slice(0, 160)}\n`,
+                );
+              } else {
+                process.stdout.write(
+                  `  ${figure.action.padEnd(8)}${figure.id} → ${figure.includePath}\n`,
+                );
+              }
+            }
           }
-        } finally {
-          await runtime.close();
-        }
 
-        if (opts.json) {
-          process.stdout.write(
-            jsonLine({ contract: PAPER_COMPILE_SCHEMA, eventSeq, mainPath, ...report }),
+          await ensureDir(join(root, 'reports', 'paper'));
+          await writeFileAtomic(
+            join(root, 'reports', 'paper', 'compile-report.json'),
+            `${JSON.stringify({ contract: PAPER_COMPILE_SCHEMA, mainPath, ...report }, null, 2)}\n`,
           );
-          return report.status === 'compiled' ? 0 : report.status === 'blocked' ? 2 : 1;
-        }
-        if (report.status === 'compiled') {
-          process.stdout.write(
-            `compiled ${report.pdfPath} (${report.pageCount ?? '?'} page(s) · ${report.venue} · template ${report.template})\n`,
+
+          let eventSeq: number | null = null;
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            const run = await runtime.db.getLatestRun(runtime.project.id);
+            if (run) {
+              const event = await runtime.db.appendEvent({
+                runId: run.runId,
+                phase: 'PAPER',
+                objectId: 'paper-compile',
+                role: 'system',
+                eventType: 'paper_compile',
+                summary:
+                  report.status === 'compiled'
+                    ? `paper compiled to PDF (${report.pageCount ?? '?'} page(s), venue ${report.venue}, template ${report.template})`
+                    : `paper compile ${report.status}: ${(report.blockers[0] ?? 'see report').slice(0, 120)}`,
+                status: report.status,
+              });
+              eventSeq = event.seq;
+            }
+          } finally {
+            await runtime.close();
+          }
+
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({ contract: PAPER_COMPILE_SCHEMA, eventSeq, mainPath, ...report }),
+            );
+            return report.status === 'compiled' ? 0 : report.status === 'blocked' ? 2 : 1;
+          }
+          if (report.status === 'compiled') {
+            process.stdout.write(
+              `compiled ${report.pdfPath} (${report.pageCount ?? '?'} page(s) · ${report.venue} · template ${report.template})\n`,
+            );
+            process.stdout.write(`  source: ${mainPath}\n`);
+            process.stdout.write(
+              `  latexmk exit 0 · skill ${skill.name}@${skill.sha256.slice(0, 12)}…\n`,
+            );
+            process.stdout.write(
+              'next: check the PDF; paper/ holds main.tex, references.bib, compile.log\n',
+            );
+            return 0;
+          }
+          if (report.status === 'blocked') {
+            process.stderr.write(`paper compile blocked: ${report.blockers.join('; ')}\n`);
+            process.stderr.write('nothing was compiled — resolve the blocker and rerun\n');
+            return 2;
+          }
+          process.stderr.write(
+            `paper compile failed (exit ${report.exitCode ?? 'n/a'}): ${report.blockers.join('; ')}\n`,
           );
-          process.stdout.write(`  source: ${mainPath}\n`);
-          process.stdout.write(
-            `  latexmk exit 0 · skill ${skill.name}@${skill.sha256.slice(0, 12)}…\n`,
+          process.stderr.write(
+            `  log tail:\n${report.logTail.split('\n').slice(-15).join('\n')}\n`,
           );
-          process.stdout.write(
-            'next: check the PDF; paper/ holds main.tex, references.bib, compile.log\n',
+          process.stderr.write(
+            'next: fix paper/main.tex (or provide the missing style file) and rerun ideaseek paper compile\n',
           );
-          return 0;
-        }
-        if (report.status === 'blocked') {
-          process.stderr.write(`paper compile blocked: ${report.blockers.join('; ')}\n`);
-          process.stderr.write('nothing was compiled — resolve the blocker and rerun\n');
-          return 2;
-        }
-        process.stderr.write(
-          `paper compile failed (exit ${report.exitCode ?? 'n/a'}): ${report.blockers.join('; ')}\n`,
-        );
-        process.stderr.write(`  log tail:\n${report.logTail.split('\n').slice(-15).join('\n')}\n`);
-        process.stderr.write(
-          'next: fix paper/main.tex (or provide the missing style file) and rerun ideaseek paper compile\n',
-        );
-        return 1;
-      }),
+          return 1;
+        },
+      ),
     );
 
   paper
@@ -938,6 +969,117 @@ export function registerPaperCommand(program: Command): void {
           'next: reports/paper/figure-render.json records per-output sha256 (source manifest trail)\n',
         );
         return report.status === 'rendered' ? 0 : 1;
+      }),
+    );
+
+  paper
+    .command('diagram')
+    .description(
+      'render a FigureSpec JSON (architecture / pipeline / audit cascade) to SVG with the vendored ' +
+        'deterministic renderer — no plotting library, no model',
+    )
+    .option(
+      '--spec <path>',
+      'FigureSpec JSON, relative to the project or absolute',
+      'reports/paper/diagram.json',
+    )
+    .option('--output <path>', 'SVG output path (default: figures/<spec name>.svg)')
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { spec: string; output?: string; json?: boolean }) => {
+        const root = await findRoot();
+        const { basename, extname, isAbsolute } = await import('node:path');
+        const specPath = isAbsolute(opts.spec) ? opts.spec : join(root, opts.spec);
+        const stem = basename(specPath, extname(specPath));
+        const figuresDir = join(root, 'figures');
+        await ensureDir(figuresDir);
+        const outputPath = opts.output
+          ? isAbsolute(opts.output)
+            ? opts.output
+            : join(root, opts.output)
+          : join(figuresDir, `${stem}.svg`);
+
+        const { renderDiagram } = await import('../paper/diagram.js');
+        type DiagramRender = Awaited<ReturnType<typeof renderDiagram>>;
+        let render: DiagramRender;
+        try {
+          render = await renderDiagram({ specPath, outputPath, cwd: root });
+        } catch (error) {
+          if (!opts.json) {
+            process.stderr.write(
+              `  提示：spec 由上游 figure-spec 技能自己的 schema 校验，平台不复制那份规则；` +
+                `示例见 aris-skills/skills/figure-spec/SKILL.md\n`,
+            );
+          }
+          throw error;
+        }
+
+        // Append-only record so a figure in the bundle can be re-checked: the
+        // determinism claim is (spec hash, renderer hash) → output hash.
+        const recordPath = join(root, 'reports', 'paper', 'diagram-render.json');
+        let record: { contract: string; renders: unknown[] } = {
+          contract: 'diagram-render-v1',
+          renders: [],
+        };
+        try {
+          record = JSON.parse(await readFile(recordPath, 'utf8')) as typeof record;
+        } catch {
+          // first render in this project
+        }
+        const entry = {
+          specPath,
+          specSha256: render.specSha256,
+          outputPath,
+          bytes: render.bytes,
+          sha256: render.sha256,
+          rendererPath: render.rendererPath,
+          rendererSha256: render.rendererSha256,
+          renderedAt: Date.now(),
+        };
+        record.renders = [
+          ...record.renders.filter(
+            (previous) => (previous as { outputPath?: string }).outputPath !== outputPath,
+          ),
+          entry,
+        ];
+        await ensureDir(join(root, 'reports', 'paper'));
+        await writeFileAtomic(recordPath, `${JSON.stringify(record, null, 2)}\n`);
+
+        let eventSeq: number | null = null;
+        const { ProjectRuntime } = await import('../workflow/runtime.js');
+        const runtime = await ProjectRuntime.open({ cwd: root, recover: false });
+        try {
+          const run = await runtime.db.getLatestRun(runtime.project.id);
+          if (run) {
+            const event = await runtime.db.appendEvent({
+              runId: run.runId,
+              phase: 'PAPER',
+              objectId: stem,
+              role: 'system',
+              eventType: 'diagram_render',
+              summary: `FigureSpec ${stem} → ${basename(outputPath)} (${render.bytes} B, deterministic)`,
+              status: 'rendered',
+            });
+            eventSeq = event.seq;
+          }
+        } finally {
+          await runtime.close();
+        }
+
+        if (opts.json) {
+          process.stdout.write(jsonLine({ eventSeq, ...entry }));
+          return 0;
+        }
+        process.stdout.write(
+          `diagram ${stem}: ${render.bytes} B → ${outputPath}\n` +
+            `  spec ${render.specSha256.slice(0, 19)}… renderer ${render.rendererSha256.slice(0, 19)}…\n` +
+            `  record: ${recordPath}\n`,
+        );
+        process.stdout.write(
+          'next: ideaseek paper compile   （SVG 已放入 figures/，LaTeX 直接引用；' +
+            'export-overleaf 会把 figures/ 全部打包）\n',
+        );
+        return 0;
       }),
     );
 

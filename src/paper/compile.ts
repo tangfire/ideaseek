@@ -5,6 +5,7 @@ import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
 import { ensureDir } from '../core/atomic.js';
 import { runProcess } from '../core/proc.js';
+import type { PlacementResult } from './place-figures.js';
 import type { Manuscript } from './write.js';
 
 /**
@@ -613,6 +614,12 @@ interface CompileOptions {
   styleDir?: string;
   /** Figure paths to treat as approved without a render report entry. */
   allowFigures?: string[];
+  /**
+   * Insert floats for figures the render records verify, before the plan
+   * cross-check runs. Without it the only route a verified artifact has into
+   * the document is another model turn — see `placeVerifiedFigures`.
+   */
+  placeFigures?: boolean;
 }
 
 /**
@@ -624,10 +631,11 @@ export async function compileManuscript(
   root: string,
   skillMeta: { name: string; sha256: string },
   opts: CompileOptions = {},
-): Promise<{ report: CompileReport; mainPath: string }> {
+): Promise<{ report: CompileReport; mainPath: string; placement: PlacementResult | null }> {
   const stored = await readManuscriptDoc(root);
   const manuscript = stored.manuscript;
 
+  let placement: PlacementResult | null = null;
   let assembled: { mainPath: string; template: string };
   try {
     assembled = await assembleLaTeXProject(root, manuscript);
@@ -650,9 +658,14 @@ export async function compileManuscript(
         manuscriptInputHash: stored.inputHash,
         compiledAt: opts.now ?? Date.now(),
       };
-      return { report, mainPath: '' };
+      return { report, mainPath: '', placement };
     }
     throw error;
+  }
+
+  if (opts.placeFigures) {
+    const { placeVerifiedFigures } = await import('./place-figures.js');
+    placement = await placeVerifiedFigures(root);
   }
 
   const mainTexText = await readFile(join(root, 'paper', 'main.tex'), 'utf8').catch(() => '');
@@ -700,14 +713,15 @@ export async function compileManuscript(
       logTail: '',
       blockers: [
         `the figure plan commits to figures the manuscript never places: ${unplacedFigures.join(', ')} — ` +
-          'add them to the manuscript (ideaseek paper write) or record them as manual/preserved ' +
-          'in the plan; compiling without them would publish a paper missing its own evidence',
+          'place the ones already rendered with: ideaseek paper compile --place-figures; ' +
+          'otherwise add them to the manuscript (ideaseek paper write) or record them as ' +
+          'manual/preserved in the plan; compiling without them would publish a paper missing its own evidence',
       ],
       skill: skillMeta,
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),
     };
-    return { report, mainPath: join(root, 'paper', 'main.tex') };
+    return { report, mainPath: join(root, 'paper', 'main.tex'), placement };
   }
 
   const unapprovedFigures = await unapprovedFigureIncludes(
@@ -732,7 +746,7 @@ export async function compileManuscript(
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),
     };
-    return { report, mainPath: join(root, 'paper', 'main.tex') };
+    return { report, mainPath: join(root, 'paper', 'main.tex'), placement };
   }
 
   // Preflight the style dependencies before spending a latexmk run. The venue
@@ -767,7 +781,7 @@ export async function compileManuscript(
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),
     };
-    return { report, mainPath: join(root, 'paper', 'main.tex') };
+    return { report, mainPath: join(root, 'paper', 'main.tex'), placement };
   }
 
   const buildCommand = [
@@ -804,7 +818,7 @@ export async function compileManuscript(
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),
     };
-    return { report, mainPath: assembled.mainPath };
+    return { report, mainPath: assembled.mainPath, placement };
   }
   const logTail = redactSecrets(
     `${result.stdout}\n${result.stderr}`.slice(-8_000) || '(no output)',
@@ -845,7 +859,7 @@ export async function compileManuscript(
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),
     };
-    return { report, mainPath: assembled.mainPath };
+    return { report, mainPath: assembled.mainPath, placement };
   }
 
   if (result.code === 0 && pdfExists) {
@@ -865,7 +879,7 @@ export async function compileManuscript(
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),
     };
-    return { report, mainPath: assembled.mainPath };
+    return { report, mainPath: assembled.mainPath, placement };
   }
 
   const blockers = classifyCompileFailure(logText);
@@ -888,5 +902,5 @@ export async function compileManuscript(
     manuscriptInputHash: stored.inputHash,
     compiledAt: opts.now ?? Date.now(),
   };
-  return { report, mainPath: assembled.mainPath };
+  return { report, mainPath: assembled.mainPath, placement };
 }

@@ -305,7 +305,8 @@ function renderFigureContext(context: FigureContext): string {
       : 'Existing figures: none',
   );
   lines.push(
-    'Scope reminder: data plots and tables only — architecture diagrams, image grids and photos go to manualRemaining.',
+    'Scope reminder: data plots and tables only — architecture/pipeline diagrams go to the ' +
+      'deterministic FigureSpec route (ideaseek paper diagram), image grids and photos go to manualRemaining.',
   );
   return lines.join('\n');
 }
