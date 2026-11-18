@@ -89,14 +89,14 @@
     {
       "id": "cli-commands",
       "title": "CLI 命令参考",
-      "search": "CLI 命令 command reference init start setup doctor scan ingest extract run status paper full report backup restore",
-      "excerpt": "所有命令在当前目录寻找 .research/。大多数命令支持 --json 机器可读输出。开始与配置：init, start, setup, doctor, config, mode, open, models, projects, interactive。读懂已有输入：scan, ingest, extract, evaluate, synthesize, mech, intake, organize, wiki, prepare, search, assessment, papers。协议与数据：protocol, data, datasets, confirm, pending, comparison, baseline, capacity。想法与实验：idea generate, idea implement, idea check, idea experiment, idea analyze, idea handoff, ideate, rounds, feedback, experiment run-ready。运行与监控：run, status, next, plan, attach, watch, pause, resume, continue, cancel, monitor, agent, ask。交付与报告：paper plan, paper write, paper compile, paper results, paper diagram, paper export-overleaf, report, full plan, full approve, render。备份与恢复：backup, restore, export, archive, cleanup, logs。"
+      "search": "CLI 命令 command reference init start setup doctor scan ingest extract run status paper full report",
+      "excerpt": "13 · CLI Reference CLI 命令参考 所有命令在当前目录寻找 .research/ 。大多数命令支持 --json 机器可读输出。 开始与配置 命令 说明 ideaseek init 初始化项目目录、配置模板和工作流数据库 ideaseek start --question \"...\" 一键启动：init + setup + 首次扫描，然后告诉你下一步 ideaseek setup 自动检测环境并持久化规范化 research.yaml ideaseek doctor 检查配置、项目状态和主机环境（只读） ideaseek config 查看生效配置 ideaseek mode [research|analysis] 显示/切换研究档位 ideaseek open [target] 选择项目（两步确认）或读取文档 ideaseek models 查看模型路由、角色绑定和凭"
     },
     {
       "id": "tui-commands",
       "title": "TUI 快捷命令",
-      "search": "TUI slash command palette help init status next mode models agent open pause resume approve reject feedback ideate rounds",
-      "excerpt": "在交互式 TUI 中输入 / 打开命令面板，支持模糊匹配和 Tab 补全。概览：/help, /init, /status, /next, /assessment, /prepare, /drift。审批：/pending, /approve, /reject。研究：/papers, /comparisons, /ideas, /experiments, /rounds, /ideate, /feedback。会话：/models, /mode, /agent, /open, /report。控制：/pause, /resume, /continue, /cancel, /quit。快捷键：/ 打开面板, Tab 补全, Shift+Tab 切换模式, Ctrl+F 搜索, Ctrl+Y 复制, Ctrl+L 清屏, Ctrl+R 历史搜索, ? 快捷键速查。"
+      "search": "TUI slash command palette help init status next mode models agent open pause resume",
+      "excerpt": "14 · TUI Commands TUI 快捷命令 在交互式 TUI 中输入 / 打开命令面板，支持模糊匹配和 Tab 补全。以下命令等价于对应的 CLI 形式。 概览 命令 说明 /help 显示帮助 /init 在当前目录创建 IdeaSeek 项目 /status 运行状态、任务、worker、最近事件 /next 状态感知的下一步建议 /assessment 材料就绪度和缺口报告 /prepare 运行只读 Analysis 准备管线 /drift 预览输入漂移和失效的下游产物 审批 命令 说明 /pending 等待你的审批（协议、代码修订、请求） /approve [n] 批准待处理项（或从 /pending 选择第 n 项） /reject &lt;reason&gt; 拒绝待处理提案并给出原因 研究 命令 说明 /papers 论文索引进度和解析失败 /compariso"
     }
   ]
 }
