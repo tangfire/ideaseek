@@ -90,7 +90,7 @@ export async function runBareInvocation(globalOpts: {
     return startInteractive({ plain: globalOpts.plain === true });
   }
   process.stdout.write(
-    'ideaseek: no command given. Run `ideaseek interactive` for the UI, `ideaseek --help` for commands.\n',
+    'ideaseek: no command given. Run `ideaseek` for the UI, `ideaseek --help` for commands.\n',
   );
   return 0;
 }

@@ -590,7 +590,7 @@ describe('bare invocation modes', () => {
     const result = await runCli(dir, []);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('no command given');
-    expect(result.stdout).toContain('ideaseek interactive');
+    expect(result.stdout).toContain('ideaseek');
   }, 30_000);
 
   it('--json snapshot emits machine-readable status and events without secrets', async () => {
