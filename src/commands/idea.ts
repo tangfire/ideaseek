@@ -3040,9 +3040,26 @@ export function registerIdeaCommand(program: Command): void {
                 'taking them to RUNNING would put template numbers into the record\n',
             );
           } else {
-            process.stdout.write(
-              `next: ideaseek idea set-status ${ideaId} RUNNING   (experiments stay quick/standard)\n`,
-            );
+            // Advice has to come from the lifecycle graph, not from the ladder
+            // result. Measured on FDG: a re-check of an idea already at
+            // ANALYZING printed `set-status … RUNNING`, which the state machine
+            // refuses with INVALID_STATE — the product's own next step was a
+            // dead end. A passed re-check of a later-stage idea means "your fix
+            // held", and the right move is the verdict step it was working on.
+            const { IDEA_TRANSITIONS } = await import('../idea/workspace.js');
+            if ((IDEA_TRANSITIONS[status] ?? []).includes('RUNNING')) {
+              process.stdout.write(
+                `next: ideaseek idea set-status ${ideaId} RUNNING   (experiments stay quick/standard)\n`,
+              );
+            } else {
+              process.stdout.write(
+                `  note: 实现再次通过校验；当前状态 ${status} 不回退到 SMOKE_TESTED，因此无需改状态\n`,
+              );
+              process.stdout.write(
+                `next: ideaseek idea analyze ${ideaId}   (` +
+                  `${status} 可记录的状态转移：${(IDEA_TRANSITIONS[status] ?? []).join(', ') || '无'})\n`,
+              );
+            }
           }
         }
         // 2 = the input is missing, not that a task failed: an empty src, or a
@@ -3223,7 +3240,6 @@ export function registerIdeaCommand(program: Command): void {
                 }
               }
             }
-            return outcome.exitCode;
             return outcome.exitCode;
           } finally {
             await runtime.close();

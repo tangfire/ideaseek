@@ -532,4 +532,38 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       ]),
     ).toHaveLength(1);
   });
+
+  /**
+   * The ladder's advice has to be legal, not merely optimistic.
+   *
+   * Observed on the real project: re-checking an idea that had already reached
+   * ANALYZING printed `next: ideaseek idea set-status … RUNNING`, and running
+   * that printed line back at the product failed with INVALID_STATE. The advice
+   * was derived from the ladder result instead of the lifecycle graph, so every
+   * idea past SMOKE_TESTED got a next step that could not be executed. The
+   * positive control (an idea that IS at SMOKE_TESTED still gets RUNNING) is
+   * what separates a fixed rule from a rule that now never fires.
+   */
+  it('advises only transitions the state machine accepts', async () => {
+    await implementRealSmoke();
+    for (const to of ['IMPLEMENTING', 'SMOKE_TESTED']) {
+      const moved = await runCli(project, ['idea', 'set-status', 'calib-reweight', to]);
+      expect(moved.code, moved.stderr + moved.stdout).toBe(0);
+    }
+    const atSmokeTested = await runCli(project, ['idea', 'check', 'calib-reweight']);
+    expect(atSmokeTested.code, atSmokeTested.stderr).toBe(0);
+    expect(atSmokeTested.stdout).toContain('idea set-status calib-reweight RUNNING');
+
+    for (const to of ['RUNNING', 'ANALYZING']) {
+      const moved = await runCli(project, ['idea', 'set-status', 'calib-reweight', to]);
+      expect(moved.code, moved.stderr + moved.stdout).toBe(0);
+    }
+    const late = await runCli(project, ['idea', 'check', 'calib-reweight']);
+    expect(late.code, late.stderr).toBe(0);
+    expect(late.stdout).not.toContain('set-status calib-reweight RUNNING');
+    expect(late.stdout).toContain('ANALYZING');
+    // Whatever it recommends must be an edge the graph allows from ANALYZING.
+    const suggested = late.stdout.match(/set-status calib-reweight ([A-Z_]+)/);
+    expect(suggested, late.stdout).toBeNull();
+  }, 180_000);
 });
