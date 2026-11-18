@@ -67,8 +67,8 @@ describe('docs-site build/check pipeline', () => {
       sections: { id: string; title: string }[];
     };
     expect(search.contract).toBe('docs-search-v1');
-    expect(search.sections.length).toBeGreaterThanOrEqual(10);
-    expect(search.sections.map((s) => s.id)).toContain('troubleshoot');
+    expect(search.sections.length).toBeGreaterThanOrEqual(7);
+    expect(search.sections.map((s) => s.id)).toContain('recovery');
 
     const keys = JSON.parse(await readFile(join(out, 'config-keys.json'), 'utf8')) as {
       contract: string;

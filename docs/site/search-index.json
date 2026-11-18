@@ -3,100 +3,46 @@
   "version": "0.1.0",
   "sections": [
     {
-      "id": "start",
-      "title": "安装与初始化",
-      "search": "安装 pnpm build doctor 初始化 init Linux WSL2",
-      "excerpt": "01 · First run 安装与初始化 IdeaSeek 面向联网的 Linux 科研服务器设计；Windows 用户优先通过 WSL2 或 SSH 使用。项目仍处于开发阶段，当前从源码检出安装。 bash 复制 git clone &lt;IdeaSeek 私有仓库地址&gt; ideaseek cd ideaseek pnpm install --frozen-lockfile pnpm build pnpm release-check 在一个新的研究方向文件夹里初始化项目。这个文件夹就是项目工作区： bash 复制 mkdir my-research cd my-research node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js init node &lt;IdeaSeek 仓库路径&gt;/dist/cli.js setup node &lt;Ide"
+      "id": "quickstart",
+      "title": "快速开始",
+      "search": "",
+      "excerpt": "Getting Started 快速开始 三步启动你的第一个研究项目。 安装 克隆仓库，运行安装脚本，自动检测并安装所有依赖。 Terminal git clone &lt;repo&gt; ideaseek && cd ideaseek node scripts/install.mjs ideaseek doctor 创建项目 新建一个研究方向文件夹，初始化 IdeaSeek 项目。 Terminal mkdir my-research && cd my-research ideaseek init ideaseek setup 放入材料并启动 把论文放进 papers/ ，数据放进 datasets/ ，然后一条命令启动。 Terminal ideaseek start --question \"你的研究问题\" 就是这么简单。 IdeaSeek 会自动扫描材料、检查环境、创建研究计划，然"
     },
     {
-      "id": "gaps",
-      "title": "不知道还缺什么？让 IdeaSeek 先做材料缺口评估",
-      "search": "材料缺口 research material assessment 缺论文 缺数据集 comparison 指标 split 推荐",
-      "excerpt": "05.5 · Material assessment 不知道还缺什么？让 IdeaSeek 先做材料缺口评估 你不需要一开始就知道该准备哪些论文、数据集或 comparison。IdeaSeek 会根据研究问题、已有论文、研究地图、数据画像、comparison 和目标场景，列出当前缺口以及它们对研究的影响。 缺口类型 例子 IdeaSeek 的处理 ANALYSIS 读取论文、数据和 comparison，评估研究材料缺口。 只写知识与缺口报告；不启动正式实验或锁定科学协议。 必须补 没有测试标签语义、主指标或 required baseline 阻止依赖它的正式实验，给出原因和下一步 建议补 缺少近期强基线、反例论文或第二个数据场景 说明它会影响哪些 claim，用户补充后提高覆盖 可选补 额外数据集、定性样例或扩展图表 记录为后续增强，不阻塞当前探索 每个建议都附来源、版本、许可证/"
+      "id": "concepts",
+      "title": "核心概念",
+      "search": "",
+      "excerpt": "Concepts 核心概念 理解这几个概念，就能用好 IdeaSeek。 📁 项目目录 当前目录就是项目。 papers/ 放论文， datasets/ 放数据， ideas/ 存放平台生成的实验代码， reports/ 存放报告。 🔄 三种模式 Research （默认）运行实验和分析； Analysis 只读准备和评估； Coding 专注代码修改。用 Shift+Tab 切换。 📊 数据规模 smoke 秒级验证 → quick 分钟级实验 → standard 完整实验。全量训练由你拿到 handoff 后自行执行。 🔒 审批与安全 高影响操作需要确认。API key 只存在 DSH credential store 中，从不写入文件、日志或事件。 🧬 证据链 每个结论都可追溯到输入哈希、版本号和运行 ID。原始论文和数据永远只读，修改只发生在工作副本中。 🤖 多 Ag"
     },
     {
-      "id": "project",
-      "title": "一个研究方向，一个项目目录",
-      "search": "项目 文件夹 init research.yaml papers datasets comparisons idea-seeds",
-      "excerpt": "02 · Project 一个研究方向，一个项目目录 通常在研究方向文件夹里启动 IdeaSeek。状态、论文索引、idea、实验、事件和 checkpoint 都属于这个项目。启动前可以用 ideaseek status 和 ideaseek next 查看当前状态与下一步。 不要把所有方向混进一个目录。你可以把多篇论文、多个数据集、对比代码和已有 idea 放在同一研究项目的对应输入区，IdeaSeek 会扫描并给出归类预览。"
+      "id": "workflow",
+      "title": "研究流程",
+      "search": "",
+      "excerpt": "Workflow 研究流程 从材料到论文的完整链路。 放入材料 论文放 papers/ ，数据放 datasets/ ，对比方法放 comparisons/ 。不确定的放 incoming/ 。 Terminal ideaseek scan # 发现材料 ideaseek intake # 查看待确认项 ideaseek prepare # 运行分析准备管线 生成 Idea 并验证 平台从论文和数据中提取证据，生成候选 idea，然后在小规模实验中快速验证。 Terminal ideaseek idea generate ideaseek idea implement &lt;id&gt; ideaseek idea check &lt;id&gt; ideaseek idea experiment &lt;id&gt; 分析与交付 分析实验结果，生成判定，交付复现包和论文。 Termin"
     },
     {
-      "id": "modes",
-      "title": "Research、Analysis 与 Coding 协同模式",
-      "search": "Research Analysis Coding Agent mode Shift Tab Alt C 研究 编程权限",
-      "excerpt": "03 · Modes Research、Analysis 与 Coding 协同模式 状态 / 入口 适合做什么 边界 RESEARCH 论文分析、协议、comparison、idea 和实验流程；自由文本由带上下文的 Supervisor 解答或转待审批决策。 遵守证据、数据、实验和审批门禁。 ANALYSIS 只读材料准备：运行 ideaseek prepare 、 ideaseek assessment 与只读材料问答，补齐论文/数据/comparison 缺口。 强制只读准备：拒绝写科研代码、锁协议、改 comparison 或启动实验。 CODING / /agent 复用 DSH 的通用 coding 会话（ Alt+C 切换焦点，或 ideaseek agent / /agent ）：理解项目、编辑代码、运行测试、修复工程问题。 不设目录写禁令，靠工具逐次审批、项目预算计费与"
+      "id": "interactive",
+      "title": "交互与 TUI",
+      "search": "",
+      "excerpt": "Interactive 交互与 TUI 启动交互式界面，用自然语言或命令与平台对话。 Terminal ideaseek interactive 自然语言 ：直接输入问题，平台从状态中回答。高影响请求会变成待审批的 Decision。 斜杠命令 ：输入 / 打开命令面板，支持模糊匹配和 Tab 补全。 快捷键 ： Shift+Tab 切换模式 · Ctrl+F 搜索 · ? 查看快捷键"
     },
     {
-      "id": "models",
-      "title": "模型与凭据",
-      "search": "模型 API key provider DeepSeek DSH models credential route 配置密钥",
-      "excerpt": "04 · Models 模型与凭据 首次启动自动检测 provider。你可以在终端里用隐藏输入配置 API key，立即测试连接，再选择默认模型；之后 /models 查看各角色使用的模型，必要时切换 route 或为高推理任务覆盖模型。Research 和 Agent 可使用不同路由。 密钥安全 API key 保存在 DSH credential store 或系统 secret manager，不写入项目配置、论文、日志或 Git。模型切换只影响新任务；运行中的 ResearchRun 保留启动时的模型快照。 bash 复制 ideaseek models ideaseek models setup --api-key-env DEEPSEEK_API_KEY --prompt-key --test ideaseek models test ideaseek models use "
+      "id": "commands",
+      "title": "CLI 命令",
+      "search": "",
+      "excerpt": "Reference CLI 命令 所有命令在当前目录寻找 .research/ ，大多数支持 --json 。 开始与配置 ideaseek init 初始化项目目录和配置 ideaseek start --question \"...\" 一键启动：init + setup + 扫描 ideaseek setup 自动检测环境并持久化配置 ideaseek doctor 检查配置、项目状态和主机环境 ideaseek mode [research|analysis] 显示/切换研究档位 ideaseek models setup 配置 API key（隐藏输入） ideaseek interactive 启动交互式 TUI 界面 ideaseek projects 列出已注册的项目 读懂材料 ideaseek scan 发现 papers/code/data 目录下的文件 ideaseek "
     },
     {
-      "id": "inputs",
-      "title": "放入论文、数据和对比方法",
-      "search": "论文 PDF 数据集 dataset baseline comparison Github 代码 zip idea-seeds incoming scan intake",
-      "excerpt": "05 · Inputs 放入论文、数据和对比方法 papers/ ：方向论文；解析后形成 PaperCard 和证据定位。 datasets/ ：已有数据或授权挂载；平台先画像，不会自动更改原始数据。 comparisons/ ：对比方法论文和代码；官方仓库与论文重实现会分别标记。 idea-seeds/ ：已有 idea、代码或实验结果；允许目录结构多样，由 intake 分析，不要求手工改成固定模板。 incoming/ ：暂时不确定归类的文件或压缩包。 bash 复制 ideaseek scan ideaseek intake ideaseek plan --question \"你的研究问题\" scan 发现输入； intake 展示归类和歧义；确认前不移动、覆盖或执行用户文件。"
-    },
-    {
-      "id": "explore",
-      "title": "先计划，再做小规模探索",
-      "search": "idea explore experiment quick smoke standard start run research",
-      "excerpt": "06 · Explore 先计划，再做小规模探索 1 检查计划。 运行 ideaseek plan --question \"...\" ，先看材料、comparison、资源和阻塞。 2 确认协议和关键语义。 例如数据字段、split、指标和 required comparison；无法安全推断的内容由你确认。 3 启动探索。 运行 ideaseek start --question \"...\" 或交互输入研究需求；先用 smoke/quick/standard 小切片验证 idea。 4 看证据和反馈。 检查 comparison、消融与失败分类；结果可能支持、否证或无法判断 idea，程序错误不能冒充科学结论。"
-    },
-    {
-      "id": "assessment",
-      "title": "先问 IdeaSeek：还缺什么材料？",
-      "search": "Analysis mode material assessment research material gaps 缺论文 数据集 comparison",
-      "excerpt": "05.5 · Analysis 先问 IdeaSeek：还缺什么材料？ 进入 Analysis 模式后，IdeaSeek 会先把材料加工成 PaperCard、证据定位、主题综合、研究地图、机制库、DatasetCard 和 comparison 摘要，再列出必须补、建议补和可选补的论文、数据集、comparison、指标和场景，并说明来源、理由、成本和下一步。补齐材料后再切到 Research，让正式科研流程开始。"
-    },
-    {
-      "id": "observe",
-      "title": "交互、命令与监控",
-      "search": "TUI slash command palette status next events pause resume attach",
-      "excerpt": "07 · Interactive 交互、命令与监控 真实 TTY 启动 Ink 交互界面。按 `/` 打开带说明的命令菜单，继续输入过滤；方向键选择，Tab 补全，Enter 执行，Esc 关闭。 Shift + Tab 循环 Research / Analysis / Coding， Alt + C 随时正交开关 Coding 焦点（保留底层科研档位）。 输入 用途 /status 看项目、run、任务和阶段 /next 解释阻塞并给下一步 /prepare / /assessment 运行只读材料准备流或查看缺口报告 /drift 检查输入漂移与下游失效产物 /models 看模型 route/凭据状态 /pause / /resume 安全暂停和恢复 /quit 退出界面，不取消后台任务 自然语言可用于询问状态或提出建议。高影响动作必须先预览并确认；Agent 不得静默改指标、测试集"
-    },
-    {
-      "id": "results",
-      "title": "结果、报告与 handoff",
-      "search": "report result handoff promising HANDOFF_READY code",
-      "excerpt": "08 · Results 结果、报告与 handoff 使用 ideaseek report 查看事实报告，检查 idea 状态、实验、失败项和证据来源。结果会区分原论文报告、本地 comparison、IdeaSeek 实验和未验证场景。 HANDOFF_READY 需要真实证据门槛通过；小规模正向结果不等于创新已证明，也不保证全量结果或论文录用。 补充实验 ：结果分析给出的缺口用消融与补充运行补齐，而不是改口径—— ideaseek idea ablation-plan &lt;id&gt; 从机制链生成消融计划， ideaseek idea ablate &lt;id&gt; --scale quick 按计划执行消融矩阵（每项绑定 idea 版本、spec 与代码哈希）； claim 侧用 ideaseek idea result-to-claim &lt;id&gt; 看全量结果"
-    },
-    {
-      "id": "full",
-      "title": "全量实验与论文交付",
-      "search": "Full Research full-run 全量论文 CCF comparison figure paper Overleaf roadmap",
-      "excerpt": "09 · Full Research 全量实验与论文交付 达到 HANDOFF_READY 后，你审阅 comparison 清单并确认数据、split、指标、预算和 GPU 时限。IdeaSeek 核验可信的官方/作者代码；缺少可用代码时按论文重实现并披露假设。随后所有 required comparisons 与 IdeaSeek 方法按锁定的公平协议运行。 结果分析会识别缺少的多种子、关键消融、comparison、数据或场景证据，并生成补充实验计划；在已授权预算和数据范围内继续运行、分析并更新主张与图表。需要新数据、权限、资源或改变科学协议时先向你说明并等待决定，不编造结果，也不无限试验直到出现正向结果。 批准后由 平台内 执行（探索管线永远没有 full 规模开关）： bash 复制 ideaseek full fairness --idea &lt;id&gt; # 逐方法对齐"
+      "id": "tui",
+      "title": "TUI 快捷命令",
+      "search": "",
+      "excerpt": "Reference TUI 快捷命令 在交互式界面中输入 / 打开命令面板。 /help 显示帮助 /status 运行状态、任务、事件 /next 下一步建议 /pending 等待你的审批 /approve [n] 批准待处理项 /papers 论文索引进度 /ideas idea 列表 /experiments 实验记录和结果 /mode [research|analysis] 切换研究档位 /agent &lt;指令&gt; 运行 DSH 编码会话 /pause / /resume 暂停/恢复运行 /quit 退出（不取消后台运行） 快捷键 Shift+Tab 切换 Research / Analysis / Coding Ctrl+F 在转录中搜索 Ctrl+Y 复制最近一条回复 Ctrl+L 清屏定位 Ctrl+R 反向历史搜索 ? 快捷键速查"
     },
     {
       "id": "recovery",
-      "title": "暂停、阻塞与恢复",
-      "search": "quota network failure restore checkpoint continue recovery recover",
-      "excerpt": "10 · Recovery 暂停、阻塞与恢复 外部模型/API、GitHub、数据源或 GPU 暂时不可用时，依赖任务应显示具体阻塞和恢复动作；其他不依赖该项的任务可以继续。补好凭据或环境后运行 ideaseek doctor 、 ideaseek next ，再按提示 ideaseek continue 。已提交 artifact 和成功任务不应重做。"
-    },
-    {
-      "id": "troubleshoot",
-      "title": "故障排除",
-      "search": "故障排除 排错 error failed blocked stale doctor recovery troubleshooting",
-      "excerpt": "11 · Troubleshooting 故障排除 症状 先跑 说明与恢复 命令报「no IdeaSeek project here」 ideaseek init 在研究方向的根目录初始化后再运行。 模型调用失败 / 无凭据 ideaseek models setup --test 隐藏输入配置并测连通； ideaseek models test 复测，输出永不含 key。 full plan/approve 报 stale ideaseek full plan --idea &lt;id&gt; 状态变了旧批准自动失效；重新 fairness → plan → approve 后再 run。 full run 拒绝：缺 entry / fairness 未确认 ideaseek baseline repair --method &lt;id&gt; --entry \"...\" 每个 re"
-    },
-    {
-      "id": "limits",
-      "title": "如何判断一个功能是否已完成",
-      "search": "limits status roadmap implemented planned future",
-      "excerpt": "12 · Product status 如何判断一个功能是否已完成 看 开发进度 ：只有有实现、测试和提交证据的条目才勾选。最终能力规划见 实施路线 ；命令和退出码见 CLI 参考 ；模型路由见 模型指南 。"
-    },
-    {
-      "id": "cli-commands",
-      "title": "CLI 命令参考",
-      "search": "CLI 命令 command reference init start setup doctor scan ingest extract run status paper full report",
-      "excerpt": "13 · CLI Reference CLI 命令参考 所有命令在当前目录寻找 .research/ 。大多数命令支持 --json 机器可读输出。 开始与配置 命令 说明 ideaseek init 初始化项目目录、配置模板和工作流数据库 ideaseek start --question \"...\" 一键启动：init + setup + 首次扫描，然后告诉你下一步 ideaseek setup 自动检测环境并持久化规范化 research.yaml ideaseek doctor 检查配置、项目状态和主机环境（只读） ideaseek config 查看生效配置 ideaseek mode [research|analysis] 显示/切换研究档位 ideaseek open [target] 选择项目（两步确认）或读取文档 ideaseek models 查看模型路由、角色绑定和凭"
-    },
-    {
-      "id": "tui-commands",
-      "title": "TUI 快捷命令",
-      "search": "TUI slash command palette help init status next mode models agent open pause resume",
-      "excerpt": "14 · TUI Commands TUI 快捷命令 在交互式 TUI 中输入 / 打开命令面板，支持模糊匹配和 Tab 补全。以下命令等价于对应的 CLI 形式。 概览 命令 说明 /help 显示帮助 /init 在当前目录创建 IdeaSeek 项目 /status 运行状态、任务、worker、最近事件 /next 状态感知的下一步建议 /assessment 材料就绪度和缺口报告 /prepare 运行只读 Analysis 准备管线 /drift 预览输入漂移和失效的下游产物 审批 命令 说明 /pending 等待你的审批（协议、代码修订、请求） /approve [n] 批准待处理项（或从 /pending 选择第 n 项） /reject &lt;reason&gt; 拒绝待处理提案并给出原因 研究 命令 说明 /papers 论文索引进度和解析失败 /compariso"
+      "title": "恢复与排错",
+      "search": "",
+      "excerpt": "Troubleshooting 恢复与排错 常见问题和恢复方法。 额度耗尽 运行 ideaseek doctor 检查凭据，充值后 ideaseek continue 从 checkpoint 继续。 网络故障 平台自动暂停在可恢复状态。网络恢复后 ideaseek continue 接着跑，不重复已完成的任务。 进程崩溃 重新打开项目时自动恢复：过期租约回收、中断的提交恢复或重新入队。 API key 配置 运行 ideaseek models setup （隐藏输入），或在 TUI 中输入 /models setup 。 注意 ：原始论文、数据和上游 comparison 仓库永远只读。自动修改只发生在工作副本或 idea 专属目录中。"
     }
   ]
 }
