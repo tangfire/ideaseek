@@ -47,10 +47,10 @@ ideaseek start --question "你的研究问题"  # 小白一键入口
 4. 日常入口是**交互界面**：
 
 ```bash
-ideaseek interactive     # 或直接敲 ideaseek
+ideaseek
 ```
 
-**模型配置在 TUI 里完成**：输入 `/models setup`，输入行切成掩码状态（`🔐 … •••`）粘贴 API key——默认先做连通性测试，坏 key 零写入；key 值从不进 argv、不落项目文件。`/models` 查看 route/凭据状态，`/models use <route>` 切换项目 route。
+**模型配置在 TUI 里完成**：输入 `/models setup`，输入行切成掩码状态（`🔐 … •••`）粘贴 API key——默认先做连通性测试，坏 key 零写入；key 值从不进 argv、不落项目文件。`/models` 查看 route/凭据状态，`/models use <route>` 切换项目 route。输入 `/docs` 打开文档站。
 
 ## 命令速查
 
@@ -62,7 +62,7 @@ ideaseek interactive     # 或直接敲 ideaseek
 | 审批 | `/pending` · `/approve [n]` · `/reject <reason>` |
 | 研究 | `/papers` · `/comparisons` · `/ideas` · `/experiments` · `/logs <task-id>` |
 | 构思 | `/rounds` · `/ideate` · `/feedback` |
-| 会话 | `/models` · `/mode` · `/open` · `/report` |
+| 会话 | `/models` · `/mode` · `/open` · `/report` · `/docs` |
 | 控制 | `/pause` · `/resume` · `/continue` · `/cancel` · `/quit` |
 
 交互要点：
