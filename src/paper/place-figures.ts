@@ -1,7 +1,45 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { execSync } from 'node:child_process';
 import { IdeaseekError } from '../core/errors.js';
 import { identicalValueGroupsOf } from './results-export.js';
+
+/**
+ * Convert SVG to PDF using Inkscape or rsvg-convert.
+ * Returns the PDF path on success, null on failure.
+ */
+async function convertSvgToPdf(svgPath: string): Promise<string | null> {
+  const pdfPath = svgPath.replace(/\.svg$/i, '.pdf');
+  const binDir = process.platform === 'win32' ? 'C:\\Program Files\\Inkscape\\bin' : '';
+  const inkscape = binDir ? `${binDir}\\inkscape.exe` : 'inkscape';
+  const rsvg = 'rsvg-convert';
+
+  try {
+    // Try Inkscape first
+    execSync(`"${inkscape}" --export-type=pdf --export-filename="${pdfPath}" "${svgPath}"`, {
+      stdio: 'pipe',
+      timeout: 30000,
+    });
+    // Verify the file was created
+    const stat = await import('node:fs/promises').then((fs) => fs.stat(pdfPath));
+    if (stat.size > 0) return pdfPath;
+  } catch {
+    // Inkscape failed, try rsvg-convert
+  }
+
+  try {
+    execSync(`"${rsvg}" -f pdf -o "${pdfPath}" "${svgPath}"`, {
+      stdio: 'pipe',
+      timeout: 30000,
+    });
+    const stat = await import('node:fs/promises').then((fs) => fs.stat(pdfPath));
+    if (stat.size > 0) return pdfPath;
+  } catch {
+    // Both converters failed
+  }
+
+  return null;
+}
 
 /**
  * Deterministic placement of figures the platform has already PROVEN exist.
@@ -325,7 +363,7 @@ export async function placeVerifiedFigures(root: string): Promise<PlacementResul
 
   for (const candidate of await candidatesFromRecords(root)) {
     const between = relative(figuresDir, candidate.absPath).split('\\').join('/');
-    const includePath = between.startsWith('..') ? null : `figures/${between}`;
+    let includePath = between.startsWith('..') ? null : `../figures/${between}`;
     if (includePath === null) {
       results.push({
         id: candidate.id,
@@ -372,20 +410,39 @@ export async function placeVerifiedFigures(root: string): Promise<PlacementResul
     const extension = (includePath.match(/\.[a-z]+$/i)?.[0] ?? '').toLowerCase();
     if (!INCLUDABLE.has(extension)) {
       // graphicx includes PDF/PNG/JPG under pdflatex and xelatex; SVG needs a
-      // converter. This machine has none — Windows `convert` is the disk utility,
-      // not ImageMagick. Inserting the include anyway produces a build failure
-      // three layers from its cause, so we say what to install instead.
-      results.push({
-        id: candidate.id,
-        includePath,
-        caption: candidate.captionHint,
-        action: 'skipped',
-        reason:
-          `${extension || 'no extension'} cannot be included by pdflatex/xelatex graphicx — ` +
-          'install a converter (Inkscape: https://inkscape.org, or rsvg-convert), ' +
-          'then re-run: ideaseek paper compile --place-figures',
-      });
-      continue;
+      // converter. Try Inkscape first (most reliable on Windows), then
+      // rsvg-convert. If neither works, skip with a clear install instruction.
+      if (extension === '.svg') {
+        const converted = await convertSvgToPdf(candidate.absPath);
+        if (converted) {
+          // Replace the SVG path with the converted PDF path
+          includePath = includePath.replace(/\.svg$/i, '.pdf');
+          // Update the candidate to point to the converted file
+          candidate.absPath = converted;
+        } else {
+          results.push({
+            id: candidate.id,
+            includePath,
+            caption: candidate.captionHint,
+            action: 'skipped',
+            reason:
+              'SVG cannot be converted to PDF — install Inkscape (https://inkscape.org/) ' +
+              'or rsvg-convert, then re-run: ideaseek paper compile --place-figures',
+          });
+          continue;
+        }
+      } else {
+        results.push({
+          id: candidate.id,
+          includePath,
+          caption: candidate.captionHint,
+          action: 'skipped',
+          reason:
+            `${extension || 'no extension'} cannot be included by pdflatex/xelatex graphicx — ` +
+            'export the figure as PDF/PNG instead',
+        });
+        continue;
+      }
     }
     const marker = '\\end{document}';
     const at = mainTex.lastIndexOf(marker);

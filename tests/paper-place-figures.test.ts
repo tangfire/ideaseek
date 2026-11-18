@@ -89,9 +89,9 @@ describe('placeVerifiedFigures', () => {
     expect(result.figures.map((figure) => figure.id).sort()).toEqual(['Fig 1', 'pipeline', 'topology']);
 
     const mainTex = await readFile(join(root, 'paper', 'main.tex'), 'utf8');
-    expect(mainTex).toContain('\\includegraphics[width=0.9\\linewidth]{figures/pipeline.pdf}');
+    expect(mainTex).toContain('\\includegraphics[width=0.9\\linewidth]{../figures/pipeline.pdf}');
     // A spaced name is brace-wrapped so pdflatex does not end the argument early.
-    expect(mainTex).toContain('\\includegraphics[width=0.9\\linewidth]{figures/{Fig 1.pdf}}');
+    expect(mainTex).toContain('\\includegraphics[width=0.9\\linewidth]{../figures/{Fig 1.pdf}}');
     expect(mainTex).toContain('Unseen-domain top-1 accuracy (\\%, all folds)');
     expect(mainTex).toContain('\\label{fig:pipeline}');
     expect(mainTex).not.toContain('broken.pdf');
@@ -99,7 +99,7 @@ describe('placeVerifiedFigures', () => {
     // is reported instead of becoming a build failure later.
     const svg = result.figures.find((figure) => figure.id === 'topology')!;
     expect(svg.action).toBe('skipped');
-    expect(svg.reason).toContain('cannot be included by pdflatex/xelatex graphicx');
+    expect(svg.reason).toContain('SVG cannot be converted to PDF');
     expect(mainTex).not.toContain('topology.svg');
     // The float must land inside the document, before \end{document}.
     expect(mainTex.indexOf('\\end{figure}')).toBeLessThan(mainTex.lastIndexOf('\\end{document}'));
