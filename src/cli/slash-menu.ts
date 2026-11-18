@@ -89,6 +89,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   { name: '/logs', usage: '/logs <task-id>', description: 'task detail with redacted logs' },
   { name: '/report', usage: '/report', description: 'write the factual run report' },
+  { name: '/docs', usage: '/docs', description: 'open the documentation site in your browser' },
   {
     name: '/models',
     usage: '/models [list|use <route>]',
@@ -143,7 +144,7 @@ export function resolveSlash(input: string): SlashResolution {
 const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
   {
     title: 'overview',
-    names: ['/help', '/init', '/status', '/next', '/prepare', '/assessment', '/drift'],
+    names: ['/help', '/init', '/status', '/next', '/prepare', '/assessment', '/drift', '/docs'],
   },
   { title: 'approvals', names: ['/pending', '/approve', '/reject'] },
   { title: 'research', names: ['/papers', '/comparisons', '/ideas', '/experiments', '/logs'] },

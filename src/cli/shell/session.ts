@@ -1048,6 +1048,25 @@ export class InteractiveSession {
       case '/report':
         await this.relay(['report']);
         return 'continue';
+      case '/docs': {
+        // Open the docs site in the user's default browser. The site lives
+        // at docs/site/index.html relative to the IdeaSeek install root.
+        const { spawn } = await import('node:child_process');
+        const { join, dirname } = await import('node:path');
+        const { fileURLToPath } = await import('node:url');
+        const here = dirname(fileURLToPath(import.meta.url));
+        const sitePath = join(here, '..', '..', '..', 'docs', 'site', 'index.html');
+        const url = `file:///${sitePath.replace(/\\/g, '/')}`;
+        if (process.platform === 'win32') {
+          spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+        } else if (process.platform === 'darwin') {
+          spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+          spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+        }
+        this.println(`opened docs: ${sitePath}`);
+        return 'continue';
+      }
       case '/models': {
         // `/models setup` needs masked key capture — never a plain relay
         // (the child would see an empty stdin and there is no masking).
