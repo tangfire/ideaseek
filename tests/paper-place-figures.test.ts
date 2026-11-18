@@ -164,6 +164,14 @@ describe('placeVerifiedFigures', () => {
             status: 'failed',
             metrics: [{ name: 'target_unseen_domain_top1_accuracy', value: 99.9 }],
           },
+          // Indistinguishable from beta: the table has to say so in the PDF.
+          {
+            specId: 'idea-beta-abl-x',
+            ideaId: 'beta-idea',
+            scale: 'quick',
+            status: 'succeeded',
+            metrics: [{ name: 'target_unseen_domain_top1_accuracy', value: 14.7132 }],
+          },
         ],
       }),
       'utf8',
@@ -171,7 +179,7 @@ describe('placeVerifiedFigures', () => {
 
     const result = await placeVerifiedFigures(root);
     expect(result.table.action).toBe('inserted');
-    expect(result.table.rowCount).toBe(2);
+    expect(result.table.rowCount).toBe(3);
     expect(result.table.columns).toEqual([
       'target_unseen_domain_top1_accuracy',
       'worst_domain_accuracy',
@@ -186,7 +194,11 @@ describe('placeVerifiedFigures', () => {
     expect(mainTex).toContain('n/a');
     // The unit basis is stated where a reader would otherwise assume one.
     expect(mainTex).toContain('the unit basis per metric');
-    expect(mainTex).toContain('beta-idea & quick');
+    // …and so is the indistinguishable pair, inside the caption the reader sees.
+    expect(mainTex).toContain('identical values for every');
+    // Rows are keyed by specId (one run), not ideaId: an ablation shares its
+    // parent's idea id and would otherwise replace it in the table.
+    expect(mainTex).toContain('idea-beta & quick');
 
     const again = await placeVerifiedFigures(root);
     expect(again.table.action).toBe('already');

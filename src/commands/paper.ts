@@ -356,9 +356,25 @@ export function registerPaperCommand(program: Command): void {
           if (exported.rows.length > 8) {
             process.stdout.write(`  … ${exported.rows.length - 8} more\n`);
           }
+          if (exported.identicalValueGroups.length > 0) {
+            process.stdout.write(
+              `  警告：${exported.identicalValueGroups.length} 组运行的数值完全相同，无法区分各自的改动：\n`,
+            );
+            for (const group of exported.identicalValueGroups) {
+              process.stdout.write(
+                `    ${group.specIds.join(', ')} → ${group.metrics.length} 项指标逐位相同\n`,
+              );
+            }
+            process.stdout.write(
+              '  含义：消融脚本很可能没有真的应用它的开关（或者复用了旧结果），' +
+                '这不是一张消融表能支持的结论；核对 ideas/*/src 里的开关实现后重跑。\n',
+            );
+          }
           process.stdout.write(
             'next: ideaseek paper figure --force (scripts must read this file), then ' +
-              'ideaseek paper render-figures\n',
+              'ideaseek paper render-figures\n' +
+              '  无需绘图库的路线：ideaseek paper compile --place-figures' +
+              '（直接把上面的记录写成 LaTeX 结果表）\n',
           );
           return 0;
         } finally {
@@ -782,6 +798,18 @@ export function registerPaperCommand(program: Command): void {
                 );
               }
             }
+            // The table is the artifact that needs no plotting stack at all, so
+            // its outcome must not hide behind the figure counts.
+            process.stdout.write(
+              `  table   ${placement.table.action}` +
+                `${
+                  placement.table.action === 'inserted'
+                    ? ` — ${placement.table.rowCount} run(s) × ${placement.table.columns.length} metric(s)`
+                    : placement.table.action === 'skipped'
+                      ? ` — ${placement.table.reason ?? ''}`
+                      : ''
+                }\n`,
+            );
           }
 
           await ensureDir(join(root, 'reports', 'paper'));

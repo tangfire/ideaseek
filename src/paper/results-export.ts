@@ -45,6 +45,17 @@ export interface PaperResultsExport {
   inputHash: string;
   rowPath: string;
   rows: PaperResultRow[];
+  /**
+   * Runs whose numbers are indistinguishable from each other.
+   *
+   * Found on the real project: five ablation runs and their parent exported the
+   * SAME value for every metric — which cannot mean the ablations did nothing
+   * and the mechanism still held, only that the ablation code ignored its own
+   * flag (or a stored result got reused). A table over these rows looks like a
+   * completed ablation study, so the export names the groups instead of leaving
+   * the reader to diff nine long floats by eye.
+   */
+  identicalValueGroups: { specIds: string[]; metrics: string[] }[];
 }
 
 interface ResultSource {
@@ -82,6 +93,36 @@ function scaleOf(spec: SpecSource): string {
  * how "Table 1 includes FedAvg in-domain accuracy" gets prevented rather than
  * discovered by a reviewer.
  */
+/**
+ * Runs that cannot be told apart by their numbers.
+ *
+ * Exported because the manuscript needs the same verdict as the export: a table
+ * built from a results file written before this field existed must still carry
+ * the caveat, and a second copy of the rule is how the two start disagreeing.
+ */
+export function identicalValueGroupsOf(
+  rows: { specId: string; status: string; metrics: { name: string; value: number }[] }[],
+): { specIds: string[]; metrics: string[] }[] {
+  const fingerprints = new Map<string, { specIds: string[]; metrics: string[] }>();
+  for (const row of rows) {
+    if (row.status !== 'succeeded' || row.metrics.length === 0) continue;
+    const sorted = [...row.metrics].sort((a, b) => a.name.localeCompare(b.name));
+    const key = sorted.map((metric) => `${metric.name}=${metric.value}`).join(';');
+    const group = fingerprints.get(key);
+    if (group) group.specIds.push(row.specId);
+    else
+      fingerprints.set(key, {
+        specIds: [row.specId],
+        metrics: sorted.map((metric) => metric.name),
+      });
+  }
+  return [...fingerprints.values()]
+    .filter((group) => group.specIds.length > 1)
+    .sort(
+      (a, b) => b.specIds.length - a.specIds.length || a.specIds[0]!.localeCompare(b.specIds[0]!),
+    );
+}
+
 export function buildPaperResults(
   entries: { spec: SpecSource; result: ResultSource | null }[],
   now: number,
@@ -113,12 +154,22 @@ export function buildPaperResults(
   }
   rows.sort((a, b) => a.specId.localeCompare(b.specId));
   const withoutEmpty = rows.filter((row) => row.specId);
+
+  const identicalValueGroups = identicalValueGroupsOf(
+    withoutEmpty.map((row) => ({
+      specId: row.specId,
+      status: row.status,
+      metrics: row.metrics.map((metric) => ({ name: metric.name, value: metric.value })),
+    })),
+  );
+
   return {
     schemaVersion: 1,
     generatedAt: now,
     inputHash: sha256Of(redactSecrets(JSON.stringify(withoutEmpty))),
     rowPath: PAPER_RESULTS_FILE.split('\\').join('/'),
     rows: withoutEmpty,
+    identicalValueGroups,
   };
 }
 

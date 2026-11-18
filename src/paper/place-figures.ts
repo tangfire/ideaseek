@@ -1,6 +1,7 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { IdeaseekError } from '../core/errors.js';
+import { identicalValueGroupsOf } from './results-export.js';
 
 /**
  * Deterministic placement of figures the platform has already PROVEN exist.
@@ -224,24 +225,28 @@ async function placeResultsTableBody(
     .slice(0, 4)
     .map(([name]) => name);
 
-  // Last occurrence wins: `paper results` appends newer exports after older ones,
-  // and a superseded run must not sit in the table next to its replacement.
-  const byLabel = new Map<string, { scale: string; values: Map<string, number> }>();
+  // Keyed by specId, which identifies ONE run. Keying by ideaId would let an
+  // ablation row stand in for its parent (they share an idea), and `paper
+  // results` sorts rows by specId — so "last wins" would silently elect the
+  // alphabetically last ablation as the idea's headline number.
+  const entries: { label: string; scale: string; values: Map<string, number> }[] = [];
   for (const row of rows) {
-    const label = String(row?.ideaId ?? row?.specId ?? '').trim();
+    const label = String(row?.specId ?? '').trim();
     if (!label) continue;
     const values = new Map<string, number>();
     for (const metric of (row?.metrics as Record<string, unknown>[] | undefined) ?? []) {
       const name = String(metric?.name ?? '').trim();
       if (name && typeof metric?.value === 'number') values.set(name, metric.value);
     }
-    byLabel.set(label, { scale: String(row?.scale ?? ''), values });
+    entries.push({ label, scale: String(row?.scale ?? ''), values });
   }
+  const maxRows = 14;
+  const shown = entries.slice(0, maxRows);
 
-  const body = [...byLabel.entries()]
+  const body = shown
     .map(
-      ([label, entry]) =>
-        `    ${escapeCaption(label)} & ${escapeCaption(entry.scale || '-')} & ` +
+      (entry) =>
+        `    ${escapeCaption(entry.label)} & ${escapeCaption(entry.scale || '-')} & ` +
         `${columns
           .map((column) => {
             const v = entry.values.get(column);
@@ -251,12 +256,31 @@ async function placeResultsTableBody(
     )
     .join('\n');
 
+  // Computed from the rows rather than read from the file's own field: a
+  // results.json written before that field existed must still carry the caveat,
+  // and `identicalValueGroupsOf` keeps the rule in one place for both.
+  const identical = identicalValueGroupsOf(
+    ((results?.rows as Record<string, unknown>[] | undefined) ?? []).map((row) => ({
+      specId: String(row?.specId ?? ''),
+      status: String(row?.status ?? ''),
+      metrics: ((row?.metrics as Record<string, unknown>[] | undefined) ?? []).map((metric) => ({
+        name: String(metric?.name ?? ''),
+        value: Number(metric?.value ?? 0),
+      })),
+    })),
+  );
+  const caveat =
+    identical.length > 0
+      ? ` Note: ${identical.length} group(s) of these runs report identical values for every ` +
+        `metric, so those rows do not distinguish their changes.`
+      : '';
+
   const table =
     `\n${TABLE_MARKER}\n` +
     `\\begin{table}[t]\\centering\\small\n` +
     `\\caption{Recorded experiment results, exported by the platform from stored runs. ` +
     `Values appear in the unit each run stored them in; the locked protocol declares the ` +
-    `unit basis per metric.}\\label{tab:ideaseek-results}\n` +
+    `unit basis per metric.${caveat}}\\label{tab:ideaseek-results}\n` +
     `\\begin{tabular}{@{}ll${'r'.repeat(columns.length)}@{}}\n` +
     `\\hline\n` +
     `    Run & Scale & ${columns.map(escapeCaption).join(' & ')} \\\\\n` +
@@ -269,7 +293,15 @@ async function placeResultsTableBody(
   if (!insert(table)) {
     return skipped('main.tex has no \\end{document}, so it is not a complete LaTeX document');
   }
-  return { action: 'inserted', reason: null, columns, rowCount: byLabel.size };
+  return {
+    action: 'inserted',
+    reason:
+      entries.length > shown.length
+        ? `table shows the first ${shown.length} of ${entries.length} succeeded runs`
+        : null,
+    columns,
+    rowCount: shown.length,
+  };
 }
 
 /**
@@ -318,6 +350,25 @@ export async function placeVerifiedFigures(root: string): Promise<PlacementResul
       });
       continue;
     }
+    let size: number;
+    try {
+      size = (await stat(candidate.absPath)).size;
+    } catch {
+      size = 0;
+    }
+    if (size === 0) {
+      // Existence is checked BEFORE the format gate: telling the user to install
+      // a converter for a file that is not there sends them to fix the wrong
+      // thing, and the record (not the disk) is what is stale.
+      results.push({
+        id: candidate.id,
+        includePath,
+        caption: candidate.captionHint,
+        action: 'skipped',
+        reason: 'a record vouches for this figure but the file is gone or empty',
+      });
+      continue;
+    }
     const extension = (includePath.match(/\.[a-z]+$/i)?.[0] ?? '').toLowerCase();
     if (!INCLUDABLE.has(extension)) {
       // graphicx includes PDF/PNG/JPG under pdflatex and xelatex; SVG needs a
@@ -332,22 +383,6 @@ export async function placeVerifiedFigures(root: string): Promise<PlacementResul
         reason:
           `${extension || 'no extension'} cannot be included by pdflatex/xelatex graphicx — ` +
           'convert it to PDF with Inkscape or rsvg-convert, or export the figure as PDF/PNG',
-      });
-      continue;
-    }
-    let size: number;
-    try {
-      size = (await stat(candidate.absPath)).size;
-    } catch {
-      size = 0;
-    }
-    if (size === 0) {
-      results.push({
-        id: candidate.id,
-        includePath,
-        caption: candidate.captionHint,
-        action: 'skipped',
-        reason: 'a record vouches for this figure but the file is gone or empty',
       });
       continue;
     }
