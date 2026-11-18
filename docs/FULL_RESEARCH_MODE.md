@@ -81,13 +81,20 @@ ideaseek full fairness --idea <idea-id>
 ideaseek full fairness --idea <idea-id> --confirm
 ideaseek full plan --idea <idea-id>
 ideaseek full approve --idea <idea-id> --confirm
-ideaseek full data discover --idea <idea-id>
-ideaseek full data download --candidate <dataset-id> --confirm
-ideaseek full run --idea <idea-id> --detach
-ideaseek full attach --run <full-run-id>
-ideaseek full paper --run <full-run-id>
-ideaseek full audit --run <full-run-id>
-ideaseek paper export --run <full-run-id> --format overleaf --out paper.zip
+ideaseek full run --idea <idea-id> --confirm
+```
+
+以下四行此前写成了"命令清单"，但 `ideaseek full --help` 只登记 fairness/plan/approve/run，
+照抄会撞到 `unknown command`，所以按现状标注（2026-11-18 实测）：
+
+```bash
+# 未实现（能力由这些现有命令承担）：
+ideaseek full data discover --idea <idea-id>   # → ideaseek datasets discover / --acquire
+ideaseek full data download --candidate <id> --confirm
+ideaseek full attach --run <full-run-id>       # → ideaseek attach / ideaseek resume / ideaseek monitor
+ideaseek full paper --run <full-run-id>        # → ideaseek paper plan|write|compile
+ideaseek full audit --run <full-run-id>        # → ideaseek idea result-to-claim / idea claim-audit
+ideaseek paper export --run <id> --format overleaf --out paper.zip  # → ideaseek paper export-overleaf
 ```
 
 用户可以暂停下载、训练、绘图或论文生成；已完成 artifact 保留。最终交付包括论文草稿、图表源数据、代码 commit、环境锁文件、数据来源/许可证、全量日志、审计报告和未解决风险。

@@ -1248,9 +1248,10 @@ describe('full-run execution machinery (genuine computation, temporary project)'
    * `{"status":"failed","metrics":[]}` in the unified registry, and a
    * `full-run-report` artifact whose items read `skipped, skipped`.
    *
-   * Why it matters: the report is what `full paper`/`full audit` and the
-   * researcher read as "the required methods ran". A failed required comparison
-   * turning the full run green is the fake-green class this platform already
+   * Why it matters: the report is what `idea result-to-claim`, `paper results`
+   * and the researcher read as "the required methods ran". A failed required
+   * comparison turning the full run green is the fake-green class this platform
+   * already
    * bans at every other door (idea check's synthetic smoke, reproduce's
    * self-declared skip, the analysis unit guard).
    */
@@ -1324,9 +1325,9 @@ describe('full-run execution machinery (genuine computation, temporary project)'
     expect(task.error?.message ?? '').toContain('full-run item');
 
     // The failed method must stay recorded as failed, and no full-run report
-    // may claim the list was executed: `full paper`/`full audit` read that
-    // artifact, and a report of "2 skipped" over a failed required comparison
-    // is a fabricated completion.
+    // may claim the list was executed: `idea result-to-claim` and `paper
+    // results` read that artifact, and a report of "2 skipped" over a failed
+    // required comparison is a fabricated completion.
     const failedDoc = await showExperiment(dir, `full-${BASELINE}`);
     expect(failedDoc.status).toBe('failed');
     expect((await fullRunReports(dir)).length).toBe(0);
