@@ -78,7 +78,7 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
   let project: string;
 
   /** create → IMPLEMENTING → scaffold → check (→ SMOKE_TESTED). */
-  async function makeReady(id: string): Promise<void> {
+  async function makeReady(id: string, smokeSleepMs = 0): Promise<void> {
     const cardPath = join(project, `${id}.json`);
     await writeFile(cardPath, JSON.stringify(makeCard(id)), 'utf8');
     expect((await runCli(project, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
@@ -87,6 +87,18 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
     // The scaffold's smoke declares itself synthetic, which `idea check`
     // now refuses; a fixture that needs a passed check must compute.
     await implementIdeaSmoke(project, id);
+    if (smokeSleepMs > 0) {
+      // The delay goes in BEFORE the check: the ladder binds the report to the
+      // source hash, so editing the entry afterwards would (rightly) invalidate
+      // the verification rather than just slow the run down.
+      const path = join(project, 'ideas', id, 'src', 'smoke.py');
+      const body = await readFile(path, 'utf8');
+      await writeFile(
+        path,
+        body.replace('import json', `import json\nimport time\n\ntime.sleep(${smokeSleepMs / 1000})`),
+        'utf8',
+      );
+    }
     const check = await runCli(project, ['idea', 'check', id, '--json']);
     expect(check.code, check.stdout + check.stderr).toBe(0);
   }
@@ -224,4 +236,51 @@ describe('ideaseek idea run-ready (multi-idea parallel)', () => {
     const betaStatus = await runCli(project, ['idea', 'show', 'beta-idea', '--json']);
     expect((JSON.parse(betaStatus.stdout) as { status: string }).status).toBe('SMOKE_TESTED');
   }, 180_000);
+
+  /**
+   * "Parallel" has to be measured, not asserted by the admission list.
+   *
+   * The other tests in this file prove WHO was admitted and WHAT was queued,
+   * which a `for` loop satisfies exactly as well as `Promise.all` — so the
+   * capability this file is named for had no test that could fail if the runner
+   * serialized. Each entry now sleeps, and the two recorded intervals must
+   * actually overlap. Same "configured, green, inert" shape as the fairness,
+   * duplicate-control and vendor-integrity cases, found by asking which claim
+   * would still pass if the feature were removed.
+   */
+  it('records runs whose time windows genuinely overlap', async () => {
+    const sleepMs = 1_500;
+    await makeReady('alpha-idea', sleepMs);
+    await makeReady('beta-idea', sleepMs);
+
+    const dispatchStart = Date.now();
+    const run = await runCli(project, ['idea', 'run-ready', '--json']);
+    const dispatchMs = Date.now() - dispatchStart;
+    expect(run.code, run.stdout + run.stderr).toBe(0);
+
+    const windows: { ideaId: string; start: number; finish: number }[] = [];
+    for (const id of ['alpha-idea', 'beta-idea']) {
+      const artifact = JSON.parse(
+        await readFile(
+          join(project, 'ideas', id, 'experiments', `idea-${id}-v1.json`),
+          'utf8',
+        ),
+      ) as { result?: { startedAt?: number; finishedAt?: number } };
+      expect(artifact.result?.startedAt, id).toBeTypeOf('number');
+      expect(artifact.result?.finishedAt, id).toBeTypeOf('number');
+      windows.push({
+        ideaId: id,
+        start: artifact.result!.startedAt!,
+        finish: artifact.result!.finishedAt!,
+      });
+    }
+
+    const overlapMs =
+      Math.min(windows[0]!.finish, windows[1]!.finish) -
+      Math.max(windows[0]!.start, windows[1]!.start);
+    // Most of a 1.5s window must be shared; serial execution gives a negative.
+    expect(overlapMs, `windows ${JSON.stringify(windows)}`).toBeGreaterThan(sleepMs / 3);
+    const totalWork = windows.reduce((sum, entry) => sum + (entry.finish - entry.start), 0);
+    expect(dispatchMs, `dispatch ${dispatchMs}ms vs work ${totalWork}ms`).toBeLessThan(totalWork);
+  }, 240_000);
 });
