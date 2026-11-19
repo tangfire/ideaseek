@@ -366,10 +366,7 @@ export function validateRunResult(value: unknown): SpecValidation {
  * Without this, a model can attach metrics it never declared, or a fabricated
  * snapshot id, and the structural validator passes because the shape is valid.
  */
-export function validateResultAgainstSpec(
-  spec: ExperimentSpec,
-  result: RunResult,
-): SpecValidation {
+export function validateResultAgainstSpec(spec: ExperimentSpec, result: RunResult): SpecValidation {
   const errors: string[] = [];
 
   // Metric names in the result must be a subset of the spec's declared metrics.
@@ -423,4 +420,26 @@ export function computeSpecHash(spec: ExperimentSpec): ContentHash {
 /** Maps a validated result status onto the experiment registry status. */
 export function experimentStatusForResult(result: RunResult): ExperimentStatus {
   return result.status;
+}
+
+/**
+ * The scale a recorded spec ran at. Registry idea specs carry it only in
+ * environment.notes (`scale:smoke`), while plan-shaped specs may carry it
+ * top-level — reading just one of the two silently loses the scale (an empty
+ * leaderboard scale column, a reproduce run that cannot pick its rebuild).
+ * Accepts `unknown` environments because callers hold unvalidated registry
+ * records as well as typed specs.
+ */
+export function specScaleOf(spec: { scale?: unknown; environment?: unknown }): string | null {
+  if (typeof spec.scale === 'string' && spec.scale) return spec.scale;
+  const env = spec.environment;
+  if (env && typeof env === 'object' && Array.isArray((env as { notes?: unknown }).notes)) {
+    for (const note of (env as { notes: unknown[] }).notes) {
+      if (typeof note === 'string' && note.startsWith('scale:')) {
+        const value = note.slice('scale:'.length);
+        if (value) return value;
+      }
+    }
+  }
+  return null;
 }

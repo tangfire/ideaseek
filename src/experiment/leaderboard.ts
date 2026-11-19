@@ -1,4 +1,5 @@
 import { IdeaseekError } from '../core/errors.js';
+import { specScaleOf } from './spec.js';
 import type { ExperimentDoc } from '../workflow/db.js';
 
 /**
@@ -135,10 +136,6 @@ function exclusionOf(doc: ExperimentDoc, result: ResultLike | null): string {
   return status; // partial | invalid
 }
 
-function readScale(spec: Record<string, unknown>): string | null {
-  return typeof spec.scale === 'string' && spec.scale ? spec.scale : null;
-}
-
 /**
  * Builds the leaderboard from registry docs. `metric` is the optional
  * `--metric` value; when absent the first metric common to every succeeded
@@ -157,7 +154,7 @@ export function buildLeaderboard(docs: ExperimentDoc[], metric?: string): Leader
       ideaId: idea.ideaId,
       specId: doc.specId,
       version: doc.version,
-      scale: readScale(doc.spec),
+      scale: specScaleOf(doc.spec),
       updatedAt: doc.updatedAt,
     };
     const result = doc.result as ResultLike | null;

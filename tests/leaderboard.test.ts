@@ -225,6 +225,21 @@ describe('buildLeaderboard', () => {
     );
   });
 
+  it('reads the scale from environment.notes where registry idea specs carry it', () => {
+    // Registry idea specs never carry a top-level scale — buildIdeaSpec writes
+    // `scale:<x>` into environment.notes. Reading only the top-level field
+    // silently emptied the scale column for every real row.
+    const doc = ideaDoc('noted-idea');
+    doc.spec = {
+      idea: { ideaId: 'noted-idea', version: 1 },
+      metrics: [{ name: 'acc', direction: 'higher' }],
+      environment: { python: 'v22.0.0', notes: ['scale:quick', 'idea-v:1'] },
+    };
+    const board = buildLeaderboard([doc]);
+    expect(board.rows[0]!.scale).toBe('quick');
+    expect(board.scales).toEqual(['quick']);
+  });
+
   it('an empty project formats as a friendly no-op', () => {
     const board = buildLeaderboard([]);
     expect(board.mode).toBe('table');
