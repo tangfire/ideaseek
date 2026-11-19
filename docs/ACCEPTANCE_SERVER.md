@@ -148,6 +148,6 @@ node dist/cli.js doctor    # 记录 ok/warn/error；credentials 行只记 presen
 2. ≤10 行总结：PASS/FAIL/SKIP 各几项、最值得修的 1–3 个问题、"是否可上线"的机器侧意见（如实，不粉饰）。
 3. 按第 4 节提交并推送（证据 + 期间产生的所有修复）。
 
-## 冷启动说明（供上游/本地 agent 接续）
+## 冷启动说明（供本地/上游 agent 接续）
 
-服务器实机跑完后，本地 agent 的接续动作：`git pull gitee main` → 读 `docs/ACCEPTANCE_EVIDENCE.md` → 审查服务器 agent 的修复 commit（测试是否真加、目标测试是否真过）→ 有问题则修回 → 把 gitee 同步到 github（`git push github main` 或 origin）→ 需要时更新 `docs/PROGRESS.md` 与本文件的实施状态。
+**分工（负责人口径，2026-11-19 定案）**：验收的判断、修复、优化、推进**全部归属服务器 agent**；本地 agent 的职责是 **gitee → github 同步**——`git pull gitee main` → 确认远端历史线性 → `git push github main`。同步时顺带扫一眼推送内容：仅当发现明显破坏铁律/门禁的改动（删测试换绿、提交了凭据）时向用户示警，**不代为实现修改**（除非用户明确要求）。证据与状态的权威文件是 `docs/ACCEPTANCE_EVIDENCE.md` 与 `docs/PROGRESS.md`，均随服务器推送而来，同步即得。
