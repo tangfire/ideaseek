@@ -162,6 +162,8 @@ ideaseek archive/export → 另一台 Linux → restore → doctor → continue
 
 ## 实施状态（2026-11-13，append-only）
 
+> 服务器实机执行计划见 [ACCEPTANCE_SERVER.md](ACCEPTANCE_SERVER.md)（gitee 为协作主干：服务器 agent 自测/有界自修/推送，证据 append-only 于 `docs/ACCEPTANCE_EVIDENCE.md`，本地 agent 拉取审查后同步 github）。
+
 自动化验收：`tests/journey-acceptance.test.ts`（4 条）+ 既有套件覆盖——
 
 - **Journey A ✅（自动）**：`--version` 对齐 package 版本；`doctor` 空目录人话提示 init、零 secret；`init` 幂等（already initialized）；`start` 空项目给出最小输入与可复制 `next:`。当前安装通道为 source build；最终可复现发行包的分发渠道（npm、私有 Git 或实验室镜像）尚未决定，不把公开 npm 发布作为产品前置。
