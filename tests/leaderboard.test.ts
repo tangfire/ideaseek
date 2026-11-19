@@ -240,6 +240,23 @@ describe('buildLeaderboard', () => {
     expect(board.scales).toEqual(['quick']);
   });
 
+  it('labels ablation rows by their spec slug, not the parent ideaId', () => {
+    // Observed on real FDG data: six ablation specs share the parent ideaId,
+    // so ideaId-only rows looked like six copies of the same idea.
+    const board = buildLeaderboard([
+      ideaDoc('probe-idea', { metrics: [{ name: 'acc', value: 0.5 }] }),
+      ideaDoc('probe-idea', {
+        specId: 'idea-probe-idea-abl-abl-k-number',
+        metrics: [{ name: 'acc', value: 0.4 }],
+      }),
+    ]);
+    const lines = formatLeaderboard(board).split('\n');
+    const ablationLine = lines.find((line) => line.includes('abl-abl-k-number'));
+    expect(ablationLine).toBeDefined();
+    expect(ablationLine).not.toMatch(/\. probe-idea\s/); // not the bare parent id
+    expect(lines.some((line) => /\. probe-idea\s/.test(line))).toBe(true); // main row keeps it
+  });
+
   it('an empty project formats as a friendly no-op', () => {
     const board = buildLeaderboard([]);
     expect(board.mode).toBe('table');

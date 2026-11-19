@@ -294,6 +294,19 @@ export function buildLeaderboard(docs: ExperimentDoc[], metric?: string): Leader
 }
 
 /** Human rendering (house style: aligned, two-space indented, honest notes). */
+
+/**
+ * Ablation/override specs share the parent ideaId, so printing ideaId alone
+ * made six ablation rows look like six copies of the same idea (observed on
+ * real FDG data). Non-main specs show their own spec slug instead.
+ */
+function labelOf(row: { ideaId: string; specId: string }): string {
+  const main = `idea-${row.ideaId}`;
+  if (row.specId === main) return row.ideaId;
+  const prefix = `${main}-`;
+  return row.specId.startsWith(prefix) ? row.specId.slice(prefix.length) : row.specId;
+}
+
 export function formatLeaderboard(board: Leaderboard): string {
   const lines: string[] = [];
   if (board.rows.length === 0) {
@@ -308,7 +321,7 @@ export function formatLeaderboard(board: Leaderboard): string {
       lines.push(`leaderboard by ${board.metric}${commonNote}:`);
       lines.push('  no result can be ranked by this metric:');
       for (const entry of board.notRanked) {
-        if (entry.status === 'succeeded') lines.push(`  ${entry.ideaId}: ${entry.reason}`);
+        if (entry.status === 'succeeded') lines.push(`  ${labelOf(entry)}: ${entry.reason}`);
       }
     } else {
       const arrow = board.direction === 'lower' ? 'lower is better' : 'higher is better';
@@ -320,7 +333,7 @@ export function formatLeaderboard(board: Leaderboard): string {
           (entry.n !== undefined ? ` n=${entry.n}` : '');
         const scale = entry.scale ? ` ${entry.scale}` : '';
         lines.push(
-          `  ${String(entry.rank).padStart(2)}. ${entry.ideaId.padEnd(24)} ${value.padStart(18)}  v${entry.version}${scale}`,
+          `  ${String(entry.rank).padStart(2)}. ${labelOf(entry).padEnd(24)} ${value.padStart(18)}  v${entry.version}${scale}`,
         );
       }
       if (board.scales.length > 1) {
@@ -336,7 +349,9 @@ export function formatLeaderboard(board: Leaderboard): string {
     for (const row of board.rows) {
       const scale = row.scale ? ` ${row.scale}` : '';
       const values = row.recorded.map((m) => `${m.name}=${m.value.toFixed(4)}`).join(' ');
-      lines.push(`  ${row.ideaId.padEnd(24)} v${row.version}${scale}  ${values || '(no metrics)'}`);
+      lines.push(
+        `  ${labelOf(row).padEnd(24)} v${row.version}${scale}  ${values || '(no metrics)'}`,
+      );
     }
     if (board.availableMetrics.length > 0) {
       lines.push(
