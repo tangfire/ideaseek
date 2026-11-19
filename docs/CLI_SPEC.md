@@ -20,6 +20,7 @@ ideaseek plan --question "..."
 ideaseek projects
 ideaseek open <project-path>
 ideaseek scan
+ideaseek literature watch [--force] [--skip-model]
 ideaseek organize [--apply]
 ideaseek intake
 ideaseek config explain
@@ -63,7 +64,7 @@ ideaseek paper export --run <id> --format overleaf --out <path>
 ideaseek report [--run <id>]
 ```
 
-`init` 创建目录和模板，不覆盖已有文件；`start` 是小白用户的一键入口，组合轻量检测、扫描、协议草案和受限运行；`setup` 优先自动检测并只询问无法安全推断的配置；`doctor` 只做检查；`scan` 递归发现用户随手放入的论文、代码、数据和压缩包；`organize` 预览或应用对象归类，但不移动/覆盖原始文件；`config explain` 显示生效配置来源；`confirm protocol` 确认平台提出的实验协议；`next` 只给建议，不启动高成本工作；`run` 创建或恢复工作流；`attach/watch` 订阅实时事件；`pause/resume/cancel` 是可审计的控制操作。
+`init` 创建目录和模板，不覆盖已有文件；`start` 是小白用户的一键入口，组合轻量检测、扫描、协议草案和受限运行；`setup` 优先自动检测并只询问无法安全推断的配置；`doctor` 只做检查；`scan` 递归发现用户随手放入的论文、代码、数据和压缩包；`literature watch` 是可入 cron 的连续文献监测——先判断有无变化（输入漂移、未解析论文、输出缺失），有变化才增量刷新 scan→ingest→data→extract/synthesize→wiki→assessment，无变化秒退（JSON `changed`/`reason` 说明原因；退出码 0=当前或已刷新，1=步骤失败，2=评估存在阻塞缺口，`--skip-model`/无凭据时模型步骤跳过并记入 `deferred`）；`organize` 预览或应用对象归类，但不移动/覆盖原始文件；`config explain` 显示生效配置来源；`confirm protocol` 确认平台提出的实验协议；`next` 只给建议，不启动高成本工作；`run` 创建或恢复工作流；`attach/watch` 订阅实时事件；`pause/resume/cancel` 是可审计的控制操作。
 
 交互提示符、启动 banner、事件摘要、审批块和 plain/JSON 显示模式遵循 [TERMINAL_UX.md](TERMINAL_UX.md)。CLI UI 只显示状态和动作摘要，不显示模型隐藏推理。`research` 是默认模式；`agent` 复用 DSH 做受限项目代码/日志/测试协助。
 

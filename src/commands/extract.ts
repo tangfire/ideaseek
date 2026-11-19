@@ -36,7 +36,7 @@ export function selectPendingExtracts(
   return pending.sort();
 }
 
-async function committedSourcesOf(
+export async function committedSourcesOf(
   runtime: ProjectRuntime,
   kind: 'parsed-paper' | 'papercard',
 ): Promise<Set<string>> {
