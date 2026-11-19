@@ -16,6 +16,7 @@ import {
   recordDecision,
 } from '../workflow/autonomy.js';
 import type { ExperimentDoc } from '../workflow/db.js';
+import { buildLeaderboard, formatLeaderboard } from '../experiment/leaderboard.js';
 import { ensureActiveRun } from './ingest.js';
 import {
   action,
@@ -262,6 +263,36 @@ export function registerExperimentCommand(program: Command): void {
               `  ${doc.specId}  v${doc.version}  ${doc.status.padEnd(10)}  ${summary}\n`,
             );
           }
+          return 0;
+        } finally {
+          await runtime.close();
+        }
+      }),
+    );
+
+  experiment
+    .command('leaderboard')
+    .description('rank idea-bound experiment results by a metric (cross-idea leaderboard)')
+    .option(
+      '--metric <name>',
+      'metric to rank by (default: first metric common to all succeeded results)',
+    )
+    .option('--json', 'machine-readable output')
+    .action(
+      action(async (opts: { metric?: string; json?: boolean }) => {
+        const root = await openRoot();
+        const runtime = await openRuntime(root);
+        try {
+          const docs = await runtime.db.listExperiments();
+          // Validation (unknown metric, conflicting directions) throws
+          // INVALID_ARGUMENT from buildLeaderboard — a typo must be louder
+          // than an empty board.
+          const board = buildLeaderboard(docs, opts.metric);
+          if (opts.json) {
+            process.stdout.write(jsonLine(board));
+            return 0;
+          }
+          process.stdout.write(formatLeaderboard(board));
           return 0;
         } finally {
           await runtime.close();

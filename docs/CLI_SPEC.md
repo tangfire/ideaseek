@@ -57,6 +57,7 @@ ideaseek datasets acquire <candidate-id> [--max-gib 50] [--timeout-ms 120000] [-
 ideaseek datasets link <candidate-id> --path <file>
 ideaseek experiment promote --idea <id> --to standard
 ideaseek experiment handoff --idea <id>
+ideaseek experiment leaderboard [--metric <name>]
 ideaseek paper export --run <id> --format overleaf --out <path>
 ideaseek report [--run <id>]
 ```
