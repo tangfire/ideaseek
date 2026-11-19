@@ -128,6 +128,16 @@ node dist/cli.js doctor    # 记录 ok/warn/error；credentials 行只记 presen
 
 `full plan --idea <最终idea>` → `full fairness` → `full approve --confirm` → `full run`。CPU 上可能数小时：允许分步；预计超时则如实标 `PARTIAL（挪至 GPU 阶段）` 并附前置证据。断言：全部 required comparison 执行、失败不被静默跳过、`paper results` 可导出复核。
 
+### STAGE 13 — 模式与指令面（Journey E 补充）
+
+在 `<workspace>/journey-a`（已初始化项目）上，覆盖三档模式与常用指令：
+
+1. `ideaseek mode` → 显示当前档位（默认 research）与项目/权限信息
+2. **切换不清空上下文**（MODES.md 契约）：`ideaseek mode analysis` → `ideaseek status` 的 run 数与切换前一致（不建第二个 run、不重复成功任务）→ `ideaseek prepare --skip-model` 在 analysis 档可跑（只读准备链）→ `ideaseek mode research` 切回 → `status`/`next` 输出与切换前语义一致
+3. **三态一致**：任选 `status` 与 `next`，各跑 human / `--plain` / `--json` 三态——JSON 可解析、三种态结论一致、对 `sk-`/`ghp_`/`Bearer` 零命中
+4. **TUI 指令面**：`ideaseek interactive`（或 TUI）里 `/help` 分组完整，`/status`、`/next`、`/papers`、`/ideas` 各 relay 一次且有真实输出
+5. **coding 档**：`ideaseek mode coding` 切换后 `mode` 显示正确、`/agent` 入口存在即可——**不强制真跑 coding turn**（成本与审批面另行验收，如实记 SKIP 范围）
+
 ## 最终产出
 
 1. `docs/ACCEPTANCE_EVIDENCE.md` 末尾追加汇总表：
