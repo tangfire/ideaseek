@@ -24,6 +24,11 @@ case "$OS" in
   MINGW*|MSYS*|CYGWIN*) IS_WSL=false ;;
 esac
 
+# npm registry: default to the China mirror (product docs are zh-first, and
+# the mirror is a faithful integrity-preserving mirror — the lockfile still
+# pins hashes). International or locked-down networks override it.
+IDEASEEK_NPM_REGISTRY="${IDEASEEK_NPM_REGISTRY:-https://registry.npmmirror.com}"
+
 step "Checking required tools"
 
 # Git
@@ -35,18 +40,82 @@ else
   exit 1
 fi
 
-# Node.js
-if command -v node >/dev/null 2>&1; then
-  NODE_VER=$(node --version)
-  info "node $NODE_VER"
-  # Check minimum version (24.9+)
-  NODE_MAJOR=$(echo "$NODE_VER" | cut -d. -f1 | tr -d 'v')
-  if [ "$NODE_MAJOR" -lt 24 ]; then
-    warn "node $NODE_VER < 24.9 required — upgrade: https://nodejs.org/"
-  fi
+# Node.js — a bare host must not be a dead end: bootstrap >= 24.9 when
+# missing or too old (Linux/macOS; the tarball layout matches nodejs.org).
+NODE_REQUIRED_MAJOR=24
+NODE_REQUIRED_MINOR=9
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local ver major rest minor
+  ver=$(node --version 2>/dev/null | tr -d 'v') || return 1
+  major=${ver%%.*}
+  rest=${ver#*.}
+  minor=${rest%%.*}
+  case "${major}${minor}" in *[!0-9]* | '') return 1 ;; esac
+  [ "$major" -gt "$NODE_REQUIRED_MAJOR" ] && return 0
+  [ "$major" -eq "$NODE_REQUIRED_MAJOR" ] && [ "$minor" -ge "$NODE_REQUIRED_MINOR" ]
+}
+
+if ! node_ok; then
+  case "$OS" in
+    Linux | Darwin)
+      step "Bootstrapping Node.js >= 24.9"
+      NARCH=$(uname -m)
+      case "$NARCH" in
+        x86_64) NARCH=x64 ;;
+        aarch64 | arm64) NARCH=arm64 ;;
+        *) NARCH="" ;;
+      esac
+      case "$OS" in
+        Linux) NOS=linux ;;
+        Darwin) NOS=darwin ;;
+      esac
+      if [ -n "$NARCH" ] && command -v curl >/dev/null 2>&1; then
+        NODE_V=v24.19.0
+        NODE_PREFIX=/usr/local/lib/node-ideaseek
+        NODE_LINK=/usr/local/bin
+        if [ "$(id -u)" -ne 0 ] && [ ! -w /usr/local ]; then
+          NODE_PREFIX="$HOME/.local/lib/node-ideaseek"
+          NODE_LINK="$HOME/.local/bin"
+          mkdir -p "$NODE_LINK"
+        fi
+        NODE_TAR="/tmp/node-${NODE_V}-${NOS}-${NARCH}.tar.xz"
+        if curl -fsSL --max-time 300 \
+          "https://registry.npmmirror.com/-/binary/node/${NODE_V}/node-${NODE_V}-${NOS}-${NARCH}.tar.xz" \
+          -o "$NODE_TAR" 2>/dev/null ||
+          curl -fsSL --max-time 300 \
+            "https://nodejs.org/dist/${NODE_V}/node-${NODE_V}-${NOS}-${NARCH}.tar.xz" \
+            -o "$NODE_TAR" 2>/dev/null; then
+          mkdir -p "$NODE_PREFIX"
+          tar -xJf "$NODE_TAR" -C "$NODE_PREFIX" --strip-components=1
+          rm -f "$NODE_TAR"
+          ln -sf "$NODE_PREFIX/bin/node" "$NODE_LINK/node"
+          ln -sf "$NODE_PREFIX/bin/npm" "$NODE_LINK/npm"
+          ln -sf "$NODE_PREFIX/bin/npx" "$NODE_LINK/npx"
+          export PATH="$NODE_LINK:$PATH"
+          info "node $(node --version) → $NODE_LINK/node"
+        else
+          fail "node download failed (npmmirror + nodejs.org both unreachable)"
+          exit 1
+        fi
+      else
+        fail "node >= 24.9 required and cannot auto-install on this platform"
+        echo "  Install: https://nodejs.org/ (LTS recommended)"
+        exit 1
+      fi
+      ;;
+    *)
+      fail "node not found"
+      echo "  Install: https://nodejs.org/ (LTS recommended)"
+      exit 1
+      ;;
+  esac
+fi
+
+if node_ok; then
+  info "node $(node --version)"
 else
-  fail "node not found"
-  echo "  Install: https://nodejs.org/ (LTS recommended)"
+  fail "node $(node --version 2>/dev/null || echo missing) < 24.9 required — upgrade: https://nodejs.org/"
   exit 1
 fi
 
@@ -55,7 +124,7 @@ if command -v pnpm >/dev/null 2>&1; then
   info "pnpm $(pnpm --version)"
 else
   warn "pnpm not found — installing..."
-  npm install -g pnpm
+  npm install -g pnpm --registry="$IDEASEEK_NPM_REGISTRY"
   info "pnpm installed"
 fi
 
@@ -102,7 +171,8 @@ else
 fi
 
 step "Installing IdeaSeek dependencies"
-pnpm install
+info "npm registry: $IDEASEEK_NPM_REGISTRY (override: IDEASEEK_NPM_REGISTRY=...)"
+pnpm install --registry="$IDEASEEK_NPM_REGISTRY"
 
 step "Building IdeaSeek"
 pnpm build

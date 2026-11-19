@@ -18,13 +18,15 @@ IdeaSeek 是一个**多 Agent 科研工作流平台**。你提供研究材料，
 
 ## 安装
 
-前置：[Node.js](https://nodejs.org/) ≥ 24.9 · [pnpm](https://pnpm.io/) · Python 3
+一条命令（缺 Node ≥24.9 或 pnpm 会自动补齐；npm 镜像默认走国内源，`IDEASEEK_NPM_REGISTRY` 可覆盖；Python 3 为实验所需，缺失仅告警）：
 
 ```bash
 git clone <repo> ideaseek && cd ideaseek
-node scripts/install.mjs     # 自动安装依赖、构建、配置全局命令
+bash setup.sh                # 自举 Node/pnpm → 依赖 → 构建 → 全局 ideaseek
 ideaseek doctor              # 验证安装
 ```
+
+已有 Node ≥24.9 的环境也可用安装器：`node scripts/install.mjs`（见 [docs/PACKAGING.md](docs/PACKAGING.md)）。
 
 ## 5 分钟上手
 
