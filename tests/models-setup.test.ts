@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -9,10 +9,13 @@ import { CLI_BIN } from './helpers.js';
 
 /**
  * `/models setup` + `models test` (docs/CLI_SPEC 模型配置, rule: hidden
- * input, DSH credential store wiring, connection test, redacted recovery,
- * NEVER store the key value). DSH_HOME and IDEASEEK_USER_CONFIG are
- * redirected to temp dirs — the real ~/.dsh and ~/.ideaseek are never
- * touched. A local HTTP server stands in for the provider.
+ * input, connection test, redacted recovery. Owner ruling 2026-11-19: the
+ * journey is "/models setup once, works everywhere" — a supplied value is
+ * saved to the user credentials file (0600, beside the user config) and
+ * loaded into env at CLI startup; config/git/logs/events stay value-free).
+ * DSH_HOME and IDEASEEK_USER_CONFIG are redirected to temp dirs — the real
+ * ~/.dsh and ~/.ideaseek are never touched. A local HTTP server stands in
+ * for the provider.
  */
 
 function runCli(
@@ -85,7 +88,7 @@ async function startProviderServer(): Promise<{
 }
 
 describe('ideaseek models setup (credential wiring without secret storage)', () => {
-  it('writes apiKeyEnv NAME to DSH settings and credentialRef to user config — never the value', async () => {
+  it('wires NAME/ref into config and saves the value only to the credentials file', async () => {
     const h = await makeHarness();
     const provider = await startProviderServer();
 
@@ -111,6 +114,7 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
       ok: boolean;
       apiKeyEnv: string;
       credentialRef: string;
+      credentialsPath: string | null;
       tested: { ok: boolean; detail: string };
       wrote: string[];
     };
@@ -118,11 +122,12 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(payload.apiKeyEnv).toBe('MY_DEEPSEEK_KEY');
     expect(payload.credentialRef).toBe('env:MY_DEEPSEEK_KEY');
     expect(payload.tested.ok).toBe(true);
+    expect(payload.credentialsPath).toBe(join(dirname(h.userConfig), 'credentials.env'));
 
     // The provider saw a Bearer token (the key was used in-memory)…
     expect(provider.authHeaders[0]).toMatch(/^Bearer sk-test-value-123$/);
 
-    // …but NO file IdeaSeek controls contains the value.
+    // …but NO config file IdeaSeek controls contains the value…
     const settings = await readFile(join(h.dshHome, 'settings.yaml'), 'utf8');
     const userCfg = await readFile(h.userConfig, 'utf8');
     expect(settings).not.toContain('sk-test-value-123');
@@ -132,17 +137,24 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(settings).toContain('apiKeyEnv: MY_DEEPSEEK_KEY');
     expect(userCfg).toContain('credentialRef: env:MY_DEEPSEEK_KEY');
     expect(userCfg).toContain('provider: deepseek');
+
+    // …and the value's single on-disk home is the 0600 credentials file.
+    const credsPath = join(dirname(h.userConfig), 'credentials.env');
+    expect(await readFile(credsPath, 'utf8')).toContain('MY_DEEPSEEK_KEY=sk-test-value-123');
+    if (process.platform !== 'win32') {
+      const { stat } = await import('node:fs/promises');
+      expect((await stat(credsPath)).mode & 0o777).toBe(0o600);
+    }
   }, 60_000);
 
-  it('a test-only hidden key points at the export step instead of implying storage', async () => {
-    // The old next-line said "key lives in … credential store" even when the
-    // value existed nowhere persistent — new users then skipped the env
-    // export and hit "no key" in the next shell (observed in the server
-    // acceptance run). The message must teach the persist step instead.
+  it('setup saves the key once and a fresh process picks it up without any export', async () => {
+    // Owner ruling: the product journey is "/models setup, then it just
+    // works" — no manual export. The saved value must be visible to a
+    // LATER process purely through the 0600 credentials file.
     const h = await makeHarness();
     const provider = await startProviderServer();
 
-    const result = await runCli(
+    const setup = await runCli(
       [
         'models',
         'setup',
@@ -156,15 +168,27 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
         '--test',
       ],
       h.env,
-      'sk-test-value-123\n',
+      'sk-round-trip-key-98765\n',
     );
-    expect(result.code, result.stdout + result.stderr).toBe(0);
-    expect(result.stdout).toContain('used for the test only');
-    expect(result.stdout).toContain('export MY_DEEPSEEK_KEY=***');
-    expect(result.stdout).toContain('ideaseek models test');
-    expect(result.stdout).not.toContain('key lives in');
-    // …and the value still appears nowhere.
-    expect(result.stdout).not.toContain('sk-test-value-123');
+    expect(setup.code, setup.stdout + setup.stderr).toBe(0);
+    expect(setup.stdout).toContain('key saved to');
+    expect(setup.stdout).toContain('ideaseek models test');
+    expect(setup.stdout).not.toContain('key lives in');
+    expect(setup.stdout).not.toContain('sk-round-trip-key'); // value never printed
+
+    // Fresh process: env still has NO key — only the credentials file does.
+    const list = await runCli(['models', 'list', '--json'], h.env);
+    expect(list.code, list.stdout + list.stderr).toBe(0);
+    const payload = JSON.parse(list.stdout) as {
+      userConfig: { credentialPresence: string; credentialRef: string | null };
+    };
+    expect(payload.userConfig.credentialRef).toBe('env:MY_DEEPSEEK_KEY');
+    expect(payload.userConfig.credentialPresence).toBe('configured');
+
+    // …and the wiring is real: connection test against the mock provider.
+    const retest = await runCli(['models', 'test', '--json'], h.env);
+    expect(retest.code, retest.stdout + retest.stderr).toBe(0);
+    expect(retest.stdout).not.toContain('sk-round-trip-key');
   }, 60_000);
 
   it('updates only apiKeyEnv on an existing provider and preserves other fields', async () => {

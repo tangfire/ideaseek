@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { IdeaseekError, exitCodeForError } from './core/errors.js';
-import { loadLocalEnv } from './core/env.js';
+import { loadLocalEnv, loadUserCredentials } from './core/env.js';
 import { registerBaselineCommand } from './commands/baseline.js';
 import { registerCapacityCommand } from './commands/capacity.js';
 import { registerComparisonCommand } from './commands/comparison.js';
@@ -428,6 +428,7 @@ function unknownRootCommand(argv: string[], program: Command): string | null {
 
 export async function runCli(argv: string[]): Promise<number> {
   loadLocalEnv(); // names-only, never overrides host env, never logs values
+  loadUserCredentials(); // /models setup's saved key — same contract, host env still wins
   const program = buildProgram();
   const extracted = await extractProjectOverride(argv);
   // The two prefixes are skipped only for the typo check: parseAsync expects

@@ -245,6 +245,7 @@ export function registerModelsCommand(program: Command): void {
             knownBaseUrl,
             normalizeSuppliedKey,
             resolveTestKey,
+            saveUserCredential,
             dshHome,
           } = await import('../models/setup.js');
           assertProviderId(opts.provider);
@@ -309,16 +310,16 @@ export function registerModelsCommand(program: Command): void {
               );
             }
             tested = await connectionTest(baseUrl, resolved.value);
-            // Drop the in-memory copy before any writes.
-            // Report where the key came from and how long it is before
-            // dropping the value: a 401 from a hidden paste is usually a
+            // Report where the key came from and how long it is before the
+            // value leaves memory: a 401 from a hidden paste is usually a
             // truncated or padded clipboard, and length is the only honest
-            // clue that costs no secret.
+            // clue that costs no secret. The drop itself happens right after
+            // the credentials-file save below — the only write that stores
+            // it; a failed test never reaches that write.
             const keyHint =
               supplied !== null
                 ? `key came from the hidden capture (${supplied.length} chars)`
                 : `key came from ${opts.apiKeyEnv} (${(process.env[opts.apiKeyEnv] ?? '').trim().length} chars)`;
-            supplied = null;
             if (!tested.ok) {
               if (opts.json) {
                 process.stdout.write(
@@ -336,7 +337,20 @@ export function registerModelsCommand(program: Command): void {
             }
           }
 
+          // Persist a supplied (hidden/stdin) value to the local credentials
+          // file — the product journey is "/models setup once, works
+          // everywhere" (owner ruling); host env still wins at load time.
+          // Only a passed test (or no test) reaches this write.
+          let credentials: { path: string; created: boolean } | null = null;
+          if (supplied !== null) {
+            credentials = await saveUserCredential(opts.apiKeyEnv, supplied);
+            supplied = null; // drop the in-memory copy right after the only write that stores it
+          }
+
           const wrote: string[] = [];
+          if (credentials) {
+            wrote.push(`credentials:${credentials.path} (${opts.apiKeyEnv} value, 0600)`);
+          }
           let dshWrite: { path: string; created: boolean } | null = null;
           if (opts.dsh !== false) {
             const result = await writeDshApiKeyEnv(opts.provider, opts.apiKeyEnv, {
@@ -359,6 +373,7 @@ export function registerModelsCommand(program: Command): void {
             provider: opts.provider,
             apiKeyEnv: opts.apiKeyEnv,
             credentialRef,
+            credentialsPath: credentials?.path ?? null,
             dshHome: dshHome(),
             dsh: dshWrite,
             tested,
@@ -380,28 +395,30 @@ export function registerModelsCommand(program: Command): void {
             process.stdout.write(`  connection: ${tested.detail}\n`);
           }
           process.stdout.write(`  wrote: ${wrote.join('; ')}\n`);
-          if ((process.env[opts.apiKeyEnv] ?? '').trim()) {
+          const envPresent = Boolean((process.env[opts.apiKeyEnv] ?? '').trim());
+          if (credentials) {
+            const precedence = envPresent
+              ? ` — host env ${opts.apiKeyEnv} is set and takes precedence`
+              : '';
+            process.stdout.write(
+              `next: ideaseek models test  (key saved to ${credentials.path}: every later ` +
+                `shell and agent process picks it up automatically${precedence})\n`,
+            );
+          } else if (envPresent) {
             process.stdout.write(
               `next: ideaseek models test  (key read from env ${opts.apiKeyEnv}; ` +
                 `IdeaSeek holds only that NAME)\n`,
             );
           } else {
-            // The hidden input was test-only: without an env/secret-manager
-            // value the NEXT shell has nothing to read. Saying "key lives in
-            // the credential store" here implied storage that never happened
-            // (user confusion observed in the server acceptance).
             process.stdout.write(
-              `note: the hidden key was used for the test only — per the no-store boundary ` +
-                `IdeaSeek keeps the NAME "${opts.apiKeyEnv}", not the value.\n`,
-            );
-            process.stdout.write(
-              `next: persist it in your shell config yourself, then re-test:\n` +
-                `  echo 'export ${opts.apiKeyEnv}=***' >> ~/.bashrc && source ~/.bashrc\n` +
-                `  ideaseek models test\n`,
+              `next: no key present — save one with the wizard: ` +
+                `ideaseek models setup --provider ${opts.provider} --prompt-key\n` +
+                `  (or export ${opts.apiKeyEnv} for automation/CI)\n`,
             );
           }
           process.stdout.write(
-            'boundary: IdeaSeek never writes the key value to config, git, prompts, events or logs\n',
+            'boundary: the key value lives only in the local credentials file (0600) or the ' +
+              'host environment — never in config, git, prompts, events or logs\n',
           );
           return 0;
         },

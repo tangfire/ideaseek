@@ -96,7 +96,7 @@ models:
 - 最近连接测试、额度/限速状态和成本累计；
 - 当前项目哪些角色使用该 route。
 
-API key 通过 DSH credential store、系统 secret manager 或允许的环境变量配置。配置向导已交付：`ideaseek models setup`——隐藏输入（`--prompt-key` TTY 或 `--api-key-stdin` 自动化，key 永不进 argv/配置/日志）、写入 DSH credential store 的 **`apiKeyEnv` 变量名**（pinned DSH 自身的凭据机制，IdeaSeek 从不落盘 key 值）、同步 user-config `credentialRef`（env:NAME）、可选 `--test` 最小连接测试（先测后写，失败零落盘），`ideaseek models test` 随时复测（presence + GET /models，输出永不含 key）：
+API key 通过本机凭据文件（`models setup` 保存）、系统 secret manager 或环境变量配置。配置向导已交付：`ideaseek models setup`——隐藏输入（`--prompt-key` TTY 或 `--api-key-stdin` 自动化，key 永不进 argv/配置/日志）、**值存入本机凭据文件 `~/.ideaseek/credentials.env`（0600、仓库外，CLI 启动时载入环境、host env 优先）**，DSH settings 写 **`apiKeyEnv` 变量名**（pinned DSH 自身的凭据机制，从环境读值）、同步 user-config `credentialRef`（env:NAME）、可选 `--test` 最小连接测试（先测后存，失败零落盘），`ideaseek models test` 随时复测（presence + GET /models，输出永不含 key）：
 
 ```text
 ideaseek models setup --api-key-env DEEPSEEK_API_KEY --prompt-key --test

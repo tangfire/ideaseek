@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { normalizeApiKey } from '../dsh/api-key.js';
 import { IdeaseekError } from '../core/errors.js';
 
@@ -8,12 +8,15 @@ import { IdeaseekError } from '../core/errors.js';
  * 设计目标): hidden key input, DSH credential wiring, minimal connection
  * test and redacted recovery.
  *
- * Secret boundary (hard rule): IdeaSeek NEVER writes a key VALUE to any
- * file it controls. The DSH provider config stores `apiKeyEnv` — the
- * NAME of an environment variable (the pinned DSH's own credential
- * mechanism); user config stores only `credentialRef` (env:NAME /
- * dsh:id). A supplied key lives in memory for the connection test and
- * is discarded. Nothing here logs, persists or echoes the value.
+ * Secret boundary (owner ruling, 2026-11-19 — the journey is "/models
+ * setup once, works everywhere"): a key VALUE lives in exactly one on-disk
+ * place — the user credentials file (`credentials.env` beside the user
+ * config, mode 0600, outside any repo, written only from hidden input) —
+ * or in the host environment / secret manager. Everything IdeaSeek holds
+ * as CONFIG stays value-free: DSH provider config stores `apiKeyEnv` (the
+ * NAME), user config stores only `credentialRef` (env:NAME / dsh:id).
+ * Nothing here logs or echoes the value; a failed connection test writes
+ * nothing at all.
  */
 
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -54,6 +57,49 @@ export function assertProviderId(provider: string): void {
       `--provider must be kebab-case (got "${provider.slice(0, 40)}")`,
     );
   }
+}
+
+/**
+ * Persists a validated key value to the user credentials file — the single
+ * on-disk home for secrets (see the boundary note above). Same-name lines
+ * are replaced, other lines survive, the file is created 0700/0600
+ * best-effort (Windows maps modes loosely). The value never appears in any
+ * message, payload or error; callers pass it in and drop their copy.
+ */
+export async function saveUserCredential(
+  name: string,
+  value: string,
+): Promise<{ path: string; created: boolean }> {
+  assertEnvName(name);
+  if (/[\r\n]/.test(value)) {
+    throw new IdeaseekError(
+      'INVALID_ARGUMENT',
+      'API key must not contain line breaks — nothing was saved',
+    );
+  }
+  const { userCredentialsPath } = await import('../core/env.js');
+  const { readFile, mkdir, chmod } = await import('node:fs/promises');
+  const { writeFileAtomic } = await import('../core/atomic.js');
+  const path = userCredentialsPath();
+  let existing = '';
+  try {
+    existing = await readFile(path, 'utf8');
+  } catch {
+    existing = '';
+  }
+  const kept = existing
+    .split(/\r?\n/)
+    .filter((line) => line.trim() && !line.startsWith(`${name}=`));
+  kept.push(`${name}=${value}`);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  await writeFileAtomic(path, `${kept.join('\n')}\n`);
+  try {
+    await chmod(path, 0o600);
+  } catch {
+    // best effort — a platform without POSIX modes still gets the file
+    // outside any repo, which is the boundary that matters.
+  }
+  return { path, created: existing.length === 0 };
 }
 
 export interface DshProviderView {
