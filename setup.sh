@@ -16,6 +16,32 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 fail()  { echo -e "${RED}[✗]${NC} $1"; }
 step()  { echo -e "\n${GREEN}==>${NC} $1"; }
 
+# 脚本内的 PATH 导出只对本进程生效；把目录持久化进 bashrc，用户下个
+# shell 才找得到（DSW 等镜像的 shell PATH 甚至可能没有 /usr/local/bin
+# ——表现为每次新 shell 都"node not found"、bootstrap 反复重跑）。
+ensure_persistent_path() {
+  local dir="$1" rc="$HOME/.bashrc"
+  case ":$PATH:" in *":$dir:"*) return 0 ;; esac
+  grep -qF "export PATH=\"$dir:" "$rc" 2>/dev/null ||
+    echo "export PATH=\"$dir:\$PATH\"" >> "$rc"
+}
+persist_link() {
+  local name="$1" src dest_dir
+  src="$(npm prefix -g)/bin/$name"
+  [ -e "$src" ] || return 1
+  dest_dir=/usr/local/bin
+  if [ ! -w /usr/local/bin ] 2>/dev/null; then
+    dest_dir="$HOME/.local/bin"
+    mkdir -p "$dest_dir"
+  fi
+  # 先持久化再入进程 PATH：ensure 的判断是"当前 PATH 里有没有"，
+  # 顺序反了它会永远跳过写 rc。
+  ensure_persistent_path "$dest_dir"
+  ln -sf "$src" "$dest_dir/$name"
+  case ":$PATH:" in *":$dest_dir:"*) ;; *) export PATH="$dest_dir:$PATH" ;; esac
+  return 0
+}
+
 # --- Platform detection ---
 OS="$(uname -s 2>/dev/null || echo Windows)"
 IS_WSL=false
@@ -92,6 +118,9 @@ if ! node_ok; then
           ln -sf "$NODE_PREFIX/bin/node" "$NODE_LINK/node"
           ln -sf "$NODE_PREFIX/bin/npm" "$NODE_LINK/npm"
           ln -sf "$NODE_PREFIX/bin/npx" "$NODE_LINK/npx"
+          # 先写 bashrc 再入进程 PATH（顺序反了 ensure 会永远跳过）——
+          # 否则每个新 shell 都重新 bootstrap 一次（观察项 I5 的根因）。
+          ensure_persistent_path "$NODE_LINK"
           export PATH="$NODE_LINK:$PATH"
           info "node $(node --version) → $NODE_LINK/node"
         else
@@ -128,29 +157,6 @@ if [ -n "$NPM_GLOBAL_BIN" ] && [ -d "$NPM_GLOBAL_BIN" ]; then
     *) export PATH="$NPM_GLOBAL_BIN:$PATH" ;;
   esac
 fi
-
-# 把命令软链进系统 PATH 目录并（必要时）写入 bashrc——脚本内的 PATH
-# 导出只对本进程生效，用户下个 shell 还要能找到。
-ensure_persistent_path() {
-  local dir="$1" rc="$HOME/.bashrc"
-  case ":$PATH:" in *":$dir:"*) return 0 ;; esac
-  grep -qF "export PATH=\"$dir:" "$rc" 2>/dev/null ||
-    echo "export PATH=\"$dir:\$PATH\"" >> "$rc"
-}
-persist_link() {
-  local name="$1" src dest_dir
-  src="$(npm prefix -g)/bin/$name"
-  [ -e "$src" ] || return 1
-  dest_dir=/usr/local/bin
-  if [ ! -w /usr/local/bin ] 2>/dev/null; then
-    dest_dir="$HOME/.local/bin"
-    mkdir -p "$dest_dir"
-  fi
-  ln -sf "$src" "$dest_dir/$name"
-  case ":$PATH:" in *":$dest_dir:"*) ;; *) export PATH="$dest_dir:$PATH" ;; esac
-  ensure_persistent_path "$dest_dir"
-  return 0
-}
 
 # pnpm
 if command -v pnpm >/dev/null 2>&1; then
