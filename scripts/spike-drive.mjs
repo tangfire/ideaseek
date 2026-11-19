@@ -50,14 +50,18 @@ const exited = new Promise((resolve) => child.on('close', (code) => resolve(code
     // under parallel-test load: the child's event loop can block long enough
     // for two chunks to coalesce into a single paste.
     const started = Date.now();
-    while (out.length === before && Date.now() - started < 800) {
+    // Full-suite load can starve the child's event loop for seconds; the
+    // cap is the coalescing window (two chunks = one paste = lost /quit).
+    // Observed failing at 800ms on a 201-file gate while isolated runs
+    // never approach it — the cap only binds in the pathological case.
+    while (out.length === before && Date.now() - started < 2_000) {
       await sleep(40);
     }
     await sleep(60);
   }
   const code = await Promise.race([
     exited,
-    sleep(Number(process.env.SPIKE_EXIT_MS ?? 12_000)).then(() => 'TIMEOUT'),
+    sleep(Number(process.env.SPIKE_EXIT_MS ?? 25_000)).then(() => 'TIMEOUT'),
   ]);
   const checks = {
     exit0: code === 0,
