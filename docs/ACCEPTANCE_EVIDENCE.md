@@ -13,3 +13,12 @@
 | I5 | 第二次运行 setup.sh 时 node bootstrap 幂等重跑了一次（无害，随后 node_ok 通过） | 未定位（疑瞬态 PATH/hash）；自愈 | 观察项：第三次复发则带 `ls -l /usr/local/bin/node` 证据排查 | — |
 
 环境备注：DSW-CPU 8核32G / Ubuntu 22.04 / python 3.11.11 / root；pdflatex 与 SVG→PDF 转换器缺失（论文图表步骤预期 SKIP，如需 `apt install texlive-latex-recommended librsvg2-bin`）。
+
+## 安装阶段·续（2026-11-19，同一日第二轮）
+
+| # | 现象 | 根因 | 处置 | commit |
+|---|---|---|---|---|
+| I6 | package.json 声明白名单后服务器仍报 `ERR_PNPM_IGNORED_BUILDS`，且 WARN "The 'pnpm' field in package.json is no longer read" | pnpm 12 不再读 package.json `pnpm` 字段；其设置新家是 pnpm-workspace.yaml，且键从 10/11 的 `onlyBuiltDependencies` 数组变为 `allowBuilds` 映射（`pnpm approve-builds --all` 写出的即权威格式） | 新增 pnpm-workspace.yaml（allowBuilds 五项），删除 package.json 死字段 | c3ed6bb |
+| I4（闭合） | 现代 pnpm 忽略 v6 锁文件重新解析（不可复现）；`--frozen-lockfile` 在新 pnpm 上硬失败 | 锁文件是 pnpm 8 时代产物 | 用 pnpm 12.21.0 重新生成（lockfileVersion 9.0，通过 supply-chain 校验），`packageManager` 钉 pnpm@12.21.0，本地全局 pnpm 对齐同版本 | c3ed6bb |
+
+验证：本地 pnpm 12.21.0 `pnpm install` → "Lockfile is up to date" 57ms 绿；postinstall 实跑（node-pty conpty、dsh-subprocess spawn-helper 均 Done）。依赖全量重解析后的全量门禁见提交后 CI/门禁记录。
