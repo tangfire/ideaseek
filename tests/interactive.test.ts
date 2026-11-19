@@ -156,6 +156,15 @@ describe('slash registry (unit)', () => {
     expect(helpText()).toContain('/init');
   });
 
+  it('the P3-tail commands are reachable from the TUI palette', () => {
+    const names = SLASH_COMMANDS.map((cmd) => cmd.name);
+    for (const required of ['/leaderboard', '/repro', '/literature']) {
+      expect(names, `missing ${required}`).toContain(required);
+      expect(resolveSlash(required)).toEqual({ kind: 'exact', name: required });
+      expect(helpText()).toContain(required);
+    }
+  });
+
   it('covers the Phase 1.5 command set', () => {
     const names = SLASH_COMMANDS.map((cmd) => cmd.name);
     for (const required of [

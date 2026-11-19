@@ -46,6 +46,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'preview input drift & invalidated downstream artifacts',
   },
   {
+    name: '/literature',
+    usage: '/literature [watch] [--force|--skip-model]',
+    description: 'continuous literature surveillance (incremental refresh of the reading chain)',
+  },
+  {
     name: '/pending',
     usage: '/pending',
     description: 'approvals waiting for you (protocol, code revisions, requests)',
@@ -71,6 +76,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: '/experiments',
     usage: '/experiments',
     description: 'recorded experiment specs and results',
+  },
+  {
+    name: '/leaderboard',
+    usage: '/leaderboard [--metric <name>]',
+    description: 'rank recorded idea results across ideas by a metric',
+  },
+  {
+    name: '/repro',
+    usage: '/repro <idea-id> [--tolerance <n>]',
+    description: 're-run a recorded result and verify its metrics reproduce',
   },
   {
     name: '/rounds',
@@ -144,10 +159,23 @@ export function resolveSlash(input: string): SlashResolution {
 const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
   {
     title: 'overview',
-    names: ['/help', '/init', '/status', '/next', '/prepare', '/assessment', '/drift', '/docs'],
+    names: [
+      '/help',
+      '/init',
+      '/status',
+      '/next',
+      '/prepare',
+      '/assessment',
+      '/drift',
+      '/literature',
+      '/docs',
+    ],
   },
   { title: 'approvals', names: ['/pending', '/approve', '/reject'] },
-  { title: 'research', names: ['/papers', '/comparisons', '/ideas', '/experiments', '/logs'] },
+  {
+    title: 'research',
+    names: ['/papers', '/comparisons', '/ideas', '/experiments', '/leaderboard', '/repro', '/logs'],
+  },
   { title: 'ideation', names: ['/rounds', '/ideate', '/feedback'] },
   { title: 'session', names: ['/models', '/mode', '/agent', '/open', '/report'] },
   { title: 'control', names: ['/pause', '/resume', '/continue', '/cancel', '/quit'] },

@@ -530,6 +530,30 @@ describe('new slash commands and NL routing (CLI)', () => {
     expect(done.stdout).not.toContain('unknown command: /ideate');
   }, 120_000);
 
+  it('/leaderboard /literature /repro relay to the P3-tail commands', async () => {
+    const project = await makeProjectDir();
+    const repl = startTtyRepl(project);
+    await repl.waitFor(/ideaseek ›/);
+
+    repl.write('/leaderboard\r');
+    await repl.waitFor(/no idea-bound experiment results/);
+
+    // Bare /literature defaults to watch. A fresh project has no parsed
+    // papers, so extract/synthesize take the parsedCount=0 skip — the relay
+    // must never reach a model call from this test.
+    repl.write('/literature\r');
+    await repl.waitFor(/literature watch: first run/);
+
+    repl.write('/repro ghost-idea\r');
+    await repl.waitFor(/no recorded result/);
+
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('unknown command: /leaderboard');
+    expect(done.stdout).not.toContain('unknown command: /literature');
+    expect(done.stdout).not.toContain('unknown command: /repro');
+  }, 180_000);
+
   it('/ideas reports real idea state instead of placeholder text', async () => {
     const project = await makeProjectDir();
     const cardPath = join(project, 'card.json');

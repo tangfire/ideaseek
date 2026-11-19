@@ -1024,6 +1024,10 @@ export class InteractiveSession {
       case '/drift':
         await this.relay(['stale', ...restArgs]);
         return 'continue';
+      case '/literature':
+        // Bare `/literature` means the watch itself — the namespace's job.
+        await this.relay(['literature', ...(restArgs.length > 0 ? restArgs : ['watch'])]);
+        return 'continue';
       case '/papers':
         await this.relay(['papers']);
         return 'continue';
@@ -1032,6 +1036,12 @@ export class InteractiveSession {
         return 'continue';
       case '/experiments':
         await this.relay(['experiment', 'list']);
+        return 'continue';
+      case '/leaderboard':
+        await this.relay(['experiment', 'leaderboard', ...restArgs]);
+        return 'continue';
+      case '/repro':
+        await this.relay(['idea', 'reproduce', ...restArgs]);
         return 'continue';
       case '/pause':
         await this.relay(['pause']);
