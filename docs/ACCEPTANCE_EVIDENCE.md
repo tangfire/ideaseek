@@ -34,3 +34,24 @@
 | # | 现象 | 根因 | 处置 | commit |
 |---|---|---|---|---|
 | I8 | 全局 `ideaseek` 在服务器上**零输出**：`--help`/`status`/裸命令全部静默 exit0，stdout 仅剩 169 字节 SQLite 警告（`tty` 正常、模块加载正常） | 入口直调检测用字符串裸比 `argv[1]` 与 `import.meta.url`：npm link 给的是**符号链接**——argv 保留链接路径、meta 是解析后的真实文件 → 比较失败 → 主块被跳过 → 加载完静默退出。测试从未暴露：要么直跑真实路径、要么带 `IDEASEEK_CLI=1` 旁路 | 检测改为 `realpathSync` 后比较（路径失效时回退原式）；新增 symlink 回归用例（Windows 无权限时**显式 SKIP，不假绿**）；实测验证 = 服务器 pull+build 后 `ideaseek --help` 恢复输出 | 1c2e7ca |
+
+## 修复轮（2026-11-19，STAGE 0 前置，服务器 agent）
+
+| # | 现象 | 根因 | 处置 | commit |
+|---|---|---|---|---|
+| I9 | `doctor` 报 `✗ node v22.23.2 (required >=24.9)`、exit 2：setup 明明已把 Node v24.19.0 自举到 `/usr/local/bin`，但 shell 里 `node` 仍是 v22 | `ensure_persistent_path` 用"当前进程 PATH 是否已含该目录"决定是否写 `~/.bashrc`；本机 `/usr/local/bin` 在进程 PATH 里（只是排在 nvm 之后）→ 早退、rc 永不写 → 新交互 shell 启动时 nvm 把 v22 插到最前，doctor 永远红 | 改为只按 rc 内容决策（grep 已有行防重复）；新增 `tests/setup-path-persist.test.ts`（4 例：被遮蔽仍写 / 缺目录写 / 幂等 / rc 已有不重复；旧逻辑反证 rc 0 字节）；`vitest run tests/setup-path-persist.test.ts` 4/4 绿，prettier + eslint 过 | bc644b0 |
+| I10 | I9 修复 + 重跑 setup 后，非交互 shell（工具会话）仍解析 node v22 | 非交互 shell 不加载 `.bashrc`（`[ -z "$PS1" ] && return` 守卫 + bash 默认不读），PATH 是 DSW 会话启动时继承的固定环境，nvm v22 目录钉在最前；rc 修复只覆盖交互终端 | 机器本地修复：`ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`（npm/npx 保留 nvm 原件，全局 prefix 语义不变）；`node --version` → v24.19.0、npm 10.9.8 正常；可逆（`nvm reinstall-packages 22.23.2` 即还原） | —（机器本地，不进仓库） |
+
+补丁后整机复跑：`bash setup.sh` exit 0（幂等：install "Already up to date"、build 重跑、rc 落盘 `export PATH="/usr/local/bin:$PATH"` 恰 1 行）。
+
+## STAGE 0 — 安装与自检（2026-11-19）
+
+- `git pull --rebase origin main`：已是最新；修复 bc644b0 已按第 4 节推送。
+- `bash setup.sh`：exit 0。首跑自举 Node v24.19.0（npmmirror）+ pnpm 12.21.0 + python 3.12.13 + 依赖安装（Lockfile up to date）+ `node scripts/build.mjs` + 全局 `ideaseek` 链接；I9 修复后复跑仍 exit 0。
+- `node dist/cli.js --version` → `0.1.0`（exit 0）。
+- `node dist/cli.js doctor`（修复后）→ `ok=7 warn=2 error=0`，exit 0：
+  - ✓ node v24.19.0（required ≥24.9）/ python 3.12.13 / container docker 28.1.0 / gpu NVIDIA A10 ×1 / disk 1004 TiB free / credentials / dsh pinned fcc0ad462172
+  - ⚠ project：`no .research/ found here; run: ideaseek init`（预期，STAGE 1 前未初始化）
+  - ⚠ latex：pdflatex 缺失；· svg-converter 缺失（均为已知环境备注，论文编译/图表步骤预期 SKIP）
+  - credentials 行只记 presence：`env DEEPSEEK_API_KEY is set`（值未读取、未打印）
+- 修复前首跑 doctor 为 `ok=6 warn=2 error=1`（node ✗ v22）→ 已按第 2 节修复自主权闭合（I9/I10）。
