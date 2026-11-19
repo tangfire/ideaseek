@@ -380,7 +380,7 @@ export function registerModelsCommand(program: Command): void {
             process.stdout.write(`  connection: ${tested.detail}\n`);
           }
           process.stdout.write(`  wrote: ${wrote.join('; ')}\n`);
-          if (Boolean((process.env[opts.apiKeyEnv] ?? '').trim())) {
+          if ((process.env[opts.apiKeyEnv] ?? '').trim()) {
             process.stdout.write(
               `next: ideaseek models test  (key read from env ${opts.apiKeyEnv}; ` +
                 `IdeaSeek holds only that NAME)\n`,
