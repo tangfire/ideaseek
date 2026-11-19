@@ -28,3 +28,9 @@
 | # | 现象 | 根因 | 处置 | commit |
 |---|---|---|---|---|
 | I5（复发→闭合） | node bootstrap 连续三轮在新 shell 重跑；`git pull` 被失败安装的本地残留挡住（pnpm-lock.yaml 脏 + 未跟踪 pnpm-workspace.yaml） | ① bootstrap 的 `export PATH` 只活在本进程，从未写 rc；② persist_link 里 ensure 先于 export 的顺序颠倒（ensure 见 PATH 已有 → 永不写 rc）——新 shell 缺 `/usr/local/bin` 时每次都当 node 缺失重来 | 函数上移到首次使用之前；bootstrap 与 persist_link 均**先写 `~/.bashrc` 再入进程 PATH**；pull 残留由 `git checkout -- pnpm-lock.yaml && rm pnpm-workspace.yaml` 清除（失败安装的产物，非用户工作） | f636e7c |
+
+## 安装阶段·续三（2026-11-19，全局命令静默失效）
+
+| # | 现象 | 根因 | 处置 | commit |
+|---|---|---|---|---|
+| I8 | 全局 `ideaseek` 在服务器上**零输出**：`--help`/`status`/裸命令全部静默 exit0，stdout 仅剩 169 字节 SQLite 警告（`tty` 正常、模块加载正常） | 入口直调检测用字符串裸比 `argv[1]` 与 `import.meta.url`：npm link 给的是**符号链接**——argv 保留链接路径、meta 是解析后的真实文件 → 比较失败 → 主块被跳过 → 加载完静默退出。测试从未暴露：要么直跑真实路径、要么带 `IDEASEEK_CLI=1` 旁路 | 检测改为 `realpathSync` 后比较（路径失效时回退原式）；新增 symlink 回归用例（Windows 无权限时**显式 SKIP，不假绿**）；实测验证 = 服务器 pull+build 后 `ideaseek --help` 恢复输出 | 1c2e7ca |
