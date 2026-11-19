@@ -1,0 +1,12 @@
+# pnpm 12 构建脚本白名单：依赖的 postinstall 默认被拦
+# （ERR_PNPM_IGNORED_BUILDS）。注意 pnpm 12 只认这里的 `allowBuilds`
+# 映射——package.json 的 `pnpm` 字段与 pnpm 10/11 的
+# `onlyBuiltDependencies` 数组在 12 均不再读取。维护方式：
+# `pnpm approve-builds --all`（或 approve-builds <pkg> / '!<pkg>'）。
+# 五项均为 harness/交互栈运行时依赖；新增带构建脚本的依赖须显式声明。
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  koffi: true
+  node-pty: true
+  protobufjs: true
