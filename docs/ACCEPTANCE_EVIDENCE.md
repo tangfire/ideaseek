@@ -22,3 +22,9 @@
 | I4（闭合） | 现代 pnpm 忽略 v6 锁文件重新解析（不可复现）；`--frozen-lockfile` 在新 pnpm 上硬失败 | 锁文件是 pnpm 8 时代产物 | 用 pnpm 12.21.0 重新生成（lockfileVersion 9.0，通过 supply-chain 校验），`packageManager` 钉 pnpm@12.21.0，本地全局 pnpm 对齐同版本 | c3ed6bb |
 
 验证：本地 pnpm 12.21.0 `pnpm install` → "Lockfile is up to date" 57ms 绿；postinstall 实跑（node-pty conpty、dsh-subprocess spawn-helper 均 Done）。依赖全量重解析后的全量门禁见提交后 CI/门禁记录。
+
+## 安装阶段·续二（2026-11-19，I5 复发 → 根因 + 修复）
+
+| # | 现象 | 根因 | 处置 | commit |
+|---|---|---|---|---|
+| I5（复发→闭合） | node bootstrap 连续三轮在新 shell 重跑；`git pull` 被失败安装的本地残留挡住（pnpm-lock.yaml 脏 + 未跟踪 pnpm-workspace.yaml） | ① bootstrap 的 `export PATH` 只活在本进程，从未写 rc；② persist_link 里 ensure 先于 export 的顺序颠倒（ensure 见 PATH 已有 → 永不写 rc）——新 shell 缺 `/usr/local/bin` 时每次都当 node 缺失重来 | 函数上移到首次使用之前；bootstrap 与 persist_link 均**先写 `~/.bashrc` 再入进程 PATH**；pull 残留由 `git checkout -- pnpm-lock.yaml && rm pnpm-workspace.yaml` 清除（失败安装的产物，非用户工作） | f636e7c |
