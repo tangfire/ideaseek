@@ -133,6 +133,20 @@ describe('ideaseek assessment (research material gaps)', () => {
     expect(file.contract).toBe('research-material-assessment-v1');
   }, 180_000);
 
+  it('the question gap names the command that actually persists it', async () => {
+    // Journey A walkthrough: next advised `plan --question`, but plan is a
+    // documented dry-run (--question "not persisted") — following the advice
+    // left the blocker untouched and the user looped. fillIn must advance.
+    const dir = await makeProjectDir();
+    const result = await runCli(dir, ['assessment', '--json']);
+    expect(result.code).toBe(2);
+    const payload = JSON.parse(result.stdout) as AssessmentPayload;
+    const gap = payload.assessment.gaps.find((entry) => entry.id === 'question-missing');
+    expect(gap, 'question-missing gap expected on a fresh project').toBeDefined();
+    expect(gap!.fillIn).toContain('setup --question');
+    expect(gap!.fillIn).not.toContain('plan --question');
+  }, 180_000);
+
   it('reuses the stored report while inputs are unchanged; rebuilds after a change', async () => {
     const dir = await makeProjectDir();
     const first = await runCli(dir, ['assessment', '--json']);

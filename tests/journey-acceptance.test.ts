@@ -84,6 +84,14 @@ describe('Journey A — first use from an empty directory', () => {
     // pipeline; it points at whatever the material assessment says is missing.
     expect(start.stdout).not.toMatch(/next: ideaseek run\b/);
     expect(start.stdout).toMatch(/next: ideaseek /);
+    // …and the printed next must ADVANCE: plan --question is a dry-run
+    // (its --question is documented "not persisted"), so a fresh project's
+    // next can never be plan --question — following it looped in Journey A.
+    expect(start.stdout).not.toMatch(/next: ideaseek plan --question/);
+    // Journey A also requires a visible demo/fixture entry — a new user with
+    // no papers must be able to experience the product (README has it; the
+    // start guidance must surface it too).
+    expect(start.stdout).toContain('ideaseek run');
     assertNoSecret(start.stdout, start.stderr);
   }, 180_000);
 });

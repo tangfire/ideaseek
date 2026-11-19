@@ -38,10 +38,10 @@ export function registerStartCommand(program: Command): void {
         // this one did.
         let guidance = scan.files
           ? '输入已就绪，平台先读一遍：解析、建索引、给出缺口评估'
-          : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），再回来跑 ideaseek start';
+          : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），再回来跑 ideaseek start；想先体验：ideaseek run --question "..."（demo 流水线，不需要论文）';
         let nextCommand = question
           ? `ideaseek prepare --question "${question}"`
-          : 'ideaseek prepare --question "你的研究问题"';
+          : 'ideaseek setup --question "你的研究问题"';
         try {
           const runtime = await ProjectRuntime.open({ cwd });
           try {
@@ -54,7 +54,7 @@ export function registerStartCommand(program: Command): void {
             // test caught the disappearance.
             guidance = scan.files
               ? advice.suggestion
-              : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），然后重来一次 ideaseek start 或直接看下一条命令';
+              : '把论文放入 papers/、数据放入 datasets/（可选对比方法放 comparisons/），然后重来一次 ideaseek start 或直接看下一条命令；想先体验：ideaseek run --question "..."（demo 流水线，不需要论文）';
           } finally {
             await runtime.close();
           }

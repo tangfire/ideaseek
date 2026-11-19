@@ -360,6 +360,14 @@ describe('next CLI end-to-end (fake harness builds, cache reuses)', () => {
     expect(payload.adviceSource).toBe('agent');
     expect(payload.candidates!.length).toBeGreaterThanOrEqual(2);
     expect(payload.command).toBe(payload.candidates![0]);
+    // Journey A: the question gap's candidate must be the persisting command
+    // (plan --question is a dry-run; advising it looped the blocker).
+    expect(payload.candidates!.some((candidate) => candidate.includes('setup --question'))).toBe(
+      true,
+    );
+    expect(payload.candidates!.some((candidate) => candidate.includes('plan --question'))).toBe(
+      false,
+    );
     expect(payload.adviceRationale).toContain('fake harness');
     expect(payload.stage).toBe('MATERIAL_INCOMPLETE');
     expect(payload.exitCode).toBe(0);

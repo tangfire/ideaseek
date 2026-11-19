@@ -237,6 +237,9 @@ export async function buildResearchMaterialAssessment(
 
     // ---- gaps: question ----
     if (!question && ideaDirs.length === 0) {
+      // fillIn must ADVANCE the state: plan --question is a documented
+      // dry-run ("not persisted"), so advising it left the blocker exactly
+      // where it was (Journey A walkthrough looped on it).
       gaps.push(
         gap({
           id: 'question-missing',
@@ -245,7 +248,7 @@ export async function buildResearchMaterialAssessment(
           reason: 'protocol design starts from a research question; none is configured',
           evidence: ['research.question is empty', `ideas: ${ideaDirs.length}`],
           confidence: 'high',
-          fillIn: 'ideaseek plan --question "your research question"',
+          fillIn: 'ideaseek setup --question "your research question"',
           cost: 'instant (config only)',
           blocks: ['protocolDesign', 'smokeQuick'],
         }),
