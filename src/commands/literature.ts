@@ -227,9 +227,12 @@ export function registerLiteratureCommand(program: Command): void {
                 pending.extract > 0 ? `${pending.extract} extraction(s)` : null,
                 deferred.length > 0 ? `${deferred.length} model output(s)` : null,
               ].filter(Boolean);
-              process.stdout.write(
-                `  deferred until a model key is configured: ${parts.join(', ')} (/models setup)\n`,
-              );
+              // --skip-model is an explicit choice; keyless is an absence.
+              // Saying "waiting for a key" after --skip-model would lie.
+              const cause = opts.skipModel
+                ? 'skipped by --skip-model'
+                : 'until a model key is configured (/models setup)';
+              process.stdout.write(`  deferred ${cause}: ${parts.join(', ')}\n`);
             }
             return 0;
           }
