@@ -19,9 +19,11 @@ step()  { echo -e "\n${GREEN}==>${NC} $1"; }
 # 脚本内的 PATH 导出只对本进程生效；把目录持久化进 bashrc，用户下个
 # shell 才找得到（DSW 等镜像的 shell PATH 甚至可能没有 /usr/local/bin
 # ——表现为每次新 shell 都"node not found"、bootstrap 反复重跑）。
+# 决策只看 rc 内容、不看当前进程 PATH：进程里"有"≠新 shell 能解析到
+# ——nvm 会在新 shell 启动时把自带 node 插到 /usr/local/bin 前面，
+# 以进程 PATH 为准则会漏写 rc（doctor 永远报 node 版本错的根因）。
 ensure_persistent_path() {
   local dir="$1" rc="$HOME/.bashrc"
-  case ":$PATH:" in *":$dir:"*) return 0 ;; esac
   grep -qF "export PATH=\"$dir:" "$rc" 2>/dev/null ||
     echo "export PATH=\"$dir:\$PATH\"" >> "$rc"
 }
@@ -34,8 +36,8 @@ persist_link() {
     dest_dir="$HOME/.local/bin"
     mkdir -p "$dest_dir"
   fi
-  # 先持久化再入进程 PATH：ensure 的判断是"当前 PATH 里有没有"，
-  # 顺序反了它会永远跳过写 rc。
+  # 先持久化再入进程 PATH：ensure 只认 rc 内容，先入 PATH 也不影响写 rc，
+  # 但顺序颠倒过一次会让 ensure 永远跳过（I5 的复发根因之一）。
   ensure_persistent_path "$dest_dir"
   ln -sf "$src" "$dest_dir/$name"
   case ":$PATH:" in *":$dest_dir:"*) ;; *) export PATH="$dest_dir:$PATH" ;; esac
