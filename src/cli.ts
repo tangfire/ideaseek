@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Command, CommanderError } from 'commander';
 import { IdeaseekError, exitCodeForError } from './core/errors.js';
 import { loadLocalEnv, loadUserCredentials } from './core/env.js';
@@ -471,9 +471,20 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 }
 
-const invokedDirectly =
-  process.argv[1] !== undefined &&
-  import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, '/')}`).href;
+// Direct-invocation guard: npm link / ln -s hands node a SYMLINK path, so
+// argv[1] keeps the link while import.meta.url is the resolved file — a raw
+// string compare made every symlinked install silently no-op (modules load,
+// warning prints, exit 0, zero output — observed on the Linux server).
+// Compare realpaths; fall back to the literal path when the file is gone.
+const invokedDirectly = ((): boolean => {
+  const argv1 = process.argv[1];
+  if (argv1 === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(argv1)).href;
+  } catch {
+    return import.meta.url === pathToFileURL(argv1).href;
+  }
+})();
 
 if (invokedDirectly || process.env.IDEASEEK_CLI === '1') {
   // `process.exit()` tears the event loop down while a finished HTTPS fetch

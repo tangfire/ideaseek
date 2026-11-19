@@ -1,3 +1,6 @@
+import { mkdtempSync, symlinkSync, unlinkSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildProgram, helpGroupsOf } from '../src/cli.js';
 
@@ -38,4 +41,63 @@ it('answers the natural guess `idea status` with the workspace view', () => {
   const idea = buildProgram().commands.find((command) => command.name() === 'idea');
   const show = idea?.commands.find((command) => command.name() === 'show');
   expect(show?.aliases()).toContain('status');
+});
+
+describe('installed entry point (symlinked global command)', () => {
+  // Honest reporting: Windows without developer mode cannot create file
+  // symlinks (EPERM) — skip visibly instead of passing vacuously. Linux,
+  // where the product ships and the bug was found, always runs it.
+  const symlinkSupport = (() => {
+    try {
+      const dir = mkdtempSync(join(tmpdir(), 'sl-probe-'));
+      symlinkSync(process.execPath, join(dir, 'probe'));
+      unlinkSync(join(dir, 'probe'));
+      rmdirSync(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!symlinkSupport)(
+    'runs through a symlink: argv[1] link path vs resolved import.meta.url',
+    async () => {
+      // npm link / ln -s hands node the LINK path while import.meta.url is the
+      // resolved file. The old raw string compare made every symlinked install
+      // silently no-op on Linux (modules load, warning prints, exit 0, zero
+      // output — the server acceptance finding). IDEASEEK_CLI must be OFF here:
+      // that env var is the test-only bypass which hid the bug.
+      const { mkdtemp, symlink } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join: joinPath } = await import('node:path');
+      const { spawn } = await import('node:child_process');
+      const { CLI_BIN } = await import('./helpers.js');
+
+      const dir = await mkdtemp(joinPath(tmpdir(), 'ideaseek-symlink-'));
+      const link = joinPath(dir, 'ideaseek');
+      await symlink(CLI_BIN, link);
+      const run = (args: string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
+        new Promise((resolve) => {
+          const child = spawn(process.execPath, [link, ...args], {
+            env: { ...process.env, IDEASEEK_CLI: undefined },
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', (chunk) => (stdout += String(chunk)));
+          child.stderr.on('data', (chunk) => (stderr += String(chunk)));
+          child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }));
+        });
+
+      const help = await run(['--help']);
+      expect(help.code, help.stderr).toBe(0);
+      expect(help.stdout).toContain('Usage:');
+      expect(help.stdout.length).toBeGreaterThan(200);
+
+      // Bare invocation down a pipe: the line-mode door message, not silence.
+      const bare = await run([]);
+      expect(bare.code, bare.stderr).toBe(0);
+      expect(bare.stdout).toContain('no command given');
+    },
+    60_000,
+  );
 });
