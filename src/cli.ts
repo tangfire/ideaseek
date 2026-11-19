@@ -224,7 +224,7 @@ async function extractProjectOverride(argv: string[]): Promise<string[]> {
 /**
  * Help is grouped by what the user is trying to do.
  *
- * Sixty-one top-level commands in registration order is a list, not a map:
+ * Sixty-two top-level commands in registration order is a list, not a map:
  * `status`, `next`, `plan`, `prepare`, `assessment` and `queue` all answer
  * different questions and sat five characters apart. Grouping is by journey
  * stage, and the names are matched from a table so an unregistered or renamed
@@ -264,6 +264,7 @@ const HELP_GROUPS: { title: string; commands: string[] }[] = [
       'intake',
       'organize',
       'assessment',
+      'literature',
     ],
   },
   {
