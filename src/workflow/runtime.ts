@@ -160,7 +160,14 @@ export class ProjectRuntime {
     );
     report.stoppedWorkers = staleWorkers;
 
-    report.staleTempsRemoved = await this.store.cleanupStaleTemps(this.clock.now());
+    // Age-based sweep, but temps owned by a live staged row are never
+    // touched — the row (not the clock) is what says "still in use"
+    // (design review #11: deleting a >60s-old multi-GB temp mid-promote
+    // made promote fail and the task requeue forever).
+    report.staleTempsRemoved = await this.store.cleanupStaleTemps(
+      this.clock.now(),
+      await this.db.listStagedTempPaths(),
+    );
 
     const stranded = await this.db.recoverStrandedRuns();
     for (const runId of stranded.settled) {

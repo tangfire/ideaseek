@@ -1,5 +1,5 @@
 import { open, readdir, rename, stat, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, normalize } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { IdeaseekError } from '../core/errors.js';
 import { ensureDir } from '../core/atomic.js';
@@ -114,8 +114,23 @@ export class ArtifactStore {
     return readFile(this.resolvePath(hash), 'utf8');
   }
 
-  /** Removes crash leftovers from `tmpDir`; returns the deleted paths. */
-  async cleanupStaleTemps(now: number): Promise<string[]> {
+  /**
+   * Removes crash leftovers from `tmpDir`; returns the deleted paths.
+   *
+   * `keep` is the set of temp paths that live `staged` artifact rows still
+   * reference (db.listStagedTempPaths): age alone must never sweep a temp a
+   * commit is about to promote. Promoting a multi-GB artifact legitimately
+   * takes longer than the staleness window, and another CLI opening the
+   * project mid-promote used to delete the in-flight temp → promote failed
+   * with OUTPUT_HASH_MISMATCH → the task requeued → the same race again
+   * (design review #11). The staged row is the ownership signal; only
+   * unreferenced files age out.
+   */
+  async cleanupStaleTemps(now: number, keep: Iterable<string | null> = []): Promise<string[]> {
+    const keepSet = new Set<string>();
+    for (const path of keep) {
+      if (path) keepSet.add(normalize(path));
+    }
     let entries: string[];
     try {
       entries = await readdir(this.tmpDir);
@@ -125,6 +140,7 @@ export class ArtifactStore {
     const removed: string[] = [];
     for (const entry of entries) {
       const path = join(this.tmpDir, entry);
+      if (keepSet.has(normalize(path))) continue;
       try {
         const info = await stat(path);
         if (now - info.mtimeMs >= this.staleTempMs) {

@@ -131,6 +131,48 @@ describe('restart recovery', () => {
     await reopened.close();
   });
 
+  it('a staged row outlives the sweep, then the interrupted commit consumes it', async () => {
+    // Design review #11: with staleTempMs=0 the age rule would sweep EVERY
+    // file, including a multi-GB temp an in-flight promote still owns —
+    // the other CLI opening the project used to delete it →
+    // OUTPUT_HASH_MISMATCH → requeue loop. The staged row, not the clock,
+    // is the ownership signal; recovery must then resume the commit by
+    // promoting that very temp.
+    const first = await openRuntime(dir, { clock, recover: false, staleTempMs: 0 });
+    const run = await createDemoRun(first);
+    const task = await first.db.claimNextTask(run.runId, 'w1', LEASE);
+    await first.db.markTaskStarted(task!.taskId, 'w1');
+    const staged = await first.store.stage('input-manifest', '{"slow":true}');
+    await first.db.beginCommit({
+      taskId: task!.taskId,
+      workerId: 'w1',
+      attempt: task!.attempt,
+      artifacts: [
+        {
+          kind: 'input-manifest',
+          tempPath: staged.tempPath,
+          contentHash: staged.contentHash,
+          size: staged.size,
+          meta: {},
+        },
+      ],
+      result: { summary: 'promote outlives the sweep window', artifacts: [] },
+    });
+    await first.close();
+
+    clock.advance(61_000);
+    const second = await openRuntime(dir, { clock, staleTempMs: 0 });
+    // The sweep saw the staged row and kept the temp despite age=∞.
+    expect(second.recovery.staleTempsRemoved).toEqual([]);
+    // …and the interrupted commit consumed it by promotion, not deletion.
+    expect(second.recovery.resumedCommits).toEqual([task!.taskId]);
+    const artifacts = await second.db.listArtifacts(task!.taskId);
+    expect(artifacts[0]!.status).toBe('committed');
+    const content = await second.store.readFinalText(artifacts[0]!.contentHash);
+    expect(JSON.parse(content)).toEqual({ slow: true });
+    await second.close();
+  });
+
   it('stops stale worker rows so status does not see ghost workers', async () => {
     const first = await openRuntime(dir, { clock, recover: false });
     const run = await createDemoRun(first);

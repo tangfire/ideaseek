@@ -79,6 +79,27 @@ describe('artifact store', () => {
     await expect(readFile(fresh.tempPath, 'utf8')).resolves.toBe('fresh bytes');
   });
 
+  it('never sweeps a temp a live staged row still owns, however old', async () => {
+    // Design review #11: age alone is not ownership. Promoting a multi-GB
+    // temp legitimately outlives the staleness window; another CLI opening
+    // the project used to sweep it mid-promote → OUTPUT_HASH_MISMATCH →
+    // requeue loop. The staged row is the ownership signal.
+    const owned = await store.stage('report', 'owned bytes');
+    const orphan = await store.stage('report', 'orphan bytes');
+    const old = new Date(Date.now() - 120_000);
+    await utimes(owned.tempPath, old, old);
+    await utimes(orphan.tempPath, old, old);
+
+    const removed = await store.cleanupStaleTemps(Date.now(), [owned.tempPath, null]);
+    expect(removed).toEqual([orphan.tempPath]);
+    await expect(readFile(owned.tempPath, 'utf8')).resolves.toBe('owned bytes');
+    // …and the survivor still promotes normally afterwards.
+    await store.promote([owned]);
+    await expect(readFile(store.resolvePath(owned.contentHash), 'utf8')).resolves.toBe(
+      'owned bytes',
+    );
+  });
+
   it('ensureCommittedFile classifies present / promoted / missing', async () => {
     const staged = await store.stage('report', 'recovery bytes');
     const hash = staged.contentHash;
