@@ -368,7 +368,9 @@ describe('ideaseek interactive (CLI)', () => {
     expect(repl.output()).not.toContain('· RESEARCH ·');
 
     repl.write('这个函数为什么返回 null\n');
-    await repl.waitFor(/no IdeaSeek project here/);
+    // Wait for the doors list itself: matching the response's first line
+    // raced the rest of the block under full-gate load (gate-7 flake).
+    await repl.waitFor(/\/init ·/);
     const output = repl.output();
     expect(output).toContain('/init ·');
     expect(output).toContain('/open ·');
