@@ -134,6 +134,39 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(userCfg).toContain('provider: deepseek');
   }, 60_000);
 
+  it('a test-only hidden key points at the export step instead of implying storage', async () => {
+    // The old next-line said "key lives in … credential store" even when the
+    // value existed nowhere persistent — new users then skipped the env
+    // export and hit "no key" in the next shell (observed in the server
+    // acceptance run). The message must teach the persist step instead.
+    const h = await makeHarness();
+    const provider = await startProviderServer();
+
+    const result = await runCli(
+      [
+        'models',
+        'setup',
+        '--provider',
+        'deepseek',
+        '--base-url',
+        provider.url,
+        '--api-key-env',
+        'MY_DEEPSEEK_KEY',
+        '--api-key-stdin',
+        '--test',
+      ],
+      h.env,
+      'sk-test-value-123\n',
+    );
+    expect(result.code, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain('used for the test only');
+    expect(result.stdout).toContain('export MY_DEEPSEEK_KEY=***');
+    expect(result.stdout).toContain('ideaseek models test');
+    expect(result.stdout).not.toContain('key lives in');
+    // …and the value still appears nowhere.
+    expect(result.stdout).not.toContain('sk-test-value-123');
+  }, 60_000);
+
   it('updates only apiKeyEnv on an existing provider and preserves other fields', async () => {
     const h = await makeHarness();
     await writeFile(

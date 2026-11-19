@@ -380,10 +380,26 @@ export function registerModelsCommand(program: Command): void {
             process.stdout.write(`  connection: ${tested.detail}\n`);
           }
           process.stdout.write(`  wrote: ${wrote.join('; ')}\n`);
-          process.stdout.write(
-            `next: ideaseek models test  (key lives in DSH's credential store under ` +
-              `${opts.apiKeyEnv}; IdeaSeek holds only that NAME)\n`,
-          );
+          if (Boolean((process.env[opts.apiKeyEnv] ?? '').trim())) {
+            process.stdout.write(
+              `next: ideaseek models test  (key read from env ${opts.apiKeyEnv}; ` +
+                `IdeaSeek holds only that NAME)\n`,
+            );
+          } else {
+            // The hidden input was test-only: without an env/secret-manager
+            // value the NEXT shell has nothing to read. Saying "key lives in
+            // the credential store" here implied storage that never happened
+            // (user confusion observed in the server acceptance).
+            process.stdout.write(
+              `note: the hidden key was used for the test only — per the no-store boundary ` +
+                `IdeaSeek keeps the NAME "${opts.apiKeyEnv}", not the value.\n`,
+            );
+            process.stdout.write(
+              `next: persist it in your shell config yourself, then re-test:\n` +
+                `  echo 'export ${opts.apiKeyEnv}=***' >> ~/.bashrc && source ~/.bashrc\n` +
+                `  ideaseek models test\n`,
+            );
+          }
           process.stdout.write(
             'boundary: IdeaSeek never writes the key value to config, git, prompts, events or logs\n',
           );
