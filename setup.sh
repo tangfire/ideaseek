@@ -119,13 +119,55 @@ else
   exit 1
 fi
 
+# npm 的全局 bin 目录必须在 PATH 上：自举 node 后 `npm i -g` 的产物
+# （服务器上的 pnpm 就是这么丢的——装上了，PATH 里没有，到 pnpm install 才炸）
+NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
+if [ -n "$NPM_GLOBAL_BIN" ] && [ -d "$NPM_GLOBAL_BIN" ]; then
+  case ":$PATH:" in
+    *":$NPM_GLOBAL_BIN:"*) ;;
+    *) export PATH="$NPM_GLOBAL_BIN:$PATH" ;;
+  esac
+fi
+
+# 把命令软链进系统 PATH 目录并（必要时）写入 bashrc——脚本内的 PATH
+# 导出只对本进程生效，用户下个 shell 还要能找到。
+ensure_persistent_path() {
+  local dir="$1" rc="$HOME/.bashrc"
+  case ":$PATH:" in *":$dir:"*) return 0 ;; esac
+  grep -qF "export PATH=\"$dir:" "$rc" 2>/dev/null ||
+    echo "export PATH=\"$dir:\$PATH\"" >> "$rc"
+}
+persist_link() {
+  local name="$1" src dest_dir
+  src="$(npm prefix -g)/bin/$name"
+  [ -e "$src" ] || return 1
+  dest_dir=/usr/local/bin
+  if [ ! -w /usr/local/bin ] 2>/dev/null; then
+    dest_dir="$HOME/.local/bin"
+    mkdir -p "$dest_dir"
+  fi
+  ln -sf "$src" "$dest_dir/$name"
+  case ":$PATH:" in *":$dest_dir:"*) ;; *) export PATH="$dest_dir:$PATH" ;; esac
+  ensure_persistent_path "$dest_dir"
+  return 0
+}
+
 # pnpm
 if command -v pnpm >/dev/null 2>&1; then
   info "pnpm $(pnpm --version)"
 else
   warn "pnpm not found — installing..."
-  npm install -g pnpm --registry="$IDEASEEK_NPM_REGISTRY"
-  info "pnpm installed"
+  # npm ≥11.17 默认拦截 install scripts（allowScripts 警告），pnpm 的
+  # postinstall 需显式放行；旧 npm 不认识该 flag → 降级重试一次。
+  npm install -g --allow-scripts=pnpm pnpm --registry="$IDEASEEK_NPM_REGISTRY" ||
+    npm install -g pnpm --registry="$IDEASEEK_NPM_REGISTRY"
+  hash -r
+  if command -v pnpm >/dev/null 2>&1; then
+    info "pnpm $(pnpm --version)"
+  else
+    fail "pnpm installed but not on PATH (npm prefix: $(npm prefix -g))"
+    exit 1
+  fi
 fi
 
 # Python
@@ -193,6 +235,11 @@ npm link 2>/dev/null || {
     info "alias added to $SHELL_RC — restart your terminal"
   fi
 }
+
+# 持久化全局命令（npm 的 prefix bin 只在本进程被加进 PATH，
+# 用户下个 shell 要靠系统 PATH 目录里的软链找到 ideaseek/pnpm）
+persist_link ideaseek || true
+persist_link pnpm || true
 
 # Verify
 if command -v ideaseek >/dev/null 2>&1; then
