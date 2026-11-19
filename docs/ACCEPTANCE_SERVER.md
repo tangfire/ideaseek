@@ -91,7 +91,7 @@ node dist/cli.js doctor    # 记录 ok/warn/error；credentials 行只记 presen
 
 ### STAGE 5 — idea 闭环（Journey G 机器可验面）
 
-`idea generate`（无 key 则手写最小 IdeaCard → `idea create --from-card`）→ IMPLEMENTING → `scaffold` → 真计算的 `src/smoke.py`（输出 `{"metrics": {...}}`）→ `idea check` → `idea experiment --json`（gpus:0 smoke 规模）。断言：结果进注册表、失败实验不被删除（可故意失败一次再重试）、`experiment leaderboard` 能列出该结果。
+`idea generate`（无 key 则手写最小 IdeaCard → `idea create --from-card`）→ IMPLEMENTING → `scaffold` → 真计算的 `src/smoke.py`（输出 `{"metrics": {...}}`）→ `idea check` → `idea experiment --json`（gpus:0 smoke 规模）。**自己写的入口跑不通时：按第 2 节修复自主权修到 check 全绿（3 次失败记 BLOCKED，不许绕过检查）**。断言：结果进注册表、失败实验不被删除（可故意失败一次再重试）、`experiment leaderboard` 能列出该结果。
 
 ### STAGE 6 — Journey H 跨机腿（本服务器即"另一台机器"）
 
@@ -119,7 +119,7 @@ node dist/cli.js doctor    # 记录 ok/warn/error；credentials 行只记 presen
 ### STAGE 11 — 并行多 idea + 对比算法 + 实验设计
 
 1. `ideate --round new --ideas 3`（无 key 用 fixture 卡片）→ 3 张 IdeaCard
-2. 对比算法：`comparison plan` → required 方法 → 源获取（**github 可达性是已知风险**：不通则用已有源或 SKIP 附探测证据）→ `comparison smoke`
+2. 对比算法：`comparison plan` → required 方法 → 源获取（**github 可达性是已知风险**）。**若某 required 方法无源可用：自己写一个最小可跑的基线实现**（如 FedAvg 骨架：读本地数据 → 按协议训练 → 打印指标 JSON）放进 `comparisons/<method-id>/`，以 `comparison smoke` 过门为准——**写完必须跑通，跑不通按第 2 节修复自主权修到通（3 次失败记 BLOCKED）**；确实无法完成则如实 SKIP 附探测证据
 3. 每个 idea：create → IMPLEMENTING → 真计算 smoke 入口 → `idea check` 全绿
 4. **并行**：`idea run-ready --scale quick --json` → 断言多 idea 一次放行（queued 空、RunResult 时间窗重叠证据）
 5. `protocol propose` → `confirm protocol`
