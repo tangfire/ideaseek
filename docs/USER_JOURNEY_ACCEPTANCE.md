@@ -175,7 +175,9 @@ ideaseek archive/export → 另一台 Linux → restore → doctor → continue
 - **2026-11-14 追加状态（D → ✅ 真实模型链接受凭据验收）**：本机配置真实 DeepSeek key 后——keyed 批量回归 tests/dsh-keyed+dsh-adapter+extract **16/16 全过（真实模型调用，非 skip）**；真实语料链：复制 FedAvg 原文 PDF → scan/ingest（真实解析）→ `extract --harness dsh` 真实出 PaperCard（2 任务成功）→ `protocol propose --harness dsh` 真实提案 → `confirm protocol` **锁定 proto-cd92ffef2e65-v1**（低置信项如实浮出 confirmations）。G（真实研究证据）与 H（跨机 restore）仍为服务器/研究项。
 - **2026-11-13 追加状态**：Journey F 的“备份恢复后 hash 一致”已闭合（backup-restore 演练：manifest 逐文件哈希复核、篡改零写入）；Journey H 的工具缺口已闭合——`ideaseek update`（源链接重建+manifest 幂等刷新）、迁移 preview（doctor schema vN/vM）、restore 含跨路径 rebind，余跨机实机验证。D（真实模型链凭据批量回归）与 G（真实 HANDOFF_READY 证据门槛，研究项不可伪造）保持 ◐。整体 A–H 验收仍未全绿（D/G/H 实机与凭据缺口）。
 
-未通过项的阻塞性质：H/F 的 restore 工具（可开发）、G 的真实证据门槛（需真实研究）、npm 安装通道（需发布账号）。产品规则复验：以上自动项均断言“有下一步命令、无 secret、无静默副作用”。
+- **2026-11-19 追加状态（本机手动新用户走查 A/B/C/H 本地腿）**：**A ✅ 手动复走**——`--version`/`doctor`（人话、零 secret、缺项目给准确 next）/`init` 幂等/`start` 空项目提示齐全；**抓到并修复两个真实缺陷**：①`next` 建议 `plan --question`（”写下研究问题，即时配置操作”）但 plan 是 documented dry-run（--question 不持久化）→ 照做后阻塞原样、建议重复 = 死循环，违反本节产品规则——gap fillIn（assessment 输出与 agent 候选集的共同源）改指 `setup --question`，start 无问题 fallback 同改，三处回归用例钉死（assessment fillIn、next 候选含 setup 不含 plan、journey-acceptance 负断言），修复后手动复走：next → setup（写入 research.yaml 带备份）→ question 阻塞消失 → 推进到 papers 建议；②空项目 `start` 指导未露出 demo 入口（验收要求”用户能看到 demo/fixture 入口”，原先只在 README）→ guidance 补 `ideaseek run --question “...”（demo 流水线，不需要论文）`。**B ✅ 手动**：四层路由+角色绑定齐全、凭据 presence-only、`models list --json` 对 `sk-`/`ghp_`/Bearer 零命中。**C ✅ 手动**：scan/intake/plan 输出均人话且给可复制 next；plan 诚实标注 dry-run（`questionPersisted:false`，估算 basis 写明 “not a provider quote”/”budget ceiling”）。**H 本地腿 ✅ 手动**：`backup`（sha256 manifest）→ 全新目录 `restore`（逐文件 hash 校验、跨路径 rebind）→ `doctor` ok=21/warn=0/error=0 → `status` 可读并给出推进命令；**跨机（另一台 Linux）腿待 GPU 服务器实机**（ModelScope 免费额度已确认方向）。F 机械面由 soak/supervisor/quota 测试覆盖（今日未手动复走 detach）；D 真实模型链 11-14 已凭据验收（今日未做 fresh 全链）；G 仍为研究项（真实证据门槛不可伪造）。
+
+未通过项的阻塞性质：H/F 的 restore 工具（可开发）、G 的真实证据门槛（需真实研究）、npm 安装通道（需发布账号）。产品规则复验：以上自动项均断言”有下一步命令、无 secret、无静默副作用”。
 
 ## 发现问题时的产品规则
 
