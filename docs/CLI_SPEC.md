@@ -58,6 +58,7 @@ ideaseek datasets link <candidate-id> --path <file>
 ideaseek experiment promote --idea <id> --to standard
 ideaseek experiment handoff --idea <id>
 ideaseek experiment leaderboard [--metric <name>]
+ideaseek idea reproduce <idea-id> [--tolerance <n>]
 ideaseek paper export --run <id> --format overleaf --out <path>
 ideaseek report [--run <id>]
 ```

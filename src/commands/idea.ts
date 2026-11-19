@@ -9,6 +9,7 @@ import type { CandidatesIndex } from '../idea/generate.js';
 import type { NoveltyCandidate } from '../idea/novelty.js';
 import { runIdeaChecks, saveCheckReport, scaffoldIdea } from '../idea/check.js';
 import { runIdeaExperiment, runReadyExperiments, type IdeaScale } from '../idea/experiment.js';
+import { formatReproduce, reproduceIdeaResult } from '../idea/reproduce.js';
 import { runAblations } from '../idea/ablation.js';
 import { runAnalysis } from '../idea/analyze.js';
 import { buildIdeaHandoff } from '../idea/handoff.js';
@@ -3945,5 +3946,61 @@ export function registerIdeaCommand(program: Command): void {
         }
         return result.ok ? 0 : 2;
       }),
+    );
+
+  idea
+    .command('reproduce')
+    .description(
+      're-execute the recorded experiment against unchanged inputs and verify its metrics reproduce (records nothing)',
+    )
+    .argument('<ideaId>', 'idea id')
+    .option(
+      '--tolerance <n>',
+      'absolute per-metric tolerance (default 0 = exact)',
+      (value) => Number(value),
+      0,
+    )
+    .option('--timeout <ms>', 'run timeout', (value) => Number(value), 120_000)
+    .option('--json', 'machine-readable output')
+    .action(
+      action(
+        async (ideaId: string, opts: { tolerance: number; timeout: number; json?: boolean }) => {
+          const root = await openRoot();
+          if (!Number.isFinite(opts.tolerance) || opts.tolerance < 0) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--tolerance must be a finite number >= 0');
+          }
+          if (!Number.isFinite(opts.timeout) || opts.timeout < 100) {
+            throw new IdeaseekError('INVALID_ARGUMENT', '--timeout must be >= 100 ms');
+          }
+          const { ProjectRuntime } = await import('../workflow/runtime.js');
+          const runtime = await ProjectRuntime.open({ cwd: root });
+          try {
+            // Executes code exactly like `idea experiment`, so it takes the
+            // same effective-autonomy gate. No novelty/review gates: nothing
+            // is recorded, and the drift gate already proves the inputs are
+            // the recorded ones.
+            await assertEffectiveAutonomy(
+              root,
+              runtime.config.policy.autonomyMode,
+              'start-experiment',
+            );
+            const outcome = await reproduceIdeaResult(
+              root,
+              ideaId,
+              { tolerance: opts.tolerance, timeoutMs: opts.timeout },
+              runtime,
+              runtime.db,
+            );
+            if (opts.json) {
+              process.stdout.write(jsonLine(outcome));
+            } else {
+              process.stdout.write(formatReproduce(outcome));
+            }
+            return outcome.verdict === 'stable' ? 0 : 2;
+          } finally {
+            await runtime.close();
+          }
+        },
+      ),
     );
 }
