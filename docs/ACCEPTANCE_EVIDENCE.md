@@ -170,3 +170,42 @@
 - 2 skipped 为环境守卫用例（无凭据/无 TTY 类，计划预期内）。
 
 结论：STAGE 8 PASS（含 I14–I17 四个修复，均已推送）。
+
+## STAGE 9 — 数据集自主获取（2026-11-20，进行中 · 会话因服务器实例到期暂停）
+
+**状态：IN PROGRESS（非 PASS）**。本节是冷启动交接：下一会话从"恢复步骤"直接续跑。
+
+已完成的步骤与取证：
+
+1. 门禁按设计逐层打开（每步留 `research.yaml.bak-*` 备份）：`external_search: false→true`、`runtime.allow_network: false→true`（discover 的 refused 提示准确指路，属设计门禁非缺陷）。
+2. `datasets discover --question "<研究问题>" --json` 多轮：候选始终 0，六个来源逐个如实报状态（papers/local-inputs/comparisons/tables/research-map/dataset-index/academic-index）；academic-index 有诚实 partial：`semantic-scholar: http 429（无 IDEASEEK_S2_API_KEY）`。
+3. `ingest --tables` → 5 份真实表格抽取提交（表格内容含 PACS/OfficeHome 等真值）；但 `extractDatasetMentions` 需要 "X dataset/benchmark" 句式或 knownNames 佐证（knownNames 又依赖 papers 来源——鸡生蛋），故 tables 来源 evidence 仍为 0。
+4. **抓到关键缺陷 I18（已修复推送）**：新下载论文 2403.08506 走完整 scan→ingest→extract 后，卡仍是 `harness.kind=fake、title/datasets=unknown/[]`——与 12:20 首批 5 张卡同病。根因不是凭据（`models test` 200、CLI 启动会加载 `~/.ideaseek/credentials.env`），而是 **`extract.ts`/`run.ts`/`full.ts` 拉起 worker/supervise 子进程时写死 `opts.harness ?? 'fake'`**，文档承诺的"有 key 默认 dsh"从未到达子进程——父进程 resolveHarnessKind 解析成 dsh 也无济于事（这也解释了"protocol propose 走真模型（CLI 内联执行）而 extract 全是假卡"的表面矛盾）。
+5. **修复 I18 = commit `afb9616`**：三处子进程改传父进程同一份 `resolveHarnessKind()` 结果；`extract.ts` 抽出纯函数 `workerChildArgs()`；回归 `tests/extract-harness.test.ts`（2 例：有 key→argv 含 dsh、无 key→fake）。定向回归全绿：extract-harness 2/2、extract+paper-extract+cli.start.e2e+literature 31/31、full-plan/full-run/full-fairness 17/17。**全量 `pnpm test` 未在 afb9616 后重跑**（用户要求暂停让机）——下一会话先补一次全量（STAGE 8 基线：d4851de 时三 lane 全绿）。
+6. **待修 I19（架构级，按铁律只记录不擅动）**：①自_declared fake 的卡（`harness.kind==='fake'`）满足 `committedSourcesOf('papercard')` 的增量判定 → 凭据不可用期间产出的占位卡**永久阻塞真实重提取**（`extract` 恒报 "already extracted"）；②artifact 无取代机制（状态词表仅 staged/committed/aborted），直接重提取会产生同源双卡并流入 synthesis/claim-audit。上游决策项：增量判定加边界（自称 synthetic ≠ 提取结果，dsh 可用时假卡不算数）+ 或同源卡取代/择新机制。**在这两项落地前，绕行方案 = 追加新论文（修复后的 extract 会出真卡）供 discover 供名。**
+
+papers/ 现状（全部 size+`%%EOF` 校验通过，sha256 基线）：
+
+| 文件 | sha256 前16位 | 卡状态 |
+|---|---|---|
+| 2111.10487.pdf | 356408772987f767 | fake（I18 修复前） |
+| 2306.01334.pdf | ce025821f691f90d | fake |
+| 2306.05879.pdf | 39eb1549a248f0b3 | fake |
+| 2402.06974.pdf | a8da20460b4a8b67 | fake |
+| 2410.11267.pdf | f2b62ec8d99dad1c | fake |
+| 2403.08506.pdf | 0c09b139b88e7ada | fake（修复前提取；I19 阻塞重提取） |
+
+（第 7 篇 2410.03499 下载中途被暂停指令打断，半截文件已删除防截断污染。）
+
+**下一会话恢复步骤（按序）**：
+
+1. `cd /mnt/workspace/ideaseek && git pull --rebase origin main && bash setup.sh`（幂等；worker venv 已由 I12 修复自动建）。
+2. 新实例机器本地修复重放：非交互 shell `node` 若报 v22 → `ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`（I10/I11，机器本地不进仓库）；`apt-get update && apt-get install -y poppler-utils`（STAGE 8 用过）。
+3. 凭据在实例盘（`~/.ideaseek/credentials.env`），**大概率随实例丢失**：请用户重新 `ideaseek models setup`（或自行 export）；`ideaseek models test` 应 200 后再进模型步骤，否则相关步骤按 SKIP (no credential) 处理。
+4. 补跑一次全量 `pnpm test`（验证 afb9616 后三 lane 全绿，刷新 STAGE 8 基线）。
+5. 续 STAGE 9：**下载一篇新论文**（复用下载配方：`curl -sIL https://export.arxiv.org/pdf/<id>` 取 content-length → `curl -sL -C - --max-time 300 -o <id>.pdf` → 校验字节数相等且尾部有 `%%EOF`，主站 arxiv.org 限流勿用）→ `scan → intake --confirm <新组> → ingest → extract` → **断言新卡 `harness.kind==='dsh'` 且 `datasets` 非空（I18 现场验证）** → `datasets discover`（`external_search`/`allow_network` 已开）→ 出候选后 `explain → authorize --grant --reason "..." → acquire --max-gib 50 --timeout-ms 600000 --confirm → data describe` → 按格式落 STAGE 9 摘要并推送。
+6. 其后 STAGE 10（data slices）→ STAGE 11（并行 idea+comparison+协议）→ STAGE 12（full run）→ STAGE 13（三模式与指令面）→ 最终汇总表（≤10 行总结 + 是否可上线意见）。
+
+journey-a 项目状态快照：协议已锁 `proto-fb889c06d303-v1`、idea `gen-fed-domain-shaft-prototype`（v3 quick 结果入注册表、leaderboard 可列）、run 历史含 3 次 FAILED（protocol propose 修复前）与成功链、`external_search/allow_network=true`。备份/恢复演练目录 `/mnt/workspace/restore-a` 与半成品 `/mnt/workspace/journey-a-partial-20261119` 保留在工作区（均为可逆保留，未删除）。
+
+本会话累计推送（STAGE 1 起）：83c13a4、a63a0d4、60e91fd、50859d4、56da8fd、9ed1900、4a13138、4df788b、f479ad3、dc08a44、c0cf71c、edfee50、c02a241、02f5309、d4851de、afb9616。
