@@ -267,3 +267,19 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 结果: PASS（train/test 子项 N/A：单域语料无 group 列，产品按设计拒绝发明域轴——如实记录）
 证据: docs/ACCEPTANCE_EVIDENCE.md L249-L268
 摘要: from-protocol 建 3 切片（smoke 75/quick 375/standard 3750，seed42，复跑同 sliceId+同 outputHash 可复核）；哈希链 c56c1d4a→14f7cb35→894cb5c6/18990da3/2c101f61；标签分布 56 类（3–100/类）如实；无域轴限制在产品输出中自述。
+
+## STAGE 11 — 并行多 idea + 对比算法 + 实验设计（2026-11-20）
+
+1. **ideate → 3 张卡（含修复 I22）**：`ideate --round new --ideas 3` → round r2（parent r1，protocol 快照 proto-fb889c06d303-v1，input manifest sha256:96cc9258…）。首次 `idea generate --round r2` 全候选被拒：`[PARSE_FAILED] every candidate was rejected…mechanismChain.steps[i].text is required`——根因=输出契约只写了 6 个 step 的顺序、没写每个 step 是 `{kind,text}` 对象（与 I13 同根：缺 wrapper 形状描述）。**修复 I22（commit 6543741）**：契约明示 `steps: exactly 6 objects of the form {"kind","text"} — both fields required`，且 idempotency inputHash 纳入契约文本哈希（文案变更不得复用旧输出）；回归 `tests/idea-generate.test.ts` +2（契约含 step 形状 / 同输入稳定 sha256 幂等键），套件 10/10 绿。修复后一次生成 3 张 **CANDIDATE**：gen-fed-unseen-domain-consensus-protocol / gen-fed-backbone-contract-consistency / gen-fed-deferred-decision-rejection（`idea validate --require-candidate` ×3 均 eligible）。
+2. **对比算法（required 方法无官方源 → 计划内手写基线）**：
+   - `comparison plan`（dsh synthesis-analyst，run-414302da04f644f4，literature=7）→ 2 候选：FedAvg/FedProx+local DG（reference-only）、FedDG/shared-global-prototype alignment（**required**）；`comparison matrix --confirm` 记录事件 #11（sha256:dd219…）。
+   - `comparison discover` → 3 个官方仓候选（med-air/FedBN、owkin/FLamby、sanphouwang/fedccrl）——**均非 required 的原型对齐族**；github 通道实测：git ls-remote/clone 可用（flask 验证）、codeload tarball 200@119KB/s、仅 raw.githubusercontent 不通。
+   - 按计划 fallback：自写**最小可跑基线** `feddg-prototype-alignment`（source=paper-reimplementation，paper ref=2601.12253 卡 sha256:223f5cbc…）：本地 git fixture → `comparison import`（@1655d1c11d，#upstream 只读/worktree 隔离）→ `baseline repair --entry "python3 smoke.py"`（r1 ok 277ms，change=none，→ smoke-tested）→ `comparison smoke`（passed，267ms）→ **gate：1/1 required runnable，PASS**。基线为纯 stdlib 联邦原型对齐（6 客户端、30 轮全局类原型聚合、留一客户端 unseen 代理；数据=从已获取 parquet 一次性派生的 660 行×56 类×8 无标签描述子，provenance 写在 README；指标名与协议一致）。实测 4.7% > 56 类随机 1.8%，如实标注"非官方复现、仅证明可运行"。
+3. **每个 idea：create → IMPLEMENTING → 真计算 smoke → check 全绿**：三工作区各 9+ 文件（config/data/src/tests）；核心分别为 sign-code 共识 / 阈值弃权 / 协议变体扫描（纯 stdlib、种子 42、真实留一客户端预测导出全部指标；派生样本各自入 `data/sample.csv`）。`idea check` ×3：**static/unit-tests/data/metrics/smoke 五相全绿**，均 `outcome=passed, status=SMOKE_TESTED`（codeHash sha256:5d841a3e…/f2296384…/af7a02a4…）。其中 C 首轮 metrics 相 `AttributeError: 'tuple' object has no attribute 'items'`（compute_metrics 返回元组）→ 拆分 `compute_diagnostics()` 后复检通过（属实现自错，非产品缺陷）。
+4. **并行放行**：`idea run-ready --scale quick --json` → 一次调用 admitted=[backbone-contract-consistency, deferred-decision-rejection]（两者 result.startedAt 相差 **64ms**，时间窗重叠），第 3 个按用户配置 `max_parallel_ideas=2` 如实排队（constraints 明示）；再次调用 → admitted=[unseen-domain-consensus-protocol]，**queued=[]** 队列排空；三结果均 `succeeded`、入注册表、`statusAfter=ANALYZING`。
+5. **协议再提案**：`protocol propose`（dsh，run-983e57355e3b48a5）→ `confirm protocol` → **locked `proto-bbae9031fbbd-v1`**（hash sha256:003699f5…），2 条低置信确认如实覆盖（resourceEstimate conf 0.40；row-level 规则不证明 group 分离、泄漏敏感结论前需 domain adapter 确认边界）。
+
+=== STAGE 11: 并行多 idea + 对比算法 + 实验设计 ===
+结果: PASS（含已修复缺陷 I22；required 对比方法按计划 fallback 为手写可运行基线）
+证据: docs/ACCEPTANCE_EVIDENCE.md L271-L285
+摘要: I22 修复后 3 张 CANDIDATE 卡；required FedDG 原型对齐无官方源→手写基线 smoke 267ms+gate 1/1 PASS；3 idea 五相 check 全绿并并行 quick 放行（同批间隔 64ms、用户上限 2、排队后清空）；新协议 proto-bbae9031fbbd-v1 锁定。
