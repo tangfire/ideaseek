@@ -340,3 +340,5 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 5. 推送状态：本轮本地提交 867cd5d、2502cec、aae70e8、0ee1e14、6543741、e77c3d1 及本证据提交 **PUSH PENDING**——实例 `~/.git-credentials` 无 gitee 条目（仅 modelscope），git push 卡 askpass；已请求用户恢复凭据后补推（见 STAGE 9 推送状态行）。
 
 **推送确认（2026-11-20）**：用户恢复 gitee 凭据后，`git ls-remote origin main` = `3f5aae4`——本轮全部提交 `867cd5d`、`2502cec`、`aae70e8`、`0ee1e14`、`6543741`、`e77c3d1`、`3f5aae4` 均已在远端，`git push` 返回 Everything up-to-date；STAGE 9 节所记 PUSH PENDING 至此闭合（该历史行按 append-only 规则不改写）。验收全部证据与修复已按第 4 节完成提交与推送。
+
+**修复后全量回归（2026-11-20，a3a1dfa 工作树，验收最后一项验证）**：`pnpm test` **exit 0** 三 lane 全绿——主 lane **205 文件 / 1905 测试 → 1903 passed / 2 skipped / 0 failed**（458.8s；较修复前基线 1891 测试多出 14 个，即 I20–I22 的定向回归用例）；交互 lane 3 文件/24 passed（93.8s）；python lane 23 tests OK（5.9s）。2 skipped 为环境守卫用例（无凭据/无 TTY 类）。至此验收计划全部完成。
