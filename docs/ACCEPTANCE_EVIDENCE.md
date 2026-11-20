@@ -245,3 +245,25 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 结果: PASS（acquire 经 I20 修复完成、link 经 I21 修复通过；三次失败尝试与原始错误均如实记录）
 证据: docs/ACCEPTANCE_EVIDENCE.md L213-L247
 摘要: 新论文真卡 harness.kind=dsh+datasets 非空（I18 现场验证）；discover 4 候选→explain→authorize→acquire（I20 idle 超时+--resume 修复后 378.2MiB sha256 校验）→describe（3750 行/56 类）→link（I21 台账哈希，validated）；推送因 gitee 凭据缺失暂挂。
+
+## STAGE 10 — 自主切片（2026-11-20）
+
+- `data slices`（初始）→ `no dataset slices registered`。
+- `data slices --from-protocol --json` → exit 0，built=3，全部绑定 `datasetSnapshotId=data-c56c1d4ab135`、`ruleVersion=2`、seed=42、inputHash=`sha256:14f7cb3516…`：
+
+| slice | 样本数 | outputHash |
+|---|---|---|
+| smoke | 75/3750（2%） | sha256:894cb5c6… |
+| quick | 375/3750（10%） | sha256:18990da3… |
+| standard | 3750/3750（100%） | sha256:2c101f61… |
+
+- **可复现**：再次 `--from-protocol` 重导出 3 条记录，sliceId 与 outputHash 与首次完全一致（rule+seed 可复核）；记录自述 "re-derive with seed 42 to reproduce"。
+- `distributionCheck.ok=true`，各带 unstratified 警告（如实）。
+- **单切片样本数**：见上表（stats.selectedRows）；**标签分布**：产品不持久化切片级标签分布（记录仅含分布检查+警告），语料级分布如实记录——56 类 / 3750 样本，每类 3–100（多数 100；class 1/2/3/8/10/28/48/54 各 100，51=99，16=98…，来自 `knowledge/image-profiles.json`）。
+- **train/test 子项：N/A（如实）**——image profile：`grouping column: None`、`splitRules: []`、warning `no grouping column: leave-one-domain-out cannot be derived`；`data materialize`（写实验读取的 `<domain>/<class>` 布局）据此**按设计拒绝**：`[DATASET_LAYOUT] cannot find group column(s) among ['image','label']; pass them explicitly if the corpus uses other names`——平台不得发明域轴（python 门禁本就含 "no domain axis warns instead of inventing one" 用例）。限制源自所获语料（单分片 ImageNet-A 无域列），非切片机制缺陷；切片记录亦自述 "no hold-out column: this slice does not test unseen groups"。
+- rootHash 映射说明：本路径（parquet 语料）的可复核哈希链为 acquire sha256 c56c1d4a… → datasetSnapshotId data-c56c1d4ab135 → slice inputHash 14f7cb35… → outputHash（上表）；federated npz 挂载才使用 rootHash 字段。
+
+=== STAGE 10: 自主切片 ===
+结果: PASS（train/test 子项 N/A：单域语料无 group 列，产品按设计拒绝发明域轴——如实记录）
+证据: docs/ACCEPTANCE_EVIDENCE.md L249-L268
+摘要: from-protocol 建 3 切片（smoke 75/quick 375/standard 3750，seed42，复跑同 sliceId+同 outputHash 可复核）；哈希链 c56c1d4a→14f7cb35→894cb5c6/18990da3/2c101f61；标签分布 56 类（3–100/类）如实；无域轴限制在产品输出中自述。
