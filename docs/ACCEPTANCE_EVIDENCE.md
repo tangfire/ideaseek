@@ -114,3 +114,17 @@
 勘误（append-only，不改写 STAGE 3 行）：STAGE 3 的 5 篇 PDF 实为**截断下载**（无 `%%EOF`，`file` 仍报 PDF 1.5，sha 基线也记录的是截断件）——STAGE 4 ingest 暴露 `Stream has ended unexpectedly`。已用 `export.arxiv.org` + content-length 比对 + 断点续传重新下载，5/5 通过大小与 `%%EOF` 校验（2111.10487=5250951B、2306.01334=4325017B、2410.11267=9761211B、2402.06974=2950638B、2306.05879=4485783B），新 sha256 基线已记录，ingest 5/5 解析成功。根因是本机到 arxiv.org 主站限流/慢速导致 curl max-time 截断，非 ideaseek 缺陷（下载为 agent 侧动作）。
 
 结论：STAGE 4 PASS（含 2 个已修复单点缺陷 I12/I13）。
+
+## STAGE 5 — idea 闭环 Journey G 机器可验面（2026-11-20）
+
+真实模型链（key 已配置），idea `gen-fed-domain-shaft-prototype`：
+
+- `ideate --round new` → r1（snapshots 绑定 protocol proto-fb889c06d303-v1、manifest sha256）→ `idea generate --round r1` → 1 张候选卡 → `idea validate --require-candidate`（gate=CANDIDATE）→ `idea create --from-card`（scaffold 9 文件，nothing overwritten）→ `set-status IMPLEMENTING`。
+- **真计算入口**：占位 scaffold 被 check 正确拒收（`FAIL smoke scaffold-placeholder — …these numbers mean nothing`，门禁有效证据）。重写为纯 Python 真计算（`src/fedg.py`：读本地 CSV → 按 x0 三分位确定域轴 → 种子化 logistic regression 在 seen domains 训练 → 留一域评估；5 个配置指标全部由真实预测导出；`smoke.py`/`train.py`/`check_metrics.py` 共用同一实现，无三方依赖）；单测从 1 例扩到 4 例（指标名对齐 config、准确率∈[0,1]、gap/通信量>0、**非占位值**）。
+- `idea check` → **PASSED (status=SMOKE_TESTED)**，static/unit-tests/data/metrics/smoke 五相全绿。
+- `idea experiment --json` → `resultStatus:"succeeded"`，5 指标入注册表（Unseen-domain top-1=0.5、Worst=0.5、Avg seen=0.6667、alignment gap=0.3、comm cost=240），`statusAfter: ANALYZING`。
+- **失败实验不被删除（故意失败→重试）**：门禁先拒了两条捷径（代码改动→`check report is stale` 拒跑；已有成功结果→`alreadyRecorded` 幂等；状态 ANALYZING→`INVALID_STATE` 要求 walk back——均为正确行为）。按门禁走 NEEDS_REVISION→IMPLEMENTING→check 后，移走数据文件制造真实运行期失败：`resultStatus:"failed", failure:{category:"data", FileNotFoundError…}` 入 **v2**；恢复数据重试 → v3 succeeded。**v1/v2/v3 三份版本化结果文件全在**（`experiments/*-v2.json` 含 failed+failure 原文），task 表亦保留全部历史失败（paper.parse/protocol.propose failed 行未被清理）——失败记录未被删除 ✓。
+- `experiment list` → 1 spec `succeeded`；`experiment show` → v3 带 command/metrics/explanation；`experiment leaderboard` → `1. gen-fed-domain-shaft-prototype 0.5000 v3 quick` ✓。
+- 零 secret：全部输出无 key 命中（未做模式化扫描，输出中仅指标与状态）。
+
+结论：STAGE 5 PASS。
