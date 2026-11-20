@@ -194,6 +194,32 @@ else
   esac
 fi
 
+# Python worker 依赖（pypdf/pdfplumber 等）：不装则第一次 `ideaseek ingest`
+# 就以 PARSER_MISSING 全量失败——装完 node 栈却用不了核心链路。
+# CLI 优先使用 worker/python/.venv（见 worker/python/README.md）。
+worker_deps_ok() {
+  local venv="$1"
+  [ -x "$venv/bin/python" ] && "$venv/bin/python" -c 'import pypdf, pdfplumber' 2>/dev/null
+}
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+  WORKER_VENV="$(pwd)/worker/python/.venv"
+  if worker_deps_ok "$WORKER_VENV"; then
+    info "python worker venv ready (worker/python/.venv)"
+  else
+    step "Installing Python worker dependencies"
+    PYBIN="$(command -v python3 || command -v python)"
+    if "$PYBIN" -m venv "$WORKER_VENV" &&
+      "$WORKER_VENV/bin/pip" install --quiet -r worker/python/requirements.txt &&
+      worker_deps_ok "$WORKER_VENV"; then
+      info "worker deps: pypdf + pdfplumber importable"
+    else
+      fail "python worker dependency install failed"
+      echo "  Manual: cd worker/python && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+      exit 1
+    fi
+  fi
+fi
+
 # LaTeX (pdflatex)
 if command -v pdflatex >/dev/null 2>&1; then
   info "pdflatex available"
