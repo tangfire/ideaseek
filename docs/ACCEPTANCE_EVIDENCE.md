@@ -74,3 +74,13 @@
 6. `ideaseek status` → 可读（项目/Run/研究链阶段/下一步命令）exit 0 ✓。
 
 结论：STAGE 1 PASS。期间唯一缺陷 I11 为机器本地环境复发（非代码缺陷），已重放修复。
+
+## STAGE 2 — Journey B 模型配置（2026-11-20）
+
+用户已在本机亲自配置 key（STAGE 0 doctor 已记 presence：`env DEEPSEEK_API_KEY is set`；本阶段不读取、不打印任何 key 值）。
+
+- `ideaseek models list` → exit 0，**四层路由齐全**：fast / balanced / deep / deterministic，各带角色绑定（fast: paper_extractor+paper_vision；balanced: 6 角色；deep: 6 角色；deterministic: evidence_checker+workflow_supervisor 且 no model）；凭据仅 presence（`deepseek api key configured (presence only)`、`credentialRef=env:DEEPSEEK_API_KEY [configured]`）。
+- `ideaseek models list --json` → exit 0，`JSON.parse` 通过；机器扫描 stdout+stderr 对 `sk-[A-Za-z0-9]`/`ghp_[A-Za-z0-9]`/`Bearer [A-Za-z0-9]` **零命中**（0/0）。
+- JSON 内嵌规则自述："Agent cannot read or modify API keys — presence is reported only"、"deterministic tier never calls a model"，与 Journey B 验收一致。
+
+结论：STAGE 2 PASS（非 SKIP，key 已由用户配置）。
