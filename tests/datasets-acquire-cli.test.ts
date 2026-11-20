@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, truncate, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -209,5 +210,85 @@ describe('ideaseek datasets acquire (gates)', () => {
     expect(resumed.code).not.toBe(0);
     // Past the gate it fails at the closed loopback endpoint, not on the .part.
     expect(resumed.stderr + resumed.stdout).not.toContain('leftover partial');
+  });
+});
+
+describe('ideaseek datasets link: acquisition-ledger hashes', () => {
+  const sha = (text: string): string => `sha256:${createHash('sha256').update(text).digest('hex')}`;
+
+  async function writeLedger(dir: string, records: Record<string, unknown>[]): Promise<void> {
+    await writeFile(
+      join(dir, 'knowledge', 'dataset-acquisitions.json'),
+      JSON.stringify({ schemaVersion: 1, records }, null, 2),
+      'utf8',
+    );
+  }
+
+  it('links with the hash the acquisition already established', async () => {
+    const dir = await project([makeCandidate(granted)]);
+    const rel = 'datasets/pacs-small.csv';
+    const payload = 'domain,label\nA,1\nB,0\n';
+    await writeFile(join(dir, rel), payload, 'utf8');
+    await writeLedger(dir, [
+      {
+        candidateId: 'ds-pacs',
+        name: 'PACS',
+        relPath: rel,
+        sha256: sha(payload),
+        bytes: Buffer.byteLength(payload),
+        sourceUrl: 'https://x.test/PACS.zip',
+        at: 1,
+      },
+    ]);
+    const result = await runCli(dir, ['datasets', 'link', 'ds-pacs', '--path', rel, '--json']);
+    expect(result.code, result.stderr).toBe(0);
+    const out = JSON.parse(result.stdout.trim().split('\n').pop() as string);
+    expect(out.local.sha256).toBe(sha(payload));
+    expect(out.local.datasetSnapshotId).toBe(`data-${sha(payload).slice(7, 19)}`);
+  });
+
+  it('links a file above the inline-hash limit when the ledger size matches', async () => {
+    const dir = await project([makeCandidate(granted)]);
+    const rel = 'datasets/pacs-big.parquet';
+    const size = 270 * 1024 * 1024;
+    // Sparse on purpose: link checks the recorded size, it never reads bytes.
+    await writeFile(join(dir, rel), '');
+    await truncate(join(dir, rel), size);
+    await writeLedger(dir, [
+      {
+        candidateId: 'ds-pacs',
+        name: 'PACS',
+        relPath: rel,
+        sha256: `sha256:${'a'.repeat(64)}`,
+        bytes: size,
+        sourceUrl: 'https://x.test/PACS.parquet',
+        at: 1,
+      },
+    ]);
+    const result = await runCli(dir, ['datasets', 'link', 'ds-pacs', '--path', rel]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`snapshot=data-${'a'.repeat(12)}`);
+  });
+
+  it('refuses the ledger hash once the file no longer matches its recorded size', async () => {
+    const dir = await project([makeCandidate(granted)]);
+    const rel = 'datasets/pacs-big.parquet';
+    const size = 270 * 1024 * 1024;
+    await writeFile(join(dir, rel), '');
+    await truncate(join(dir, rel), size);
+    await writeLedger(dir, [
+      {
+        candidateId: 'ds-pacs',
+        name: 'PACS',
+        relPath: rel,
+        sha256: `sha256:${'a'.repeat(64)}`,
+        bytes: size - 1,
+        sourceUrl: 'https://x.test/PACS.parquet',
+        at: 1,
+      },
+    ]);
+    const result = await runCli(dir, ['datasets', 'link', 'ds-pacs', '--path', rel]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr + result.stdout).toContain('without a scan hash');
   });
 });

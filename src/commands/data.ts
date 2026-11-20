@@ -118,6 +118,27 @@ async function appendAcquisition(
 }
 
 /**
+ * The hash an acquisition already established for `relPath`. Trusted only
+ * while the on-disk size still matches what acquire staged, so a file that
+ * changed after download can never borrow the ledger's identity. Without this
+ * fallback, a file above the scan/inline hash limit that acquire itself staged
+ * could never be linked (scan skips its hash, link refuses to inline it).
+ */
+async function acquisitionHashFor(
+  root: string,
+  relPath: string | null,
+  size: number,
+): Promise<ContentHash | null> {
+  if (!relPath) return null;
+  const ledger = await readFile(join(root, 'knowledge', 'dataset-acquisitions.json'), 'utf8')
+    .then((text) => JSON.parse(text) as { records?: AcquisitionRecord[] })
+    .catch(() => null);
+  const match = [...(ledger?.records ?? [])].reverse().find((record) => record.relPath === relPath);
+  if (!match || match.bytes !== size || !isContentHash(match.sha256)) return null;
+  return match.sha256 as ContentHash;
+}
+
+/**
  * Builds the measured structure a selection spec is validated against: column
  * names and group→value counts from the profiles `data describe` wrote. Purely
  * descriptive — the platform never decides what a column means.
@@ -1662,14 +1683,19 @@ export function registerDataCommand(program: Command): void {
             if (manifestHash) {
               sha256 = manifestHash;
             } else {
-              if (info.size > MAX_INLINE_HASH_BYTES) {
+              const ledgerHash = await acquisitionHashFor(root, rel, info.size);
+              if (ledgerHash) {
+                sha256 = ledgerHash;
+              } else if (info.size > MAX_INLINE_HASH_BYTES) {
                 throw new IdeaseekError(
                   'USER_INPUT_REQUIRED',
-                  `file is ${(info.size / (1024 * 1024)).toFixed(0)} MiB without a scan hash — ` +
-                    'run ideaseek scan first (inline hashing of large files is refused)',
+                  `file is ${(info.size / (1024 * 1024)).toFixed(0)} MiB without a scan hash or a ` +
+                    'matching acquisition record — run ideaseek scan first, or obtain it with ' +
+                    'ideaseek datasets acquire (inline hashing of large files is refused)',
                 );
+              } else {
+                sha256 = await sha256OfFile(resolved);
               }
-              sha256 = await sha256OfFile(resolved);
             }
             snapshotId = `data-${sha256.slice(7, 19)}`;
           } else if (info.isDirectory() && readonlyEntry && resolve(readonlyEntry) === resolved) {
