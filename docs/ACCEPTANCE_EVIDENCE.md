@@ -283,3 +283,58 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 结果: PASS（含已修复缺陷 I22；required 对比方法按计划 fallback 为手写可运行基线）
 证据: docs/ACCEPTANCE_EVIDENCE.md L271-L285
 摘要: I22 修复后 3 张 CANDIDATE 卡；required FedDG 原型对齐无官方源→手写基线 smoke 267ms+gate 1/1 PASS；3 idea 五相 check 全绿并并行 quick 放行（同批间隔 64ms、用户上限 2、排队后清空）；新协议 proto-bbae9031fbbd-v1 锁定。
+
+## STAGE 12 — 全量运行（2026-11-20）· PARTIAL（科学门禁如实拦截）
+
+- `full plan --idea gen-fed-domain-shaft-prototype` → NOT READY（handoff PROMISING），4 阻塞：verdict inconclusive / seeds 1<2 / fairness 未锁 / required 对比无 succeeded 实验。机器侧清单（comparisons gate=ok required=1、预算、资源）均正常。
+- **准备（如实记录试错链）**：STAGE 11 的 `protocol propose→confirm` 锁定了新协议 proto-bbae9031fbbd-v1（指标来自新论文的基准参照，含百分比量纲），此后 idea 实验被门禁逐层拦下——① `align-metrics` 判定 card 的 Unseen 指标与新主指标可映射但置信度 0.7 未达 apply 门槛，**如实拒绝应用**；② 按门禁明示路径把协议主指标 `mean unseen-domain accuracy`（百分比口径）加入 config 与入口输出；③ 状态机要求 ANALYZING→NEEDS_REVISION→IMPLEMENTING→check→SMOKE_TESTED 合法回走后才记录新 spec（`ANALYZING with a changed spec — walk back first` 实际拦截，全部按提示走通）；④ 分析器初版找不到同跑对照（记录为 `mean unseen-domain accuracy` 但配对主指标为 spec 首项）→ 按分析器提示改挂主指标键。过程共产生 idea 实验 v4/v5/v6 三条真实记录（v1–v3 历史保留），无删除。
+- **同跑对照（truthful baseline）**：`idea revise` v1→v2（工程修订）+ config seeds [42,43] 双种子均值 + 入口在**同一数据同一划分**上计算 prototype-alignment 对照（per-class 质心最近邻，评估点=subject 的 unseen 域），以 `baselines` 随 RunResult 入库。
+- **required 对比实验**：`experiment spec/result` 记录 `cmp-feddg-prototype-alignment-quick v1 → succeeded`（在其隔离 worktree 实跑 `python3 smoke.py`，指标 4.7/1.82/4.7/1.5992/403200，dataSnapshotId=sample 副本 sha256:0b196de5…，codeCommit=1655d1c1…）。
+- **fairness**：READY → `--confirm` 锁定（sha256:2d1e7…，决策事件 #24），**3 条偏差如实入锁**：① data-split 快照不同（方法用自身派生样本 vs idea 工作区 synthetic）② 方法不产 2/2 协议主指标 ③ seeds [42] vs [42,43]。
+- **裁决（唯一剩余阻塞，如实拦截）**：`idea analyze` v2 → **INCONCLUSIVE**：`primary delta vs best baseline: 0`（subject 0.5 vs 对照 0.5）、且分析器对"两方法逐位相同（17 位有效数字）"触发借用基线签名告警（本次为小样本真实打平的误报可能，但 delta=0 的结论独立成立）。**不得伪造优越性**。
+- **门禁链验证**：`full approve --confirm` → `not ready for full research: analysis verdict is inconclusive (need supported)`；`full run --confirm` → `full plan ... is not approved`。approve 需要 READY 的 plan，run 需要 approve 的 plan，两层保护均实际生效。
+- 结论：**PARTIAL**——前置链（plan/fairness/对比实验/门禁）全部真实执行并留证；full run 无法获准的原因是科学结论不足（假设在 smoke 规模与对照打平），非平台缺陷。`paper results` 导出等 full-run 后置断言因此不适用（N/A）。
+
+=== STAGE 12: 全量运行 ===
+结果: PARTIAL（verdict 门禁如实拦截：假设与同跑对照打平，不宣称优越；fairness/plan/approve/run 链全验证）
+证据: docs/ACCEPTANCE_EVIDENCE.md L287-L302
+摘要: plan NOT READY（4→1 阻塞）；双种子+同跑对照+required 对比实验入注册表；fairness 锁定含 3 偏差（事件 #24）；analysis INCONCLUSIVE（delta=0）；approve/run 双层拒绝原样记录。
+
+## STAGE 13 — 模式与指令面 Journey E 补充（2026-11-20）
+
+1. `ideaseek mode` → `session mode: research`，project/autonomy/permissions 人话列出（science 输入只读、受保护操作需确认、实验需协议锁+对比门+容量准入）。
+2. **切换不清空上下文（MODES.md 契约）**：`mode analysis` → 事件 #26，输出明写 **"no second run was started"**；DB `runs=17 / tasks=52` 切换前后完全一致；`prepare --skip-model` 在 analysis 档跑通 [1/5]…[5/5]（scan 19 文件 reused 8、ingest 增量、data describe 更新、extract/synthesize skipped(--skip-model)、**assessment READY · 0 blocking**，exit 0）；`mode research` 切回 → 事件 #27，status 仍 run-983e57355e3b48a5/COMPLETED，next 语义与切换前一致。
+3. **三态一致**：`status`/`next` 各跑 human / `--plain` / `--json`——JSON 可解析、三态结论一致（同一 runId/状态/下一步 synthesize）；对 `sk-[A-Za-z0-9]{8,}`/`ghp_[…]`/`Bearer […]`（前界守卫）**0 命中**。使用口径记录：`--plain` 是**全局选项**（须在子命令前：`ideaseek --plain status`；`status --plain` 报 unknown option，属 Commander 全局语义，非缺陷）。
+4. **TUI 指令面**：`ideaseek interactive` 在 PTY（`script -qec`）下可真实启动——banner 与工作区计数为真（`papers 7 · datasets 1 · comparisons 1 · ideas 4 · model key: ready`），tips 含 `/next` `/pending` `Alt+C coding` `?` 快捷键；但管道输入被识别为 paste 且 Enter 不提交，**本会话无法可靠驱动 slash 指令**（两次尝试均如实记录，残留"last session interrupted"提示系上次超时被杀所致）→ `/help` 分组与 `/status` `/next` `/papers` `/ideas` relay 子项 **SKIP（无真实 TTY 驱动）**；机器证据取自 interactive lane：3 文件/24 用例全绿（含 TUI checklist layout/palette/dispatch/Ctrl-C hint/`/quit`、greeting/shortcuts/Ctrl+O/Ctrl+F 等）。
+5. **coding 档**：`mode coding` → `session focus: ask → coding`（"每行输入都是一轮 DSH coding 会话；权限档位不变，回合仍受审计与漂移侦测"），`mode` 显示 `text goes to: CODING focus`；`/agent` 入口存在（`ideaseek agent` = 真实 DSH coding turn，approvals TTY prompt else rejected）；真实 coding turn **SKIP**（成本与审批面另行验收，计划允许）。随后 `mode ask` + research 恢复默认口径。
+
+=== STAGE 13: 模式与指令面 ===
+结果: PASS（TUI slash relay 子项 SKIP（无真实 TTY 驱动，附 interactive lane 24 用例机器证据）；coding 真实 turn SKIP（计划允许））
+证据: docs/ACCEPTANCE_EVIDENCE.md L303-L314
+摘要: mode 显示/切换契约成立（事件 #26/#27，runs=17 tasks=52 不变，analysis 档 prepare READY 0 blocking）；status/next 三态一致且零 secret（--plain 为全局选项）；TUI 可启动但管道无法可靠驱动；coding focus 与 agent 入口在，真实 turn 按计划 SKIP。
+
+## 最终汇总（2026-11-20）
+
+| Journey | 结果 | 证据行 | 备注 |
+|---|---|---|---|
+| STAGE 0 安装与自检 | PASS | L47-57 · L213-215 | 本轮恢复：node 符号链接重放、poppler（腾讯镜像）、models test 200 |
+| STAGE 1 Journey A | PASS | L59-76 | init 幂等、start 露 demo、next 推进性 |
+| STAGE 2 Journey B | PASS | L78-86 | 四层路由齐全、JSON 零 secret |
+| STAGE 3 Journey C | PASS | L88-101 · 勘误 L114 | 下载截断已重下并验 sha |
+| STAGE 4 Journey D | PASS | L103-116 | 修复 I12/I13；gate 停滞可见 |
+| STAGE 5 Journey G | PASS | L118-130 | 失败实验保留、leaderboard |
+| STAGE 6 Journey H | PASS | L132-142 | 上传备份子项 SKIP: no upload |
+| STAGE 7 Journey F | PASS | L144-153 | SSH 断连子项 PARTIAL（detach 等价） |
+| STAGE 8 全量回归 | PASS | L155-172 · 基线 L213-215 | 修复 I14–I17；afb9616 后 3 lane 全绿 |
+| STAGE 9 数据集获取 | PASS | L213-247 | 修复 I20/I21；四次 acquire 尝试全留证 |
+| STAGE 10 自主切片 | PASS | L249-268 | train/test 子项 N/A（单域语料无 group 列，产品按设计拒绝发明域轴） |
+| STAGE 11 并行+对比+协议 | PASS | L271-285 | 修复 I22；required 对比按计划手写基线并 gate 通过 |
+| STAGE 12 全量运行 | PARTIAL | L287-302 | 门禁如实拦截：verdict inconclusive（假设与同跑对照打平） |
+| STAGE 13 模式与指令面 | PASS | L303-314 | TUI slash relay SKIP（无真实 TTY，interactive lane 24 用例机器证据）；coding turn SKIP（计划允许） |
+
+**≤10 行总结**
+1. PASS 13 项（STAGE 0–11、13），PARTIAL 1 项（STAGE 12），阶段内 SKIP 子项 4 处（上传备份、SSH 断连模拟、TUI slash relay、coding 真实 turn）。
+2. 本轮修复 3 个真实缺陷（均改→回归→绿→小 commit）：I20 acquire idle 超时+显式 --resume（真网续传补完 378.2MiB）；I21 link 回退 acquire 台账哈希（>256MiB 断链）；I22 idea 生成契约显式 step 形状（真模型一次出 3 卡）。
+3. 最值得修：① acquire 无并发分块/限速窗口下大文件仍慢（--resume 已可用）；② dataset-index 源质量（Office-Home 索引指向 1.06GB MP3、ImageNet-A size 挂错）需上游清洗；③ 新协议指标取自论文基准参照（百分比参照目标），与可测语料脱节，align-metrics 置信度门槛会如实拒绝自动对齐。
+4. 机器侧上线意见：主研究链（材料→协议→idea→数据→切片→对比→并行实验）全链 PASS，全部门禁（协议锁/对比门/fairness/verdict/审批/状态机）在反面场景均真实拦截、无假绿；full-run 需先有超越同跑对照的假设（科学事实，非平台缺陷）；网络重负载与外部源质量是主要运行风险。
+5. 推送状态：本轮本地提交 867cd5d、2502cec、aae70e8、0ee1e14、6543741、e77c3d1 及本证据提交 **PUSH PENDING**——实例 `~/.git-credentials` 无 gitee 条目（仅 modelscope），git push 卡 askpass；已请求用户恢复凭据后补推（见 STAGE 9 推送状态行）。
