@@ -99,3 +99,18 @@
 - 零 secret：plan JSON+stderr 对 `sk-|ghp_|Bearer` 零命中。
 
 结论：STAGE 3 PASS。
+
+## STAGE 4 — 协议与首次运行 Journey D（2026-11-20）
+
+执行链与断言：
+
+- `prepare --skip-model` → `[5/5] assessment: GAPS · protocol=BLOCKED · smoke=BLOCKED (2 blocking, 5 total gap(s))`，缺口如实：`papers-not-parsed`、`no-dataset`，各带准确 next 命令，exit 2。
+- `protocol propose` 首次报 `no extracted PaperCards` → 按链补 `ingest`（首跑 PARSER_MISSING，见 I12）→ `extract`：`10 succeeded, 0 failed`（真实模型，key 已配置，未用 fake harness）。
+- **修复 I12（setup.sh 不装 python worker 依赖，全新安装第一次 ingest 必死）**：现象=`ingest` 5/5 全失败 `pypdf is not installed`；根因=setup.sh 只检查 python 版本、从不安装 `worker/python/requirements.txt`（也从不建 venv）；改动=`setup.sh` 新增 `worker_deps_ok` + venv 自举（失败则打印手工命令并 exit 1）、新增 `tests/setup-worker-venv.test.ts`（4 例）；回归=该文件 4/4 绿 + `bash setup.sh` 实跑 exit 0（`worker deps: pypdf + pdfplumber importable`）；commit **50859d4**。
+- **修复 I13（protocol propose 三连败）**：现象=两次运行共 6 次尝试全失败（`splitRules.source must be one of…` / `splitRules.confidence…` / `value must not be empty`，另 2 次模型 JSON 非法被重试）；根因=解压 session 逐字核对模型输出：splitRules/slicing 被输出成**裸数组**（丢 `{value,source,confidence}` 包装），且 Rules 文案旧写法 `slicing[]` 正好暗示裸数组；枚举此前只写在 taskDefinition 的 schema 行；改动=`src/experiment/protocol-synth.ts` Rules 行补全 `every "source" field must be one of [...]`（**56da8fd**）+ 明示数组放 `value` 内、`slicing[]` 改 `slicing.value[]`、prompt 版本 .4→.5→.6（**9ed1900**）；回归=`tests/protocol-propose.test.ts` 新增 enum + wrapper 两例（6/6 绿，连同 prompt-injection 11/11 绿）；修复后 `protocol propose` **1 次尝试通过**（run-4faa1715b8ba4a0f）。
+- `confirm protocol` → **locked `proto-fb889c06d303-v1`**，hash sha256:9d450910…f034282，4 条低置信确认（splitRules/smokeTest/resourceEstimate/slicing）如实浮出并被覆盖。
+- **comparison gate 停滞可见、不假装进入 idea 阶段**：`status` 阶段=`MATERIAL_INCOMPLETE`（datasets 阻塞）；`next` 给 datasets discover→authorize→acquire→link 链而非 idea；`idea list`=`no idea workspaces`；`assessment` exit 2，`[BLOCKING] no-dataset` + `[recommended] no-comparisons — the idea-stage gate will block until some exist`，每条带 evidence/fill-in/cost/blocks。
+
+勘误（append-only，不改写 STAGE 3 行）：STAGE 3 的 5 篇 PDF 实为**截断下载**（无 `%%EOF`，`file` 仍报 PDF 1.5，sha 基线也记录的是截断件）——STAGE 4 ingest 暴露 `Stream has ended unexpectedly`。已用 `export.arxiv.org` + content-length 比对 + 断点续传重新下载，5/5 通过大小与 `%%EOF` 校验（2111.10487=5250951B、2306.01334=4325017B、2410.11267=9761211B、2402.06974=2950638B、2306.05879=4485783B），新 sha256 基线已记录，ingest 5/5 解析成功。根因是本机到 arxiv.org 主站限流/慢速导致 curl max-time 截断，非 ideaseek 缺陷（下载为 agent 侧动作）。
+
+结论：STAGE 4 PASS（含 2 个已修复单点缺陷 I12/I13）。
