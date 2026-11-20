@@ -69,6 +69,11 @@ function runCliChild(args: string[], logFd: number) {
   });
 }
 
+/** Child argv for one parallel worker; pure so the harness wiring is testable. */
+export function workerChildArgs(runId: string, harnessKind: string): string[] {
+  return ['worker', '--run', runId, '--harness', harnessKind, '--idle-exit', '3000'];
+}
+
 /**
  * `ideaseek extract` — the Phase 2 parallel map stage: enqueues
  * paper.extract for every parsed-but-unextracted paper (incremental,
@@ -101,9 +106,14 @@ export function registerExtractCommand(program: Command): void {
           timeout?: number;
           json?: boolean;
         }) => {
+          // Resolve once: the parent runtime AND the spawned workers must see
+          // the same kind. Hardcoding `?? 'fake'` for the children made every
+          // extract synthetic even with a key configured — the documented
+          // "dsh when a key is configured" default never reached the worker.
+          const harnessKind = resolveHarnessKind(opts.harness);
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
-            harness: buildHarness(resolveHarnessKind(opts.harness)),
+            harness: buildHarness(harnessKind),
           });
           try {
             assertConfigUsable(runtime.configLoad);
@@ -229,20 +239,7 @@ export function registerExtractCommand(program: Command): void {
             const fd = openSync(logPath, 'a');
             const children = [];
             for (let i = 0; i < k; i += 1) {
-              children.push(
-                runCliChild(
-                  [
-                    'worker',
-                    '--run',
-                    runId,
-                    '--harness',
-                    opts.harness ?? 'fake',
-                    '--idle-exit',
-                    '3000',
-                  ],
-                  fd,
-                ),
-              );
+              children.push(runCliChild(workerChildArgs(runId, harnessKind), fd));
             }
             const timeoutMs = Number.isFinite(opts.timeout) ? (opts.timeout as number) : 600_000;
             const deadline = Date.now() + timeoutMs;

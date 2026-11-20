@@ -394,9 +394,12 @@ export function registerFullCommand(program: Command): void {
             await import('../workflow/autonomy.js');
           const shared = await import('./shared.js');
           const { ProjectRuntime } = await import('../workflow/runtime.js');
+          // Resolve once so the detached supervisor child inherits the same
+          // kind as the parent (`?? 'fake'` downgraded background full runs).
+          const harnessKind = shared.resolveHarnessKind(opts.harness);
           const runtime = await ProjectRuntime.open({
             cwd: root,
-            harness: shared.buildHarness(shared.resolveHarnessKind(opts.harness)),
+            harness: shared.buildHarness(harnessKind),
           });
           let lockHeld = false;
           let lockRoot: string | null = null;
@@ -517,7 +520,7 @@ export function registerFullCommand(program: Command): void {
               const fd = openSync(logPath, 'a');
               const child = spawn(
                 process.execPath,
-                [script, 'supervise', '--run', runId, '--harness', opts.harness ?? 'fake'],
+                [script, 'supervise', '--run', runId, '--harness', harnessKind],
                 { cwd: process.cwd(), detached: true, stdio: ['ignore', fd, fd] },
               );
               closeSync(fd);

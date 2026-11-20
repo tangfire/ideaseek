@@ -67,9 +67,12 @@ export function registerRunCommand(program: Command): void {
               process.stdout.write('note: took over a stale project lock (previous pid is gone)\n');
             }
           }
+          // Same resolution for parent and the detached supervisor child —
+          // `?? 'fake'` here silently downgraded every background run.
+          const harnessKind = resolveHarnessKind(opts.harness);
           const runtime = await ProjectRuntime.open({
             cwd: process.cwd(),
-            harness: buildHarness(resolveHarnessKind(opts.harness)),
+            harness: buildHarness(harnessKind),
           });
           try {
             assertConfigUsable(runtime.configLoad);
@@ -180,7 +183,7 @@ export function registerRunCommand(program: Command): void {
               const fd = openSync(logPath, 'a');
               const child = spawn(
                 process.execPath,
-                [script, 'supervise', '--run', run.runId, '--harness', opts.harness ?? 'fake'],
+                [script, 'supervise', '--run', run.runId, '--harness', harnessKind],
                 {
                   cwd: process.cwd(),
                   detached: true,
