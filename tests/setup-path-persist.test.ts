@@ -15,17 +15,37 @@ function extractEnsurePath(): string {
   return m[0];
 }
 
+// Windows 上没有 /bin/bash（git-bash 走 PATH 解析）。关键：runEnsure 必须
+// 用假 PATH 覆盖子进程环境（这正是被测场景），而 Windows spawn 按子进程
+// PATH 找可执行文件——所以先在父环境里解析成绝对路径，子进程 PATH 怎么
+// 覆盖都不影响；两侧都解析不到时整组诚实跳过。
+function resolveBash(): string | null {
+  try {
+    const probe = process.platform === 'win32' ? ['where', 'bash'] : ['which', 'bash'];
+    const out = execFileSync(probe[0]!, [probe[1]!], { encoding: 'utf8', env: process.env });
+    return (
+      out
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+const BASH = resolveBash();
+
 function runEnsure(dir: string, pathValue: string, rcInitial = ''): string {
   const home = mkdtempSync(join(tmpdir(), 'ideaseek-setup-home-'));
   const rc = join(home, '.bashrc');
   writeFileSync(rc, rcInitial);
-  execFileSync('/bin/bash', ['-c', `${extractEnsurePath()}\nensure_persistent_path '${dir}'\n`], {
+  execFileSync(BASH!, ['-c', `${extractEnsurePath()}\nensure_persistent_path '${dir}'\n`], {
     env: { ...process.env, HOME: home, PATH: pathValue },
   });
   return readFileSync(rc, 'utf8');
 }
 
-describe('setup.sh ensure_persistent_path', () => {
+describe.skipIf(!BASH)('setup.sh ensure_persistent_path', () => {
   const shadowedDir = '/usr/local/bin';
   // 模拟服务器实况：nvm 的 node 目录在前、/usr/local/bin 在后（进程 PATH
   // 里"有"该目录，但新 shell 解析 node 时会被 nvm 抢先）。

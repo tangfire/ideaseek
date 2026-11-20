@@ -3,9 +3,12 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
@@ -130,31 +133,49 @@ describe('ideaseek install / uninstall (one command)', () => {
 });
 
 describe('npm global-bin shim (instant ideaseek on PATH)', () => {
-  it('replaces an npm-link symlink instead of writing through it', async () => {
-    // npm link leaves <npm-bin>/ideaseek as a symlink INTO this checkout.
-    // writeFileSync would follow it and overwrite dist/cli.js with the shim
-    // body — the CLI then dies with SyntaxError on every invocation (the
-    // server full-suite failure: 170+ tests failed on `init` exit 1).
-    const prefix = join(await mkdtemp(join(tmpdir(), 'ideaseek-symlink-prefix-')), 'prefix');
-    const npmBin = join(await mkdtemp(join(tmpdir(), 'ideaseek-symlink-bin-')), 'bin');
-    mkdirSync(npmBin, { recursive: true });
-    const target = join(await mkdtemp(join(tmpdir(), 'ideaseek-symlink-target-')), 'cli.js');
-    writeFileSync(target, '// the real bundle\n', 'utf8');
-    const shim = join(npmBin, 'ideaseek');
-    symlinkSync(target, shim);
+  // Windows 无 developer mode 时建文件符号链接会 EPERM——诚实跳过而不是
+  // 让权限错误冒充产品失败（symlink 语义由 Linux 侧与 CI 覆盖）。
+  const symlinkSupport = (() => {
+    try {
+      const dir = mkdtempSync(join(tmpdir(), 'sl-probe-'));
+      symlinkSync(process.execPath, join(dir, 'probe'));
+      unlinkSync(join(dir, 'probe'));
+      rmdirSync(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
 
-    const installed = await run('install.mjs', ['--prefix', prefix, '--json'], {
-      IDEASEEK_NPM_BIN: npmBin,
-    });
-    expect(installed.code, installed.stdout + installed.stderr).toBe(0);
+  it.skipIf(!symlinkSupport)(
+    'replaces an npm-link symlink instead of writing through it',
+    async () => {
+      // npm link leaves <npm-bin>/ideaseek as a symlink INTO this checkout.
+      // writeFileSync would follow it and overwrite dist/cli.js with the shim
+      // body — the CLI then dies with SyntaxError on every invocation (the
+      // server full-suite failure: 170+ tests failed on `init` exit 1).
+      const prefix = join(await mkdtemp(join(tmpdir(), 'ideaseek-symlink-prefix-')), 'prefix');
+      const npmBin = join(await mkdtemp(join(tmpdir(), 'ideaseek-symlink-bin-')), 'bin');
+      mkdirSync(npmBin, { recursive: true });
+      const target = join(await mkdtemp(join(tmpdir(), 'ideaseek-symlink-target-')), 'cli.js');
+      writeFileSync(target, '// the real bundle\n', 'utf8');
+      const shim = join(npmBin, 'ideaseek');
+      symlinkSync(target, shim);
 
-    // The link target (stand-in for dist/cli.js) is byte-identical …
-    expect(readFileSync(target, 'utf8')).toBe('// the real bundle\n');
-    // … and the shim is now our own regular file, not a link.
-    expect(lstatSync(shim).isSymbolicLink()).toBe(false);
-    expect(readFileSync(shim, 'utf8')).toContain('#!/bin/sh');
-    expect(readFileSync(shim, 'utf8')).toContain('exec node');
-  }, 60_000);
+      const installed = await run('install.mjs', ['--prefix', prefix, '--json'], {
+        IDEASEEK_NPM_BIN: npmBin,
+      });
+      expect(installed.code, installed.stdout + installed.stderr).toBe(0);
+
+      // The link target (stand-in for dist/cli.js) is byte-identical …
+      expect(readFileSync(target, 'utf8')).toBe('// the real bundle\n');
+      // … and the shim is now our own regular file, not a link.
+      expect(lstatSync(shim).isSymbolicLink()).toBe(false);
+      expect(readFileSync(shim, 'utf8')).toContain('#!/bin/sh');
+      expect(readFileSync(shim, 'utf8')).toContain('exec node');
+    },
+    60_000,
+  );
 
   it('honours an explicitly empty IDEASEEK_NPM_BIN as "no shim"', async () => {
     // The suite default is IDEASEEK_NPM_BIN='' — meant to keep test runs

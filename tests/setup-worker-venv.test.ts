@@ -19,14 +19,30 @@ function makeVenv(name: string, pythonExitCode: number | null): string {
   if (pythonExitCode === null) return venv; // venv 不存在
   mkdirSync(join(venv, 'bin'), { recursive: true });
   const py = join(venv, 'bin', 'python');
-  writeFileSync(py, `#!/bin/bash\nexit ${pythonExitCode}\n`);
+  // env bash：Windows git-bash 内 /bin/bash 未必可解析，env 在两侧都能找到。
+  writeFileSync(py, `#!/usr/bin/env bash\nexit ${pythonExitCode}\n`);
   chmodSync(py, 0o755);
   return venv;
 }
 
+// Windows 没有 /bin/bash（git-bash 走 PATH）；此前 ENOENT 被 catch 成
+// exit 1，恰好让"应失败"的用例假绿、"应就绪"的用例误报——按平台解析
+// bash，两侧都拿不到时整组诚实跳过。
+function bashBin(): string {
+  return process.platform === 'win32' ? 'bash' : '/bin/bash';
+}
+function hasBash(): boolean {
+  try {
+    execFileSync(bashBin(), ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runDepsOk(venv: string): number {
   try {
-    execFileSync('/bin/bash', ['-c', `${extractWorkerDepsOk()}\nworker_deps_ok '${venv}'`], {
+    execFileSync(bashBin(), ['-c', `${extractWorkerDepsOk()}\nworker_deps_ok '${venv}'`], {
       stdio: 'ignore',
     });
     return 0;
@@ -35,7 +51,7 @@ function runDepsOk(venv: string): number {
   }
 }
 
-describe('setup.sh worker_deps_ok', () => {
+describe.skipIf(!hasBash())('setup.sh worker_deps_ok', () => {
   it('is ready when the venv python imports pypdf and pdfplumber', () => {
     expect(runDepsOk(makeVenv('ok', 0))).toBe(0);
   });
