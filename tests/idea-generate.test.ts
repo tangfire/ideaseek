@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { arisSkillsRoot } from '../src/aris/skill.js';
+import type { LoadedArisSkill } from '../src/aris/skill.js';
+import { buildGenerationRequest } from '../src/idea/generate.js';
+import type { IdeationRound } from '../src/idea/rounds.js';
 import { CLI_BIN, makeProjectDir } from './helpers.js';
 
 /**
@@ -256,4 +259,52 @@ describe('ideaseek idea generate (ARIS idea-creator backend)', () => {
     };
     expect(index.candidates[0]!.hypothesis.statement.length).toBeGreaterThan(10);
   }, 120_000);
+});
+
+describe('idea generation output contract', () => {
+  const round: IdeationRound = {
+    roundId: 'r-test',
+    createdAt: 1,
+    question: 'fedg',
+    ideaLimit: 3,
+    modelRoute: 'default',
+    parentRoundId: null,
+    snapshots: {
+      inputManifestHash: null,
+      paperCardCount: 0,
+      researchMapHash: null,
+      protocolId: null,
+      protocolHash: null,
+      protocolMetrics: [],
+      comparisonSet: [],
+      datasetRootHashes: [],
+    },
+    inherited: [],
+    noveltyConstraints: [],
+    knownFingerprints: [],
+    instructions: [],
+    status: 'open',
+    stopReason: null,
+    updatedAt: 1,
+  };
+  const skill: LoadedArisSkill = {
+    name: 'idea-creator',
+    description: '',
+    allowedTools: [],
+    body: '',
+    sha256: `sha256:${'0'.repeat(64)}`,
+  };
+
+  it('spells out the mechanismChain step shape the validator enforces', () => {
+    const request = buildGenerationRequest(round, skill);
+    expect(request.instruction).toContain('{"kind": "...", "text": "..."}');
+    expect(request.instruction).toContain('both fields are required');
+  });
+
+  it('keeps the idempotency input stable for identical inputs', () => {
+    const first = buildGenerationRequest(round, skill).inputHash;
+    const again = buildGenerationRequest(round, skill).inputHash;
+    expect(again).toBe(first);
+    expect(first).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
 });

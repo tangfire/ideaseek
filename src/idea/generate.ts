@@ -53,9 +53,10 @@ Each IdeaCard must satisfy ALL of:
 - "contradictions": ≥1 string.
 - "novelty": {"claim", "uncertainty", "whyNotRestatement"} — uncertainty is
   mandatory; the claim must differ from every novelty constraint below.
-- "mechanismChain": {"designPrincipleLink", "steps": exactly 6 steps with
-  kinds in order observation → hypothesis → intervention → expected-change →
-  baseline-difference → falsifier}.
+- "mechanismChain": {"designPrincipleLink", "steps": exactly 6 objects of the
+  form {"kind": "...", "text": "..."} — both fields are required on every
+  step; "kind" in this order: observation → hypothesis → intervention →
+  expected-change → baseline-difference → falsifier.
 - "nearestComparisons": ≥1 {methodId, difference, evidence} using methodIds
   from the round context when available.
 - "componentNecessity": ≥1 {component, role: "necessary-mechanism",
@@ -98,6 +99,9 @@ export function buildGenerationRequest(
   const inputHash = sha256Of(
     stableJson({
       contract: IDEA_CANDIDATES_SCHEMA,
+      // A contract-text edit must invalidate idempotent reuse: the cached
+      // output was produced by a different prompt.
+      contractTextSha256: sha256Of(OUTPUT_CONTRACT),
       skillSha256: skill.sha256,
       round: {
         roundId: round.roundId,
