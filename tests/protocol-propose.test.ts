@@ -74,6 +74,13 @@ describe('PROTOCOL_INSTRUCTION source enum', () => {
     expect(rulesLine).toContain('every "source" field must be one of');
     for (const source of PROTOCOL_SOURCES) expect(rulesLine).toContain(source);
   });
+
+  // 模型把 splitRules/slicing 输出成裸数组（丢了 {value,source,confidence}
+  // 包装）——旧文案里的 `slicing[]` 记法正好暗示了裸数组。
+  it('keeps the value wrapper on the array-valued sourced fields', () => {
+    expect(PROTOCOL_INSTRUCTION).toContain('arrays go INSIDE "value"');
+    expect(PROTOCOL_INSTRUCTION).toContain('slicing.value[]');
+  });
 });
 
 describe('CLI: protocol propose → confirm loop (fake harness)', () => {

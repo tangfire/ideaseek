@@ -2,7 +2,7 @@ import type { CompactCard } from '../knowledge/synthesis.js';
 import { PROTOCOL_SOURCES } from './protocol.js';
 
 /** Prompt+schema version for provenance; bump when the instruction changes. */
-export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.5';
+export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.6';
 
 /**
  * Measured structure of an image corpus (docs/DATA_CONTRACTS.md §RunEnv
@@ -146,17 +146,21 @@ export const PROTOCOL_INSTRUCTION = [
   ' "invalidRunCriteria": [string],',
   ' "stopConditions": [string]',
   '}',
-  // The enum must apply to EVERY sourced field: it was only spelled out on
-  // taskDefinition, so the model invented source values on splitRules and
-  // validation rejected the proposal on all retry attempts (acceptance STAGE 4).
+  // Acceptance STAGE 4: the model dropped the {value,source,confidence}
+  // wrapper on array-valued sourced fields — splitRules/slicing came out as
+  // bare arrays and validateProtocolProposal rejected every attempt — and
+  // invented source values where the enum was not spelled out. The old
+  // `slicing[]` prose notation actively suggested a bare array.
   `Rules: confidence in [0,1]; every "source" field must be one of [${PROTOCOL_SOURCES.join(',')}];`,
+  'splitRules and slicing keep the {"value":...,"source":...,"confidence":...} object shown in',
+  'the schema — their arrays go INSIDE "value" (the prose name slicing[] means slicing.value[]);',
   'use "user" source when the dataset profile says semantics',
   'are unconfirmed and keep confidence <= 0.6 so the confirmation gate lists them;',
   'when dataset.corpora is present its structure was MEASURED from the local corpus, not',
   'inferred: cite a domain axis, its values and per-domain counts as source "data-probe"',
   'with confidence >= 0.7, and prefer its splitCandidates over inventing a split; only mark',
   'a data property unconfirmed if it is absent from both files[] and corpora[].',
-  'slicing[] is the machine-readable form of splitRules and must be emitted whenever the',
+  'slicing.value[] is the machine-readable form of splitRules and must be emitted whenever the',
   'corpus has a measurable grouping column: one entry per evaluation fold, naming columns',
   'EXACTLY as they appear in dataset files[].columnNames or corpora[] (a column you invent',
   'will be rejected against the measured structure), holdoutValues taken verbatim from the',
