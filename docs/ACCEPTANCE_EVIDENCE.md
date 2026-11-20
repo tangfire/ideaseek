@@ -84,3 +84,18 @@
 - JSON 内嵌规则自述："Agent cannot read or modify API keys — presence is reported only"、"deterministic tier never calls a model"，与 Journey B 验收一致。
 
 结论：STAGE 2 PASS（非 SKIP，key 已由用户配置）。
+
+## STAGE 3 — Journey C 材料输入（2026-11-20）
+
+方向：联邦学习域泛化。论文由验收 agent 用 curl 从 arXiv 下载（材料输入按计划由 agent 准备；ideaseek 自主数据获取在 STAGE 9 的授权链验证）。
+
+- 下载 5 篇公开 PDF → `/mnt/workspace/journey-a/papers/`（arXiv 2111.10487 Federated Learning with Domain Generalization / 2306.01334 FedDG Survey / 2410.11267 FedCCRL / 2402.06974 Hypernetwork-Driven Model Fusion / 2306.05879 FedWon），`file` 均为 PDF 1.5；下载后记录 sha256 基线。
+- `ideaseek scan` → `scanned 5 file(s)`、`roles: paper=5`、`groups: 5 · duplicates: 0 · reused hashes: 0`，manifest/review 落 `knowledge/`。
+- `ideaseek intake` → 5 候选分组，**分组/confidence 证据**：全部 `paper conf=0.95 [same-filename-stem]`（grp-30799402…/580f02b0…/86ed30a5…/8c50878c…/9fde4481…）。
+- `ideaseek intake --confirm <grp>` ×5 → 全部 confirmed，回执"exact reviewed file set - membership changes invalidate it"。
+- `ideaseek organize`（**preview**）→ `5 index entries would be created`、明确 `originals are never moved or modified`，未加 --apply（按计划 preview 为主）。
+- `ideaseek plan --question "<研究问题>" --json` → exit 0 可解析：**`startedNothing:true`（dry-run ✓）**、`inputs.paperFiles=5`、`estimates` 基线如实标注 "not a provider quote"/"budget ceiling"、`blockers:["no protocol proposal yet"]`、`run:null`。`questionPersisted:true` **如实**——研究问题由 STAGE 1 `setup --question` 写入，plan 后 `research.yaml` mtime 仍为 setup 时刻（10:38，plan 于 10:5x 执行）、无新 .bak，即 plan 未持久化任何东西；无参 `plan --json` 同为 startedNothing:true。
+- 断言原始 PDF 前后 sha256 一致：`sha256sum -c` 5/5 成功（exit 0）。
+- 零 secret：plan JSON+stderr 对 `sk-|ghp_|Bearer` 零命中。
+
+结论：STAGE 3 PASS。
