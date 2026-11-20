@@ -55,3 +55,22 @@
   - ⚠ latex：pdflatex 缺失；· svg-converter 缺失（均为已知环境备注，论文编译/图表步骤预期 SKIP）
   - credentials 行只记 presence：`env DEEPSEEK_API_KEY is set`（值未读取、未打印）
 - 修复前首跑 doctor 为 `ok=6 warn=2 error=1`（node ✗ v22）→ 已按第 2 节修复自主权闭合（I9/I10）。
+
+## STAGE 1 — Journey A 全新目录首次使用（2026-11-20）
+
+前置：发现上一会话在 STAGE 0 提交后（11-19 23:51）已建 `/mnt/workspace/journey-a` 半成品但未落证据；为满足"全新目录"语义，改名保留为 `journey-a-partial-20261119`（可逆，不删除），新建空目录执行。
+
+| # | 现象 | 根因 | 处置 | commit |
+|---|---|---|---|---|
+| I11 | STAGE 0 后新会话 `doctor` 又报 `✗ node v22.23.2`、exit 2 | I10 机器本地修复（nvm bin 的 node 符号链接）随 DSW 会话重启被还原为 nvm 原始 v22 二进制；非交互 shell PATH 中 nvm 目录仍排在 /usr/local/bin 之前 | 机器本地重放 `ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`；复验 `node --version`=v24.19.0、npm 10.9.8；不进仓库（交互 shell 侧已有仓内修复 I9） | —（机器本地） |
+
+执行与断言（均在 `/mnt/workspace/journey-a` 全新空目录，命令与输出原文）：
+
+1. `ideaseek doctor`（空目录）→ `ok=7 warn=2 error=0` exit 0：人话缺项提示 `no .research/ found here; run: ideaseek init`；credentials 行仅 presence（`env DEEPSEEK_API_KEY is set`，值未读取）；零 secret（机器 grep `sk-|ghp_|Bearer` 对 doctor/start/next/status 全量输出 = 0 命中）。
+2. `ideaseek init` #1 → `initialized ... directories: 10, created: research.yaml, README.md, .gitignore` exit 0；#2 → `already initialized` exit 0 —— **幂等 ✓**。
+3. `ideaseek start`（空项目）→ 最小输入提示（papers/datasets 放置 + 重跑 start）**且露出 demo 入口** `ideaseek run --question "..."（demo 流水线，不需要论文）` ✓。
+4. `ideaseek next` → 下一条命令 `ideaseek setup --question "..."`（**非** `plan --question`，dry-run 不持久化的产品规则 ✓），可直接复制。
+5. 执行该命令（写入 STAGE 3 研究问题，research.yaml 带 `.bak-1795142308410` 备份）→ 再次 `next`：**阻塞由 3 项（question/papers/datasets）降为 2 项（papers/datasets）**，question 阻塞消失并给出 `scan && ingest` 推进建议 —— **推进性验证 ✓（核心回归）**。
+6. `ideaseek status` → 可读（项目/Run/研究链阶段/下一步命令）exit 0 ✓。
+
+结论：STAGE 1 PASS。期间唯一缺陷 I11 为机器本地环境复发（非代码缺陷），已重放修复。
