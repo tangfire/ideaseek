@@ -1424,14 +1424,25 @@ export function registerDataCommand(program: Command): void {
     )
     .argument('<candidateId>', 'candidate id')
     .option('--max-gib <n>', 'hard byte ceiling for this download', '50')
-    .option('--timeout-ms <ms>', 'per-request timeout', '120000')
+    .option(
+      '--timeout-ms <ms>',
+      'idle timeout: response headers and the max gap between body chunks (ms)',
+      '120000',
+    )
+    .option('--resume', 'continue an interrupted download from its leftover .part (ranged request)')
     .option('--confirm', 'confirm a large or unknown-size download')
     .option('--json', 'machine-readable output')
     .action(
       action(
         async (
           candidateId: string,
-          opts: { maxGib?: string; timeoutMs?: string; confirm?: boolean; json?: boolean },
+          opts: {
+            maxGib?: string;
+            timeoutMs?: string;
+            resume?: boolean;
+            confirm?: boolean;
+            json?: boolean;
+          },
         ) => {
           const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
           try {
@@ -1502,6 +1513,7 @@ export function registerDataCommand(program: Command): void {
               destDir: resolve(root, runtime.config.inputs.datasetsDir),
               maxBytes: Math.floor(maxGib * 1024 * 1024 * 1024),
               timeoutMs,
+              resume: opts.resume === true,
             });
             const relPath = relative(root, acquired.path).replace(/\\/g, '/');
             const at = Date.now();

@@ -46,6 +46,15 @@ async function code(promise: Promise<unknown>): Promise<string> {
   }
 }
 
+async function failure(promise: Promise<unknown>): Promise<{ code?: string; message?: string }> {
+  try {
+    await promise;
+    return {};
+  } catch (error) {
+    return error as { code?: string; message?: string };
+  }
+}
+
 describe('url and filename validation', () => {
   it('refuses non-https so a dataset cannot be tampered with in transit', async () => {
     expect(
@@ -138,17 +147,38 @@ describe('staging a file', () => {
   it('refuses a leftover .part instead of silently re-fetching over it', async () => {
     const dir = await dest();
     await writeFile(join(dir, 'pacs.zip.part'), 'half', 'utf8');
-    expect(
-      await code(
-        acquireDataset({
-          url: 'https://x.test/d/pacs.zip',
-          destDir: dir,
-          maxBytes: 1024,
-          timeoutMs: 1000,
-          fetchImpl: async () => response(200, [bytes('x')]),
-        }),
-      ),
-    ).toBe('INVALID_STATE');
+    const result = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/pacs.zip',
+        destDir: dir,
+        maxBytes: 1024,
+        timeoutMs: 1000,
+        fetchImpl: async () => response(200, [bytes('x')]),
+      }),
+    );
+    expect(result.code).toBe('INVALID_STATE');
+    expect(result.message).toMatch(/--resume/);
+  });
+
+  it('refuses a partial that already exceeds the ceiling before any request', async () => {
+    const dir = await dest();
+    await writeFile(join(dir, 'pacs.zip.part'), 'x'.repeat(64), 'utf8');
+    let fetched = false;
+    const result = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/pacs.zip',
+        destDir: dir,
+        maxBytes: 16,
+        timeoutMs: 1000,
+        resume: true,
+        fetchImpl: async () => {
+          fetched = true;
+          return response(206, []);
+        },
+      }),
+    );
+    expect(result.code).toBe('USER_INPUT_REQUIRED');
+    expect(fetched).toBe(false);
   });
 
   it('honors a declared content-length before reading any body', async () => {
@@ -266,5 +296,167 @@ describe('redirect handling', () => {
       ),
     ).toBe('NETWORK_BLOCKED');
     expect(hops).toBe(3);
+  });
+});
+
+describe('idle timeout: slow but steady transfers are allowed to finish', () => {
+  it('lets a stream run past timeoutMs while chunks keep arriving', async () => {
+    const dir = await dest();
+    const payloads = Array.from({ length: 15 }, (_, i) => bytes(`c${i};`));
+    const body = (async function* () {
+      for (const chunk of payloads) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        yield chunk;
+      }
+    })();
+    // ~1.5s of streaming against a 1s budget: only a total-duration timer
+    // would kill this, every chunk gap stays far below the idle limit.
+    const result = await acquireDataset({
+      url: 'https://x.test/d/slow.zip',
+      destDir: dir,
+      maxBytes: 1024,
+      timeoutMs: 1000,
+      fetchImpl: async () => ({ status: 200, headers: { get: () => null }, body }),
+    });
+    expect(result.bytes).toBe(payloads.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+    expect(await readFile(result.path, 'utf8')).toBe(
+      payloads.map((chunk) => new TextDecoder().decode(chunk)).join(''),
+    );
+  });
+
+  it('aborts when the stream goes silent past timeoutMs and keeps the .part', async () => {
+    const dir = await dest();
+    const body = (async function* () {
+      yield bytes('partial');
+      await new Promise(() => {});
+    })();
+    const result = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/stall.zip',
+        destDir: dir,
+        maxBytes: 1024,
+        timeoutMs: 200,
+        fetchImpl: async () => ({ status: 200, headers: { get: () => null }, body }),
+      }),
+    );
+    expect(result.code).toBe('NETWORK_BLOCKED');
+    expect(result.message).toMatch(/stalled/);
+    expect(await readFile(join(dir, 'stall.zip.part'), 'utf8')).toBe('partial');
+  });
+});
+
+describe('truncation detection', () => {
+  it('fails loudly when the promised content-length is not delivered', async () => {
+    const dir = await dest();
+    const result = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/pacs.zip',
+        destDir: dir,
+        maxBytes: 1024,
+        timeoutMs: 1000,
+        fetchImpl: async () => response(200, [bytes('1234')], { 'content-length': '10' }),
+      }),
+    );
+    expect(result.code).toBe('NETWORK_BLOCKED');
+    expect(result.message).toMatch(/ended early/);
+    expect(await readFile(join(dir, 'pacs.zip.part'), 'utf8')).toBe('1234');
+  });
+});
+
+describe('resuming an interrupted download (resume)', () => {
+  it('continues from the .part size with a ranged request and hashes the full file', async () => {
+    const dir = await dest();
+    await writeFile(join(dir, 'pacs.zip.part'), 'hello ', 'utf8');
+    let sawRange: string | undefined;
+    const result = await acquireDataset({
+      url: 'https://x.test/d/pacs.zip',
+      destDir: dir,
+      maxBytes: 1024,
+      timeoutMs: 1000,
+      resume: true,
+      fetchImpl: async (_url, init) => {
+        sawRange = init.headers?.range;
+        return response(206, [bytes('world')], {
+          'content-range': 'bytes 6-10/11',
+          'content-length': '5',
+        });
+      },
+    });
+    expect(sawRange).toBe('bytes=6-');
+    expect(result.path).toBe(join(dir, 'pacs.zip'));
+    expect(result.bytes).toBe(11);
+    expect(result.sha256).toBe(sha256Of('hello world'));
+    expect(await readFile(result.path, 'utf8')).toBe('hello world');
+    expect(await stat(`${result.path}.part`).catch(() => null)).toBeNull();
+  });
+
+  it('refuses to append when the server ignores Range and returns the whole file', async () => {
+    const dir = await dest();
+    await writeFile(join(dir, 'pacs.zip.part'), 'hello ', 'utf8');
+    const result = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/pacs.zip',
+        destDir: dir,
+        maxBytes: 1024,
+        timeoutMs: 1000,
+        resume: true,
+        fetchImpl: async () => response(200, [bytes('hello world')]),
+      }),
+    );
+    expect(result.code).toBe('INVALID_STATE');
+    expect(result.message).toMatch(/ignored the ranged request/);
+    expect(await readFile(join(dir, 'pacs.zip.part'), 'utf8')).toBe('hello ');
+  });
+
+  it('refuses a content-range that does not start at the partial size', async () => {
+    const dir = await dest();
+    await writeFile(join(dir, 'pacs.zip.part'), 'hello ', 'utf8');
+    const result = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/pacs.zip',
+        destDir: dir,
+        maxBytes: 1024,
+        timeoutMs: 1000,
+        resume: true,
+        fetchImpl: async () =>
+          response(206, [bytes('world')], { 'content-range': 'bytes 3-10/11' }),
+      }),
+    );
+    expect(result.code).toBe('INVALID_STATE');
+    expect(result.message).toMatch(/range that was not asked for/);
+  });
+
+  it('keeps the partial when the server ends early, and the next resume finishes it', async () => {
+    const dir = await dest();
+    await writeFile(join(dir, 'pacs.zip.part'), 'hello ', 'utf8');
+    const early = await failure(
+      acquireDataset({
+        url: 'https://x.test/d/pacs.zip',
+        destDir: dir,
+        maxBytes: 1024,
+        timeoutMs: 1000,
+        resume: true,
+        fetchImpl: async () => response(206, [bytes('wo')], { 'content-range': 'bytes 6-10/11' }),
+      }),
+    );
+    expect(early.code).toBe('NETWORK_BLOCKED');
+    expect(early.message).toMatch(/ended early/);
+    expect(await readFile(join(dir, 'pacs.zip.part'), 'utf8')).toBe('hello wo');
+    // The follow-up resumes from 8 bytes instead of re-fetching from zero.
+    let from: string | undefined;
+    const done = await acquireDataset({
+      url: 'https://x.test/d/pacs.zip',
+      destDir: dir,
+      maxBytes: 1024,
+      timeoutMs: 1000,
+      resume: true,
+      fetchImpl: async (_url, init) => {
+        from = init.headers?.range;
+        return response(206, [bytes('rld')], { 'content-range': 'bytes 8-10/11' });
+      },
+    });
+    expect(from).toBe('bytes=8-');
+    expect(done.sha256).toBe(sha256Of('hello world'));
+    expect(await readFile(done.path, 'utf8')).toBe('hello world');
   });
 });

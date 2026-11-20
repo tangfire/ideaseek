@@ -192,4 +192,22 @@ describe('ideaseek datasets acquire (gates)', () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr + result.stdout).toMatch(/confirm/i);
   });
+
+  it('passes the leftover .part gate only with --resume', async () => {
+    const dir = await project([makeCandidate(granted)]);
+    await writeFile(join(dir, 'datasets', 'PACS.zip.part'), 'x', 'utf8');
+    const blocked = await runCli(dir, ['datasets', 'acquire', 'ds-pacs', '--timeout-ms', '3000']);
+    expect(blocked.stderr + blocked.stdout).toContain('leftover partial');
+    const resumed = await runCli(dir, [
+      'datasets',
+      'acquire',
+      'ds-pacs',
+      '--timeout-ms',
+      '3000',
+      '--resume',
+    ]);
+    expect(resumed.code).not.toBe(0);
+    // Past the gate it fails at the closed loopback endpoint, not on the .part.
+    expect(resumed.stderr + resumed.stdout).not.toContain('leftover partial');
+  });
 });
