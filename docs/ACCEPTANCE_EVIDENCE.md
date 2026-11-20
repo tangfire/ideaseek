@@ -128,3 +128,15 @@
 - 零 secret：全部输出无 key 命中（未做模式化扫描，输出中仅指标与状态）。
 
 结论：STAGE 5 PASS。
+
+## STAGE 6 — Journey H 跨机腿（2026-11-20，本服务器即"另一台机器"）
+
+（`<workspace>/` 无用户上传的 `fdg-backup.tar.gz`，该可选子项 SKIP — no upload；主体按计划执行：）
+
+- `ideaseek backup --json`（journey-a，含 init + 5 论文输入）→ `status:"ok"`，dir=`.research/backups/b-1795151564404`，逐文件 sha256 manifest（`path/bytes/sha256` 三元组，如 `artifacts/sha256/12/27/12270ec7…`）exit 0。
+- 全新目录 `/mnt/workspace/restore-a` → `ideaseek restore <backupDir>` → `restored 18 file(s) … (every file hash-verified)` **exit 0** ✓。
+- `doctor` → **ok=20 warn=1 error=0** exit 0（唯一 warn=latex，已知环境项）；跨路径 rebind 后 run 状态可读（`latest run run-4faa1715b8ba4a0f is COMPLETED`、recovery no repairs）。
+- `status` → 可读并给出 next（`datasets discover → authorize → acquire → link` 链）**exit 0**。
+- secret 扫描备注：粗模式 `sk-[A-Za-z0-9]+` 对 status 有 1 处**误报**——命中的是任务 ID `task-f2a81a31c6c34620` 中的 "sk-" 子串；加前界（前一字符非字母）与长度界后对 stage1/3/5/6/models 全部输出 **0 命中**。后续阶段一律用前界模式。
+
+结论：STAGE 6 PASS（上传备份子项 SKIP: no upload）。
