@@ -140,3 +140,14 @@
 - secret 扫描备注：粗模式 `sk-[A-Za-z0-9]+` 对 status 有 1 处**误报**——命中的是任务 ID `task-f2a81a31c6c34620` 中的 "sk-" 子串；加前界（前一字符非字母）与长度界后对 stage1/3/5/6/models 全部输出 **0 命中**。后续阶段一律用前界模式。
 
 结论：STAGE 6 PASS（上传备份子项 SKIP: no upload）。
+
+## STAGE 7 — Journey F 轻量面（2026-11-20）
+
+- `ideaseek run --detach` → `detached supervisor started for run run-bb7feecbe91043ab (pid 90853)`，立即返回（supervisor 独立于本 shell 存活——detach 语义本身即"会话可断"的机器面）；demo 三任务（demo.ingest/analyze/report）由后台 supervisor 执行完毕，`daemon supervisor: pid 90853 exited(completed)`。
+- `ideaseek status` → run COMPLETED、3/3 完成、事件流可见（run_created→task_enqueued×3→research_sync +4 nodes）exit 0。
+- `ideaseek attach --run run-bb7feecbe91043ab` → **回放 21 条事件**（含 artifact_committed 的 sha256、task_succeeded、run_completed），`attach stopped (terminal); run=COMPLETED, events=21` exit 0。
+- **心跳可见**：task 表 `heartbeat_at` 三任务均有值（1795151749873/1795151750170/1795151750444）；`ideaseek monitor` 快照给出 run 状态、资源与最近日志列表 exit 0。
+- **已完成任务不重做**：再次 `ideaseek run --run run-bb7…` 走"新建下一周期"语义（新 run-c778fd035bfa4eba、全新 task 行），**run-bb7 的 3 条任务保持 attempt=1、原时间戳未被重新 lease**；工作流级同样只做一次——paper.parse/extract/protocol.propose 均只在其成功 run 中执行过一次，后续 run 未重跑（demo.ingest 复跑报 `ingested 0 input file(s)`，幂等）。
+- **SSH 断线模拟：PARTIAL**——无法在本会话真实切断 SSH；以"detached supervisor 独立于调用 shell + status/attach 事后接管"等价验证，如实标注。
+
+结论：STAGE 7 PASS（SSH 断线子项 PARTIAL）。
