@@ -200,6 +200,26 @@ describe('ideaseek paper compile (e2e)', () => {
     }
   }, 300_000);
 
+  it('reports a missing latexmk as blocked, not failed (nothing ever ran)', async () => {
+    // 'failed' means "ran and broke" and must carry a log tail; a tool that
+    // cannot even start is an environment blocker with a next step. An empty
+    // PATH makes the latexmk spawn fail with ENOENT whatever the host has.
+    const dir = await makeProjectDir();
+    expect((await runCli(dir, ['paper', 'write', '--harness', 'fake'])).code).toBe(0);
+    const compiled = await runCli(dir, ['paper', 'compile', '--json'], {
+      PATH: '/nonexistent-ideaseek-path',
+    });
+    expect([1, 2]).toContain(compiled.code);
+    const report = JSON.parse(compiled.stdout) as {
+      status: string;
+      blockers: string[];
+      logTail: string;
+    };
+    expect(report.status).toBe('blocked');
+    expect(report.blockers.join(' ')).toContain('latexmk could not be started');
+    expect(report.logTail).toBe('');
+  }, 300_000);
+
   it('blocks venues without a vendored template with exit 2 and next step', async () => {
     const dir = await makeProjectDir();
     // No stored plan → a CVPR manuscript is allowed by the venue pin, but

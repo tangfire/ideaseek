@@ -38,8 +38,14 @@ describe('python pdf bridge', () => {
     // Drift here is silent and expensive: bump the revision in one language
     // only, and either papers never re-parse or they re-parse forever.
     const { spawn } = await import('node:child_process');
+    const { pythonBinary } = await import('../src/knowledge/pdf.js');
+    // The product resolves its own interpreter (worker venv first); testing
+    // with a bare `python` was skipping on hosts where only the venv has
+    // pypdf — i.e. exactly the layout setup.sh now builds.
+    const python = await pythonBinary().catch(() => null);
+    if (python === null) return; // no python on PATH: environment guard
     const output = await new Promise<string | null>((resolve) => {
-      const child = spawn('python', ['-m', 'ideaseek_worker', 'selftest'], {
+      const child = spawn(python, ['-m', 'ideaseek_worker', 'selftest'], {
         cwd: workerPythonDir(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -48,22 +54,30 @@ describe('python pdf bridge', () => {
       child.on('error', () => resolve(null));
       child.on('close', (exit) => resolve(exit === 0 ? stdout : null));
     });
-    if (output === null) return; // no python/pypdf: environment guard
+    if (output === null) return; // worker deps missing: environment guard
     const parser = (JSON.parse(output.trim()) as { parser: string }).parser;
     expect(parser).toContain(EXPECTED_PARSER_REVISION);
   }, 60_000);
 
   it('selftest proves the worker environment (skips when python/pypdf missing)', async () => {
-    const { spawn } = await import('node:child_process');
+    const { spawn, spawnSync } = await import('node:child_process');
+    const { pythonBinary } = await import('../src/knowledge/pdf.js');
+    const python = await pythonBinary().catch(() => null);
+    if (python === null) return; // no python on PATH: environment guard, not a failure
+    // The skip must cover missing pypdf too (the test's own contract): a
+    // bare interpreter without worker deps fails selftest by design, and
+    // that is an absent environment, not a regression.
+    const probe = spawnSync(python, ['-c', 'import pypdf'], { stdio: 'ignore' });
+    if (probe.status !== 0) return; // pypdf missing: environment guard
     const code = await new Promise<number | null>((resolve) => {
-      const child = spawn('python', ['-m', 'ideaseek_worker', 'selftest'], {
+      const child = spawn(python, ['-m', 'ideaseek_worker', 'selftest'], {
         cwd: workerPythonDir(),
         stdio: 'ignore',
       });
       child.on('error', () => resolve(null));
       child.on('close', (exit) => resolve(exit));
     });
-    if (code === null) return; // no python on PATH: environment guard, not a failure
+    if (code === null) return; // interpreter vanished mid-test: environment guard
     expect(code).toBe(0);
   }, 60_000);
 

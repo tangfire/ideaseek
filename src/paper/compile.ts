@@ -799,9 +799,12 @@ export async function compileManuscript(
       env: process.env,
     });
   } catch (error) {
-    // latexmk missing / not spawnable → honest failed report, not a crash.
+    // latexmk missing / not spawnable → blocked, not failed: no build was
+    // ever attempted, so there is no log to tail — 'failed' means "ran and
+    // broke" (contract: compiled | failed with log tail | blocked with next
+    // step), and a missing tool is an environment blocker with a next step.
     const report: CompileReport = {
-      status: 'failed',
+      status: 'blocked',
       venue: manuscript.venue,
       template: assembled.template,
       engine: 'pdflatex',

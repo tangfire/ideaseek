@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir as osTmp } from 'node:os';
 import { tmpdir } from 'node:os';
@@ -218,6 +219,13 @@ describe('the fence must say when it is not armed', () => {
     const { mkdtemp } = await import('node:fs/promises');
     const { codingSessionBoot, projectRootFor } = await import('../src/dsh/session.js');
     const home = await mkdtemp(join(osTmp(), 'ideaseek-fence-boot-'));
+    // /ideas/ is the gitignored project-workspace marker at the checkout
+    // root (.gitignore: "project workspace at repo root only"). A fresh
+    // clone has never been used as a project, so the marker is absent and
+    // the walk would fall back to the leaf — create it (idempotent) to
+    // exercise the development-checkout layout this test is about.
+    const ideasMarker = join(process.cwd(), 'ideas');
+    if (!existsSync(ideasMarker)) mkdirSync(ideasMarker, { recursive: true });
     const boot = await codingSessionBoot({ cwd: process.cwd(), dshHome: home });
     // Running from the development checkout, so the platform tree must resolve.
     // An empty deny list here would mean the fence is decorative, and that has

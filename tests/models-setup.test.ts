@@ -23,10 +23,11 @@ function runCli(
   extraEnv: Record<string, string> = {},
   stdin?: string,
   timeoutMs = 60_000,
+  cwd: string = process.cwd(),
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI_BIN, ...args], {
-      cwd: process.cwd(),
+      cwd,
       env: { ...process.env, IDEASEEK_CLI: '1', ...extraEnv },
     });
     let stdout = '';
@@ -177,7 +178,12 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(setup.stdout).not.toContain('sk-round-trip-key'); // value never printed
 
     // Fresh process: env still has NO key — only the credentials file does.
-    const list = await runCli(['models', 'list', '--json'], h.env);
+    // `models list` is project-scoped (no context → NOT_INITIALIZED is the
+    // documented rule), so run it from a real project like a user would —
+    // this checkout is a fresh clone with no .research/ at its root.
+    const project = await mkdtemp(join(tmpdir(), 'ideaseek-models-proj-'));
+    expect((await runCli(['init'], h.env, undefined, 60_000, project)).code).toBe(0);
+    const list = await runCli(['models', 'list', '--json'], h.env, undefined, 60_000, project);
     expect(list.code, list.stdout + list.stderr).toBe(0);
     const payload = JSON.parse(list.stdout) as {
       userConfig: { credentialPresence: string; credentialRef: string | null };
