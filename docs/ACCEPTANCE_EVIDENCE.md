@@ -209,3 +209,39 @@ papers/ 现状（全部 size+`%%EOF` 校验通过，sha256 基线）：
 journey-a 项目状态快照：协议已锁 `proto-fb889c06d303-v1`、idea `gen-fed-domain-shaft-prototype`（v3 quick 结果入注册表、leaderboard 可列）、run 历史含 3 次 FAILED（protocol propose 修复前）与成功链、`external_search/allow_network=true`。备份/恢复演练目录 `/mnt/workspace/restore-a` 与半成品 `/mnt/workspace/journey-a-partial-20261119` 保留在工作区（均为可逆保留，未删除）。
 
 本会话累计推送（STAGE 1 起）：83c13a4、a63a0d4、60e91fd、50859d4、56da8fd、9ed1900、4a13138、4df788b、f479ad3、dc08a44、c0cf71c、edfee50、c02a241、02f5309、d4851de、afb9616。
+
+## STAGE 9 — 数据集自主获取（2026-11-20，冷启动续跑完成）
+
+前置恢复（新实例，按交接步骤）：`git pull --rebase origin main`（56a8b2e，已最新）→ `bash setup.sh` exit 0（install "Already up to date"、build、全局链接）→ 机器本地修复重放：node 符号链接（I10/I11：`ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`，`node --version`=v24.19.0）与 poppler-utils（aliyun 镜像 pool 403，切 `https://mirrors.cloud.tencent.com/ubuntu/` 后 `pdftotext version 22.02.0`；原 sources.list 备份为 `sources.list.bak-aliyun-20261120`）。凭据未丢失：`~/.ideaseek/credentials.env` 存在（presence only），`ideaseek models test` → `GET /models → 200 (2 model(s) listed)`，未重新配置。
+
+afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** 三 lane 全绿——主 lane **205 文件 / 1891 测试 → 1889 passed / 2 skipped / 0 failed**（473s，较 STAGE 8 的 204/1889 多出 extract-harness +1 文件/+2 测试）；交互 lane 3 文件/24 passed（98.6s）；python lane 23 tests OK（7.4s）。2 skipped 仍为环境守卫用例。
+
+续跑执行与取证：
+
+1. **新论文 + I18 现场验证**：arXiv API 选 2601.12253（Federated Joint Learning for Domain and Class Generalization，正文点名 Office-Home/MiniDomainNet/ImageNet 系）→ `curl -sIL https://export.arxiv.org/pdf/2601.12253` 取 content-length 351800 → `curl -sL -C - --max-time 300` 下载，字节数相等 + 尾部 `%%EOF` ✓ → `scan`（7 文件，新组 grp-19edc5fe5c1dff23 conf=0.95）→ `intake --confirm` → `ingest`（parsed 1 of 1）→ `extract`（run-db440951d631462e，2 worker）→ **卡断言达成**：artifact 35/4a/354a09… 的 `harness.kind="dsh"`（dsh-sdk@0.2.2-rc.1，model deepseek-v4-flash，session session-5aa376dd…），`title`=真标题（非 unknown），`datasets=["Office-Home","MiniDomainNet","ImageNet-Rendition","ImageNet-A"]` 非空；paper.verify 8 claims/8 spans 全 verified。
+2. **discover**（`external_search`/`allow_network` 已开）：`datasets discover --question "<研究问题>" --json` → exit 0，**候选 4（recommended×4）**，`incompleteSources:true` 如实；来源：papers ok evidence=4（即上一步新卡供名）、tables ok=1、dataset-index ok=3（hf-mirror 查询 4 名）、academic-index empty 且诚实 partial（`semantic-scholar: http 429（无 IDEASEEK_S2_API_KEY）`）、local-inputs/comparisons/research-map 各带准确 next。
+3. **候选核查（源质量发现）**：`ds-officehome`（conf 0.7 最高）的索引 URL 实测为 **audio/mpeg 1.06GB**，HF API 该仓库仅含 OfficeHomeDataset.mp3——名不副实，未采用；`ds-imageneta` 索引称 649.5MiB 实为两分片之和（396,527,844+284,538,081），单 URL 实测 378MiB。两处记入"待修清单"（dataset-index 的取文件/取大小逻辑）。
+4. **explain**：对 `ds-imagenetrendition`（conf 0.6）与 `ds-imageneta`（conf 0.55）各跑 `datasets explain`——来源（papercard+dataset-index）、时间、sha256、license（unknown / mit=镜像标签并注明）、下载需确认均如实呈现。
+5. **authorize**：`--grant --confirm --reason "..."` ×2 → `ds-imagenetrendition` 事件 #20、`ds-imageneta` 事件 #21（reason 内记录选型依据）。
+6. **acquire 三次尝试与缺陷定位（如实失败记录）**：
+   - 尝试1 `ds-imagenetrendition`（1991MiB）计划原样旗标：600s 后 `error: TimeoutError: The operation was aborted due to timeout`，仅落 68MB（.part 70,530,364B）。
+   - 带宽实测：短探突发 2.5MB/s，持续 90s 仅 36KB/s（curl 同结论）——CDN 对持续流限速；imagenet-r 端点复测 330KB/s 仍远不够。
+   - 尝试2 `ds-imageneta` 计划原样旗标：`error: TypeError: terminated`（TLSSocket 中途断开），.part 18,084,101B。
+   - 尝试3 冷却 11 分钟限速窗口（20:09 探针持续 1.42MB/s ≥ 阈值）后计划原样重跑：**98.86%（392,000,944/396,527,844B）处被 600s 总时长定时器击杀**（`TimeoutError`，字节仍在流动）。
+   - 根因（代码级）：`AbortSignal.timeout(timeoutMs)` 挂在 fetch 上，覆盖整个 body 流 → 与 `--max-gib 50`（600s 内需 85MB/s 才能完成）自相矛盾；且无断点续传，任何失败从零重来（残留 .part 被 fail-loud 拒绝）。按第 2 节可自动修范围处置（非架构/非删检查，fail-loud 默认保留）。
+7. **修复 I20（commit 867cd5d）**：`--timeout-ms` 改为 idle 语义（header 期限 + body 块间最大间隔；持续到达的流允许跑完，静默即中止并保留 .part）；新增**显式 `--resume`**（Range 续传：校验 206+Content-Range 起点；服务器忽略 Range 返回 200 即拒绝以防拼接腐坏；前缀哈希衔接使最终 sha256 覆盖全文件；206 的 total 与传输字节不符（静默截断）即大声失败；`--max-gib` 对续传同样生效；无 `--resume` 时残留 .part 仍 fail-loud）。回归 `tests/dataset-acquire.test.ts` +9 例（慢而稳跑完 / 静默 stall 中止留 .part / 截断检测 / 续传完成+哈希 / 忽略 Range 拒绝 / Content-Range 不符拒绝 / 提前结束可再续 / 超限 .part 预拒 / 提示 --resume）+ CLI 1 例；定向 30/30 绿。
+8. **尝试4（计划原样旗标 + `--resume`）**：`acquired ds-imageneta → datasets/train-00000-of-00002-ab6d3d8ffc378699.parquet (378.2 MiB)`，`sha256:c56c1d4ab1357727…f711`，台账 1 条，决策事件 #22——续传在真实网络上补完 4.5MB 尾巴并校验全文件。
+9. **修复 I21（commit 2502cec）**：`scan` 对 >256MiB 文件 `hashStatus:"skipped-too-large"`、`link` 又拒绝内联哈希 → **acquire 自己暂存的文件也永远过不了 link 门**（真实断链，378MiB 正撞死区）。`src/commands/data.ts` link 在 scan manifest 无哈希时回退查**追加式 acquire 台账**（仅当磁盘字节数与台账记录一致才信任；文件事后变动不借身份并仍大声拒绝）。回归 CLI +3（台账哈希小文件 / 超限稀疏文件凭台账通过 / 尺寸不符拒绝），CLI 套件 12/12 绿。
+10. **data describe**：`--json` exit 0 → 1 文件剖析：`rows=3750`、`label` 56 distinct、missing=0/dup=0、label candidate conf 0.9、`datasetSnapshotId=data-c56c1d4ab135`（与 acquire 哈希一致）；写 `knowledge/dataset-card.{json,md}` 与 `image-profiles.json`。随后 `datasets link`（含 I21 修复）→ `status=validated snapshot=data-c56c1d4ab135 download=local-present`，事件 #23。失败残留 .part 两份保存于 `.research/abandoned-downloads/`（未删除）。
+
+待修清单（只记录不擅动）：
+- dataset-index：Office-Home 索引指向 1.06GB MP3（仓库无数据集本体）；ImageNet-A 的 size 把两分片求和挂在单 URL 上。
+- link 对无台账/无 scan 哈希的大文件仍拒绝内联哈希（当前行为正确，但"人工提供超大文件"场景仍无路径）。
+- `pnpm exec tsc --noEmit` 在 HEAD 有 8 个预存错误（全在 tests/next-advice.test.ts ×7 与 tests/literature-watch.test.ts ×1，非本阶段改动；`pnpm test` 不受影响）。
+
+推送状态：本地提交 867cd5d、2502cec 及本证据提交**待推送**——本实例 `~/.git-credentials` 无 gitee 条目（仅 modelscope），`git push` 卡于 askpass 凭据提示（非代码问题）。已请用户恢复凭据后补推；按计划此处如实记 PUSH PENDING。
+
+=== STAGE 9: 数据集自主获取 ===
+结果: PASS（acquire 经 I20 修复完成、link 经 I21 修复通过；三次失败尝试与原始错误均如实记录）
+证据: docs/ACCEPTANCE_EVIDENCE.md L213-L247
+摘要: 新论文真卡 harness.kind=dsh+datasets 非空（I18 现场验证）；discover 4 候选→explain→authorize→acquire（I20 idle 超时+--resume 修复后 378.2MiB sha256 校验）→describe（3750 行/56 类）→link（I21 台账哈希，validated）；推送因 gitee 凭据缺失暂挂。
