@@ -151,3 +151,22 @@
 - **SSH 断线模拟：PARTIAL**——无法在本会话真实切断 SSH；以"detached supervisor 独立于调用 shell + status/attach 事后接管"等价验证，如实标注。
 
 结论：STAGE 7 PASS（SSH 断线子项 PARTIAL）。
+
+## STAGE 8 — Linux 全量回归（2026-11-20，可选但已执行）
+
+`apt-get update && apt-get install -y poppler-utils` 成功（首跑 404 为索引过期，update 后装上 pdftotext/pdfinfo）。`pnpm test`（vitest 主 lane + 交互 lane + python lane）**共 7 轮**才到全绿——过程中抓到并修复 4 个真实缺陷（均按第 2 节：改→回归测试→绿→小 commit→推送）：
+
+| # | 现象 | 根因 | 处置 | commit |
+|---|---|---|---|---|
+| I14 | 全量首轮 60 文件/170 测试失败（`init` exit 1、`dist/cli.js:2 SyntaxError`），次轮恶化到 117 文件/478 失败 | `npm link` 后 `<npm-bin>/ideaseek` 是指向 `dist/cli.js` 的符号链接；install.mjs 写 shim 时 `writeFileSync` 穿透链接，把 sh 包装脚本覆盖进真 bundle——**装好的 CLI 被测试自毁**；测试传 `IDEASEEK_NPM_BIN:''` 本意"不碰真 npm bin"，但 `'' ?? null` 落空回退到 `npm prefix -g` 写了真实目录 | `scripts/install.mjs` 新增 `writeOwnFile`（写前遇符号链接先 unlink，目标不动）+ 显式空 env 即禁用 shim；回归 `tests/install-uninstall.test.ts` 2 例（符号链接目标字节不变 + 空 env 不产生 npmShims） | c0cf71c |
+| I15 | 修 I14 后仍 4 失败：paper-compile（`logTail` 空）、pdf selftest、models-setup（NOT_INITIALIZED）、capability-guard（root 解析） | ①latexmk 无法 spawn（ENOENT）被记成 `failed`——但"没跑过"没有日志可 tail，契约是 failed⇒有日志、blocked⇒有下一步；②测试裸用 `python`（系统无 pypdf），而产品解析器是 venv 优先；③`models list` 按设计要求项目上下文，新克隆仓库根无 `.research/`；④仓库根缺 gitignored 的 `ideas/` 布局标记（fresh clone 从未被当项目用过） | ①compile.ts spawn 失败改 `status:'blocked'` + 空 PATH 回归用例；②pdf 测试改用 `pythonBinary()` + pypdf 缺失如实 skip；③list 改在临时 init 的项目里跑；④测试幂等创建 `ideas/` 标记 | edfee50 |
+| I16 | 交互 lane 稳定挂 1 条（cli.e2e 租约回收 20s 超时），单跑必过；从失败项目 DB 取证：reclaim 其实 1.5s 内就完成了（事件 seq7/8） | 测试等的是 `recovery.reclaimedLeases`——该字段只报告**本次 open** 的操作；负载下 reclaim 发生在 waitForRecovery 之前的 `immediate` status 调用里，后续轮询永远为空（边沿触发 vs 持久状态） | 等待条件改为持久状态（无 leased/running、任务回队）；"谁回收了这条租约"的强断言由文件后部既有的 `events --json` 账本断言承担 | c02a241 |
+| I17 | 两 lane 全绿但 `pnpm test` 整体 exit 1：python lane 5 FAIL/2 skip（`PARSER_MISSING`、`EMPTY_FILE` 断言错位） | `worker/python/run-tests.mjs` 硬编码 `python`（系统无 pypdf），而 venv 里依赖齐全——venv 是 setup.sh 刚建的布局 | runner 解释器顺序对齐 `pythonBinary()`（venv→python3→python）；回归 `tests/python-runner.test.ts`（PATH 剥离后只剩 venv 可解析，"skip 不算过"） | 02f5309 |
+
+**最终记录（第 7 轮，`pnpm test` exit 0）**：
+- 主 lane：**204 文件 / 1889 测试 → 1887 passed / 2 skipped / 0 failed**（512s）
+- 交互 lane：**3 文件 / 24 → 24 passed / 0 failed**（130s）
+- python lane：**23 tests → OK**（8.2s，含此前因无 pypdf 而挂/跳的 parse/tables/OCR 用例）
+- 2 skipped 为环境守卫用例（无凭据/无 TTY 类，计划预期内）。
+
+结论：STAGE 8 PASS（含 I14–I17 四个修复，均已推送）。
