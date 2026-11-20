@@ -21,10 +21,12 @@ import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -42,6 +44,21 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const prefix = resolve(
   flag('--prefix') ?? process.env.IDEASEEK_PREFIX ?? join(homedir(), '.ideaseek'),
 );
+
+// Never write through a symlink. `npm link` leaves <npm-bin>/ideaseek as a
+// link INTO this checkout (…/node_modules/ideaseek/dist/cli.js); a plain
+// writeFileSync follows it and replaces dist/cli.js with the shim body —
+// the CLI then dies with SyntaxError on every invocation (and every test
+// that spawns it). Replace the link itself, leaving its target untouched.
+function writeOwnFile(file, content, mode) {
+  try {
+    if (lstatSync(file).isSymbolicLink()) unlinkSync(file);
+  } catch {
+    // absent — nothing to replace
+  }
+  writeFileSync(file, content, 'utf8');
+  if (mode !== null && mode !== undefined) chmodSync(file, mode);
+}
 
 function fail(message, hint) {
   if (asJson) {
@@ -146,10 +163,9 @@ const binDir = join(prefix, 'bin');
 mkdirSync(binDir, { recursive: true });
 const launcherPath = join(binDir, process.platform === 'win32' ? 'ideaseek.cmd' : 'ideaseek');
 if (process.platform === 'win32') {
-  writeFileSync(launcherPath, `@echo off\r\nnode "${cliPath}" %*\r\n`, 'utf8');
+  writeOwnFile(launcherPath, `@echo off\r\nnode "${cliPath}" %*\r\n`, null);
 } else {
-  writeFileSync(launcherPath, `#!/bin/sh\nexec node "${cliPath}" "$@"\n`, 'utf8');
-  chmodSync(launcherPath, 0o755);
+  writeOwnFile(launcherPath, `#!/bin/sh\nexec node "${cliPath}" "$@"\n`, 0o755);
 }
 // npm global-bin shim: `npm prefix -g`'s directory is where npm puts
 // package bins, so it is already on PATH wherever `npm i -g` works —
@@ -158,8 +174,15 @@ if (process.platform === 'win32') {
 let npmShims = [];
 let npmShimDir = null;
 {
-  let dir = process.env.IDEASEEK_NPM_BIN ?? null;
-  if (!dir) {
+  // IDEASEEK_NPM_BIN set (even to '') is an explicit override: '' disables
+  // the shim entirely — tests pass '' so a suite run never touches the
+  // machine's real npm global bin. Unset → auto-detect `npm prefix -g`.
+  const envDir = process.env.IDEASEEK_NPM_BIN;
+  let dir;
+  if (envDir !== undefined) {
+    dir = envDir.trim();
+  } else {
+    dir = null;
     try {
       // String command (not args + shell) — avoids Node's DEP0190 warning;
       // .cmd resolution needs the shell on Windows.
@@ -187,8 +210,7 @@ let npmShimDir = null;
             ]
           : [[join(dir, 'ideaseek'), `#!/bin/sh\nexec node "${cliPath}" "$@"\n`, 0o755]];
       for (const [file, content, mode] of files) {
-        writeFileSync(file, content, 'utf8');
-        if (mode !== null) chmodSync(file, mode);
+        writeOwnFile(file, content, mode);
         npmShims.push(file);
       }
       npmShimDir = dir;
