@@ -12,19 +12,24 @@ interface CliResult {
 }
 
 /**
- * Poll `status --json` until the crashed worker's lease has been reclaimed.
+ * Poll `status --json` until the crashed worker's lease is no longer held.
  *
- * Bounded by the same scaled budget the interactive e2e uses, and the failure
- * text carries the last payload: a timeout here now means recovery never
- * happened, which is a product defect, instead of meaning the suite ran on a
- * busy machine, which is not.
+ * `recovery.reclaimedLeases` reports only the work THIS open performed — and
+ * the reclaim edge can fire during the very first status call after the
+ * crash (it does as soon as the machine is loaded), after which every later
+ * poll correctly reports an empty recovery while the task is already back in
+ * the queue. So the wait condition is the durable state (nothing leased /
+ * running, the task queued again); the record of WHO reclaimed it is
+ * asserted from the event ledger, which is append-only and cannot miss the
+ * edge. Bounded by the same scaled budget; the failure text carries the
+ * last payload: a timeout here means recovery never happened, which is a
+ * product defect, not a busy suite.
  */
 async function waitForRecovery(
   dir: string,
   timeoutMs = budget(20_000),
 ): Promise<{
   tasks: Record<string, number>;
-  recovery: { reclaimedLeases: string[] };
   status: string;
 }> {
   const started = Date.now();
@@ -35,20 +40,16 @@ async function waitForRecovery(
     const payload = JSON.parse(last || '{}') as {
       run?: { status?: string };
       tasks: Record<string, number>;
-      recovery: { reclaimedLeases: string[] };
     };
-    if ((payload.recovery?.reclaimedLeases?.length ?? 0) > 0) {
+    const tasks = payload.tasks ?? {};
+    const held = (tasks.leased ?? 0) + (tasks.running ?? 0) + (tasks.committing ?? 0);
+    if (held === 0 && (tasks.queued ?? 0) > 0) {
       expect(run.code).toBe(3); // still running, just not owned any more
-      expect(payload.recovery.reclaimedLeases).toHaveLength(1);
-      return {
-        tasks: payload.tasks,
-        recovery: payload.recovery,
-        status: payload.run?.status ?? '',
-      };
+      return { tasks, status: payload.run?.status ?? '' };
     }
     if (Date.now() - started > timeoutMs) {
       throw new Error(
-        `lease was never reclaimed within ${timeoutMs}ms; last status payload:
+        `lease was never released within ${timeoutMs}ms; last status payload:
 ${last.slice(-2000)}`,
       );
     }
@@ -183,17 +184,16 @@ describe('ideaseek CLI end-to-end', () => {
       const immediatePayload = JSON.parse(immediate.stdout) as {
         run: { status: string };
         tasks: Record<string, number>;
-        recovery: { reclaimedLeases: string[] };
       };
       expect(immediatePayload.run.status).toBe('RUNNING');
 
       // After the 1s lease expires, the task is back in the queue with no owner.
       // Polled rather than slept-and-checked once: the fixed 2.2s sleep was the
-      // flake this recorded. Recovery happens on the next runtime open, so the
-      // assertion is not "reclaim occurred within 2.2s of wall clock" (a claim
-      // about machine speed that no product behaviour supports) but "reclaim
-      // occurs, and when it does it names exactly this lease and requeues this
-      // task with its dependents". Same strength, no timing assumption.
+      // flake this recorded. The wait condition is that durable state — not
+      // `recovery.reclaimedLeases`, which reports only the work THIS open did
+      // and is therefore empty once an earlier open (the `immediate` call, under
+      // load) already performed the reclaim. The event ledger below is what
+      // names the reclaimed lease permanently.
       const reclaimedPayload = await waitForRecovery(dir);
       // Reclaimed ingest + its two not-yet-run dependents are all queued.
       expect(reclaimedPayload.tasks.queued).toBe(3);
