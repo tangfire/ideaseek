@@ -338,3 +338,5 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 3. 最值得修：① acquire 无并发分块/限速窗口下大文件仍慢（--resume 已可用）；② dataset-index 源质量（Office-Home 索引指向 1.06GB MP3、ImageNet-A size 挂错）需上游清洗；③ 新协议指标取自论文基准参照（百分比参照目标），与可测语料脱节，align-metrics 置信度门槛会如实拒绝自动对齐。
 4. 机器侧上线意见：主研究链（材料→协议→idea→数据→切片→对比→并行实验）全链 PASS，全部门禁（协议锁/对比门/fairness/verdict/审批/状态机）在反面场景均真实拦截、无假绿；full-run 需先有超越同跑对照的假设（科学事实，非平台缺陷）；网络重负载与外部源质量是主要运行风险。
 5. 推送状态：本轮本地提交 867cd5d、2502cec、aae70e8、0ee1e14、6543741、e77c3d1 及本证据提交 **PUSH PENDING**——实例 `~/.git-credentials` 无 gitee 条目（仅 modelscope），git push 卡 askpass；已请求用户恢复凭据后补推（见 STAGE 9 推送状态行）。
+
+**推送确认（2026-11-20）**：用户恢复 gitee 凭据后，`git ls-remote origin main` = `3f5aae4`——本轮全部提交 `867cd5d`、`2502cec`、`aae70e8`、`0ee1e14`、`6543741`、`e77c3d1`、`3f5aae4` 均已在远端，`git push` 返回 Everything up-to-date；STAGE 9 节所记 PUSH PENDING 至此闭合（该历史行按 append-only 规则不改写）。验收全部证据与修复已按第 4 节完成提交与推送。
