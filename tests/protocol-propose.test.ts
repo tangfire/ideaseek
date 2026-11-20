@@ -3,8 +3,12 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { PROTOCOL_PROMPT_VERSION, buildProtocolInput } from '../src/experiment/protocol-synth.js';
-import { validateProtocolProposal } from '../src/experiment/protocol.js';
+import {
+  PROTOCOL_PROMPT_VERSION,
+  buildProtocolInput,
+  PROTOCOL_INSTRUCTION,
+} from '../src/experiment/protocol-synth.js';
+import { PROTOCOL_SOURCES, validateProtocolProposal } from '../src/experiment/protocol.js';
 import { CLI_BIN } from './helpers.js';
 
 function runCli(
@@ -57,6 +61,18 @@ describe('buildProtocolInput', () => {
     expect(input.dataset.present).toBe(false);
     expect(input.dataset.note).toContain('agent-inference');
     expect(PROTOCOL_PROMPT_VERSION).toContain('protocol-proposal');
+  });
+});
+
+describe('PROTOCOL_INSTRUCTION source enum', () => {
+  // Acceptance STAGE 4：模型在 splitRules.source 上编造取值，三次重试全被
+  // validateProtocolProposal 拒绝——枚举只写在 taskDefinition 的 schema 行上，
+  // Rules 行没有约束到其余 sourced 字段。
+  it('binds every sourced field to PROTOCOL_SOURCES in the Rules line', () => {
+    const rulesLine = PROTOCOL_INSTRUCTION.split('\n').find((l) => l.startsWith('Rules:'));
+    expect(rulesLine, 'Rules line missing').toBeTruthy();
+    expect(rulesLine).toContain('every "source" field must be one of');
+    for (const source of PROTOCOL_SOURCES) expect(rulesLine).toContain(source);
   });
 });
 

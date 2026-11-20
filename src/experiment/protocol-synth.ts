@@ -1,7 +1,8 @@
 import type { CompactCard } from '../knowledge/synthesis.js';
+import { PROTOCOL_SOURCES } from './protocol.js';
 
 /** Prompt+schema version for provenance; bump when the instruction changes. */
-export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.4';
+export const PROTOCOL_PROMPT_VERSION = 'protocol-proposal-v1-prompt.5';
 
 /**
  * Measured structure of an image corpus (docs/DATA_CONTRACTS.md §RunEnv
@@ -145,7 +146,11 @@ export const PROTOCOL_INSTRUCTION = [
   ' "invalidRunCriteria": [string],',
   ' "stopConditions": [string]',
   '}',
-  'Rules: confidence in [0,1]; use "user" source when the dataset profile says semantics',
+  // The enum must apply to EVERY sourced field: it was only spelled out on
+  // taskDefinition, so the model invented source values on splitRules and
+  // validation rejected the proposal on all retry attempts (acceptance STAGE 4).
+  `Rules: confidence in [0,1]; every "source" field must be one of [${PROTOCOL_SOURCES.join(',')}];`,
+  'use "user" source when the dataset profile says semantics',
   'are unconfirmed and keep confidence <= 0.6 so the confirmation gate lists them;',
   'when dataset.corpora is present its structure was MEASURED from the local corpus, not',
   'inferred: cite a domain axis, its values and per-domain counts as source "data-probe"',
