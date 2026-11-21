@@ -198,6 +198,49 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(retest.stdout).not.toContain('sk-round-trip-key');
   }, 60_000);
 
+  it('a stale .env in the working directory cannot shadow the saved key', async () => {
+    // Startup ingests <cwd>/.env AND the credentials file. With first-writer
+    // wins, a project-local .env holding an old value silently beat the key
+    // /models setup just saved — later runs authenticated with the stale key.
+    const h = await makeHarness();
+    const provider = await startProviderServer();
+    const setup = await runCli(
+      [
+        'models',
+        'setup',
+        '--provider',
+        'deepseek',
+        '--base-url',
+        provider.url,
+        '--api-key-env',
+        'SHADOW_KEY',
+        '--json',
+      ],
+      h.env,
+    );
+    expect(setup.code, setup.stdout + setup.stderr).toBe(0);
+    await writeFile(
+      join(dirname(h.userConfig), 'credentials.env'),
+      'SHADOW_KEY=sk-from-credentials-file\n',
+      'utf8',
+    );
+    const cwd = await mkdtemp(join(tmpdir(), 'ideaseek-shadow-'));
+    await writeFile(join(cwd, '.env'), 'SHADOW_KEY=sk-stale-dotenv\n', 'utf8');
+
+    const test = await runCli(
+      ['models', 'test', '--json'],
+      { ...h.env, SHADOW_KEY: '' }, // empty host var must not shadow either
+      undefined,
+      60_000,
+      cwd,
+    );
+    expect(test.code, test.stdout + test.stderr).toBe(0);
+    // The provider must see the credentials-file value, not the stale .env.
+    expect(provider.authHeaders.at(-1)).toBe('Bearer sk-from-credentials-file');
+    expect(test.stdout + test.stderr).not.toContain('sk-from-credentials-file');
+    expect(test.stdout + test.stderr).not.toContain('sk-stale-dotenv');
+  }, 60_000);
+
   it('resolveTestKey sees a credentials file written after the process started', async () => {
     // The "configure, then use immediately — no restart" contract: this
     // process began before the file existed; resolveTestKey must reload it
@@ -278,10 +321,25 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
 
   it('assumes the well-known deepseek endpoint instead of demanding --base-url', async () => {
     const h = await makeHarness();
-    const result = await runCli(['models', 'setup', '--provider', 'deepseek', '--test', '--json'], {
-      ...h.env,
-      DEEPSEEK_API_KEY: '',
-    });
+    // Hermetic key name: this dev machine may carry a real DEEPSEEK_API_KEY
+    // in a local .env, and an empty var no longer shadows file-sourced keys
+    // (env precedence fix) — point resolution at a name that exists nowhere.
+    const result = await runCli(
+      [
+        'models',
+        'setup',
+        '--provider',
+        'deepseek',
+        '--api-key-env',
+        'FRESH_NO_KEY_7',
+        '--test',
+        '--json',
+      ],
+      {
+        ...h.env,
+        DEEPSEEK_API_KEY: '',
+      },
+    );
     // Before, the connection test looked only at the DSH provider view and
     // threw here — on a fresh machine there is no provider entry to read.
     expect(result.stderr).not.toContain('no base URL known');

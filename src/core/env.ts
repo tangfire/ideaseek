@@ -4,10 +4,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Shared KEY=VALUE line ingestion: host env wins, values are never logged or
- * returned (only names), comments/blank lines skipped, malformed lines ignored.
+ * Shared KEY=VALUE line ingestion. Precedence (order-independent):
+ * a non-empty value we never wrote is the real host env and always wins;
+ * among files the credentials file (rank 1) outranks a local .env (rank 2);
+ * a re-read of the same file refreshes the value (key rotation without
+ * restart). An empty/blank existing value is treated as unset so a stray
+ * `KEY=` line cannot shadow a real key. Values are never logged or returned
+ * (only names), comments/blank lines skipped, malformed lines ignored.
  */
-function ingestEnvText(text: string, loaded: string[]): void {
+const RANK_CREDENTIALS = 1;
+const RANK_LOCAL = 2;
+const ingestedRank = new Map<string, number>();
+
+function ingestEnvText(text: string, loaded: string[], rank: number): void {
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -19,8 +28,13 @@ function ingestEnvText(text: string, loaded: string[]): void {
       .trim()
       .replace(/^["']|["']$/g, '');
     if (!/^[A-Z0-9_]+$/i.test(key)) continue;
-    if (process.env[key] !== undefined) continue; // host env wins
+    const existing = process.env[key];
+    if (existing !== undefined && existing.trim() !== '') {
+      const prior = ingestedRank.get(key);
+      if (prior === undefined || prior < rank) continue; // host env or higher-ranked file wins
+    }
     process.env[key] = value;
+    ingestedRank.set(key, rank);
     loaded.push(key); // names only — never values
   }
 }
@@ -42,7 +56,7 @@ export function loadLocalEnv(cwd: string = process.cwd()): string[] {
     } catch {
       continue;
     }
-    ingestEnvText(text, loaded);
+    ingestEnvText(text, loaded, RANK_LOCAL);
   }
   return loaded;
 }
@@ -79,7 +93,7 @@ export function loadUserCredentials(): string[] {
     return [];
   }
   const loaded: string[] = [];
-  ingestEnvText(text, loaded);
+  ingestEnvText(text, loaded, RANK_CREDENTIALS);
   return loaded;
 }
 
