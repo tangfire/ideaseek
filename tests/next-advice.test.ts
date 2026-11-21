@@ -270,6 +270,7 @@ describe('materialAdvice applies agent advice over the ladder', () => {
     expect(built?.command).toBe(alternative);
 
     const applied = await materialAdvice(runtime!); // no harness: load only
+    if (!applied) throw new Error('materialAdvice returned null');
     expect(applied.adviceSource).toBe('agent');
     expect(applied.command).toBe(alternative);
     expect(applied.adviceRationale).toContain('下游');

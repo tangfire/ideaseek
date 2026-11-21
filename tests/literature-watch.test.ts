@@ -191,7 +191,7 @@ describe('ideaseek literature watch', () => {
     expect(human.code, human.stdout + human.stderr).toBe(0);
     expect(human.stdout).toContain('no change');
     // research-map.md cannot exist without a model — deferred, not a loop.
-    expect(second.payload.deferred).toEqual(expect.arrayContaining(MODEL_OUTPUT_MARKERS));
+    expect(second.payload.deferred).toEqual(expect.arrayContaining([...MODEL_OUTPUT_MARKERS]));
   }, 300_000);
 
   it('a newly arrived paper reopens the gate and gets parsed', async () => {

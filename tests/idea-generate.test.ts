@@ -293,6 +293,7 @@ describe('idea generation output contract', () => {
     allowedTools: [],
     body: '',
     sha256: `sha256:${'0'.repeat(64)}`,
+    path: '/x',
   };
 
   it('spells out the mechanismChain step shape the validator enforces', () => {
