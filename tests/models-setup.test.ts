@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import { CLI_BIN } from './helpers.js';
+import { resolveTestKey } from '../src/models/setup.js';
 
 /**
  * `/models setup` + `models test` (docs/CLI_SPEC 模型配置, rule: hidden
@@ -196,6 +197,31 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(retest.code, retest.stdout + retest.stderr).toBe(0);
     expect(retest.stdout).not.toContain('sk-round-trip-key');
   }, 60_000);
+
+  it('resolveTestKey sees a credentials file written after the process started', async () => {
+    // The "configure, then use immediately — no restart" contract: this
+    // process began before the file existed; resolveTestKey must reload it
+    // just in time (the TUI's own process is the motivating case).
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-late-key-'));
+    const previous = process.env.IDEASEEK_USER_CONFIG;
+    process.env.IDEASEEK_USER_CONFIG = join(dir, 'config.yaml');
+    delete process.env.LATE_ARRIVAL_KEY;
+    try {
+      await writeFile(
+        join(dir, 'credentials.env'),
+        'LATE_ARRIVAL_KEY=sk-late-arrival-1234\n',
+        'utf8',
+      );
+      const resolved = resolveTestKey(null, 'LATE_ARRIVAL_KEY');
+      expect(resolved.present).toBe(true);
+      expect(resolved.source).toBe('env');
+      expect(resolved.value).toBe('sk-late-arrival-1234');
+    } finally {
+      if (previous === undefined) delete process.env.IDEASEEK_USER_CONFIG;
+      else process.env.IDEASEEK_USER_CONFIG = previous;
+      delete process.env.LATE_ARRIVAL_KEY;
+    }
+  }, 30_000);
 
   it('updates only apiKeyEnv on an existing provider and preserves other fields', async () => {
     const h = await makeHarness();

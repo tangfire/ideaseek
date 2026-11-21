@@ -5,6 +5,7 @@ import type { RunResult } from '@deepseek-ai/dsh-sdk-client';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import type { SdkPromptContentBlock } from '@deepseek-ai/dsh-sdk-protocol';
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm';
+import { loadUserCredentials } from '../core/env.js';
 import { writeCapabilityPatch } from './capability.js';
 import {
   HarnessBlockError,
@@ -411,6 +412,11 @@ export class DshHarnessAdapter implements HarnessAdapter {
   }
 
   async initialize(): Promise<void> {
+    // Just-in-time credential reload: /models setup may write the file after
+    // this process started. Every model call funnels through here, so re-read
+    // it BEFORE the (cached) child env is decided — configure, then use
+    // immediately, no restart (the TUI's own process included).
+    loadUserCredentials();
     await mkdir(this.opts.dshHome, { recursive: true });
     if (this.harness && this.startPromise) {
       await this.startPromise;
@@ -434,7 +440,7 @@ export class DshHarnessAdapter implements HarnessAdapter {
       // allow for everything — the fence sits there looking configured while
       // denying nothing, which is the worst shape a security rule can have.
       IDEASEEK_CAPABILITY_ROLE: 'worker',
-      IDEASEEK_READ_ROOTS: [projectRoot, ...this.opts.extraReadRoots ?? []].join(delimiter),
+      IDEASEEK_READ_ROOTS: [projectRoot, ...(this.opts.extraReadRoots ?? [])].join(delimiter),
       IDEASEEK_READ_DENY_ROOTS: this.opts.denyRoots?.join(delimiter) ?? '',
       // A response cut off by the output cap is a FAILURE, here, always.
       // The `sdk` profile layers @deepseek-ai/dsh-sdk-app, whose patch sets

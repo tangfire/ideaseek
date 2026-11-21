@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { normalizeApiKey } from '../dsh/api-key.js';
 import { IdeaseekError } from '../core/errors.js';
+import { loadUserCredentials } from '../core/env.js';
 
 /**
  * `/models setup` machinery (docs/CLI_SPEC 模型配置, docs/MODEL_ROUTING
@@ -355,6 +356,10 @@ export function resolveTestKey(
   explicit: string | null,
   envName: string,
 ): { present: boolean; value: string | null; source: 'stdin' | 'env' | 'none' } {
+  // Just-in-time reload: the credentials file may be written after this
+  // process started — `models test` must see a key saved seconds ago
+  // without the user restarting anything.
+  loadUserCredentials();
   if (explicit !== null && explicit.length > 0) {
     return { present: true, value: explicit, source: 'stdin' };
   }
