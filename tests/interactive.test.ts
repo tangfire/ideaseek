@@ -135,7 +135,7 @@ function fakeEvent(overrides: Partial<RunEvent> = {}): RunEvent {
 
 describe('slash registry (unit)', () => {
   it('completes by prefix and ignores non-slash input', () => {
-    expect(slashCompleter('/sta')).toEqual([['/status'], '/sta']);
+    expect(slashCompleter('/sta')).toEqual([['/start', '/status'], '/sta']);
     expect(slashCompleter('/')).toEqual([SLASH_COMMANDS.map((cmd) => cmd.name), '/']);
     expect(slashCompleter('status')).toEqual([[], 'status']);
     expect(slashCompleter('/zzz')).toEqual([[], '/zzz']);
@@ -143,7 +143,8 @@ describe('slash registry (unit)', () => {
 
   it('resolves exact, unique-prefix, ambiguous and unknown inputs', () => {
     expect(resolveSlash('/status')).toEqual({ kind: 'exact', name: '/status' });
-    expect(resolveSlash('/sta')).toEqual({ kind: 'prefix', name: '/status' });
+    // /start now shares the "/sta" prefix — ambiguity, not a silent pick.
+    expect(resolveSlash('/sta')).toEqual({ kind: 'ambiguous', candidates: ['/start', '/status'] });
     expect(resolveSlash('/log')).toEqual({ kind: 'prefix', name: '/logs' });
     const ambiguous = resolveSlash('/r');
     expect(ambiguous.kind).toBe('ambiguous');

@@ -84,7 +84,7 @@ describe('slash menu state machine (unit)', () => {
     expect(all.visible.length).toBeGreaterThan(10);
 
     const filtered = openMenu('/sta');
-    expect(filtered.visible.map((c) => c.name)).toEqual(['/status']);
+    expect(filtered.visible.map((c) => c.name)).toEqual(['/start', '/status']);
 
     const down = moveSelection(all, 1);
     expect(down.selected).toBe(1);
@@ -122,7 +122,7 @@ describe('slash menu state machine (unit)', () => {
   });
 
   it('keeps unique-prefix resolution (/sta → /status)', () => {
-    expect(resolveSlash('/sta')).toEqual({ kind: 'prefix', name: '/status' });
+    expect(resolveSlash('/sta')).toEqual({ kind: 'ambiguous', candidates: ['/start', '/status'] });
     expect(resolveSlash('/logs')).toEqual({ kind: 'exact', name: '/logs' });
   });
 
@@ -177,9 +177,12 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     await repl.waitFor(/ideaseek ›/);
     repl.write('/');
     await repl.waitFor(/show this help/);
-    // Down twice: /help → /init → /status, then Enter executes it.
+    // Down three times: /help → /init → /start → /status (/start joined the
+    // bootstrap group), then Enter executes it.
     repl.write('\x1b[B');
     await repl.waitFor(/> \/init/);
+    repl.write('\x1b[B');
+    await repl.waitFor(/> \/start/);
     repl.write('\x1b[B');
     await repl.waitFor(/> \/status/);
     repl.write('\r');
@@ -212,7 +215,7 @@ describe('forced-TTY REPL (PTY-equivalent via escape sequences)', () => {
     const dir = await makeProjectDir();
     const repl = startTtyRepl(dir);
     await repl.waitFor(/ideaseek ›/);
-    repl.write('/sta');
+    repl.write('/stat'); // unique prefix ( /sta is ambiguous since /start )
     await new Promise((resolve) => setTimeout(resolve, 200));
     repl.write('\t');
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -553,6 +556,29 @@ describe('new slash commands and NL routing (CLI)', () => {
     expect(done.stdout).not.toContain('unknown command: /literature');
     expect(done.stdout).not.toContain('unknown command: /repro');
   }, 180_000);
+
+  it('/start /scan /plan relay the bootstrap and materials loop', async () => {
+    const dir = await makeProjectDir();
+    const repl = startTtyRepl(dir);
+    await repl.waitFor(/ideaseek ›/);
+
+    repl.write('/scan\r');
+    await repl.waitFor(/scanned/);
+
+    // Positional text becomes the persisted research question
+    // (TUI convenience for `start --question …`).
+    repl.write('/start 迁移学习里的样本不均衡怎么处理\r');
+    await repl.waitFor(/question saved|already initialized/);
+    const yaml = await readFile(join(dir, 'research.yaml'), 'utf8');
+    expect(yaml).toContain('迁移学习里的样本不均衡怎么处理');
+
+    repl.write('/plan\r');
+    await repl.waitFor(/plan \(dry-run/);
+
+    const done = await repl.quit();
+    expect(done.code).toBe(0);
+    expect(done.stdout).not.toContain('unknown command');
+  }, 120_000);
 
   it('/ideas reports real idea state instead of placeholder text', async () => {
     const project = await makeProjectDir();

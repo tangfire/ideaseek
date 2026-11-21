@@ -1021,6 +1021,22 @@ export class InteractiveSession {
       case '/prepare':
         await this.relay(['prepare', ...restArgs]);
         return 'continue';
+      case '/start': {
+        // Positional text IS the research question (TUI convenience for
+        // `start --question …`); flags pass through untouched.
+        const args =
+          restArgs.length > 0 && !restArgs[0]!.startsWith('-')
+            ? ['start', '--question', restArgs.join(' ')]
+            : ['start', ...restArgs];
+        await this.relay(args);
+        return 'continue';
+      }
+      case '/scan':
+        await this.relay(['scan', ...restArgs]);
+        return 'continue';
+      case '/plan':
+        await this.relay(['plan', ...restArgs]);
+        return 'continue';
       case '/drift':
         await this.relay(['stale', ...restArgs]);
         return 'continue';

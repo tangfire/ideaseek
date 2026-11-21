@@ -81,10 +81,13 @@ ideaseek ›
 交互提示符支持：
 
 ```text
+/start        一键启动：init + setup + 首次扫描，可带研究问题（`/start <问题>`）
 /status       当前阶段、任务、资源和预算
 /models       查看和配置模型 route/provider
 /mode         查看/切换 Research 和 Analysis 权限档位（或 coding/ask 焦点）
 /prepare      运行 Analysis 只读材料准备流水线（scan → ingest → data → extract → assess）
+/scan         发现 papers/code/data 进入输入清单
+/plan         干跑计划：输入、门禁、资源估算（不启动任何东西）
 /assessment   查看研究材料就绪度与缺口报告
 /drift        预览原始输入漂移与下游失效产物（对应 CLI `ideaseek stale`）
 /agent        起一轮通用 DSH coding 会话（`/agent <指令>`；无参列出可续的 session）

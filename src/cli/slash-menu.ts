@@ -28,6 +28,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: '/init [name]',
     description: 'create the IdeaSeek project in this directory (papers/, datasets/, …)',
   },
+  {
+    name: '/start',
+    usage: '/start [研究问题]',
+    description: 'one-stop start: init + setup + first scan, persist the question',
+  },
   { name: '/status', usage: '/status', description: 'run state, tasks, workers, recent events' },
   { name: '/next', usage: '/next', description: 'state-aware suggestion for the next command' },
   {
@@ -39,6 +44,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: '/prepare',
     usage: '/prepare [--skip-model]',
     description: 'run read-only Analysis prep pipeline (scan → ingest → data → extract → assess)',
+  },
+  {
+    name: '/scan',
+    usage: '/scan',
+    description: 'discover papers/code/data into the input manifest',
+  },
+  {
+    name: '/plan',
+    usage: '/plan [--question "..."]',
+    description: 'dry-run plan: inputs, gates, estimates — starts nothing',
   },
   {
     name: '/drift',
@@ -162,9 +177,12 @@ const HELP_SECTIONS: readonly { title: string; names: readonly string[] }[] = [
     names: [
       '/help',
       '/init',
+      '/start',
       '/status',
       '/next',
       '/prepare',
+      '/scan',
+      '/plan',
       '/assessment',
       '/drift',
       '/literature',
