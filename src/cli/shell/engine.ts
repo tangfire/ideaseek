@@ -727,6 +727,33 @@ export interface InkKeyLike {
 
 // eslint-disable-next-line no-control-regex
 const SGR_MOUSE = /^(?:\x1b)?\[<(\d+);\d+;\d+[Mm]$/;
+// X10 (non-SGR) pointer reports: ESC [ M + 3 raw bytes (button/col/row +32).
+// eslint-disable-next-line no-control-regex
+const X10_MOUSE = /^(?:\x1b)?\[M([\x20-\x7e]{3})$/;
+// Broad SGR shape — ink may strip the ESC and/or the "[" depending on how it
+// tokenizes an unknown CSI, so classifyPointer accepts every degraded form.
+// eslint-disable-next-line no-control-regex
+const SGR_BROAD = /^(?:\x1b)?\[?<(\d+);\d+;\d+[Mm]$/;
+
+/**
+ * Classifies pointer input for the UI layer: clicks/drags/motion must be
+ * swallowed (they used to fall into text insertion — typed garbage — and,
+ * during the hidden key prompt, straight into the secret buffer: corrupted
+ * key + extra bullets), while the wheel keeps its scroll path.
+ */
+export function classifyPointer(input: string): 'wheel' | 'pointer' | null {
+  const sgr = SGR_BROAD.exec(input);
+  if (sgr) {
+    const button = Number(sgr[1]);
+    return button === 64 || button === 65 ? 'wheel' : 'pointer';
+  }
+  const x10 = X10_MOUSE.exec(input);
+  if (x10) {
+    const button = x10[1]!.charCodeAt(0) - 32;
+    return button === 64 || button === 65 ? 'wheel' : 'pointer';
+  }
+  return null;
+}
 
 /** Maps an Ink key event onto the pure ShellEngine key vocabulary. */
 export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
@@ -786,6 +813,12 @@ export function toEngineKey(input: string, key: InkKeyLike): EngineKey {
     }
   }
   if (key.ctrl && input.length === 1) return { name: input, ctrl: true };
+  // Never type terminal answers or pointer reports as text: any unrecognized
+  // ESC-leading input (cursor reports, degraded mouse encodings) is a
+  // response, not a keystroke. Real keys all returned above.
+  if (input.startsWith('\x1b') || SGR_BROAD.test(input) || X10_MOUSE.test(input)) {
+    return { name: 'unknown' };
+  }
   if (input.length > 0 && !key.meta) return { sequence: input };
   return { name: 'unknown' };
 }

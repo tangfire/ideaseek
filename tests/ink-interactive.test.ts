@@ -324,6 +324,53 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
   );
 
   it(
+    'hidden key prompt swallows pointer clicks — no ghost bullets, no corrupted key',
+    async () => {
+      // Owner-reported: clicking while entering the API key injected garbage
+      // into the hidden buffer (extra 黑点) and corrupted the key (配置不成功).
+      // The secret branch appended ANY non-modifier input raw — including SGR
+      // click reports, because mouse reporting is on by default.
+      const dir = await makeProjectDir('ink-secret');
+      const repl = startInk(dir);
+      try {
+        await repl.waitFor(/ideaseek ›/, 60_000);
+        // Keys in separate paced writes: bundling the \r makes the engine
+        // treat the chunk as a paste instead of dispatching the command.
+        await repl.write('/models setup');
+        await repl.write('\r');
+        await repl.waitFor(/which provider\?/, 60_000);
+        await repl.write('/models setup deepseek');
+        await repl.write('\r');
+        await repl.waitFor(/API key \(input hidden\)/, 60_000);
+
+        // Three clicks, then exactly one real character.
+        await repl.write('\x1b[<0;10;5M');
+        await repl.write('\x1b[<0;11;5M');
+        await repl.write('\x1b[<0;12;5M');
+        await repl.write('x');
+
+        // ESC cancels — never submits, so no network and no writes.
+        await repl.write('\x1b');
+        await repl.waitFor(/setup cancelled/, 60_000);
+
+        const output = repl.output();
+        // Fixed: one bullet for 'x' only; a corrupted buffer would show more.
+        expect(output).not.toContain('••');
+        expect(output).toContain('API key (input hidden)');
+        expect(output).not.toContain('[<0;'); // raw pointer bytes never echoed
+
+        await repl.write('/');
+        await repl.write('quit');
+        await repl.write('\r');
+        expect(await repl.done).toBe(0);
+      } finally {
+        await cleanup(dir, repl.child);
+      }
+    },
+    budget(180_000),
+  );
+
+  it(
     'agent tool approvals surface in the TUI and answer with y/n',
     async () => {
       const dir = await makeProjectDir('ink-approve');

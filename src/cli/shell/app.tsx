@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Box, Text, render, useApp, useInput, useStdout } from 'ink';
 import { copyToClipboard } from './clipboard.js';
-import { ShellEngine, toEngineKey, type EngineResult } from './engine.js';
+import { ShellEngine, classifyPointer, toEngineKey, type EngineResult } from './engine.js';
 import { scanWorkspaceMentions, type CompletionEntry } from './mentions.js';
 import {
   createPicker,
@@ -352,8 +352,9 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStatusRefreshRef = useRef(0);
   const [secretBuf, setSecretBuf] = useState('');
-  // Trigger re-render when secret prompt state changes (beginSecretPrompt / answerSecret)
-  const [secretPromptVersion, setSecretPromptVersion] = useState(0);
+  // Prompt changes re-render via setState alone — the tick value is never
+  // read (hence the underscore), the setter below is the mechanism.
+  const [_secretPromptTick, setSecretPromptVersion] = useState(0);
   useEffect(() => {
     session.setOnSecretPromptChange(() => setSecretPromptVersion((v) => v + 1));
     return () => session.setOnSecretPromptChange(null);
@@ -623,6 +624,12 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
 
   useInput((input, key) => {
     inputGenRef.current += 1;
+    // Pointer reports must never reach the composer or the secret buffer:
+    // clicks were typed as text (garbage + 黑点) and — during /models setup —
+    // appended raw into the key (corrupted paste → 配置不成功). The engine
+    // already ignored SGR clicks; this swallows every degraded encoding at
+    // the UI boundary too, and keeps the wheel out of the secret buffer.
+    const pointer = classifyPointer(input);
     if (session.secretPrompt) {
       if (key.return) {
         const answer = secretBuf;
@@ -639,11 +646,13 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
         setSecretBuf((value) => value.slice(0, -1));
         return;
       }
+      if (pointer) return; // clicks/wheel during a hidden prompt: swallow
       if (input && !key.ctrl && !key.meta && input !== '\t' && input !== '\r') {
         setSecretBuf((value) => value + input);
       }
       return;
     }
+    if (pointer === 'pointer') return; // clicks never type, approve, or search
     if (session.pendingApproval) {
       if (input === 'y' || input === 'Y') session.respondApproval(true);
       else if (input === 'n' || input === 'N' || key.return || key.escape)

@@ -1,6 +1,11 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { ShellEngine, interactiveRenderer, type EngineKey } from '../src/cli/shell/engine.js';
+import {
+  ShellEngine,
+  classifyPointer,
+  interactiveRenderer,
+  type EngineKey,
+} from '../src/cli/shell/engine.js';
 import { startShellSpike, toEngineKey } from '../src/cli/shell/spike.js';
 
 /**
@@ -194,6 +199,25 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
     expect(click.wheelDelta).toBe(0);
     const release = engine.handle(toEngineKey('\x1b[<0;10;5m', {}));
     expect(release.line).toBe('x');
+  });
+
+  it('classifies pointer encodings and refuses to type terminal answers', () => {
+    // Degraded ink tokenization (ESC stripped and/or "[" dropped) must still
+    // be recognized as pointer input — those forms fell into the paste branch
+    // and typed garbage into the composer, and into the hidden key buffer.
+    expect(classifyPointer('\x1b[<0;10;5M')).toBe('pointer');
+    expect(classifyPointer('[<0;10;5M')).toBe('pointer');
+    expect(classifyPointer('<0;10;5M')).toBe('pointer');
+    expect(classifyPointer('\x1b[<64;10;5M')).toBe('wheel');
+    expect(classifyPointer('\x1b[M   ')).toBe('pointer'); // X10 click
+    expect(classifyPointer('plain typing')).toBeNull();
+
+    // Unrecognized terminal answers and X10 never become typed text.
+    expect(toEngineKey('\x1b[10;20R', {})).toEqual({ name: 'unknown' }); // cursor report
+    expect(toEngineKey('\x1b[M   ', {})).toEqual({ name: 'unknown' });
+    expect(toEngineKey('<0;10;5M', {})).toEqual({ name: 'unknown' });
+    // Real typing is untouched.
+    expect(toEngineKey('hello', {})).toEqual({ sequence: 'hello' });
   });
 });
 
