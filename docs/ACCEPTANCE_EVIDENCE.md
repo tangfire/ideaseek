@@ -342,3 +342,16 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 **推送确认（2026-11-20）**：用户恢复 gitee 凭据后，`git ls-remote origin main` = `3f5aae4`——本轮全部提交 `867cd5d`、`2502cec`、`aae70e8`、`0ee1e14`、`6543741`、`e77c3d1`、`3f5aae4` 均已在远端，`git push` 返回 Everything up-to-date；STAGE 9 节所记 PUSH PENDING 至此闭合（该历史行按 append-only 规则不改写）。验收全部证据与修复已按第 4 节完成提交与推送。
 
 **修复后全量回归（2026-11-20，a3a1dfa 工作树，验收最后一项验证）**：`pnpm test` **exit 0** 三 lane 全绿——主 lane **205 文件 / 1905 测试 → 1903 passed / 2 skipped / 0 failed**（458.8s；较修复前基线 1891 测试多出 14 个，即 I20–I22 的定向回归用例）；交互 lane 3 文件/24 passed（93.8s）；python lane 23 tests OK（5.9s）。2 skipped 为环境守卫用例（无凭据/无 TTY 类）。至此验收计划全部完成。
+
+## 续接验收：有界研究迭代（2026-11-21，≤3 轮，目标解锁 STAGE 12）
+
+### 迭代 R1 — ① 诊断（本轮只读 + 一次 analyze，无代码改动）
+
+- 现场：journey-a（STAGE 12 验收项目）`gen-fed-domain-shaft-prototype` run status=ANALYZING、idea v2、锁定协议 proto-bbae9031fbbd-v1（primary `mean unseen-domain accuracy (%)`，unit=percent，source=paper-evidence conf 0.85）。
+- `paper results`（确定性导出，5 条运行）：本 idea quick 记录 `Unseen-domain top-1 accuracy=0.5 … mean unseen-domain accuracy=50`；required 对比 `cmp-feddg-prototype-alignment-quick=4.7`（另一量纲体系）；其余 idea 0.02–0.05。
+- `idea analyze`（真模型，本轮新跑）：**INCONCLUSIVE（failure class: metric）、primary delta=0**，basis=`idea-…@v6 (quick)`。agent 审查（ARIS analyze-results, conf 0.60）判 **NOT comparable**：两侧 0.5 若按字面 percent 是 0.5%（近零，不可信），更可能是 fraction；split rules 无记录、无法确认同一评估总体。确定性层同时报 `effect insufficient: 0.5 does not beat 0.5` 与 **suspicious identical controls**（`feddg-prototype-alignment`、`FedDG/…`、主体自身三者同为 0.5——17 位同值=同一计算被报了多次或全员打平的签名）。
+- **打平根因核对（证据点名的"协议指标与可测语料脱节"= 主因，成立）**：
+  1. idea 的可测语料 `data/synthetic.csv` = **10 行、2 特征、二分类、label=行号奇偶**；无 domain 列 → `fedg.py` 按 x0 三分位造"域"（3/3/4 行），held-out 域仅 **4 行、2 类均衡 → chance=0.5 恰为地板**；主体（逻辑回归）与对照（最近质心）均 2/4=0.5，delta=0 是**评估集地板效应**，不是机制测量。
+  2. 协议主指标（percent、多域 unseen accuracy、源自论文基准参照）在本项目**没有任何带域轴的语料可测**：真语料 parquet 3750 行仅 image+label、sample-data.csv 660 行无 group 列（STAGE 10 已证实平台拒绝发明域轴）；玩具语料的"域"是 x0 三分位伪影。
+  3. 次要错位（非打平成因，如实记录）：同一记录内单位混装（`mean unseen-domain accuracy`=50 percent vs 其余键= fraction）；配对用 spec.metrics[0]=`Unseen-domain top-1 accuracy`（fraction 键），协议 percent 名的 declaredPrimary 匹配不上、单位闸对它惰性——v5 曾改挂 `mean unseen-domain accuracy`=50 反而配不上对，v6 又挂回 fraction 键。**两把钥匙数值一致（0.5=50%），故对齐不是阻塞项，数据才是。**
+- 结论 → R2 单变量 = **可测语料（data）**：按卡片自己声明的 minimalExperiment（多域客户端、held-out 域、域位移）重建 idea 工作区语料；代码/指标名/seeds/对照定义/协议一律不动。
