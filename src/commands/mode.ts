@@ -57,13 +57,15 @@ async function changeStrategy(
   try {
     const autonomy = parseAutonomyMode(runtime.config.policy.autonomyMode);
     assertAutonomy(autonomy, 'change-research-mode', { confirmed: opts.confirm });
-    const { readFile, writeFile } = await import('node:fs/promises');
+    const { readFile } = await import('node:fs/promises');
+    const { writeFileAtomic } = await import('../core/atomic.js');
     const configPath = projectPaths(root).configFile;
     const raw = await readFile(configPath, 'utf8');
     if (!/^\s*mode:.*$/m.test(raw)) {
       throw new IdeaseekError('INVALID_STATE', 'research.yaml has no research.mode key');
     }
-    await writeFile(configPath, raw.replace(/^(\s*mode:).*$/m, `$1 ${mode}`), 'utf8');
+    // Atomic: a crash mid-write must not truncate the project's main config.
+    await writeFileAtomic(configPath, raw.replace(/^(\s*mode:).*$/m, `$1 ${mode}`));
     const decision = await recordDecision(runtime.db, runtime.project.id, {
       action: 'change-research-mode',
       target: `${current} → ${mode}`,

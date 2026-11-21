@@ -93,7 +93,8 @@ export async function saveUserCredential(
     .filter((line) => line.trim() && !line.startsWith(`${name}=`));
   kept.push(`${name}=${value}`);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFileAtomic(path, `${kept.join('\n')}\n`);
+  // Created 0600 from the first byte — no world-readable window before chmod.
+  await writeFileAtomic(path, `${kept.join('\n')}\n`, { mode: 0o600 });
   try {
     await chmod(path, 0o600);
   } catch {

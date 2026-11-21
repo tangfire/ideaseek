@@ -27,6 +27,17 @@ interface StepOutcome {
   detail: string;
 }
 
+/**
+ * Exit contract: 2 = blocking gaps remain, 1 = a pipeline step failed even
+ * though no blocking gap is open (fail-open exit codes let `prepare && run`
+ * proceed on a broken pipeline), 0 = clean.
+ */
+export function prepareExitCode(blockingCount: number, failedSteps: number): number {
+  if (blockingCount > 0) return 2;
+  if (failedSteps > 0) return 1;
+  return 0;
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -47,167 +58,182 @@ export function registerPrepareCommand(program: Command): void {
     .option('--question <text>', 'research question for the assessment step')
     .option('--json', 'machine-readable output')
     .action(
-      action(async (opts: { skipModel?: boolean; harness?: string; question?: string; json?: boolean }) => {
-        const { findProjectRoot } = await import('../config/paths.js');
-        const root = await findProjectRoot(process.cwd());
-        if (!root) {
-          throw new IdeaseekError(
-            'NOT_INITIALIZED',
-            'no IdeaSeek project here; run: ideaseek init',
-          );
-        }
-
-        const steps: StepOutcome[] = [];
-        const logStep = (line: string) => {
-          if (!opts.json) process.stdout.write(`${line}\n`);
-        };
-
-        // 1. Scan inputs (incremental hash reuse).
-        const scan = await performScan(root);
-        steps.push({
-          step: 'scan',
-          status: 'ran',
-          detail: `${scan.files} file(s), reused ${scan.reusedHashes} hash(es)`,
-        });
-        logStep(`prepare [1/5] scan: ${scan.files} file(s) (reused ${scan.reusedHashes} hash(es))`);
-
-        // 2. Ingest PDFs / LaTeX sources incrementally.
-        const ingestRes = await runCli(['ingest', '--json'], { timeoutMs: 180_000 });
-        if (ingestRes.code === 0) {
-          steps.push({ step: 'ingest', status: 'ran', detail: 'incremental parse complete' });
-          logStep('prepare [2/5] ingest: incremental parse complete');
-        } else {
-          steps.push({
-            step: 'ingest',
-            status: 'failed',
-            detail: (ingestRes.stderr || ingestRes.stdout).trim().slice(0, 200),
-          });
-          logStep('prepare [2/5] ingest: partial/failed (see assessment gaps)');
-        }
-
-        // 3. Profile datasets if any data files or readonlyDatasets are configured.
-        let hasDatasetInput = false;
-        let parsedCount = 0;
-        let cardCount = 0;
-        const rt = await ProjectRuntime.open({ cwd: root, recover: false });
-        try {
-          assertConfigUsable(rt.configLoad);
-          parsedCount = (await rt.db.listArtifactsByKind('parsed-paper')).length;
-          cardCount = (await rt.db.listArtifactsByKind('papercard')).length;
-          hasDatasetInput =
-            rt.config.inputs.readonlyDatasets.length > 0 ||
-            (await fileExists(join(root, 'knowledge', 'input-manifest.json')));
-        } finally {
-          await rt.close();
-        }
-
-        if (hasDatasetInput) {
-          const dataRes = await runCli(['data', 'describe', '--json'], { timeoutMs: 120_000 });
-          if (dataRes.code === 0) {
-            steps.push({ step: 'data-describe', status: 'ran', detail: 'dataset card updated' });
-            logStep('prepare [3/5] data describe: dataset profile updated');
-          } else {
-            steps.push({
-              step: 'data-describe',
-              status: 'failed',
-              detail: (dataRes.stderr || dataRes.stdout).trim().slice(0, 200),
-            });
-            logStep('prepare [3/5] data describe: failed (check dataset format)');
+      action(
+        async (opts: {
+          skipModel?: boolean;
+          harness?: string;
+          question?: string;
+          json?: boolean;
+        }) => {
+          const { findProjectRoot } = await import('../config/paths.js');
+          const root = await findProjectRoot(process.cwd());
+          if (!root) {
+            throw new IdeaseekError(
+              'NOT_INITIALIZED',
+              'no IdeaSeek project here; run: ideaseek init',
+            );
           }
-        } else {
-          steps.push({ step: 'data-describe', status: 'skipped', detail: 'no dataset inputs' });
-          logStep('prepare [3/5] data describe: skipped (no datasets found)');
-        }
 
-        // 4. Model-backed extract & synthesize (only when requested or credentials exist).
-        const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
-        const modelHarness =
-          opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : null);
-        if (opts.skipModel || !modelHarness) {
-          const reason = opts.skipModel
-            ? '--skip-model set'
-            : 'no DEEPSEEK_API_KEY configured (pass --harness or run /models setup)';
-          steps.push({ step: 'extract+synthesize', status: 'skipped', detail: reason });
-          logStep(`prepare [4/5] extract/synthesize: skipped (${reason})`);
-        } else if (parsedCount === 0) {
+          const steps: StepOutcome[] = [];
+          const logStep = (line: string) => {
+            if (!opts.json) process.stdout.write(`${line}\n`);
+          };
+
+          // 1. Scan inputs (incremental hash reuse).
+          const scan = await performScan(root);
           steps.push({
-            step: 'extract+synthesize',
-            status: 'skipped',
-            detail: 'no parsed papers yet',
-          });
-          logStep('prepare [4/5] extract/synthesize: skipped (no parsed papers)');
-        } else {
-          const extRes = await runCli(['extract', '--harness', modelHarness, '--json'], {
-            timeoutMs: 300_000,
-          });
-          steps.push({
-            step: 'extract',
-            status: extRes.code === 0 ? 'ran' : 'failed',
-            detail:
-              extRes.code === 0
-                ? 'PaperCards synced'
-                : (extRes.stderr || extRes.stdout).trim().slice(0, 200),
-          });
-          const synthRes = await runCli(['synthesize', '--harness', modelHarness, '--json'], {
-            timeoutMs: 300_000,
-          });
-          steps.push({
-            step: 'synthesize',
-            status: synthRes.code === 0 ? 'ran' : 'failed',
-            detail:
-              synthRes.code === 0
-                ? 'topic synthesis & research map synced'
-                : (synthRes.stderr || synthRes.stdout).trim().slice(0, 200),
+            step: 'scan',
+            status: 'ran',
+            detail: `${scan.files} file(s), reused ${scan.reusedHashes} hash(es)`,
           });
           logStep(
-            `prepare [4/5] extract=${extRes.code === 0 ? 'ok' : 'failed'} · synthesize=${synthRes.code === 0 ? 'ok' : 'failed'} (${parsedCount} parsed, ${cardCount} prior cards)`,
+            `prepare [1/5] scan: ${scan.files} file(s) (reused ${scan.reusedHashes} hash(es))`,
           );
-        }
 
-        // 5. Rebuild/reuse ResearchMaterialAssessment.
-        const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
-        const { assessment, reused } = await loadOrBuildAssessment(root, {
-          question: opts.question,
-        });
-        const blocking = assessment.gaps.filter((g) => g.priority === 'blocking');
-        steps.push({
-          step: 'assessment',
-          status: 'ran',
-          detail: `${assessment.verdict} (blocking=${blocking.length}, reused=${reused})`,
-        });
+          // 2. Ingest PDFs / LaTeX sources incrementally.
+          const ingestRes = await runCli(['ingest', '--json'], { timeoutMs: 180_000 });
+          if (ingestRes.code === 0) {
+            steps.push({ step: 'ingest', status: 'ran', detail: 'incremental parse complete' });
+            logStep('prepare [2/5] ingest: incremental parse complete');
+          } else {
+            steps.push({
+              step: 'ingest',
+              status: 'failed',
+              detail: (ingestRes.stderr || ingestRes.stdout).trim().slice(0, 200),
+            });
+            logStep('prepare [2/5] ingest: partial/failed (see assessment gaps)');
+          }
 
-        if (opts.json) {
-          process.stdout.write(
-            jsonLine({
-              steps,
-              verdict: assessment.verdict,
-              reused,
-              sufficientFor: assessment.sufficientFor,
-              blockingGaps: blocking.length,
-              totalGaps: assessment.gaps.length,
-              assessment,
-            }),
-          );
-          return blocking.length > 0 ? 2 : 0;
-        }
+          // 3. Profile datasets if any data files or readonlyDatasets are configured.
+          let hasDatasetInput = false;
+          let parsedCount = 0;
+          let cardCount = 0;
+          const rt = await ProjectRuntime.open({ cwd: root, recover: false });
+          try {
+            assertConfigUsable(rt.configLoad);
+            parsedCount = (await rt.db.listArtifactsByKind('parsed-paper')).length;
+            cardCount = (await rt.db.listArtifactsByKind('papercard')).length;
+            hasDatasetInput =
+              rt.config.inputs.readonlyDatasets.length > 0 ||
+              (await fileExists(join(root, 'knowledge', 'input-manifest.json')));
+          } finally {
+            await rt.close();
+          }
 
-        logStep(
-          `prepare [5/5] assessment: ${assessment.verdict.toUpperCase()} · protocol=${assessment.sufficientFor.protocolDesign ? 'OK' : 'BLOCKED'} · smoke=${assessment.sufficientFor.smokeQuick ? 'OK' : 'BLOCKED'} (${blocking.length} blocking, ${assessment.gaps.length} total gap(s))`,
-        );
-        for (const item of blocking.slice(0, 6)) {
-          process.stdout.write(`  [BLOCKING] ${item.id}: ${item.reason}\n`);
-          process.stdout.write(`             next: ${item.fillIn}\n`);
-        }
-        if (blocking.length === 0) {
-          process.stdout.write(
-            'next: materials ready — ideaseek mode research (or ideaseek protocol propose)\n',
+          if (hasDatasetInput) {
+            const dataRes = await runCli(['data', 'describe', '--json'], { timeoutMs: 120_000 });
+            if (dataRes.code === 0) {
+              steps.push({ step: 'data-describe', status: 'ran', detail: 'dataset card updated' });
+              logStep('prepare [3/5] data describe: dataset profile updated');
+            } else {
+              steps.push({
+                step: 'data-describe',
+                status: 'failed',
+                detail: (dataRes.stderr || dataRes.stdout).trim().slice(0, 200),
+              });
+              logStep('prepare [3/5] data describe: failed (check dataset format)');
+            }
+          } else {
+            steps.push({ step: 'data-describe', status: 'skipped', detail: 'no dataset inputs' });
+            logStep('prepare [3/5] data describe: skipped (no datasets found)');
+          }
+
+          // 4. Model-backed extract & synthesize (only when requested or credentials exist).
+          const keyPresent = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+          const modelHarness =
+            opts.harness ?? process.env.IDEASEEK_ASK_HARNESS ?? (keyPresent ? 'dsh' : null);
+          if (opts.skipModel || !modelHarness) {
+            const reason = opts.skipModel
+              ? '--skip-model set'
+              : 'no DEEPSEEK_API_KEY configured (pass --harness or run /models setup)';
+            steps.push({ step: 'extract+synthesize', status: 'skipped', detail: reason });
+            logStep(`prepare [4/5] extract/synthesize: skipped (${reason})`);
+          } else if (parsedCount === 0) {
+            steps.push({
+              step: 'extract+synthesize',
+              status: 'skipped',
+              detail: 'no parsed papers yet',
+            });
+            logStep('prepare [4/5] extract/synthesize: skipped (no parsed papers)');
+          } else {
+            const extRes = await runCli(['extract', '--harness', modelHarness, '--json'], {
+              timeoutMs: 300_000,
+            });
+            steps.push({
+              step: 'extract',
+              status: extRes.code === 0 ? 'ran' : 'failed',
+              detail:
+                extRes.code === 0
+                  ? 'PaperCards synced'
+                  : (extRes.stderr || extRes.stdout).trim().slice(0, 200),
+            });
+            const synthRes = await runCli(['synthesize', '--harness', modelHarness, '--json'], {
+              timeoutMs: 300_000,
+            });
+            steps.push({
+              step: 'synthesize',
+              status: synthRes.code === 0 ? 'ran' : 'failed',
+              detail:
+                synthRes.code === 0
+                  ? 'topic synthesis & research map synced'
+                  : (synthRes.stderr || synthRes.stdout).trim().slice(0, 200),
+            });
+            logStep(
+              `prepare [4/5] extract=${extRes.code === 0 ? 'ok' : 'failed'} · synthesize=${synthRes.code === 0 ? 'ok' : 'failed'} (${parsedCount} parsed, ${cardCount} prior cards)`,
+            );
+          }
+
+          // 5. Rebuild/reuse ResearchMaterialAssessment.
+          const { loadOrBuildAssessment } = await import('../knowledge/assessment.js');
+          const { assessment, reused } = await loadOrBuildAssessment(root, {
+            question: opts.question,
+          });
+          const blocking = assessment.gaps.filter((g) => g.priority === 'blocking');
+          steps.push({
+            step: 'assessment',
+            status: 'ran',
+            detail: `${assessment.verdict} (blocking=${blocking.length}, reused=${reused})`,
+          });
+
+          const failedSteps = steps.filter((step) => step.status === 'failed').length;
+          if (opts.json) {
+            process.stdout.write(
+              jsonLine({
+                steps,
+                verdict: assessment.verdict,
+                reused,
+                sufficientFor: assessment.sufficientFor,
+                blockingGaps: blocking.length,
+                failedSteps,
+                totalGaps: assessment.gaps.length,
+                assessment,
+              }),
+            );
+            return prepareExitCode(blocking.length, failedSteps);
+          }
+
+          logStep(
+            `prepare [5/5] assessment: ${assessment.verdict.toUpperCase()} · protocol=${assessment.sufficientFor.protocolDesign ? 'OK' : 'BLOCKED'} · smoke=${assessment.sufficientFor.smokeQuick ? 'OK' : 'BLOCKED'} (${blocking.length} blocking, ${assessment.gaps.length} total gap(s))`,
           );
-        } else {
-          process.stdout.write(
-            'next: clear the BLOCKING gaps above, then rerun ideaseek prepare\n',
-          );
-        }
-        return blocking.length > 0 ? 2 : 0;
-      }),
+          for (const item of blocking.slice(0, 6)) {
+            process.stdout.write(`  [BLOCKING] ${item.id}: ${item.reason}\n`);
+            process.stdout.write(`             next: ${item.fillIn}\n`);
+          }
+          if (blocking.length > 0) {
+            process.stdout.write(
+              'next: clear the BLOCKING gaps above, then rerun ideaseek prepare\n',
+            );
+          } else if (failedSteps > 0) {
+            process.stdout.write(
+              `next: ${failedSteps} step(s) failed — review the failures above, then rerun ideaseek prepare\n`,
+            );
+          } else {
+            process.stdout.write(
+              'next: materials ready — ideaseek mode research (or ideaseek protocol propose)\n',
+            );
+          }
+          return prepareExitCode(blocking.length, failedSteps);
+        },
+      ),
     );
 }

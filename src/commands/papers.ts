@@ -100,7 +100,7 @@ export function registerPapersCommand(program: Command): void {
         const report = await buildPapersReport(root);
         if (opts.json) {
           process.stdout.write(jsonLine(report));
-          return report.failures.length > 0 ? 0 : 0;
+          return report.failures.length > 0 ? 1 : 0;
         }
         const parsers = Object.entries(report.byParser)
           .map(([name, count]) => `${name}:${count}`)
@@ -131,7 +131,7 @@ export function registerPapersCommand(program: Command): void {
             );
           }
         }
-        return 0;
+        return report.failures.length > 0 ? 1 : 0;
       }),
     );
 }

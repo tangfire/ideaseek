@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { IdeaseekError } from '../core/errors.js';
 
 /**
  * User-level project registry (PRODUCT_GAPS #5): a small JSON file under
@@ -29,21 +30,42 @@ export function registryPath(): string {
 }
 
 async function readRegistry(): Promise<RegistryFile> {
+  const path = registryPath();
+  const { readFile } = await import('node:fs/promises');
+  let text: string;
   try {
-    const { readFile } = await import('node:fs/promises');
-    const parsed = JSON.parse(await readFile(registryPath(), 'utf8')) as RegistryFile;
-    if (!parsed || !Array.isArray(parsed.projects)) return { version: 1, projects: [] };
-    return parsed;
-  } catch {
-    return { version: 1, projects: [] };
+    text = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, projects: [] };
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `cannot read project registry ${path}: ${(error as Error).message} — move the file aside, then rerun`,
+    );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Fail loud, never wipe: a corrupt registry (e.g. crash during an old
+    // non-atomic write) must not be silently replaced with an empty one.
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `project registry ${path} is not valid JSON — move the file aside to recover it, then rerun`,
+    );
+  }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as RegistryFile).projects)) {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `project registry ${path} has an unexpected shape — move the file aside to recover it, then rerun`,
+    );
+  }
+  return parsed as RegistryFile;
 }
 
 async function writeRegistry(registry: RegistryFile): Promise<void> {
-  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { writeFileAtomic } = await import('../core/atomic.js');
   const path = registryPath();
-  await mkdir(join(path, '..'), { recursive: true });
-  await writeFile(path, `${JSON.stringify(registry, null, 2)}\n`, 'utf8');
+  await writeFileAtomic(path, `${JSON.stringify(registry, null, 2)}\n`);
 }
 
 /** Idempotent upsert by root (init/start refresh lastOpenedAt). */

@@ -9,13 +9,19 @@ export async function ensureDir(path: string): Promise<void> {
 /**
  * Durable write for small files: temp file in the same directory, fsync, then
  * atomic rename. Used for config templates and other metadata, never for user
- * input files (which are read-only).
+ * input files (which are read-only). `opts.mode` applies at temp creation so
+ * secret-bearing files (credentials) never exist world-readable, not even
+ * between create and rename.
  */
-export async function writeFileAtomic(path: string, data: string | Buffer): Promise<void> {
+export async function writeFileAtomic(
+  path: string,
+  data: string | Buffer,
+  opts?: { mode?: number },
+): Promise<void> {
   const dir = dirname(path);
   await ensureDir(dir);
   const temp = join(dir, `.tmp-${randomUUID()}`);
-  const handle = await open(temp, 'w');
+  const handle = await open(temp, 'w', opts?.mode);
   try {
     await handle.writeFile(data);
     await handle.sync();

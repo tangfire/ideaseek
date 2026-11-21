@@ -75,6 +75,26 @@ describe('project registry (unit)', () => {
       else process.env.IDEASEEK_REGISTRY_PATH = previous;
     }
   });
+
+  it('a corrupt registry fails loudly and is never silently overwritten', async () => {
+    // A crash during an old non-atomic write leaves truncated JSON. Treating
+    // that as an empty registry made the next registerProject wipe every
+    // known project — silent data loss. Now: fail with recovery guidance
+    // and leave the file byte-for-byte intact.
+    const previous = process.env.IDEASEEK_REGISTRY_PATH;
+    const isolated = join(await mkdtemp(join(tmpdir(), 'ideaseek-reg-')), 'projects.json');
+    const garbage = '{"version":1,"projects":[{"root":';
+    await writeFile(isolated, garbage, 'utf8');
+    process.env.IDEASEEK_REGISTRY_PATH = isolated;
+    try {
+      await expect(registerProject('/some/project', 'p')).rejects.toThrow(/not valid JSON/);
+      await expect(listRegisteredProjects()).rejects.toThrow(/not valid JSON/);
+      expect(await readFile(isolated, 'utf8')).toBe(garbage);
+    } finally {
+      if (previous === undefined) delete process.env.IDEASEEK_REGISTRY_PATH;
+      else process.env.IDEASEEK_REGISTRY_PATH = previous;
+    }
+  });
 });
 
 describe('project lock (unit)', () => {
