@@ -539,16 +539,18 @@ describe('new slash commands and NL routing (CLI)', () => {
     await repl.waitFor(/ideaseek ›/);
 
     repl.write('/leaderboard\r');
-    await repl.waitFor(/no idea-bound experiment results/);
+    // Explicit budget: relayed children can be starved past the default
+    // under a full 205-file gate (observed gate-13 flake).
+    await repl.waitFor(/no idea-bound experiment results/, 90_000);
 
     // Bare /literature defaults to watch. A fresh project has no parsed
     // papers, so extract/synthesize take the parsedCount=0 skip — the relay
     // must never reach a model call from this test.
     repl.write('/literature\r');
-    await repl.waitFor(/literature watch: first run/);
+    await repl.waitFor(/literature watch: first run/, 90_000);
 
     repl.write('/repro ghost-idea\r');
-    await repl.waitFor(/no recorded result/);
+    await repl.waitFor(/no recorded result/, 90_000);
 
     const done = await repl.quit();
     expect(done.code).toBe(0);
@@ -563,17 +565,17 @@ describe('new slash commands and NL routing (CLI)', () => {
     await repl.waitFor(/ideaseek ›/);
 
     repl.write('/scan\r');
-    await repl.waitFor(/scanned/);
+    await repl.waitFor(/scanned/, 90_000);
 
     // Positional text becomes the persisted research question
     // (TUI convenience for `start --question …`).
     repl.write('/start 迁移学习里的样本不均衡怎么处理\r');
-    await repl.waitFor(/question saved|already initialized/);
+    await repl.waitFor(/question saved|already initialized/, 90_000);
     const yaml = await readFile(join(dir, 'research.yaml'), 'utf8');
     expect(yaml).toContain('迁移学习里的样本不均衡怎么处理');
 
     repl.write('/plan\r');
-    await repl.waitFor(/plan \(dry-run/);
+    await repl.waitFor(/plan \(dry-run/, 90_000);
 
     const done = await repl.quit();
     expect(done.code).toBe(0);

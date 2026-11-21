@@ -61,7 +61,7 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
     expect(snap.paletteOpen).toBe(true);
     expect(snap.paletteItems.length).toBeGreaterThan(10);
     snap = engine.handle({ sequence: 'st' });
-    expect(snap.paletteItems).toEqual(['/status']);
+    expect(snap.paletteItems).toEqual(['/start', '/status']);
     // A space closes filtering (arguments mode).
     engine.handle({ sequence: ' ' });
     const afterSpace = engine.handle({ sequence: 'x' });
@@ -71,7 +71,7 @@ describe('ShellEngine (pure keyboard/palette rules)', () => {
   it('Tab completes a unique prefix; multiple matches share a prefix', () => {
     const engine = new ShellEngine();
     engine.handle({ sequence: '/' });
-    engine.handle({ sequence: 'sta' });
+    engine.handle({ sequence: 'stat' }); // 'sta' is ambiguous since /start
     let snap = engine.handle(key('tab'));
     expect(snap.line).toBe('/status');
     expect(snap.paletteOpen).toBe(true);
