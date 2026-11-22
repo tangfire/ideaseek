@@ -35,6 +35,7 @@ export type IdeaseekErrorCode =
   | 'QUOTA_EXHAUSTED'
   | 'AUTH_REQUIRED'
   | 'NETWORK_BLOCKED'
+  | 'SECRET_GATE_BLOCKED'
   | 'SKILL_NOT_FOUND'
   | 'SKILL_TAMPERED'
   | 'SKILL_INVALID'
