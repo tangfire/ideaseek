@@ -64,7 +64,15 @@ interface CliResult {
   stderr: string;
 }
 
-function runCli(cwd: string, args: string[], timeoutMs = 60_000): Promise<CliResult> {
+/**
+ * CLI 派生用例的墙上时间预算。同一份文件串行跑净耗时 61 s，放进全量并行里量到 372 s
+ * ——满载时单条 `idea check` 的墙上时间会放大到串行的好几倍，60 s 只在空载成立，
+ * 于是门禁出现"只在满载时红"的抖动：那种红灯会被学会忽略，比红更糟。
+ * 只放宽预算，不改断言强度。
+ */
+const CLI_BUDGET_MS = 150_000;
+
+function runCli(cwd: string, args: string[], timeoutMs = CLI_BUDGET_MS): Promise<CliResult> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, [CLI_BIN, ...args], {
       cwd,
@@ -104,7 +112,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       cardPath,
     ]);
     expect(created.code).toBe(0);
-  }, 60_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   /**
    * Replace the starter smoke with code that computes a value. Tests about
@@ -181,7 +189,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       'utf8',
     );
     expect(train).toBe('# mine\n');
-  }, 60_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('reports an empty src/ as not implemented rather than as a failing check', async () => {
     const dir = join(project, 'ideas', 'calib-reweight');
@@ -194,7 +202,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(result.stdout).toContain('NOT-IMPLEMENTED');
     expect(result.stdout).toContain('idea scaffold calib-reweight');
     expect(result.stdout).not.toContain('FAIL static');
-  }, 60_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('resolves scaffolded dataset_ref through IDEASEEK_DATASET_ROOTS (skips without python)', async () => {
     await scaffold();
@@ -229,7 +237,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     const unconfigured = await runCheck('');
     expect(unconfigured.code).toBe(2);
     expect(unconfigured.err).toContain('inputs.readonly_datasets');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('refuses to grade the scaffold template as a passing check', async () => {
     await setImplementing();
@@ -248,7 +256,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(payload.status).toBe('IMPLEMENTING');
     const smoke = payload.phases.find((phase) => phase.phase === 'smoke');
     expect(smoke?.failureKind).toBe('scaffold-placeholder');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('passes the full ladder and advances IMPLEMENTING → SMOKE_TESTED', async () => {
     await setImplementing();
@@ -313,7 +321,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     );
     expect(smokeLog).toContain('rare-class recall');
     expect(smokeLog).not.toContain('"synthetic": true');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('fails the static phase on broken code and keeps IMPLEMENTING', async () => {
     await setImplementing();
@@ -341,7 +349,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(plain.code).toBe(1);
     expect(plain.stdout).toContain('FAIL static');
     expect(plain.stdout).toContain('rerun');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('classifies a dependency failure in the unit-test phase', async () => {
     await setImplementing();
@@ -362,7 +370,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     const unit = payload.phases.find((p) => p.phase === 'unit-tests')!;
     expect(unit.ok).toBe(false);
     expect(unit.failureKind).toBe('missing-dependency');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('fails the data interface check when the bound file disappears', async () => {
     await setImplementing();
@@ -377,7 +385,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     const data = payload.phases.find((p) => p.phase === 'data')!;
     expect(data.ok).toBe(false);
     expect(data.summary).toContain('missing data file');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('fails the metrics check when metrics become non-runnable', async () => {
     await setImplementing();
@@ -404,7 +412,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       phases: { phase: string; ok: boolean }[];
     };
     expect(payload.phases.find((p) => p.phase === 'metrics')!.ok).toBe(false);
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('reports smoke-missing without advancing the status', async () => {
     await setImplementing();
@@ -424,7 +432,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
 
     const plain = await runCli(project, ['idea', 'check', 'calib-reweight']);
     expect(plain.stdout).toContain('src/smoke.py');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('binds check reports to the current idea version', async () => {
     await setImplementing();
@@ -458,7 +466,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       ),
     ) as IdeaCheckReport;
     expect(report.version).toBe(2);
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('rejects checks on unknown ideas and invalid config JSON fails static', async () => {
     const ghost = await runCli(project, ['idea', 'check', 'ghost-idea']);
@@ -479,7 +487,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     const staticPhase = payload.phases.find((p) => p.phase === 'static')!;
     expect(staticPhase.ok).toBe(false);
     expect(staticPhase.summary).toContain('bad.json');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('fails the smoke phase when the value contradicts the locked protocol unit', async () => {
     // Two FDG ideas passed every phase and were refused only at analysis, with
@@ -494,7 +502,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     expect(smoke.failureKind).toBe('unit');
     expect(smoke.summary).toContain('declared percent');
     expect(report.outcome).toBe('failed');
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('passes the same code once the value is in the declared unit', async () => {
     await writeFile(
@@ -512,7 +520,7 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
       metricContract: ['rare-class recall (per-rare-class mean, %)'],
     });
     expect(report.phases.find((phase) => phase.phase === 'smoke')!.ok).toBe(true);
-  }, 120_000);
+  }, CLI_BUDGET_MS * 1.2);
 
   it('checks nothing it was not told, and matches across the prose gap', () => {
     // A project with no locked protocol has no unit to violate: an empty
@@ -565,5 +573,5 @@ describe('ideaseek idea scaffold + check (CLI)', () => {
     // Whatever it recommends must be an edge the graph allows from ANALYZING.
     const suggested = late.stdout.match(/set-status calib-reweight ([A-Z_]+)/);
     expect(suggested, late.stdout).toBeNull();
-  }, 180_000);
+  }, CLI_BUDGET_MS * 1.2);
 });

@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 function run(
   target: string[],
-  timeoutMs = 180_000,
+  timeoutMs = 240_000,
   extraEnv: Record<string, string> = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
