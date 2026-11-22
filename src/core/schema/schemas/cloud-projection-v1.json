@@ -1,0 +1,571 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ideaseek.dev/schemas/cloud-projection-v1.json",
+  "title": "IdeaSeek cloud projection batch (cloud-projection-v1)",
+  "description": "Wire contract for `ideaseek cloud push` -> Sites Function `/functions/v1/app/ingest`. One document is exactly one sync batch: an idempotent, allowlisted projection of the local authoritative workflow database. This schema is the single authority shared by the TypeScript projector (ajv, before anything leaves the machine) and the cloud Function (re-validation on arrival); the Python/worker side has no consumer. Every object closes with additionalProperties:false so an unknown key fails the whole batch loudly instead of being dropped silently, per the repository fail-closed convention. Field presence here is NOT an authorization to transmit: the projector's own allowlist is the L0 boundary and must reject secret shapes, absolute paths and artifact bodies before serialization, so nothing in this file may be interpreted as license to widen what leaves the host.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "external_batch_id", "project", "generated_at", "entities"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Major projection contract version. A Function receiving an unknown value rejects the batch with a 409-class receipt; it never attempts silent field compatibility."
+    },
+    "external_batch_id": {
+      "type": "string",
+      "pattern": "^[a-z]+-[0-9a-f]{16}$",
+      "description": "Idempotency key (core/ids.ts newId format). A replayed batch with the same key must not create duplicate rows."
+    },
+    "generated_at": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Local epoch milliseconds at projection time. Transport clock only; never a scientific timestamp."
+    },
+    "local_schema_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The local workflow DB migration version the batch was read from (sqlite.ts schema_version). Lets the console show which engine build produced a view."
+    },
+    "project": { "$ref": "#/definitions/projectIdentity" },
+    "entities": { "$ref": "#/definitions/entities" }
+  },
+
+  "definitions": {
+    "localId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+      "minLength": 3,
+      "maxLength": 128,
+      "description": "An identifier as produced locally (core/ids.ts). Projected verbatim so cloud rows can be traced back without a second mapping table."
+    },
+    "hashref": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Content hash. Artifact bodies never travel; only this and a relative hint."
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)(?:\\.\\./))(?![A-Za-z]:)[^\\\\]+$",
+      "maxLength": 512,
+      "description": "Project-root-relative path fragment. Absolute paths, drive letters, backslashes and any `..` segment are rejected here as a second net behind the projector, because a leaked local path is itself a disclosure (username, mount layout)."
+    },
+    "summaryText": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Sanitized, length-capped summary. The cap is NFR-03 and mirrors DATA_CONTRACTS.md:73; the projector truncates and flags rather than splitting across events."
+    },
+    "enumOrUnknown": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+      "description": "An engine enum label projected verbatim (NFR-12 forbids front-end translation or invented intermediate states). Where the contract knows the closed set it constrains further; where the engine field is genuinely free-form it stays a string rather than inventing an enumeration the engine cannot emit."
+    },
+    "epochMillis": { "type": ["integer", "null"], "minimum": 0 },
+
+    "maybeSummaryText": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/summaryText" }],
+      "description": "Nullable wrappers exist because draft-07 ignores every keyword beside `$ref`: writing `{type:[string,null], $ref}` silently drops the null and makes a legitimately absent field fail validation. Optionality must be expressed as `anyOf`, not as a sibling `type`."
+    },
+    "maybeHashref": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/hashref" }] },
+    "maybeLocalId": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/localId" }] },
+    "maybeRelativePath": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/relativePath" }]
+    },
+    "maybeBudgetPair": { "anyOf": [{ "type": "null" }, { "$ref": "#/definitions/budgetPair" }] },
+
+    "projectIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_id", "title", "visibility", "source_host"],
+      "properties": {
+        "external_id": { "$ref": "#/definitions/localId" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "question": { "type": ["string", "null"], "maxLength": 2000 },
+        "strategy": { "enum": ["starter", "standard", "research"] },
+        "autonomy": { "enum": ["guided", "autonomous", "review-only"] },
+        "visibility": {
+          "enum": ["private", "link", "listed"],
+          "description": "Owner-controlled only. A push never escalates visibility: `link`/`listed` are set through the console publication flow, and this field arriving as a more-public value than the stored one is rejected by the Function, not applied."
+        },
+        "source_host": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Desensitized host label. Raw hostname/username must be hashed or truncated by the projector; a real machine name plus a project title is identifying."
+        },
+        "archived": { "type": "boolean" }
+      }
+    },
+
+    "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Entity collections present in this batch. Absent key means nothing changed for that type - it is NOT a deletion, and the Function must not infer one. Deletions travel as explicit tombstone entries in a later contract version rather than as omission, because silent-delete-on-absent would let a partial push destroy projection history.",
+      "properties": {
+        "runs": { "type": "array", "items": { "$ref": "#/definitions/run" }, "maxItems": 2000 },
+        "stages": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/stageProgress" },
+          "maxItems": 2000
+        },
+        "tasks": { "type": "array", "items": { "$ref": "#/definitions/task" }, "maxItems": 20000 },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/runEvent" },
+          "maxItems": 5000
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/artifactRef" },
+          "maxItems": 20000
+        },
+        "papers": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/paperCard" },
+          "maxItems": 5000
+        },
+        "claims": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/claim" },
+          "maxItems": 50000
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/evidenceRef" },
+          "maxItems": 50000
+        },
+        "protocols": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/protocol" },
+          "maxItems": 500
+        },
+        "comparisons": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/comparison" },
+          "maxItems": 2000
+        },
+        "rounds": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ideationRound" },
+          "maxItems": 500
+        },
+        "ideas": { "type": "array", "items": { "$ref": "#/definitions/idea" }, "maxItems": 5000 },
+        "experiments": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/experiment" },
+          "maxItems": 5000
+        },
+        "metrics": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/metricResult" },
+          "maxItems": 50000
+        },
+        "approvals": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/approvalRequest" },
+          "maxItems": 5000
+        },
+        "costs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/costEntry" },
+          "maxItems": 20000
+        },
+        "egress": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/egressEntry" },
+          "maxItems": 20000
+        }
+      }
+    },
+
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_run_id", "status", "phase_tag"],
+      "properties": {
+        "external_run_id": { "$ref": "#/definitions/localId" },
+        "status": {
+          "enum": [
+            "RUNNING",
+            "PAUSED",
+            "QUOTA_EXHAUSTED",
+            "AUTH_REQUIRED",
+            "NETWORK_BLOCKED",
+            "FAILED_RECOVERABLE",
+            "FAILED",
+            "CANCELED",
+            "COMPLETED"
+          ],
+          "description": "Exactly workflow/types.ts RunStatus. QUOTA_EXHAUSTED/AUTH_REQUIRED/NETWORK_BLOCKED are recoverable blocks, not scientific failures, and the console must render them apart (F2.4)."
+        },
+        "phase_tag": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Verbatim engine phase. Deliberately an open string: types.ts RunPhase is only INIT|DEMO|COMPLETED while the 14 research phases of WORKFLOW_SPEC.md are not yet a closed engine enum, so asserting a 14-value enum here would be a contract the engine cannot satisfy. Unmapped values stay visible as `stage_progress.stage_known=false` instead of being coerced."
+        },
+        "question": { "type": ["string", "null"], "maxLength": 2000 },
+        "block_reason": { "type": ["string", "null"], "maxLength": 400 },
+        "error_class": { "type": ["string", "null"], "maxLength": 64 },
+        "summary": { "$ref": "#/definitions/maybeSummaryText" },
+        "started_at": { "$ref": "#/definitions/epochMillis" },
+        "finished_at": { "$ref": "#/definitions/epochMillis" },
+        "heartbeat_at": { "$ref": "#/definitions/epochMillis" },
+        "config_hash": { "$ref": "#/definitions/maybeHashref" },
+        "budget": { "$ref": "#/definitions/maybeBudgetPair" }
+      }
+    },
+
+    "budgetPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budget_usd_micro", "spent_usd_micro"],
+      "properties": {
+        "budget_usd_micro": { "type": "integer", "minimum": 0 },
+        "spent_usd_micro": { "type": "integer", "minimum": 0 }
+      },
+      "description": "Whole micro-dollars, never floats: bigint columns and JSON number precision disagree on floats (NFR-06 class of bug)."
+    },
+
+    "stageProgress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_external_id", "stage", "state", "stage_known"],
+      "properties": {
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "stage": { "type": "string", "maxLength": 64 },
+        "state": { "enum": ["pending", "active", "blocked", "passed", "failed"] },
+        "stage_known": {
+          "type": "boolean",
+          "description": "False when the local engine emitted a phase that is not in the canonical 14-stage list. The console renders it as an explicitly labelled unknown step (DIAGRAMS.md:676 item 2) rather than dropping it, so the spec/implementation gap stays visible instead of being hidden by the projection layer."
+        },
+        "gate_note": { "type": ["string", "null"], "maxLength": 400 },
+        "blocker_code": { "type": ["string", "null"], "maxLength": 64 },
+        "entered_at": { "$ref": "#/definitions/epochMillis" },
+        "exited_at": { "$ref": "#/definitions/epochMillis" }
+      }
+    },
+
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_task_id", "run_external_id", "kind", "status"],
+      "properties": {
+        "external_task_id": { "$ref": "#/definitions/localId" },
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "kind": { "type": "string", "maxLength": 64 },
+        "agent_role": { "type": ["string", "null"], "maxLength": 64 },
+        "status": {
+          "enum": ["queued", "leased", "running", "committing", "succeeded", "failed", "canceled"],
+          "description": "workflow/types.ts TaskStatus verbatim."
+        },
+        "phase_tag": { "type": ["string", "null"], "maxLength": 64 },
+        "attempt": { "type": "integer", "minimum": 0 },
+        "max_attempts": { "type": ["integer", "null"], "minimum": 0 },
+        "started_at": { "$ref": "#/definitions/epochMillis" },
+        "ended_at": { "$ref": "#/definitions/epochMillis" },
+        "artifact_count": { "type": "integer", "minimum": 0 },
+        "error_class": { "type": ["string", "null"], "maxLength": 64 },
+        "error_summary": { "$ref": "#/definitions/maybeSummaryText" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "enum": ["failed", "canceled"] } },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["error_class"],
+            "properties": { "error_class": { "type": "string", "minLength": 1, "maxLength": 64 } }
+          },
+          "description": "A failed task with no surfaced cause is exactly the silent degradation this repository has been hardening against; the projector must carry the classified cause or say `unknown` explicitly."
+        }
+      ]
+    },
+
+    "runEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_external_id", "seq", "ts", "event_type", "summary"],
+      "properties": {
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "seq": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Local per-run monotonic sequence, carried through unchanged so the console can detect gaps and say 'N events not synced' instead of quietly showing a shorter timeline."
+        },
+        "ts": { "type": "integer", "minimum": 0 },
+        "phase_tag": { "type": ["string", "null"], "maxLength": 64 },
+        "object_type": { "type": ["string", "null"], "maxLength": 64 },
+        "object_id": { "type": ["string", "null"], "maxLength": 128 },
+        "actor_role": { "type": ["string", "null"], "maxLength": 64 },
+        "event_type": { "type": "string", "maxLength": 64 },
+        "status": { "type": ["string", "null"], "maxLength": 64 },
+        "summary": { "$ref": "#/definitions/summaryText" },
+        "truncated": {
+          "type": "boolean",
+          "description": "True when the 400-char cap cut the summary. Marks the gap instead of letting a truncated line read as a complete one."
+        },
+        "level": { "enum": ["debug", "info", "warn", "error"] },
+        "artifact_refs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/localId" },
+          "maxItems": 64
+        }
+      }
+    },
+
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_artifact_id", "run_external_id", "kind", "content_hash", "status"],
+      "properties": {
+        "external_artifact_id": { "$ref": "#/definitions/localId" },
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "task_external_id": { "$ref": "#/definitions/maybeLocalId" },
+        "kind": { "type": "string", "maxLength": 64 },
+        "content_hash": { "$ref": "#/definitions/hashref" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "path_hint": { "$ref": "#/definitions/maybeRelativePath" },
+        "status": { "enum": ["staged", "committed", "aborted"] },
+        "committed_at": { "$ref": "#/definitions/epochMillis" }
+      },
+      "description": "Reference and hash only. There is deliberately no body, inline-text or encoding field: adding one later is a contract change that must re-run the L0 review, not a new key in an existing object."
+    },
+
+    "paperCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_paper_id", "title", "status"],
+      "properties": {
+        "external_paper_id": { "type": "string", "maxLength": 128 },
+        "document_hash": { "$ref": "#/definitions/maybeHashref" },
+        "title": { "type": "string", "maxLength": 400 },
+        "problem": { "$ref": "#/definitions/maybeSummaryText" },
+        "method_summary": { "$ref": "#/definitions/maybeSummaryText" },
+        "status": { "enum": ["ok", "failed", "partial"] },
+        "parser_version": { "type": ["string", "null"], "maxLength": 64 },
+        "claim_count": { "type": "integer", "minimum": 0 },
+        "unknown_count": { "type": "integer", "minimum": 0 }
+      },
+      "description": "Paper titles are bibliographic metadata and may travel; abstracts, extracted body text and table/figure content may not - they are the corpus the user supplied."
+    },
+
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_claim_id", "paper_external_id", "stance", "confidence", "disclosure"],
+      "properties": {
+        "external_claim_id": { "type": "string", "maxLength": 128 },
+        "paper_external_id": { "type": "string", "maxLength": 128 },
+        "text": { "type": ["string", "null"], "maxLength": 2000 },
+        "stance": { "type": "string", "maxLength": 32 },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "ordinal": { "type": ["integer", "null"], "minimum": 0 },
+        "disclosure": {
+          "enum": ["withheld", "project", "public"],
+          "description": "Claim text is unpublished research output, so it projects as L1 and defaults to `withheld` in the public view even when the project is `listed`. `public` requires an explicit Owner action recorded in the publication audit row; it can never be the projector's default. The three-way value exists because 'is this field on the wire' and 'who may read it' are different decisions and collapsing them would make every future per-field grant a schema change."
+        }
+      }
+    },
+
+    "evidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_evidence_id", "claim_external_id", "kind"],
+      "properties": {
+        "external_evidence_id": { "type": "string", "maxLength": 128 },
+        "claim_external_id": { "type": "string", "maxLength": 128 },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "section": { "type": ["string", "null"], "maxLength": 200 },
+        "kind": { "type": "string", "maxLength": 32 }
+      },
+      "description": "Location only - page, section, kind. No quote text: a located citation is traceable, a quoted passage is corpus content."
+    },
+
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_protocol_id", "status"],
+      "properties": {
+        "external_protocol_id": { "type": "string", "maxLength": 128 },
+        "protocol_hash": { "$ref": "#/definitions/maybeHashref" },
+        "status": { "enum": ["draft", "proposed", "locked", "superseded"] },
+        "task_definition": { "$ref": "#/definitions/maybeSummaryText" },
+        "sample_unit": { "$ref": "#/definitions/maybeSummaryText" },
+        "split_rule": { "$ref": "#/definitions/maybeSummaryText" },
+        "primary_metrics": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 64 },
+          "maxItems": 32
+        },
+        "confirmed_by": { "type": ["string", "null"], "maxLength": 128 },
+        "locked_at": { "$ref": "#/definitions/epochMillis" }
+      }
+    },
+
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_method_id", "name", "code_source", "required", "status"],
+      "properties": {
+        "external_method_id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 200 },
+        "code_source": {
+          "enum": ["user", "official-code", "paper-reimplementation"],
+          "description": "RESEARCH_INTEGRITY red line: a reimplementation must never render as official code."
+        },
+        "required": { "type": "boolean" },
+        "status": { "type": "string", "maxLength": 32 },
+        "repro_confidence": { "type": ["string", "null"], "maxLength": 32 },
+        "source_hint": {
+          "type": ["string", "null"],
+          "maxLength": 300,
+          "pattern": "^(?!.*://[^/@:]+:[^/@]+@)(?!.*(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[0-9A-Z]{16})).*$",
+          "description": "Repository identity without credentials: no `user:secret@` basic-auth userinfo and no GitHub/AWS token shapes. A bare `ssh://git@` / `git@host:` prefix is deliberately allowed - that username is protocol, not a secret. The projector's scrub (core/redact.ts) is the primary defence, and this restates the DDL CHECK on cloud_comparison.source_hint. It belongs here too because ajv runs locally BEFORE the bytes leave the host: a DDL-only check means the credential has already been transmitted by the time the row is rejected."
+        }
+      }
+    },
+
+    "ideationRound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_round_id", "index"],
+      "properties": {
+        "external_round_id": { "$ref": "#/definitions/localId" },
+        "index": { "type": "integer", "minimum": 0 },
+        "note": { "$ref": "#/definitions/maybeSummaryText" },
+        "created_at": { "$ref": "#/definitions/epochMillis" }
+      }
+    },
+
+    "idea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_idea_id", "title", "status", "hypothesis_disclosure"],
+      "properties": {
+        "external_idea_id": { "$ref": "#/definitions/localId" },
+        "round_external_id": { "$ref": "#/definitions/maybeLocalId" },
+        "parent_idea_id": { "$ref": "#/definitions/maybeLocalId" },
+        "title": { "type": "string", "maxLength": 300 },
+        "hypothesis": { "type": ["string", "null"], "maxLength": 4000 },
+        "hypothesis_disclosure": {
+          "enum": ["withheld", "structure", "public"],
+          "description": "Even a `listed` project defaults to `withheld`: the hypothesis is the unpublished contribution. `structure` shows that a hypothesis exists and its shape without its content. Escalation requires the F5.4 explicit confirmation and an audit row."
+        },
+        "mechanism_summary": { "$ref": "#/definitions/maybeSummaryText" },
+        "status": { "type": "string", "maxLength": 32 },
+        "verdict": {
+          "type": ["string", "null"],
+          "enum": [null, "SUPPORTED", "NEEDS_REVISION", "REJECTED", "INVALID_RUN"]
+        },
+        "version": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "hypothesis_disclosure": { "enum": ["withheld", "structure"] } },
+            "required": ["hypothesis_disclosure"]
+          },
+          "then": { "properties": { "hypothesis": { "type": "null" } } },
+          "description": "Restates the DDL's idea_hypothesis_coherence CHECK so the contradiction is caught by the local projector instead of by Postgres after the text has already crossed the wire: a row that declares the hypothesis withheld must not carry it. The hypothesis is the unpublished contribution; this is the one field where a projector bug must fail rather than degrade."
+        }
+      ]
+    },
+
+    "experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_spec_id", "run_external_id", "scale", "status"],
+      "properties": {
+        "external_spec_id": { "type": "string", "maxLength": 128 },
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "idea_external_id": { "$ref": "#/definitions/maybeLocalId" },
+        "protocol_external_id": { "type": ["string", "null"], "maxLength": 128 },
+        "spec_hash": { "$ref": "#/definitions/maybeHashref" },
+        "scale": { "enum": ["smoke", "quick", "standard", "handoff_manifest"] },
+        "status": { "type": "string", "maxLength": 32 },
+        "seed": { "type": ["integer", "null"] },
+        "failure_class": { "type": ["string", "null"], "maxLength": 64 },
+        "started_at": { "$ref": "#/definitions/epochMillis" },
+        "ended_at": { "$ref": "#/definitions/epochMillis" }
+      },
+      "description": "`scale` is carried on every result-bearing row because NFR-13 forbids presenting a smoke or quick slice as a validated conclusion."
+    },
+
+    "metricResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_metric_id", "experiment_external_id", "name", "value", "is_synthetic"],
+      "properties": {
+        "external_metric_id": { "type": "string", "maxLength": 128 },
+        "experiment_external_id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "value": { "type": ["number", "null"] },
+        "direction": { "enum": ["higher_better", "lower_better", "unknown"] },
+        "variance": { "type": ["number", "null"], "minimum": 0 },
+        "n_runs": { "type": ["integer", "null"], "minimum": 0 },
+        "is_synthetic": {
+          "type": "boolean",
+          "description": "True for any placeholder or fixture number. Such rows must never render as a result anywhere in the product (NFR-13); the flag travels with the value rather than living in a side table that a view could forget to join."
+        },
+        "baseline_comparison_external_id": { "type": ["string", "null"], "maxLength": 128 },
+        "delta": { "type": ["number", "null"] }
+      }
+    },
+
+    "approvalRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_approval_id", "run_external_id", "kind", "summary", "status"],
+      "properties": {
+        "external_approval_id": { "$ref": "#/definitions/localId" },
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "kind": { "enum": ["protocol", "decision", "repair"] },
+        "summary": { "$ref": "#/definitions/summaryText" },
+        "options": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 128 },
+          "maxItems": 16
+        },
+        "payload_hash": { "$ref": "#/definitions/maybeHashref" },
+        "status": { "enum": ["pending", "resolved", "expired"] },
+        "created_at": { "$ref": "#/definitions/epochMillis" },
+        "resolved_at": { "$ref": "#/definitions/epochMillis" }
+      },
+      "description": "Cloud-visible half of the two-phase mailbox (REQUIREMENTS.md:3.3). `payload_hash` binds the intent to the exact local payload so a decision taken against a stale projection can be detected rather than silently applied."
+    },
+
+    "costEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_cost_id", "run_external_id", "usd_micro"],
+      "properties": {
+        "external_cost_id": { "$ref": "#/definitions/localId" },
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "kind": { "enum": ["token", "compute", "storage", "other"] },
+        "model_route": { "type": ["string", "null"], "maxLength": 128 },
+        "agent_role": { "type": ["string", "null"], "maxLength": 64 },
+        "usd_micro": { "type": "integer", "minimum": 0 },
+        "tokens_in": { "type": ["integer", "null"], "minimum": 0 },
+        "tokens_out": { "type": ["integer", "null"], "minimum": 0 },
+        "ts": { "type": "integer", "minimum": 0 }
+      },
+      "description": "Whole micro-dollars again. Provider figures arrive as floats; summing floats across thousands of calls produces a total that cannot be reconciled against an invoice."
+    },
+
+    "egressEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["external_egress_id", "run_external_id", "destination_class", "count"],
+      "properties": {
+        "external_egress_id": { "$ref": "#/definitions/localId" },
+        "run_external_id": { "$ref": "#/definitions/localId" },
+        "destination_class": { "type": "string", "maxLength": 64 },
+        "data_class": { "enum": ["paper_text", "dataset_feature", "code", "metadata", "unknown"] },
+        "count": { "type": "integer", "minimum": 0 },
+        "bytes_approx": { "type": ["integer", "null"], "minimum": 0 },
+        "ts": { "type": "integer", "minimum": 0 }
+      },
+      "description": "PRODUCT_GAPS_AUDIT gap 12: aggregate, sanitized, no payload. There is no prompt field and there must never be one - the transparency requirement is 'what left, how often, of what class', not a copy of the content."
+    }
+  }
+}

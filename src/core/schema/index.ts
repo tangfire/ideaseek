@@ -54,6 +54,7 @@ import runStrategyV1 from './schemas/run-strategy-v1.json' with { type: 'json' }
 import supervisorIntentV1 from './schemas/supervisor-intent-v1.json' with { type: 'json' };
 import synthesisLeadV1 from './schemas/synthesis-lead-v1.json' with { type: 'json' };
 import topicSynthesisV1 from './schemas/topic-synthesis-v1.json' with { type: 'json' };
+import cloudProjectionV1 from './schemas/cloud-projection-v1.json' with { type: 'json' };
 
 /**
  * JSON Schema registry (DEPENDENCY_POLICY: 契约校验 = JSON Schema + 成熟
@@ -158,6 +159,11 @@ const SCHEMAS = {
   'supervisor-intent-v1': supervisorIntentV1,
   'synthesis-lead-v1': synthesisLeadV1,
   'topic-synthesis-v1': topicSynthesisV1,
+  // Registered alongside the other contracts rather than kept under web/ so
+  // that the local projector and the cloud Function validate against one
+  // file; a second copy is how a projection drifts from the schema that is
+  // supposed to be enforcing it.
+  'cloud-projection-v1': cloudProjectionV1,
 };
 export type SchemaName = keyof typeof SCHEMAS;
 
@@ -182,14 +188,17 @@ function validatorFor(name: SchemaName): ValidateFunction {
 }
 
 function formatIssue(error: ErrorObject): SchemaIssue {
-  // Required-property failures report the PARENT instance path in ajv;
-  // point at the missing property itself so callers see `/title`, not `/`.
-  const params = error.params as { missingProperty?: string };
-  const missing =
-    error.keyword === 'required' && typeof params.missingProperty === 'string'
-      ? `/${params.missingProperty}`
-      : '';
-  const path = `${error.instancePath}${missing}` || '/';
+  // `required` and `additionalProperties` both report the PARENT instance path
+  // in ajv. Point at the property the caller has to fix so callers see `/title`
+  // or `/stray_key` rather than `/` plus a message naming nothing.
+  const params = error.params as { missingProperty?: string; additionalProperty?: string };
+  const named =
+    error.keyword === 'required'
+      ? params.missingProperty
+      : error.keyword === 'additionalProperties'
+        ? params.additionalProperty
+        : undefined;
+  const path = `${error.instancePath}${named ? `/${named}` : ''}` || '/';
   return { path, message: error.message ?? 'is invalid' };
 }
 
