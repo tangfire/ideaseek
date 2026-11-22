@@ -141,7 +141,7 @@ repeat
     secret / 论文原文 / 数据内容 /
     完整 prompt / 隐藏推理 一律不出境。
   end note
-  :POST /api/ingest\n(Bearer sync_token);
+  :POST /functions/v1/app/ingest\n(Bearer sync_token);
 
   if (schema 版本受支持?) then (否)
     :整批拒绝 + 回执原因;
@@ -193,7 +193,7 @@ start
 :Owner/Reviewer 收到"待确认"提示;
 :查看理由、选项、影响范围;
 :选择选项 + 填写备注;
-:POST /api/approvals/:id/intent;
+:POST /functions/v1/app/approvals/:id/intent;
 :落库 approval_intent\n标记 delivered_at;
 :界面显示"已提交，待本地确认"\n**不显示"已批准"**;
 

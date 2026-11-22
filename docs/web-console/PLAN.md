@@ -18,17 +18,17 @@
 | 语言 | TypeScript 6 | 与根 `typescript ^6.0.3` 同版本，共享类型与 lint 规则 | — |
 | 视图 | React 19 + 函数组件 | 根 `package.json:48` 已有 `react 19.1.10`，不引入第二份 React | Vue（与既有依赖重复） |
 | 构建 | Vite | 产物为纯静态目录，正好匹配 Sites 的"打包上传静态站"模型 | Webpack（配置面大）；Next SSR（Sites 是静态托管 + Function，不是 Node 常驻服务） |
-| 路由 | **hash 路由**（`wouter`） | 现有 `docs/site/index.html` 已用 hash 锚点导航，说明该仓库在无服务端 rewrite 的条件下也能工作；Sites 是否提供 SPA fallback 未验证 | History API 路由——若托管不做 404→index 回退，深链直接白屏 |
+| 路由 | **hash 路由**（`wouter`） | 现有 `docs/site/index.html` 已用 hash 锚点导航；S3 已确认平台支持 `prepare_site.spa: true`，但 hash 路由与"不依赖服务端 rewrite"的降级路径同构，失败面为零，故保留 | History API 路由——需要依赖 SPA 回退，而回退对缺失脚本也返回 HTML 200，排障时易误判 |
 | 样式 | 纯 CSS + 设计令牌（CSS 变量） | 零 PostCSS 依赖，构建风险最低；控制台页面类型约 10 种，手写可控 | Tailwind（引入 PostCSS，叠加 S1 spike 未验证风险） |
 | 数据 | `@tanstack/react-query` | 投影是批更新，天然需要缓存 + 陈旧标记；WS 帧只作为 invalidation 源喂给 query，不自己维护第二份状态 | 手写 fetch（重复造轮子）；SWR（缓存语义更弱） |
-| 实时 | Sites Function WebSocket 通道（**待 S6 验证**） | 浏览器侧零轮询，服务端推状态帧/批事件帧/心跳帧；延迟从"同步周期 + 轮询间隔"压到只剩同步周期 | 前端轮询（页面静止、请求量随在线人数线性涨）；SSE（长连接流式响应同样未验证，风险不低于 `ws`） |
+| 实时 | Sites Function WebSocket 通道（平台文档确认支持；本实例数值待 M-4 量测） | 浏览器侧零轮询，服务端推状态帧/批事件帧/心跳帧；延迟从"同步周期 + 轮询间隔"压到只剩同步周期 | 前端轮询（页面静止、请求量随在线人数线性涨）；SSE（同样依赖长连接，且不比 `Deno.upgradeWebSocket` 少任何未验证项） |
 | 图表 | 自绘 SVG | 阶段流水线、指标条、版本树形状固定，不需要通用图表库 | ECharts（体积与字体风险） |
-| Schema | ajv 8（`package.json:45` 已有） | Function 侧校验投影契约，与本地 40+ schema 同一套惯例 | zod（新增依赖且与既有契约体系并行） |
-| 后端 | Sites Functions（Node） | 平台自带托管，含 `function_backend` | Cloudflare Workers（用户已选 Sites） |
-| 数据库 | Sites 托管关系库（JSONB 支持，推断为 Postgres） | 平台 API 明示 bigint/JSONB 精度语义 | 自建库（无托管入口） |
+| Schema | ajv 8（`package.json:45` 已有）+ **构建期 standalone 生成的校验函数** | 契约真源仍是 `cloud-projection-v1.json`，与本地 40+ schema 同一套惯例；Function 包内不引第三方依赖（S1 结论：打包器不装依赖） | 在 Function 里 `import Ajv`（部署期才炸）；vendor 一份 ajv bundle 进 Git |
+| 后端 | Sites Functions（**Deno edge 运行时**，`Deno.serve`，单包逻辑名 `app`） | 平台自带托管，含 `function_backend`；无常驻进程语义 | Node/Express 常驻服务（平台不执行启动命令）；Cloudflare Workers（用户已选 Sites） |
+| 数据库 | Sites 托管 Supabase Postgres，DDL 走受管迁移子集 | S2 确认：只接受 `CREATE TABLE app.<t>` / `ADD COLUMN` / 普通索引，类型限 7 种，**无 `CHECK`、无数组、无 `numeric`** | 按通用 Postgres 写迁移（第一版 0001 就是这样被整份拒绝的，见 spike 报告 §0）；自建库（无托管入口） |
 | 测试 | vitest 4（已有） | Function 单测 + 投影器单测与主线同框架 | — |
 
-**待 spike 推翻的可能**：见 §3。任何一项被推翻，只影响 §2 目录布局，不影响需求与 ER 设计。
+**Spike 的实际结果**（[SPIKE_SITES_RUNTIME.md](SPIKE_SITES_RUNTIME.md)）：S1–S3、S5、S6 都有确定答案，被推翻的是**运行时（Node → Deno）、`CHECK` 约束（不可用 → 上移到契约）、RLS 下推（作废 → 判定在 Function）与 `/api/*` 前缀（保留命名空间 → `/functions/v1/app/*`）**。仍未知的只剩数值类边界（超时、请求体上限、连接寿命），登记为 M-1…M-5。
 
 ---
 
@@ -53,7 +53,7 @@ ideaseek/                          (branch: feat/web-console)
 │  └─ dist/                        构建产物（prepare_site 上传这个）
 │
 ├─ web/functions/                  ← Sites Function
-│  ├─ index.ts                     路由 /api/ingest /api/views/* /api/approvals/*
+│  ├─ index.ts                     路由 /functions/v1/app/ingest /functions/v1/app/views/* /functions/v1/app/approvals/*
 │  ├─ ingest.ts                    校验 + 幂等 upsert
 │  ├─ policy.ts                    可见性 → 行列过滤
 │  └─ schema.ts                    由 cloud-projection-v1.json 生成的类型
@@ -77,7 +77,9 @@ ideaseek/                          (branch: feat/web-console)
 
 ## 3. 前置 Spike（里程碑 1 第一件事，阻塞全局）
 
-平台侧关于 Sites Function 的运行时细节没有本地文档可查（本次调研已确认），因此以下 6 问必须在写业务代码前用最小骨架验证。**R4 的缓解措施就是这个 spike 本身。**
+> **本节已于 M1 执行完毕，结论见 [SPIKE_SITES_RUNTIME.md](SPIKE_SITES_RUNTIME.md)。** 下面的表格保留原始问题与当时的降级方案，作为决策记录；两处前提被证伪的地方已在 spike 报告 §0 与 §7 登记：本地**有**权威文档（在应用安装的 Sites 插件目录里，当初只搜了用户资源目录），以及 `/api/*` 是平台保留命名空间。
+
+以下 6 问必须在写业务代码前验证。**R4 的缓解措施就是这个 spike 本身**——只是执行方式从"盲探"变成"先读权威文档、再对文档未给出的数值做实测"。
 
 | ID | 待验证 | 不通时的降级方案 |
 | --- | --- | --- |
@@ -86,7 +88,7 @@ ideaseek/                          (branch: feat/web-console)
 | S3 | 静态托管是否支持未命中路径回退 `index.html` | 已用 hash 路由规避，无需降级 |
 | S4 | 单次请求体上限与写入频率限制 | 决定 push 批大小与心跳间隔；上限很小则按实体分表多次提交 |
 | S5 | 行级/列级访问策略能否表达"`link`/`listed` 只读 L2 列" | 若只能表级，则**再降级投影物理分表**（`cloud_public_*` 视图），安全等价 |
-| **S6** | **Function 是否支持 WebSocket 长连接**：升级握手、单实例并发连接上限、连接存活时长上限、空闲断开策略 | **降级为"短轮询 + 变更指纹"**：`GET /api/live?since=` 每 15 s 拉一次 `{state_rev, event_cursor}`，无变更返回 304。推送契约的帧语义不变，只把传输层换成拉；NFR-16 的 P95 目标由 < 1 s 放宽到 ≤ 15 s，§3.4 的"禁止写实时"措辞红线继续生效 |
+| **S6** | **Function 是否支持 WebSocket 长连接**：升级握手、单实例并发连接上限、连接存活时长上限、空闲断开策略 | **降级为"短轮询 + 变更指纹"**：`GET /functions/v1/app/live?since=` 每 15 s 拉一次 `{state_rev, event_cursor}`，无变更返回 304。推送契约的帧语义不变，只把传输层换成拉；NFR-16 的 P95 目标由 < 1 s 放宽到 ≤ 15 s，§3.4 的"禁止写实时"措辞红线继续生效 |
 
 S6 之所以单列：S1–S5 是立项时就登记在册的未知，S6 是**评审过程中新引入的一个决策顺带带来的新假设**——负责人把浏览端选型定为"服务端主动推"，而这条通道能不能建起来同样没有本地文档可查。不能因为 `ws` 是通用能力，就把它当作已验证事实写进选型表。
 
