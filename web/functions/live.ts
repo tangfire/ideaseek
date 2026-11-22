@@ -4,7 +4,8 @@
  * 传输是 `Deno.upgradeWebSocket`，就在同一个 `app` Function 里——平台文档明确
  * "Upgrade 是一个由 Function 处理的 HTTP 请求，不是启动常驻服务"。
  * 浏览器 WS 带不了自定义 Authorization 头，所以身份只有同域登录态这一条路；
- * 权限判定复用 views.ts 的 `canRead`，握手前完成，不在帧里再判。
+ * 握手前用 views.ts 的 `canRead` 定身份与项目存在性，之后**每一帧重新判一次**（F5.5：
+ * 中途拨 private 或撤销列出要立刻停帧，不能沿用握手时的判定）。
  *
  * 帧来自 `live_outbox`：WS 层不直读 cloud_*（F17.3），否则每次 push 的读次数
  * 会随连接数增长，而且会长出第二套视图。
@@ -14,7 +15,7 @@ import { rows } from './deps.ts';
 import type { Viewer } from './views.ts';
 import { canRead, deniesAsAbsent } from './views.ts';
 
-/** 参照实现的边界，不是平台配额（SPIKE §6）：数值本身等 M-4 实测。 */
+/** 参照实现的边界，不是平台配额。M-4 已量（§10.7）：4 KiB 帧→1009、空闲 55.2 s→1000，先到的是这里设的寿命定时器；平台侧更早的收线与并发天花板未观测到。 */
 const MAX_MESSAGE_BYTES = 4 * 1024;
 const MAX_BUFFERED_BYTES = 512 * 1024;
 const LIFETIME_MS = 55_000;
