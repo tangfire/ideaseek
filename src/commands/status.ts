@@ -57,7 +57,20 @@ export function registerStatusCommand(program: Command): void {
     .action(
       action(async (opts: { run?: string; detail?: boolean; json?: boolean }) => {
         const runtime = await ProjectRuntime.open({ cwd: process.cwd() });
+        // status is the glance command: run/next/doctor already refuse a
+        // broken research.yaml, but status used to print a healthy-looking
+        // view with zero mention of it — the config problem has to be
+        // visible here too, with the same recovery command.
+        const configErrors = runtime.configLoad.errors;
         try {
+          if (!opts.json && configErrors.length > 0) {
+            process.stdout.write(
+              `! config: research.yaml has ${configErrors.length} problem(s) — run: ideaseek config explain\n`,
+            );
+            for (const problem of configErrors.slice(0, 3)) {
+              process.stdout.write(`  ${problem.slice(0, 200)}\n`);
+            }
+          }
           const collectAlerts = async () => {
             const { collectRuntimeAlerts } = await import('../runtime/alerts.js');
             return collectRuntimeAlerts(runtime.paths.root);
@@ -92,6 +105,7 @@ export function registerStatusCommand(program: Command): void {
                   failed: [],
                   alerts: await collectAlerts(),
                   events: [],
+                  configErrors,
                   exitCode: 0,
                 }),
               );
@@ -162,6 +176,7 @@ export function registerStatusCommand(program: Command): void {
                 usage: await usageSummary(),
                 alerts: await collectAlerts(),
                 recovery: runtime.recovery,
+                configErrors,
                 events: events.map((event) => ({
                   seq: event.seq,
                   ts: event.ts,
