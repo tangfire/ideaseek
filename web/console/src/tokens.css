@@ -1,0 +1,119 @@
+/**
+ * 设计令牌 = PLAN.md §6.1 的落地处。无外部字体、无 CDN。
+ *
+ * `--quota` 与 `--fail` 不同色是 F2.4 的视觉落点：额度耗尽不是失败，
+ * 把两者混成一色会让用户去查一个并不存在的 bug。
+ */
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --line: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --ok: #3fb950;
+  --active: #58a6ff;
+  --blocked: #d29922;
+  --fail: #f85149;
+  --quota: #a371f7;
+  --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f8fa;
+  --panel: #ffffff;
+  --line: #d0d7de;
+  --text: #1f2328;
+  --muted: #59636e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px 16px 64px;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+
+.banner {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--active);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin: 0 0 16px;
+  background: color-mix(in srgb, var(--panel) 85%, var(--active) 15%);
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.status-chip[data-state='ok'] {
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
+  color: var(--ok);
+}
+
+.status-chip[data-state='active'] {
+  border-color: color-mix(in srgb, var(--active) 55%, var(--line));
+  color: var(--active);
+}
+
+.status-chip[data-state='blocked'] {
+  border-color: color-mix(in srgb, var(--blocked) 55%, var(--line));
+  color: var(--blocked);
+}
+
+.status-chip[data-state='fail'] {
+  border-color: color-mix(in srgb, var(--fail) 55%, var(--line));
+  color: var(--fail);
+}
+
+.status-chip[data-state='quota'] {
+  border-color: color-mix(in srgb, var(--quota) 55%, var(--line));
+  color: var(--quota);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 500;
+}

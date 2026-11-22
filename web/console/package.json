@@ -1,0 +1,26 @@
+{
+  "name": "@ideaseek/console",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "IdeaSeek 云端控制台前端子工程（与主线隔离，独立安装，见 docs/web-console/PLAN.md §2）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.108.2",
+    "react": "19.1.10",
+    "react-dom": "19.1.10",
+    "wouter": "^3.13.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8"
+  }
+}
