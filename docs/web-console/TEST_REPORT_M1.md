@@ -31,11 +31,12 @@
 | 类型 | `pnpm typecheck` | 通过 |
 | 控制台子工程 | `web/console`：`pnpm typecheck` + `pnpm build` | 通过（`tsc --noEmit`；构建产物 `index-Cim3_YfU.js` 231.9 kB / gzip 74.2 kB） |
 | Function 本地 lane | `pnpm test:function` | **21/21 通过**（`routes.test.ts` 15 + `identity.test.ts` 6） |
+| 发布卫生闸门 | `node scripts/release-check.mjs` | `ok:true`、`secrets:0`（本轮先红过一次：测试 fixture 撞高熵凭据规则，见 §5"全量门禁报出一条 `secrets: 1`"那一行） |
 | 主线全量 | `pnpm test`（vitest + interactive lane + python） | 见 §3 |
 
 ### 3. 主线全量结果
 
-`pnpm test` = vitest 全量 + interactive lane + python 车道。本轮跑了三次全量，**没有任何一次是干净的绿灯**，三次读数都登记在这里：
+`pnpm test` = vitest 全量 + interactive lane + python 车道。本轮跑了四次全量：前三次**都不是干净的绿灯**，第四次才拿到出口要求的读数；四次都登记在这里，不拿最后一次盖掉前面。
 
 | 次序 | 读数 | 失败项 |
 | --- | --- | --- |
