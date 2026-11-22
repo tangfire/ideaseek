@@ -9,7 +9,15 @@ export default tseslint.config(
       'node_modules/**',
       'coverage/**',
       '.research/**',
+      // Git-ignored scratch dir for deployment measurements (SPIKE §10). Its
+      // scripts are throwaway probes, not deliverables.
+      '.local/**',
       'worker/python/.venv/**',
+      // web/ is the console subproject: Deno edge runtime + browser globals,
+      // checked by its own toolchain. Root rules here assume the Node CLI
+      // (PLAN.md §2 隔离要求 3), so linting it with them would only produce
+      // no-undef noise — or worse, push Node idioms into edge code.
+      'web/**',
     ],
   },
   js.configs.recommended,

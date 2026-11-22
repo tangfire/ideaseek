@@ -18,7 +18,7 @@
  * project, the shared dist is left alone.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,9 +51,55 @@ function lockIsStale() {
   }
 }
 
+/**
+ * Move a stale lock out of the way.
+ *
+ * Deleting it is not enough on Windows: while any process holds a handle on the
+ * directory (the editor's file watcher does, most of the time), `rmSync` returns
+ * without throwing, the path survives in delete-pending state, and the next
+ * `mkdirSync` still reports EEXIST. Renaming succeeds where deleting silently
+ * does not, and it keeps the owner pid as evidence instead of erasing it.
+ */
+function discardStaleLock() {
+  // One fixed dump name, so a lock that refuses to die cannot pile up a
+  // `.stale-<ts>` directory per retry; only when that name is itself occupied
+  // (still delete-pending, so it can be listed but not replaced) does the
+  // timestamped variant take the overflow.
+  const dump = lockDir + '.stale';
+  try {
+    rmSync(dump, { recursive: true, force: true });
+  } catch {
+    // occupied — fall through to the unique name
+  }
+  try {
+    renameSync(lockDir, dump);
+    return;
+  } catch {
+    // maybe it really is deletable — try that before giving up
+  }
+  try {
+    renameSync(lockDir, `${dump}-${Date.now()}`);
+  } catch {
+    // nothing moved; the wait limit makes a lock that never clears loud
+  }
+  try {
+    rmSync(lockDir, { recursive: true, force: true });
+  } catch {
+    // leave it to the next round; the wait limit makes that failure loud
+  }
+}
+
 async function acquire() {
   const started = Date.now();
   for (;;) {
+    // Checked at the top of every turn: the steal path `continue`s without
+    // sleeping, so a lock that refuses to disappear used to spin here forever —
+    // silent, at full CPU, and past WAIT_LIMIT_MS.
+    if (Date.now() - started > WAIT_LIMIT_MS) {
+      throw new Error(
+        `build lock busy for ${WAIT_LIMIT_MS}ms (${lockDir}) — another session may be stuck building`,
+      );
+    }
     try {
       mkdirSync(lockDir);
       writeFileSync(pidFile, String(process.pid));
@@ -61,13 +107,12 @@ async function acquire() {
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       if (lockIsStale()) {
-        rmSync(lockDir, { recursive: true, force: true });
+        discardStaleLock();
+        // A rename that "succeeded" can still leave the old path blocking mkdir
+        // for a moment (Windows delete-pending); the pause keeps the retry from
+        // spinning hot across that window.
+        await sleep(50);
         continue;
-      }
-      if (Date.now() - started > WAIT_LIMIT_MS) {
-        throw new Error(
-          `build lock busy for ${WAIT_LIMIT_MS}ms (${lockDir}) — another session may be stuck building`,
-        );
       }
       await sleep(250);
     }

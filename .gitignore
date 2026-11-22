@@ -49,3 +49,6 @@ research.yaml.bak-*
 
 # cross-session build lock (scripts/build.mjs)
 .build-lock/
+# stale locks moved aside when Windows would not delete them (discardStaleLock)
+.build-lock.stale*/
+.local/
