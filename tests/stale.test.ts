@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { appendFile, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CLI_BIN, makeProjectDir } from './helpers.js';
@@ -119,6 +119,25 @@ describe('ideaseek stale (difference preview)', () => {
       expect(r.recovery.length).toBeGreaterThan(0);
       if (r.status !== 'current') expect(r.invalidates.length).toBeGreaterThan(0);
     }
+  }, 180_000);
+
+  it('reports a corrupt matrix file as corrupt, not as "never built"', async () => {
+    // The recovery (rebuild) is the same either way, but "no comparison
+    // matrix built yet" when a corrupt file sits right there is a lying
+    // diagnosis — the product rule requires honest state + next command.
+    const dir = await makeProjectDir();
+    await mkdir(join(dir, 'knowledge'), { recursive: true });
+    await writeFile(join(dir, 'knowledge', 'comparison-matrix.json'), '{"inputHash": "abc', 'utf8');
+    const result = await runCli(dir, ['stale', '--json']);
+    expect(result.code, result.stdout + result.stderr).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      rows: { id: string; status: string; detail: string; recovery: string }[];
+    };
+    const matrix = payload.rows.find((r) => r.id === 'comparison-matrix');
+    expect(matrix?.status).toBe('missing'); // vocabulary/exit contract unchanged
+    expect(matrix?.detail).toContain('not valid JSON');
+    expect(matrix?.detail).not.toContain('built yet'); // the lying diagnosis
+    expect(matrix?.recovery).toContain('comparison matrix');
   }, 180_000);
 
   it('detects a code change invalidating the passing check report (exit 2)', async () => {

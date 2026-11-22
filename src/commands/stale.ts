@@ -239,17 +239,24 @@ async function fairnessRow(root: string, ideaId: string): Promise<StaleRow> {
   const { readFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
   let stored: { inputHash?: unknown; confirmed?: unknown } | null = null;
+  let unreadable: string | null = null;
   try {
     stored = JSON.parse(await readFile(join(root, 'knowledge', `fairness-${ideaId}.json`), 'utf8'));
-  } catch {
-    stored = null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      stored = null;
+    } else {
+      // Corrupt ≠ missing: the file exists and cannot be trusted — say so
+      // instead of "no lock built yet" (the recovery is the same rebuild).
+      unreadable = `fairness lock file is unreadable or not valid JSON — restore or move it aside, then rebuild`;
+    }
   }
   if (!stored) {
     return {
       id,
       scope: 'idea',
       status: 'missing',
-      detail: 'no fairness lock built yet',
+      detail: unreadable ?? 'no fairness lock built yet',
       invalidates,
       recovery,
     };
@@ -293,17 +300,22 @@ async function matrixRow(root: string): Promise<StaleRow> {
   const { readFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
   let stored: { inputHash?: unknown } | null = null;
+  let unreadable: string | null = null;
   try {
     stored = JSON.parse(await readFile(join(root, 'knowledge', 'comparison-matrix.json'), 'utf8'));
-  } catch {
-    stored = null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      stored = null;
+    } else {
+      unreadable = `comparison matrix file is unreadable or not valid JSON — restore or move it aside, then rebuild`;
+    }
   }
   if (!stored) {
     return {
       id,
       scope: 'project',
       status: 'missing',
-      detail: 'no comparison matrix built yet',
+      detail: unreadable ?? 'no comparison matrix built yet',
       invalidates,
       recovery: 'ideaseek comparison matrix',
     };
