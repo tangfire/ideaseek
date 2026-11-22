@@ -35,7 +35,22 @@
 
 ### 3. 主线全量结果
 
-<!--MAIN_LANE-->
+`pnpm test` = vitest 全量 + interactive lane + python 车道。本轮跑了三次全量，**没有任何一次是干净的绿灯**，三次读数都登记在这里：
+
+| 次序 | 读数 | 失败项 |
+| --- | --- | --- |
+| 第 1 次 | `Test Files 3 failed / 212 passed (215)`，`Tests 3 failed / 1963 passed / 4 skipped (1970)`，`Duration 809.51s`，EXIT=1 | `consolidate`（`expected 2 to be +0`）、`idea-check`（CLI 超时）、`pack`（`--verify-reproducible` 180 s 超时） |
+| 第 2 次 | `Test Files 2 failed / 213 passed (215)`，`Tests 2 failed / 1964 passed / 4 skipped (1970)`，`Duration 756.73s`，EXIT=1 | `idea-check`（CLI 超时）、**`release-check`（真缺陷：本轮新增的测试 fixture 撞高熵凭据闸门，见 §5 第 8 行）** |
+| 第 3 次（修正凭据 fixture 之后） | `Test Files 1 failed / 214 passed (215)`，`Tests 1 failed / 1965 passed / 4 skipped (1970)`，`Duration 709.94s`，EXIT=1 | 仅 `idea-check > classifies a dependency failure in the unit-test phase`：`cli idea check calib-reweight --json timed out` |
+
+对唯一剩下的那一条做的取证（不是"重跑直到绿"）：
+
+- 单独串行跑同一文件：`Test Files 1 passed (1) / Tests 16 passed (16) / Duration 70.28s`，EXIT=0；该文件 `tests` 净耗时 61.03 s，用例级超时预算在满载并行下会被吃穿。
+- 第 1 次的 `consolidate`、`pack` 也在 `--maxWorkers=1` 下与 `idea-check` 一起 27/27 通过（`Duration 142.46s`）。
+- 同类先例已有登记口径：`docs/PROGRESS.md:338` 把 CLI 派生用例在全并行下的超时归为**环境性非回归**。
+
+**判定口径**：M1 出口要求"主线 `pnpm test` 仍全绿"，按字面读数这一条**没有达成**——达成的是"本轮改动没有引入回归：全量三次里失败的用例，一条是真缺陷且已修（第 2 次的 release-check），其余是满载下的 CLI 超时抖动，单独串行均绿"。把这种状态写成绿灯就是自欺，所以报告把 EXIT=1 原样留在表里。
+M2 入口条件因此加一条硬项：**先解决 CLI 派生用例的超时预算**（`idea-check` 一类用例按用例级 `testTimeout` 给出可容纳满载的预算并注明原因，而不是把并行度降下来掩盖问题），解决之后 M1 的门禁才补一次全绿读数。
 
 ---
 
@@ -101,6 +116,7 @@
 | WS 全部 403 | 边缘层拒绝空 `User-Agent`（`BOT_DETECTED`） | 脚本客户端显式带 UA；同时确认普通 HTTP 无 UA 也走得到 Function（不是同一道闸） |
 | `/live` 升级请求拿到 `502`（正文空） | 缺 `?action=live` → 路由走轮询兜底 → 升级请求收到普通响应 | 读数与原因写入 §10.7；这条如果不当场查清，就会被写成"平台不支持 WebSocket" |
 | `pnpm test` 首轮 128 例失败、`exit 9009` 无输出 | Windows Store 的 `python` 占位程序抢先命中 PATH | 门禁运行前把 `worker/python/.venv/Scripts` 置于 PATH 首位；`python --version` = 3.12.14 |
+| 全量门禁报出一条 `secrets: 1` | `release-check` 的高熵凭据闸门命中 `web/functions/test/routes.test.ts` 里的 `DIAG_TOKEN = '<48 个 0>'`——形状确实像凭据 | 闸门不动：先试短占位串，被 `token.ts` 的 ≥32 下限打回 401/403（那条下限是"机器凭据不可猜"的防线，测试不该绕过），最后改成由 label 拼出 48 位不透明串。车道回到 21/21，`release-check` `ok:true`、`secrets:0`（`f16b8d7`） |
 | `pnpm format:check` 报 550+ 文件 | 本机 `core.autocrlf=true`，工作树是 CRLF 而 `.prettierrc` 要 `endOfLine: lf`；**索引里是 LF**（`git ls-files --eol` = `i/lf w/crlf`） | 改以入库字节评估格式（等价于 CI 视图），并只格式化本轮新写/改动的文件；不去 `git config`、不产生 500+ 文件噪音 diff |
 | 界面 L2 显示 `strategy=未记录`、传输位写"实时推送" | "扣下的字段"被读成"没记录"；"实时"撞 REQUIREMENTS §3.4 红线（R3） | 文案改为"不在这一级" / "服务端推送"；重新发布并在浏览器复检 |
 
@@ -115,6 +131,8 @@
 5. **`user_id → cloud_owner.email` 首次登录自动建行**是本轮的**决定**而非平台保证：站内任何已登录账号都会获得一个 Owner 主体（只能看见自己投影上来的数据）。M4 公开上线检查单要重看这一条。
 6. **Function 侧契约校验是手写白名单**，ajv standalone 生成器仍未做；M2 放开 17 个集合之前必须换成构建期生成并入 `release-check`，否则会出现"看起来严、实际漏"。
 7. `is_synthetic` / 合成演示数据**没有被当作真实结论**：本轮所有云端行都是合成投影，`spike-m1-demo` 已拨回 `private`。
+8. **CLI 派生用例的超时预算**：全量三次里唯一稳定的失败（`idea-check`，串行 16/16 绿）。这是门禁可信度的问题——一条"只在满载时红"的用例会让人学会忽略红灯。M2 之前按 §3 的口径处理。
+9. **前端降级到轮询后不会回 WS**：`web/console/src/live.ts` 一次性 WS 失败后永久停在轮询，没有探测式回升。当前读数如实显示"降级：15 s 轮询"，不构成谎报，但 NFR-16 在恢复后仍按轮询评估——列入 M3。
 
 ---
 
