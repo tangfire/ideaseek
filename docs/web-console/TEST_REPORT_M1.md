@@ -42,6 +42,7 @@
 | 第 1 次 | `Test Files 3 failed / 212 passed (215)`，`Tests 3 failed / 1963 passed / 4 skipped (1970)`，`Duration 809.51s`，EXIT=1 | `consolidate`（`expected 2 to be +0`）、`idea-check`（CLI 超时）、`pack`（`--verify-reproducible` 180 s 超时） |
 | 第 2 次 | `Test Files 2 failed / 213 passed (215)`，`Tests 2 failed / 1964 passed / 4 skipped (1970)`，`Duration 756.73s`，EXIT=1 | `idea-check`（CLI 超时）、**`release-check`（真缺陷：本轮新增的测试 fixture 撞高熵凭据闸门，见 §5 第 8 行）** |
 | 第 3 次（修正凭据 fixture 之后） | `Test Files 1 failed / 214 passed (215)`，`Tests 1 failed / 1965 passed / 4 skipped (1970)`，`Duration 709.94s`，EXIT=1 | 仅 `idea-check > classifies a dependency failure in the unit-test phase`：`cli idea check calib-reweight --json timed out` |
+| 第 4 次（放宽 CLI 派生用例的墙上时间预算之后，`44bb4b5`） | **`Test Files 215 passed (215)`，`Tests 1966 passed / 4 skipped (1970)`，`Duration 472.09s`**；interactive lane `3 passed / 26 tests`；python 车道 `Ran 23 tests ... OK`；EXIT=0 | 无 |
 
 对唯一剩下的那一条做的取证（不是"重跑直到绿"）：
 
@@ -49,8 +50,7 @@
 - 第 1 次的 `consolidate`、`pack` 也在 `--maxWorkers=1` 下与 `idea-check` 一起 27/27 通过（`Duration 142.46s`）。
 - 同类先例已有登记口径：`docs/PROGRESS.md:338` 把 CLI 派生用例在全并行下的超时归为**环境性非回归**。
 
-**判定口径**：M1 出口要求"主线 `pnpm test` 仍全绿"，按字面读数这一条**没有达成**——达成的是"本轮改动没有引入回归：全量三次里失败的用例，一条是真缺陷且已修（第 2 次的 release-check），其余是满载下的 CLI 超时抖动，单独串行均绿"。把这种状态写成绿灯就是自欺，所以报告把 EXIT=1 原样留在表里。
-M2 入口条件因此加一条硬项：**先解决 CLI 派生用例的超时预算**（`idea-check` 一类用例按用例级 `testTimeout` 给出可容纳满载的预算并注明原因，而不是把并行度降下来掩盖问题），解决之后 M1 的门禁才补一次全绿读数。
+**判定口径**：M1 出口要求"主线 `pnpm test` 仍全绿"。前三次没有一次是绿的，第四次（`44bb4b5` 之后）拿到 `215/215 files、1966 passed / 4 skipped、EXIT=0`，出口条件按这个读数成立。前三次的红不是环境问题掩盖过去的：第 2 次的 `release-check` 是本轮真实缺陷（§5 第 8 行），第 1、3 次的 CLI 超时按 §3 的取证把预算改成按满载实测推导的值——**只放宽时间预算，断言与阈值一个没改**，这一点如果做不到就不该改。
 
 ---
 
@@ -131,7 +131,7 @@ M2 入口条件因此加一条硬项：**先解决 CLI 派生用例的超时预�
 5. **`user_id → cloud_owner.email` 首次登录自动建行**是本轮的**决定**而非平台保证：站内任何已登录账号都会获得一个 Owner 主体（只能看见自己投影上来的数据）。M4 公开上线检查单要重看这一条。
 6. **Function 侧契约校验是手写白名单**，ajv standalone 生成器仍未做；M2 放开 17 个集合之前必须换成构建期生成并入 `release-check`，否则会出现"看起来严、实际漏"。
 7. `is_synthetic` / 合成演示数据**没有被当作真实结论**：本轮所有云端行都是合成投影，`spike-m1-demo` 已拨回 `private`。
-8. **CLI 派生用例的超时预算**：全量三次里唯一稳定的失败（`idea-check`，串行 16/16 绿）。这是门禁可信度的问题——一条"只在满载时红"的用例会让人学会忽略红灯。M2 之前按 §3 的口径处理。
+8. **CLI 派生用例的超时预算**：已按满载实测改掉（`44bb4b5`，§3 第 4 次读数绿）。留一条警告：这种预算是**这台机器这次的负载**量出来的，换并发度或换机器可能要重看；正确的长期解是给这些用例一个按负载推导的预算或把它们归到单独的串行 lane。
 9. **前端降级到轮询后不会回 WS**：`web/console/src/live.ts` 一次性 WS 失败后永久停在轮询，没有探测式回升。当前读数如实显示"降级：15 s 轮询"，不构成谎报，但 NFR-16 在恢复后仍按轮询评估——列入 M3。
 
 ---
@@ -141,4 +141,5 @@ M2 入口条件因此加一条硬项：**先解决 CLI 派生用例的超时预�
 - Node v24.11.1（`D:/tools/node-v24.11.1-win-x64`，不在默认 PATH）、pnpm 12.21、vitest 4.1.12、python 3.12.14（`worker/python/.venv`）。
 - 部署态脚本放在 **git-ignored** 的 `.local/`（含一次性探针 token 文件，绝不入库、绝不回显值）。
 - 站点：`ideaseek-t7xsgawx37d.qoder.zone`，projectId `01a20236-0bb5-70d0-8725-85eb306c8203`，siteId `01a20236-0bb8-7b28-97ba-6d14e9abbfad`；本轮两次发布 actionId `4d7e2a18-…`（Function 修复）与 `0db688ef-…`（文案 + 注释修正，publish operation `01a202a7-89aa-72c3-85b4-d7c05f83036c`，state `succeeded`/committed）。
+- 部署与仓库一致性：`curl https://ideaseek-t7xsgawx37d.qoder.zone/` 引用的入口是 `/assets/index-Cim3_YfU.js`，与本轮本地 `pnpm build` 产出的 `web/console/dist/index.html` 同一哈希——线上跑的就是这份构建，不是上一版。
 - 访问模式 `public` 是负责人明确批准的那一步（private 下网关先于代码 401，实测项无法采集）；重新发布保留该策略。
