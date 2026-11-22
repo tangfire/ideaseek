@@ -93,7 +93,7 @@ IdeaSeek 默认在用户全量数据的只读快照上生成 `smoke`/`quick`/`st
 - [IDEA_IMPROVEMENT.md](IDEA_IMPROVEMENT.md)：导入已有 idea/代码、诊断问题和生成改进路线。
 - [FULL_RESEARCH_MODE.md](FULL_RESEARCH_MODE.md)：用户批准后下载数据、运行全量实验、画图和生成论文草稿。
 - [LONG_RUNNING_WORKFLOWS.md](LONG_RUNNING_WORKFLOWS.md)：跨多轮 idea/实验的长任务生命周期、恢复粒度和 soak-test 验收。
-- [web-console/](web-console/REQUIREMENTS.md)：Web 控制台（PRODUCT_GAPS_AUDIT 缺口⑩ 的选型落地）——需求文档、用例图/流程图/ER 图、完整功能清单、技术栈与执行计划。**当前状态：待需求评审，未进入开发。**
+- [web-console/](web-console/REQUIREMENTS.md)：Web 控制台（PRODUCT_GAPS_AUDIT 缺口⑩ 的选型落地）——需求文档、用例图/流程图/ER 图、完整功能清单、技术栈与执行计划。**当前状态：需求评审已于 2026-11-22 通过（阻塞项 Q1/Q2/Q3/Q9/Q11 逐条决议），进入开发阶段；第一步是前置 spike S1–S6，尚未写业务代码。**
 
 ## 首版边界
 

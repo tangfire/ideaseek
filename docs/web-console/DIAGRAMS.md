@@ -112,7 +112,7 @@ end note
 
 note bottom of UC04
   匿名访客仅能进入
-  visibility=public 的项目，
+  visibility=listed 的项目，
   且读取的是 L2 再降级投影。
 end note
 @enduml
@@ -156,16 +156,26 @@ repeat
     :不污染已有投影;
   else (是)
     :按 external_id 幂等 upsert;
+    :事务内写 live_outbox\n(带连接内单调 seq);
+    :广播 worker 推帧到\n已订阅该项目的 WS 连接\n（state / events）;
+    note right
+      WS 层不重新查询投影表。
+      每批 push 的读次数
+      与在线连接数无关（F17.3）。
+    end note
   endif
 backward
   :继续本地执行\n（云端结果不影响研究）;
 repeat while (run 未结束?) is (是)
 
 :Owner 用浏览器打开控制台;
-:看到 阶段 / 阻塞原因 / 待确认事项;
+:先 REST 拉全量（首屏）\n再建 WS 订增量;
+:看到 阶段 / 阻塞原因 / 待确认事项\n并标注"已同步至 seq N";
 stop
 @enduml
 ```
+
+浏览端不轮询：连接断开走指数退避重连，重连成功后**必须先补一次 REST 全量**再收增量帧（WS-03）。S6 判定 Function 不支持长连接时，本图最后两步替换为 15 s 短轮询 + 变更指纹，其余不变。
 
 ### 2.2 两阶段审批信箱（约束三，对应 R2）
 
@@ -238,19 +248,27 @@ if (预览中含未审查的\nidea.hypothesis 全文?) then (是)
 else (否)
 endif
 
-fork
-  :visibility=link\n生成随机 token 深链;
-fork again
-  :visibility=public\n进入公开项目列表;
-  :写入数据库行级策略\n仅暴露 L2 列;
-end fork
+:发布第一步：visibility=link\n生成随机 token 深链;
+:写入数据库行级策略\n仅暴露 L2 列;
+
+if (还要进公开列表?) then (是)
+  :发布第二步（独立确认，F5.9）：\nvisibility=listed;
+else (否)
+  :停在 link，\n页面不出现于任何列表;
+endif
 
 :记录 publication 审计行\n(who/when/what fields_profile);
 
 note right
+  Q1：link 与 listed 是两个动作。
+  链接泄露只波及知情者，
+  进列表等于投广告。
+
   反向操作即时生效：
-  public → private 后，
-  所有历史分享深链立刻 404。
+  任一级 → private 后，
+  历史分享深链立刻 404，
+  已建立的 WS 连接 ≤ 5 s 内
+  收到 revoked 帧并断开（WS-06）。
 end note
 
 :Owner 可随时 UC-22 删除全部投影;
@@ -342,7 +360,7 @@ entity "cloud_project" as proj {
   question : text
   strategy : text "starter|standard|research"
   autonomy : text "guided|autonomous|review-only"
-  visibility : text "private|link|public"
+  visibility : text "private|link|listed"
   source_host : text "脱敏主机名"
   schema_version : int
   last_sync_at : timestamptz
@@ -605,6 +623,21 @@ entity "cloud_sync_batch" as batch {
   requested_at : timestamptz
 }
 
+entity "live_outbox" as outbox {
+  * id : bigserial <<PK>>
+  --
+  project_id : uuid <<FK>>
+  batch_id : uuid <<FK>> "来源 push"
+  frame_type : text "state|events|revoked"
+  payload : jsonb "≤ 8 KB，仅脱敏摘要"
+  created_at : timestamptz
+  --
+  note: 与 upsert 同事务写入，
+  广播 worker 消费后即删。
+  它是投影表与 WS 之间唯一的耦合点：
+  WS 层不直读 cloud_*（F17.3）。
+}
+
 owner ||--o{ token
 owner ||--o{ proj
 token  ||--o{ batch
@@ -616,6 +649,8 @@ proj   ||--o{ round
 proj   ||--o{ idea
 proj   ||--o| pub
 proj   ||--o{ batch
+batch  ||--o{ outbox
+proj   ||--o{ outbox
 run    ||--o{ stage
 run    ||--o{ task
 run    ||--o{ event
@@ -641,7 +676,7 @@ end note
 
 note right of idea
   hypothesis 是未发表学术成果。
-  visibility=public 时默认走
+  visibility≠private 时默认走
   redacted profile，只露 title/status。
 end note
 
@@ -669,7 +704,10 @@ end note
 
 ---
 
-## 4. 待评审的图示问题
+## 4. 图示层面的残留风险
+
+评审已通过（`REQUIREMENTS.md §8.1`），以下三条是图示本身仍带着的已知不确定性，开发时按此处理，不当作错误：
 
 1. `cloud_egress_entry` 依赖本地先产出外发计数（缺口⑫本身未实现）。若里程碑 6 时该能力仍缺，UC-21 降级为"仅展示模型调用计数"或推迟。
 2. `cloud_stage_progress.stage` 需要 14 阶段映射表，映射不上的 `task.phase` 归入 `unknown` 并**显式可视化**，让规范与实现的差距可见，而不是藏起来。
+3. §2.1 的 WS 推帧分支画的是"平台支持长连接"这一**未验证前提**（spike S6）。S6 判定不通时，该分支替换为 15 s 短轮询 + 变更指纹，`live_outbox` 仍然成立（变更指纹从它派生），本图其余部分不动。
