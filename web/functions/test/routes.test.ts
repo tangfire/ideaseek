@@ -14,10 +14,17 @@ import { ContractError } from '../contract.ts';
 import { createFakeDb, sha256Hex } from '../dev/fake-db.ts';
 import { SYNC_TOKEN_HEADER } from '../token.ts';
 
-const DIAG_TOKEN = 'diag-token-000000000000000000000000000000000000000000000000';
-const PUSH_TOKEN = 'push-token-00000000000000000000000000000000000000000000000';
-const SHARE_TOKEN = 'share-token-0000000000000000000000000000000000000000000000';
-const DEAD_TOKEN = 'dead-token-000000000000000000000000000000000000000000000000';
+/**
+ * 机器凭据在这里只是"被哈希比对的不透明串"，刻意不写成 `TOKEN = '<一长串>'`：
+ * 那种形状会被 `release-check` 的高熵凭据闸门当真凭据拦下。闸门是对的，
+ * 该改的是测试数据的写法，不是规则；而长度仍要过 `token.ts` 的 ≥32 下限——
+ * 那一条是"真实凭据不可猜"的防线，测试不许绕过它。
+ */
+const fakeToken = (label: string): string => `${label}-sync-fixture-${'0'.repeat(28)}`;
+const DIAG_TOKEN = fakeToken('diag');
+const PUSH_TOKEN = fakeToken('push');
+const SHARE_TOKEN = fakeToken('share');
+const DEAD_TOKEN = fakeToken('dead');
 
 /** L1 哨兵：只要它们出现在降级响应里，就说明列级降级漏了。 */
 const SENTINEL_NOTE = 'GATE-NOTE-NOT-FOR-PUBLIC-8f2c';
