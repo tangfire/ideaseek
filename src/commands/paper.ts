@@ -82,6 +82,51 @@ async function readStoredPlan(root: string): Promise<StoredPlan | null> {
   }
 }
 
+interface DiagramRenderRecord {
+  contract: string;
+  renders: unknown[];
+}
+
+/**
+ * The append-only diagram render record. Missing file = first render (fresh
+ * record); corrupt or wrong-shaped file must be LOUD, never "first render" —
+ * the old catch-all silently overwrote the render history it exists to keep,
+ * and a non-array `renders` crashed the command at `.filter`.
+ */
+export async function readDiagramRenderRecord(recordPath: string): Promise<DiagramRenderRecord> {
+  const fresh: DiagramRenderRecord = { contract: 'diagram-render-v1', renders: [] };
+  let text: string;
+  try {
+    text = await readFile(recordPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return fresh;
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `cannot read diagram render record ${recordPath}: ${(error as Error).message} — restore or move it aside, then rerun`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `diagram render record ${recordPath} is not valid JSON — rerunning would erase its history; restore or move it aside, then rerun`,
+    );
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !Array.isArray((parsed as DiagramRenderRecord).renders)
+  ) {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `diagram render record ${recordPath} has an unexpected shape — restore or move it aside, then rerun`,
+    );
+  }
+  return parsed as DiagramRenderRecord;
+}
+
 interface StoredReview {
   status: string;
   note: string | null;
@@ -1050,15 +1095,7 @@ export function registerPaperCommand(program: Command): void {
         // Append-only record so a figure in the bundle can be re-checked: the
         // determinism claim is (spec hash, renderer hash) → output hash.
         const recordPath = join(root, 'reports', 'paper', 'diagram-render.json');
-        let record: { contract: string; renders: unknown[] } = {
-          contract: 'diagram-render-v1',
-          renders: [],
-        };
-        try {
-          record = JSON.parse(await readFile(recordPath, 'utf8')) as typeof record;
-        } catch {
-          // first render in this project
-        }
+        const record = await readDiagramRenderRecord(recordPath);
         const entry = {
           specPath,
           specSha256: render.specSha256,

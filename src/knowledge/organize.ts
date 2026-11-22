@@ -91,7 +91,8 @@ export async function applyOrganize(
   } catch {
     existing = null;
   }
-  const entriesBySource = new Map((existing?.entries ?? []).map((entry) => [entry.source, entry]));
+  const priorEntries = existing && Array.isArray(existing.entries) ? existing.entries : [];
+  const entriesBySource = new Map(priorEntries.map((entry) => [entry.source, entry]));
 
   for (const item of plan) {
     if (item.action === 'skip-unhashable') {

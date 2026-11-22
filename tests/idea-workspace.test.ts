@@ -355,6 +355,43 @@ describe('ideaseek idea workspace (CLI)', () => {
     expect(payload.issues.some((issue) => issue.kind === 'input-changed')).toBe(true);
   }, 60_000);
 
+  it('a corrupt version file fails loudly with recovery guidance (no raw SyntaxError)', async () => {
+    // Listing path: one garbage version used to escape as an uncaught
+    // SyntaxError with no code and no next step.
+    const dir = join(project, 'ideas', 'corrupt-idea', 'versions');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'v1.json'), '{"version": 1, "summar', 'utf8');
+    await expect(loadVersionRecords(project, 'corrupt-idea')).rejects.toThrow(/not valid JSON/);
+
+    // Crash-recovery path: the pointer says v2 exists, the file is garbage.
+    const cardPath = await writeCard(project, 'corrupt-card.json', makeCard('corrupt-revise'));
+    const created = await runCli(project, [
+      'idea',
+      'create',
+      'corrupt-revise',
+      '--from-card',
+      cardPath,
+    ]);
+    expect(created.code, created.stderr).toBe(0);
+    await writeFile(
+      join(project, 'ideas', 'corrupt-revise', 'versions', 'v2.json'),
+      '{"version": 2, "trunc',
+      'utf8',
+    );
+    const revise = await runCli(project, [
+      'idea',
+      'revise',
+      'corrupt-revise',
+      '--kind',
+      'engineering',
+      '--summary',
+      'resume',
+    ]);
+    expect(revise.code).toBe(1); // INVALID_STATE = task failure, honest not silent
+    expect(revise.stderr + revise.stdout).toMatch(/not valid JSON|unreadable/);
+    expect(revise.stderr + revise.stdout).toContain('move');
+  });
+
   it('resumes a crashed create and a crashed revise without corrupting the chain', async () => {
     // Crash window 1: workspace.json exists, idea.json missing.
     const partialDir = join(project, 'ideas', 'partial-idea');

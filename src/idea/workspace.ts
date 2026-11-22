@@ -191,7 +191,17 @@ export async function loadVersionRecords(
   }
   const records: IdeaVersionRecord[] = [];
   for (const name of names) {
-    const record = JSON.parse(await readFile(join(dir, name), 'utf8')) as IdeaVersionRecord;
+    let record: IdeaVersionRecord;
+    try {
+      record = JSON.parse(await readFile(join(dir, name), 'utf8')) as IdeaVersionRecord;
+    } catch {
+      // One corrupt version must not crash the listing with a raw
+      // SyntaxError — but silently skipping it would rewrite history.
+      throw new IdeaseekError(
+        'INVALID_STATE',
+        `idea version ${name} is unreadable or not valid JSON — repair or move ${join(dir, name)} aside, then rerun`,
+      );
+    }
     records.push(record);
   }
   records.sort((a, b) => a.version - b.version);
@@ -577,7 +587,14 @@ export async function reviseEngineering(
   let record: IdeaVersionRecord;
   if (await pathExists(targetPath)) {
     // Crash recovery: the version file landed but the pointer/card did not.
-    record = JSON.parse(await readFile(targetPath, 'utf8')) as IdeaVersionRecord;
+    try {
+      record = JSON.parse(await readFile(targetPath, 'utf8')) as IdeaVersionRecord;
+    } catch {
+      throw new IdeaseekError(
+        'INVALID_STATE',
+        `version file v${target} is unreadable or not valid JSON — repair or move ${targetPath} aside, then rerun revise`,
+      );
+    }
     if (record.parentVersion !== target - 1) {
       throw new IdeaseekError(
         'INVALID_STATE',
@@ -661,7 +678,21 @@ export async function checkpointCode(
       `versions/v${meta.currentVersion}.json missing — run: ideaseek idea revise ${ideaId} --kind engineering --summary "resume"`,
     );
   }
-  const record = JSON.parse(await readFile(versionPath, 'utf8')) as IdeaVersionRecord;
+  let record: IdeaVersionRecord;
+  try {
+    record = JSON.parse(await readFile(versionPath, 'utf8')) as IdeaVersionRecord;
+  } catch {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `version file at ${versionPath} is unreadable or not valid JSON — repair or move it aside, then rerun`,
+    );
+  }
+  if (typeof record.version !== 'number') {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `version file at ${versionPath} has no version field — repair or move it aside, then rerun`,
+    );
+  }
   if (record.checkpoint?.codeHash === codeHash && record.codeHash === codeHash) {
     return {
       codeHash,

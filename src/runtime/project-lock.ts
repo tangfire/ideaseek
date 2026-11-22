@@ -21,12 +21,41 @@ function lockPath(projectRoot: string): string {
 }
 
 async function readLock(projectRoot: string): Promise<ProjectLock | null> {
+  const path = lockPath(projectRoot);
+  const { readFile } = await import('node:fs/promises');
+  let text: string;
   try {
-    const { readFile } = await import('node:fs/promises');
-    return JSON.parse(await readFile(lockPath(projectRoot), 'utf8')) as ProjectLock;
-  } catch {
-    return null;
+    text = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `cannot read project lock ${path}: ${(error as Error).message} — if no other ideaseek process is running, move the file aside, then rerun`,
+    );
   }
+  // A corrupt lock must never read as "no lock": that silently bypasses
+  // mutual exclusion and lets two controllers interleave writes.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `project lock ${path} is not valid JSON — if no other ideaseek process is running, move the file aside, then rerun`,
+    );
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    typeof (parsed as ProjectLock).pid !== 'number' ||
+    typeof (parsed as ProjectLock).purpose !== 'string'
+  ) {
+    throw new IdeaseekError(
+      'INVALID_STATE',
+      `project lock ${path} has an unexpected shape — if no other ideaseek process is running, move the file aside, then rerun`,
+    );
+  }
+  return parsed as ProjectLock;
 }
 
 export interface AcquireResult {

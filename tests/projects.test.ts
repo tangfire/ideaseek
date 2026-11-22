@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -98,6 +98,22 @@ describe('project registry (unit)', () => {
 });
 
 describe('project lock (unit)', () => {
+  it('a corrupt lock fails loudly and is never treated as "no lock"', async () => {
+    // readLock used to catch everything into null — a truncated lock read
+    // as "free", silently bypassing mutual exclusion (two controllers
+    // interleaving writes). Corrupt must be loud, like the registry rule.
+    const project = await makeProjectDir();
+    await mkdir(join(project, '.research'), { recursive: true });
+    const lockFile = join(project, '.research', 'project-lock.json');
+    const garbage = '{"pid": 123, "purpose"';
+    await writeFile(lockFile, garbage, 'utf8');
+    await expect(acquireProjectLock(project, 'unit-test')).rejects.toThrow(/not valid JSON/);
+    expect(await readFile(lockFile, 'utf8')).toBe(garbage); // never rewritten
+    // Valid JSON with the wrong shape is corrupt too, not a free lock.
+    await writeFile(lockFile, '{"hello":"world"}', 'utf8');
+    await expect(acquireProjectLock(project, 'unit-test')).rejects.toThrow(/unexpected shape/);
+  });
+
   it('refuses a live foreign holder, takes over a stale one, releases idempotently', async () => {
     const project = await makeProjectDir();
 

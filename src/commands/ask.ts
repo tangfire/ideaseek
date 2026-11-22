@@ -99,7 +99,7 @@ export function sanitizeSupervisorCliArgs(argv: readonly string[]): string[] | n
   return args;
 }
 
-function parseSupervisorOutput(output: string): {
+export function parseSupervisorOutput(output: string): {
   kind: string;
   answer?: string;
   cliArgs?: string[] | null;
@@ -107,20 +107,19 @@ function parseSupervisorOutput(output: string): {
   summary?: string;
 } | null {
   try {
-    const parsed = JSON.parse(output) as {
-      kind?: string;
-      answer?: string;
-      cliArgs?: string[] | null;
-      reason?: string;
-      summary?: string;
-    };
+    const parsed = JSON.parse(output) as Record<string, unknown>;
     if (!parsed || typeof parsed.kind !== 'string') return null;
+    // Field-level coercion: live model output can put a number where a
+    // string belongs (answer: 42) — an unguarded .trim() downstream would
+    // crash the whole ask turn on otherwise-fine JSON.
     return {
       kind: parsed.kind,
-      answer: parsed.answer,
-      cliArgs: parsed.cliArgs,
-      reason: parsed.reason,
-      summary: parsed.summary,
+      answer: typeof parsed.answer === 'string' ? parsed.answer : undefined,
+      cliArgs: Array.isArray(parsed.cliArgs)
+        ? parsed.cliArgs.filter((arg): arg is string => typeof arg === 'string')
+        : null,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : undefined,
+      summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
     };
   } catch {
     return null;

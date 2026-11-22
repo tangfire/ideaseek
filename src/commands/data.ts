@@ -133,7 +133,8 @@ async function acquisitionHashFor(
   const ledger = await readFile(join(root, 'knowledge', 'dataset-acquisitions.json'), 'utf8')
     .then((text) => JSON.parse(text) as { records?: AcquisitionRecord[] })
     .catch(() => null);
-  const match = [...(ledger?.records ?? [])].reverse().find((record) => record.relPath === relPath);
+  const ledgerRecords = ledger && Array.isArray(ledger.records) ? ledger.records : [];
+  const match = [...ledgerRecords].reverse().find((record) => record.relPath === relPath);
   if (!match || match.bytes !== size || !isContentHash(match.sha256)) return null;
   return match.sha256 as ContentHash;
 }

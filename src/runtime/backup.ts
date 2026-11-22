@@ -55,11 +55,17 @@ function recordsPath(root: string): string {
 export async function listBackupRecords(root: string, limit = 50): Promise<BackupRecord[]> {
   try {
     const raw = await readFile(recordsPath(root), 'utf8');
-    const records = raw
-      .split(/\r?\n/)
-      .filter((line) => line.trim())
-      .map((line) => JSON.parse(line) as BackupRecord)
-      .filter((record) => record && (record.status === 'ok' || record.status === 'failed'));
+    const records: BackupRecord[] = [];
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const record = JSON.parse(line) as BackupRecord;
+        if (record && (record.status === 'ok' || record.status === 'failed')) records.push(record);
+      } catch {
+        // One truncated line (crash mid-append) must not erase the whole
+        // backup history — skip the bad line, keep every readable one.
+      }
+    }
     return records.slice(-limit);
   } catch {
     return [];

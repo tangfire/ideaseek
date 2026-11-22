@@ -112,10 +112,16 @@ export function shouldNotifyAlert(
 export async function listNotifications(root: string, limit = 10): Promise<NotificationRecord[]> {
   try {
     const raw = await readFile(notificationsPath(root), 'utf8');
-    const records = raw
-      .split(/\r?\n/)
-      .filter((line) => line.trim())
-      .map((line) => JSON.parse(line) as NotificationRecord);
+    const records: NotificationRecord[] = [];
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        records.push(JSON.parse(line) as NotificationRecord);
+      } catch {
+        // A truncated tail line is the normal crash artifact of an
+        // append-only ledger — skip it, never discard the whole history.
+      }
+    }
     return records.slice(-limit).reverse();
   } catch {
     return [];
