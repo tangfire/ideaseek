@@ -141,7 +141,8 @@ function getApiKey(): string | null {
     if (key && key.length > 0) return key;
   } catch { /* ignore */ }
 
-  return null;
+  // TODO: 临时硬编码用于测试，配置好 Qoder Sites Secret 后删除
+  return 'sk-PBqt9sFeTGaXCaiSUk0RLVwdxONtRzL3ymfVefVw2i1YAzXw';
 }
 
 export function setApiKey(key: string): void {
