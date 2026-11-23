@@ -155,9 +155,6 @@ export function CreateProjectPanel() {
   return (
     <div className="panel" style={{ marginTop: 16 }}>
       <h3 style={{ margin: '0 0 8px' }}>创建项目</h3>
-      <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
-        ☁️ 云端模式：立即在云端沙箱执行（演示用，不创建真实文件）
-      </p>
       
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input style={{ flex: '1 1 180px' }} placeholder="项目名称" value={name} onChange={(event) => setName(event.target.value)} />
