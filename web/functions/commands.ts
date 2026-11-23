@@ -333,6 +333,28 @@ async function resolveProject(
  * 提交一条命令。返回的永远是"已排队"而不是"已完成"——这一条就是 R2 的同一原则
  * 用在执行面上：云端没有执行能力，界面就不许写成执行结果。
  */
+/**
+ * 获取或创建匿名 Owner——用于未登录状态下的 project_create。
+ * 所有匿名用户共享同一个 owner 行，避免为每次请求创建新记录。
+ */
+async function getOrCreateAnonymousOwner(db: Db, BackendError: BackendErrorLike): Promise<string> {
+  const ANONYMOUS_EMAIL = '__anonymous__@system';
+  const existing = rows<{ id: string }>(
+    await db.from<{ id: string }>('cloud_owner').select('id').eq('email', ANONYMOUS_EMAIL).limit(1),
+    BackendError,
+  )[0];
+  if (existing) return existing.id;
+  
+  const created = rows<{ id: string }>(
+    await db
+      .from<{ id: string; email: string; display_name: string }>('cloud_owner')
+      .insert({ email: ANONYMOUS_EMAIL, display_name: 'Anonymous User' })
+      .select('id'),
+    BackendError,
+  )[0];
+  return created.id;
+}
+
 export async function enqueueCommand(
   db: Db,
   viewer: Viewer,
@@ -341,7 +363,13 @@ export async function enqueueCommand(
   BackendError: BackendErrorLike,
 ): Promise<Response> {
   if (!COMMAND_TYPES.includes(type as CommandType)) throw new BackendError('not_found', 404);
-  if (!viewer.ownerId) throw new BackendError('login_required', 401);
+  
+  // project_create 允许匿名：未登录时自动分配系统匿名 Owner
+  let effectiveOwnerId = viewer.ownerId;
+  if (!effectiveOwnerId && type === 'project_create') {
+    effectiveOwnerId = await getOrCreateAnonymousOwner(db, BackendError);
+  }
+  if (!effectiveOwnerId) throw new BackendError('login_required', 401);
 
   const payload = validatePayload(type, body, BackendError);
   const externalCommandId = text(body.command_id, 64) ?? crypto.randomUUID();
@@ -352,7 +380,7 @@ export async function enqueueCommand(
     BackendError,
   )[0];
   if (existing) {
-    if (existing.created_by !== viewer.ownerId) throw new BackendError('no_access', 403);
+    if (existing.created_by !== effectiveOwnerId) throw new BackendError('no_access', 403);
     // 幂等键撞车但载荷不同：客户端把同一个 id 用在了两件事上。仍然只返回原记录
     // （不插第二行、不改状态），但必须把 mismatch 说出来——静默回放会让界面显示一条
     // 用户其实没打算排的动作。
@@ -373,7 +401,7 @@ export async function enqueueCommand(
     const externalId = text(body.external_id, 64);
     if (!externalId) throw new BackendError('invalid_input:external_id', 400);
     const project = await resolveProject(db, externalId, BackendError);
-    if (project.owner_id !== viewer.ownerId) {
+    if (project.owner_id !== effectiveOwnerId) {
       // 不是 Owner：对外按"不存在"处理（deniesAsAbsent 的同一条理由——external_id
       // 就是本地目录名，403 等于承认它存在）。
       throw new BackendError(deniesAsAbsent(viewer) ? 'not_found' : 'no_access', deniesAsAbsent(viewer) ? 404 : 403);
@@ -390,7 +418,7 @@ export async function enqueueCommand(
         type,
         payload,
         status: 'queued',
-        created_by: viewer.ownerId,
+        created_by: effectiveOwnerId,
         created_at: new Date().toISOString(),
       })
       .select('*'),
