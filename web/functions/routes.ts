@@ -15,6 +15,7 @@ import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, 
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
 import { agentCommandHeartbeat, agentHeartbeat, agentView, cancelCommand, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
 import { accessView, grantCreate, grantRevoke, shareCreate, shareRevoke } from './access.ts';
+import { stepView } from './engine/step-driver.ts';
 
 export interface Deps {
   db: Db;
@@ -553,6 +554,14 @@ export function application(deps: Deps) {
       if (!externalId) throw new BackendError('invalid_input:external_id', 400);
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       return shareRevoke(db, viewer, externalId, shareRevokeMatch[1]!, BackendError);
+    }
+
+    // 步进驱动器：浏览器泵每 2s 调一次，认领并执行一个任务单元。
+    if (path === '/app/step' && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+      const ownerId = viewer.ownerId ?? 'anonymous';
+      return stepView(db, body, BackendError, ownerId);
     }
 
     throw new BackendError('not_found', 404);

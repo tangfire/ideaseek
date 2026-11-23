@@ -26,6 +26,7 @@ export interface Builder<T = Record<string, unknown>> extends PromiseLike<QueryR
   insert(rows: unknown): Builder<T>;
   insertIfAbsent(row: unknown, options: { onConflict: string }): Builder<T>;
   update(patch: unknown): Builder<T>;
+  delete(): Builder<T>;
 }
 
 export interface Db {

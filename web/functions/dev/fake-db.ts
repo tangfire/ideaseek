@@ -129,6 +129,17 @@ export function createFakeDb(): FakeDb {
             Object.assign(row, patch);
             added.push(row);
           }
+        } else if (mutation.kind === 'delete') {
+          const survivors: Row[] = [];
+          for (const row of rows) {
+            if (this.matches(row)) {
+              added.push(row);
+            } else {
+              survivors.push(row);
+            }
+          }
+          rows.length = 0;
+          rows.push(...survivors);
         } else {
           for (const candidate of Array.isArray(patch) ? patch : [patch]) {
             const conflictKey = (mutation.onConflict ?? '').split(',').map((key) => key.trim()).filter(Boolean);

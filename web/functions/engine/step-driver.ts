@@ -1,0 +1,310 @@
+/**
+ * 步进驱动器：浏览器每 2s 调用一次 POST /app/step。
+ *
+ * 每次调用：
+ *   1. 找到有活跃 run 的项目
+ *   2. 认领一个 queued 任务（唯一键插入 lease）
+ *   3. 执行一个最小可提交单元（≤45s）
+ *   4. 提交结果（CAS 更新）
+ *   5. 写 outbox 帧推送 UI
+ *   6. 返回下一步状态
+ *
+ * 没有 queued 任务时检查当前 run 阶段，看是否需要推进到下一阶段并生成新任务。
+ */
+import type { BackendErrorLike, Db } from '../deps.ts';
+import { rows } from '../deps.ts';
+import { CloudEngine, type CloudRun, type CloudTask } from './cloud-engine.ts';
+
+export interface StepRequest {
+  project_id?: string;
+  run_id?: string;
+}
+
+export interface StepResult {
+  action: 'claimed' | 'advanced' | 'idle' | 'completed';
+  task?: CloudTask;
+  run?: CloudRun;
+  newPhase?: string;
+  events?: Array<{ seq: number; type: string; summary: string }>;
+  message: string;
+}
+
+const PHASE_ORDER = [
+  'INIT', 'INPUT_READY', 'CALIBRATING', 'PAPER_ANALYSIS', 'DATA_READY',
+  'PROTOCOL_PROPOSED', 'PROTOCOL_REVIEW', 'COMPARISON_DISCOVERY',
+  'COMPARISON_REPRODUCTION', 'BASELINE_VALIDATED', 'IDEA_GENERATION',
+  'IDEA_SCREENING', 'EXPERIMENTING', 'IDEA_REVIEW', 'COMPLETED',
+] as const;
+
+const PHASE_TASK_KIND: Record<string, string> = {
+  CALIBRATING: 'calibrate',
+  PAPER_ANALYSIS: 'analyze_paper',
+  DATA_READY: 'prepare_data',
+  PROTOCOL_PROPOSED: 'propose_protocol',
+  IDEA_GENERATION: 'generate_idea',
+  IDEA_SCREENING: 'screen_idea',
+};
+
+export async function handleStep(
+  db: Db,
+  BackendError: BackendErrorLike,
+  body: StepRequest,
+  ownerId: string,
+): Promise<StepResult> {
+  const engine = new CloudEngine(db, BackendError);
+
+  const run = await resolveRun(engine, BackendError, body, ownerId);
+  if (!run) return { action: 'idle', message: '没有活跃的运行' };
+  if (run.status === 'succeeded' || run.phase_tag === 'COMPLETED') {
+    return { action: 'completed', run, message: '运行已完成' };
+  }
+
+  const claim = await engine.claimNextTask(run.id, 'step-driver');
+  if (claim) {
+    const result = await executeTask(engine, run, claim.task, claim.leaseEpoch);
+    return {
+      action: 'claimed',
+      task: result.task,
+      run: result.run,
+      events: result.events,
+      message: `执行了 ${claim.task.kind} 任务`,
+    };
+  }
+
+  const advanced = await tryAdvancePhase(engine, run);
+  if (advanced) {
+    return {
+      action: 'advanced',
+      run: advanced,
+      newPhase: advanced.phase_tag,
+      message: `推进到 ${advanced.phase_tag} 阶段`,
+    };
+  }
+
+  return { action: 'idle', run, message: `阶段 ${run.phase_tag} 无待执行任务` };
+}
+
+async function resolveRun(
+  engine: CloudEngine,
+  BackendError: BackendErrorLike,
+  body: StepRequest,
+  _ownerId: string,
+): Promise<CloudRun | null> {
+  if (body.run_id) return engine.getRun(body.run_id);
+
+  if (body.project_id) {
+    const runs = await engine.listActiveRuns(body.project_id);
+    return runs[0] ?? null;
+  }
+
+  const allRuns = await engine.listActiveRuns();
+  return allRuns[0] ?? null;
+}
+
+async function executeTask(
+  engine: CloudEngine,
+  run: CloudRun,
+  task: CloudTask,
+  leaseEpoch: number,
+): Promise<{ task: CloudTask; run: CloudRun; events: Array<{ seq: number; type: string; summary: string }> }> {
+  const events: Array<{ seq: number; type: string; summary: string }> = [];
+
+  const startEvent = await engine.appendEvent({
+    runId: run.id,
+    type: 'task_started',
+    summary: `开始执行 ${task.kind} (attempt ${task.attempt})`,
+    phaseTag: run.phase_tag,
+    objectType: 'task',
+    objectId: task.external_task_id,
+  });
+  events.push({ seq: startEvent.seq, type: startEvent.type, summary: startEvent.summary });
+
+  try {
+    const taskResult = await performTaskWork(engine, run, task);
+
+    const committed = await engine.commitTask({
+      taskId: task.id,
+      workerId: 'step-driver',
+      leaseEpoch,
+      result: taskResult,
+    });
+
+    const commitEvent = await engine.appendEvent({
+      runId: run.id,
+      type: 'task_completed',
+      summary: `${task.kind} 完成`,
+      phaseTag: run.phase_tag,
+      objectType: 'task',
+      objectId: task.external_task_id,
+    });
+    events.push({ seq: commitEvent.seq, type: commitEvent.type, summary: commitEvent.summary });
+
+    await engine.publishOutboxFrame(run.project_id, 'state', {
+      run: { external_run_id: run.external_run_id, phase_tag: run.phase_tag, status: run.status },
+      task: { external_task_id: task.external_task_id, kind: task.kind, status: 'succeeded' },
+    });
+
+    const updatedRun = await engine.getRun(run.id) ?? run;
+    return { task: committed, run: updatedRun, events };
+  } catch (err) {
+    const errorClass = err instanceof Error ? err.name : 'unknown';
+    const errorSummary = err instanceof Error ? err.message : String(err);
+
+    const failed = await engine.failTask({
+      taskId: task.id,
+      workerId: 'step-driver',
+      leaseEpoch,
+      errorClass,
+      errorSummary,
+    });
+
+    const failEvent = await engine.appendEvent({
+      runId: run.id,
+      type: 'task_failed',
+      summary: `${task.kind} 失败: ${errorSummary}`,
+      phaseTag: run.phase_tag,
+      objectType: 'task',
+      objectId: task.external_task_id,
+      level: 'error',
+    });
+    events.push({ seq: failEvent.seq, type: failEvent.type, summary: failEvent.summary });
+
+    return { task: failed, run, events };
+  }
+}
+
+/**
+ * 执行单个任务的实际工作。
+ * 最小闭环：Class A 阶段全是 LLM 推理，这里返回结构化占位结果。
+ * M2 阶段接入 FunctionLlmAdapter 做真实的论文分析与 idea 生成。
+ */
+async function performTaskWork(
+  engine: CloudEngine,
+  run: CloudRun,
+  task: CloudTask,
+): Promise<Record<string, unknown>> {
+  switch (task.kind) {
+    case 'calibrate':
+      return { calibrated: true, strategy: 'standard' };
+
+    case 'analyze_paper': {
+      const paperId = (task.payload as Record<string, unknown> | null)?.paper_id as string | undefined;
+      const nodeId = `paper-${paperId ?? task.external_task_id}`;
+      await engine.upsertResearchNode({
+        runId: run.id,
+        nodeId,
+        kind: 'paper_analysis',
+        status: 'succeeded',
+        title: paperId ? `Paper ${paperId}` : 'Paper analysis',
+        detail: { task_id: task.external_task_id, kind: task.kind },
+      });
+      return { paper_id: paperId ?? null, claims_extracted: 0, status: 'analyzed' };
+    }
+
+    case 'generate_idea': {
+      const nodeId = `idea-${task.external_task_id}`;
+      await engine.upsertResearchNode({
+        runId: run.id,
+        nodeId,
+        kind: 'idea',
+        status: 'proposed',
+        title: 'Generated idea',
+        detail: { task_id: task.external_task_id },
+      });
+      return { idea_id: nodeId, status: 'proposed' };
+    }
+
+    default:
+      return { status: 'completed', kind: task.kind };
+  }
+}
+
+async function tryAdvancePhase(engine: CloudEngine, run: CloudRun): Promise<CloudRun | null> {
+  const currentIdx = PHASE_ORDER.indexOf(run.phase_tag as typeof PHASE_ORDER[number]);
+  if (currentIdx < 0 || currentIdx >= PHASE_ORDER.length - 1) return null;
+
+  const nextPhase = PHASE_ORDER[currentIdx + 1];
+  const taskKind = PHASE_TASK_KIND[nextPhase];
+
+  if (!taskKind) {
+    const updated = await engine.setRunPhase(run.id, nextPhase);
+    await engine.setStageProgress(run.id, nextPhase, 'active');
+    await engine.appendEvent({
+      runId: run.id,
+      type: 'phase_advanced',
+      summary: `进入 ${nextPhase} 阶段`,
+      phaseTag: nextPhase,
+    });
+    return updated;
+  }
+
+  const tasks = await engine.listTasks(run.id);
+  const hasPendingForNext = tasks.some((t) => t.phase_tag === nextPhase && (t.status === 'queued' || t.status === 'claimed'));
+  if (hasPendingForNext) return null;
+
+  const updated = await engine.setRunPhase(run.id, nextPhase, { status: 'running' });
+  await engine.setStageProgress(run.id, nextPhase, 'active');
+  await engine.setStageProgress(run.id, run.phase_tag, 'passed');
+
+  await enqueueTasksForPhase(engine, run, nextPhase, taskKind);
+
+  await engine.appendEvent({
+    runId: run.id,
+    type: 'phase_advanced',
+    summary: `进入 ${nextPhase} 阶段，已创建 ${taskKind} 任务`,
+    phaseTag: nextPhase,
+  });
+
+  return updated;
+}
+
+async function enqueueTasksForPhase(
+  engine: CloudEngine,
+  run: CloudRun,
+  phase: string,
+  kind: string,
+): Promise<void> {
+  if (phase === 'PAPER_ANALYSIS') {
+    const papers = run.question ? [run.question] : [];
+    for (let i = 0; i < Math.max(papers.length, 1); i++) {
+      await engine.enqueueTask({
+        runId: run.id,
+        kind,
+        phaseTag: phase,
+        payload: { paper_id: `paper-${i}`, index: i },
+      });
+    }
+  } else if (phase === 'IDEA_GENERATION') {
+    await engine.enqueueTask({
+      runId: run.id,
+      kind,
+      phaseTag: phase,
+      payload: { round: 1 },
+    });
+  } else {
+    await engine.enqueueTask({
+      runId: run.id,
+      kind,
+      phaseTag: phase,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP 入口
+// ---------------------------------------------------------------------------
+
+export async function stepView(
+  db: Db,
+  body: Record<string, unknown>,
+  BackendError: BackendErrorLike,
+  ownerId: string,
+): Promise<Response> {
+  const req: StepRequest = {
+    project_id: typeof body.project_id === 'string' ? body.project_id : undefined,
+    run_id: typeof body.run_id === 'string' ? body.run_id : undefined,
+  };
+
+  const result = await handleStep(db, BackendError, req, ownerId);
+  return Response.json(result);
+}

@@ -80,7 +80,7 @@ const web = (json: unknown): RequestInit => ({ method: 'POST', headers: { 'conte
 const agent = (json: unknown): RequestInit => ({ method: 'POST', headers: { [SYNC_TOKEN_HEADER]: AGENT_TOKEN, 'content-type': 'application/json' }, body: JSON.stringify(json) });
 
 async function enqueue(as: (user: string | null) => (ctx: SiteContext) => Promise<Response>, commandId: string, payload: Record<string, unknown> = {}) {
-  return call(as('owner-1'), '/commands/git_commit', web({ external_id: 'prj-listed', command_id: commandId, message: '本地提交', ...payload }));
+  return call(as('owner-1'), '/commands/run_start', web({ external_id: 'prj-listed', command_id: commandId, question: '测试运行', ...payload }));
 }
 
 // --------------------------------------------------------------------------- 撤回排队
@@ -127,7 +127,7 @@ test('撤回的入口条件：缺参数、未知命令、别人的项目、匿�
   fake.seed('cloud_command', {
     project_id: other.id,
     external_command_id: 'cmd-theirs',
-    type: 'git_commit',
+    type: 'run_start',
     payload: { message: '别人的' },
     status: 'queued',
     created_by: other.owner_id,

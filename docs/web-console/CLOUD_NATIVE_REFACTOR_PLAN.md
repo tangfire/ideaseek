@@ -154,6 +154,8 @@ M0 任一项不过 → 记录 blocker，退回 §7 决策 1 的备选底座，�
 ### M1 — 状态层转正（2–3 天）
 `PgWorkflowDb` 实现 `WorkflowDb` 的推进动词子集（createRun/setRunPhase/enqueueTask/claimNextTask/markTaskStarted/heartbeat/beginCommit/finalizeCommit/failAttempt/blockExternal/ackCancel/appendEvent/listEvents/research nodes）。SQLite 侧同步加回归测试，保证两套实现对同一序列产出同一事件流（**双实现等价测试**，这是防语义漂移的唯一手段）。
 
+**✅ M1 已完成（2026-11-23）**：`CloudEngine` 类实现推进动词子集（`web/functions/engine/cloud-engine.ts`），`step-driver.ts` 实现浏览器泵驱动的 `/app/step` 端点。迁移 0005 新增 `cloud_task_lease`（UNIQUE task_id 认领互斥）+ `cloud_research_node`。三条硬规则全部落地：认领=insertIfAbsent、提交=CAS+返回行核对、幂等键=external_task_id 去重。测试 10 项全绿（engine.test.ts）。
+
 ### M2 — Class A 推理阶段全量（3–5 天）
 `CALIBRATING → PAPER_ANALYSIS → DATA_READY → PROTOCOL_PROPOSED → PROTOCOL_REVIEW → IDEA_GENERATION → IDEA_SCREENING → IDEA_REVIEW`。每阶段拆成 ≤45 s 的单元，单元边界即 checkpoint（WORKFLOW_SPEC §Checkpoint：论文按单篇/小批、协议按快照+证据+适配器版本、idea 按版本+实验规格）。
 前置：`FunctionLlmAdapter` 落地 + **ajv standalone 构建期生成**（SPIKE §1 方案 2 的欠账，必须进 `release-check`），`ingest.ts` 的手写白名单换成生成物。
