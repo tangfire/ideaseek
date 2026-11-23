@@ -120,8 +120,13 @@ export class CloudEngine {
     return rows(result, this.BackendError)[0] ?? null;
   }
 
-  async getProjectByExternal(externalId: string): Promise<{ id: string } | null> {
-    const result = await this.db.from<{ id: string }>('cloud_project').select('id').eq('external_id', externalId).limit(1);
+  async getProjectByExternal(externalId: string): Promise<{ id: string; owner_id: string } | null> {
+    const result = await this.db.from<{ id: string; owner_id: string }>('cloud_project').select('id,owner_id').eq('external_id', externalId).limit(1);
+    return rows(result, this.BackendError)[0] ?? null;
+  }
+
+  async getProjectById(projectId: string): Promise<{ id: string; owner_id: string } | null> {
+    const result = await this.db.from<{ id: string; owner_id: string }>('cloud_project').select('id,owner_id').eq('id', projectId).limit(1);
     return rows(result, this.BackendError)[0] ?? null;
   }
 
@@ -134,13 +139,18 @@ export class CloudEngine {
     return rows(result, this.BackendError)[0] ?? null;
   }
 
-  async setRunPhase(runId: string, phase: RunPhase, opts?: { status?: RunStatus; summary?: string }): Promise<CloudRun> {
+  async setRunPhase(runId: string, phase: RunPhase, opts?: { status?: RunStatus; summary?: string; blockReason?: string | null }): Promise<CloudRun> {
+    const now = new Date().toISOString();
     const patch: Record<string, unknown> = {
       phase_tag: phase,
-      heartbeat_at: new Date().toISOString(),
+      heartbeat_at: now,
     };
-    if (opts?.status) patch.status = opts.status;
+    if (opts?.status) {
+      patch.status = opts.status;
+      if (opts.status === 'succeeded') patch.finished_at = now;
+    }
     if (opts?.summary !== undefined) patch.summary = opts.summary;
+    if (opts?.blockReason !== undefined) patch.block_reason = opts.blockReason;
 
     const result = await this.db.from<CloudRun>('cloud_run')
       .update(patch)
@@ -155,7 +165,7 @@ export class CloudEngine {
     let q = this.db.from<CloudRun>('cloud_run').select('*');
     if (projectId) q = q.eq('project_id', projectId);
     const all = rows(await q, this.BackendError);
-    return all.filter((r) => r.status === 'created' || r.status === 'running' || r.status === 'paused');
+    return all.filter((r) => r.status === 'created' || r.status === 'running' || r.status === 'paused' || r.status === 'blocked');
   }
 
   // ---- Task 生命周期 ----

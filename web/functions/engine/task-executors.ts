@@ -11,7 +11,6 @@ export interface TaskExecutionContext {
   engine: CloudEngine;
   run: CloudRun;
   task: CloudTask;
-  deepseekApiKey?: string | null;
 }
 
 // 粗略成本估算：DeepSeek 约 $0.14/1M input tokens, $0.28/1M output tokens
@@ -66,7 +65,6 @@ export async function executeAnalyzePaper(ctx: TaskExecutionContext): Promise<Re
     inputs: [{ name: 'Paper content', content: paperText.slice(0, 12_000) }],
     outputSchema: PAPER_ANALYSIS_SCHEMA,
     maxTokens: 2048,
-    apiKey: ctx.deepseekApiKey ?? undefined,
   });
 
   const parsed = result.parsed ?? {};
@@ -160,7 +158,6 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
     ],
     outputSchema: IDEA_GENERATION_SCHEMA,
     maxTokens: 2048,
-    apiKey: ctx.deepseekApiKey ?? undefined,
   });
 
   const parsed = result.parsed ?? {};
@@ -215,8 +212,8 @@ export async function executeCalibrate(ctx: TaskExecutionContext): Promise<Recor
     instruction: 'Evaluate whether this research question is well-formed for an automated research workflow. Return a calibration assessment.',
     inputs: [{ name: 'Research question', content: ctx.run.question ?? 'Not specified' }],
     outputSchema: `calibration-v1: {"feasible": boolean, "strategy": "starter|standard|research", "estimated_papers": number, "notes": "string"}`,
-    maxTokens: 512,
-    apiKey: ctx.deepseekApiKey ?? undefined,
+    // 渠道是推理模型：太小的预算会被推理 token 耗尽，正文返回空。
+    maxTokens: 2048,
   });
 
   const parsed = result.parsed ?? {};
@@ -285,7 +282,6 @@ For each comparison, identify:
     ],
     outputSchema: COMPARISON_DISCOVERY_SCHEMA,
     maxTokens: 2048,
-    apiKey: ctx.deepseekApiKey ?? undefined,
   });
 
   const parsed = result.parsed ?? {};
@@ -453,6 +449,191 @@ export async function executeRunExperiment(ctx: TaskExecutionContext): Promise<R
 }
 
 // ---------------------------------------------------------------------------
+// prepare_data：研究问题 + 已分析论文 → 数据准备计划
+// ---------------------------------------------------------------------------
+
+const DATA_PLAN_SCHEMA = `data-plan-v1:
+{
+  "datasets": [{"name": "string", "source": "string — where to obtain it", "role": "train|eval|calibration", "size_estimate": "string"}],
+  "preprocessing": ["string — concrete preprocessing steps"],
+  "splits": {"train": "string", "validation": "string", "test": "string"},
+  "risks": ["string — data quality or leakage risks"]
+}`;
+
+export async function executePrepareData(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  const papers = await ctx.engine.listTasks(ctx.run.id);
+  const analyzedPapers = papers.filter((t) => t.kind === 'analyze_paper' && t.status === 'succeeded');
+  const paperContexts = analyzedPapers.slice(0, 5).map((p) => {
+    const r = (p.result as Record<string, unknown> | null) ?? {};
+    return `Paper: ${r.title ?? p.external_task_id}\nMethod: ${r.method_summary ?? 'N/A'}\nUnknowns: ${JSON.stringify(r.unknowns ?? [])}`;
+  });
+
+  const result = await callLlm({
+    instruction: 'Design a concrete data preparation plan for this research question: which datasets to obtain, how to preprocess them, how to split them, and what data risks (leakage, bias, size) to watch for. The plan must be executable by a computational experiment pipeline.',
+    inputs: [
+      { name: 'Research question', content: ctx.run.question ?? 'Not specified' },
+      { name: 'Analyzed papers', content: paperContexts.join('\n---\n') || 'No papers analyzed yet.' },
+    ],
+    outputSchema: DATA_PLAN_SCHEMA,
+    maxTokens: 2048,
+  });
+
+  const parsed = result.parsed ?? {};
+  const datasets = Array.isArray(parsed.datasets) ? parsed.datasets : [];
+
+  await ctx.engine.upsertResearchNode({
+    runId: ctx.run.id,
+    nodeId: `data-plan-${ctx.task.external_task_id}`,
+    kind: 'data_plan',
+    status: 'succeeded',
+    title: '数据准备计划',
+    detail: {
+      datasets,
+      preprocessing: parsed.preprocessing ?? [],
+      splits: parsed.splits ?? null,
+      risks: parsed.risks ?? [],
+    },
+  });
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'data_prepared',
+    summary: `数据计划就绪：${datasets.length} 个数据集`,
+    phaseTag: 'DATA_READY',
+    objectType: 'data_plan',
+    objectId: ctx.task.external_task_id,
+  });
+
+  await recordLlmCost(ctx, result, 'prepare_data');
+
+  return { datasets, preprocessing: parsed.preprocessing ?? [], splits: parsed.splits ?? null, risks: parsed.risks ?? [], llm_usage: result.usage, llm_model: result.model };
+}
+
+// ---------------------------------------------------------------------------
+// propose_protocol：研究问题 + 数据计划 → 评测协议
+// ---------------------------------------------------------------------------
+
+const PROTOCOL_SCHEMA = `protocol-v1:
+{
+  "metrics": [{"name": "string", "definition": "string", "higher_is_better": boolean}],
+  "baselines": ["string — baseline methods to compare against"],
+  "procedure": ["string — ordered experimental steps"],
+  "stopping_criteria": "string",
+  "threats_to_validity": ["string"]
+}`;
+
+export async function executeProposeProtocol(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  const nodes = await ctx.engine.listResearchNodes(ctx.run.id);
+  const dataPlan = nodes.find((n) => n.kind === 'data_plan' && n.status === 'succeeded');
+  const comparisons = nodes.find((n) => n.kind === 'comparison_discovery');
+
+  const result = await callLlm({
+    instruction: 'Propose a rigorous evaluation protocol for this research question: metrics with precise definitions, baselines, an ordered experimental procedure, stopping criteria, and threats to validity. The protocol must make results reproducible and comparable.',
+    inputs: [
+      { name: 'Research question', content: ctx.run.question ?? 'Not specified' },
+      { name: 'Data plan', content: dataPlan ? JSON.stringify(dataPlan.detail ?? {}) : 'No data plan yet.' },
+      { name: 'Known comparisons', content: comparisons ? JSON.stringify(comparisons.detail ?? {}) : 'None discovered yet.' },
+    ],
+    outputSchema: PROTOCOL_SCHEMA,
+    maxTokens: 2048,
+  });
+
+  const parsed = result.parsed ?? {};
+  const metrics = Array.isArray(parsed.metrics) ? parsed.metrics : [];
+
+  await ctx.engine.upsertResearchNode({
+    runId: ctx.run.id,
+    nodeId: `protocol-${ctx.task.external_task_id}`,
+    kind: 'protocol',
+    status: 'succeeded',
+    title: '评测协议',
+    detail: {
+      metrics,
+      baselines: parsed.baselines ?? [],
+      procedure: parsed.procedure ?? [],
+      stopping_criteria: parsed.stopping_criteria ?? null,
+      threats_to_validity: parsed.threats_to_validity ?? [],
+    },
+  });
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'protocol_proposed',
+    summary: `评测协议就绪：${metrics.length} 项指标`,
+    phaseTag: 'PROTOCOL_PROPOSED',
+    objectType: 'protocol',
+    objectId: ctx.task.external_task_id,
+  });
+
+  await recordLlmCost(ctx, result, 'propose_protocol');
+
+  return { metrics, baselines: parsed.baselines ?? [], procedure: parsed.procedure ?? [], llm_usage: result.usage, llm_model: result.model };
+}
+
+// ---------------------------------------------------------------------------
+// screen_idea：已生成的 idea → 逐个评审，淘汰的不再进 EXPERIMENTING
+// ---------------------------------------------------------------------------
+
+const IDEA_SCREENING_SCHEMA = `idea-screening-v1:
+{
+  "screenings": [{"idea_id": "string", "verdict": "advance|reject", "score": number, "reason": "string"}]
+}`;
+
+export async function executeScreenIdea(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  const nodes = await ctx.engine.listResearchNodes(ctx.run.id);
+  const proposedIdeas = nodes.filter((n) => n.kind === 'idea' && n.status === 'proposed');
+  if (proposedIdeas.length === 0) {
+    return { screened: 0, advanced: 0, rejected: 0, note: '没有待评审的 idea' };
+  }
+
+  const result = await callLlm({
+    instruction: 'Screen each research idea below against the research question. For each idea return a verdict (advance or reject), a 0-10 score, and a one-sentence reason. Reject ideas that are infeasible, untestable, or duplicate existing work. Return one screening entry per idea, using the exact idea_id given.',
+    inputs: [
+      { name: 'Research question', content: ctx.run.question ?? 'Not specified' },
+      {
+        name: 'Ideas',
+        content: proposedIdeas.map((n) => `idea_id: ${n.node_id}\ntitle: ${n.title ?? ''}\n${JSON.stringify(n.detail ?? {})}`).join('\n---\n'),
+      },
+    ],
+    outputSchema: IDEA_SCREENING_SCHEMA,
+    maxTokens: 2048,
+  });
+
+  const parsed = result.parsed ?? {};
+  const screenings = Array.isArray(parsed.screenings) ? parsed.screenings as Array<Record<string, unknown>> : [];
+  let advanced = 0;
+  let rejected = 0;
+
+  for (const idea of proposedIdeas) {
+    const verdict = screenings.find((s) => s.idea_id === idea.node_id);
+    const decision = verdict?.verdict === 'reject' ? 'rejected' : 'proposed';
+    if (decision === 'rejected') rejected++;
+    else advanced++;
+    await ctx.engine.upsertResearchNode({
+      runId: ctx.run.id,
+      nodeId: idea.node_id,
+      kind: 'idea',
+      status: decision,
+      title: idea.title ?? undefined,
+      detail: { ...(idea.detail ?? {}), screening: verdict ?? { verdict: 'advance', reason: '评审未覆盖，默认保留' } },
+    });
+  }
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'ideas_screened',
+    summary: `Idea 评审完成：${advanced} 个晋级，${rejected} 个淘汰`,
+    phaseTag: 'IDEA_SCREENING',
+    objectType: 'idea',
+    objectId: ctx.task.external_task_id,
+  });
+
+  await recordLlmCost(ctx, result, 'screen_idea');
+
+  return { screened: proposedIdeas.length, advanced, rejected, llm_usage: result.usage, llm_model: result.model };
+}
+
+// ---------------------------------------------------------------------------
 // 分发器
 // ---------------------------------------------------------------------------
 
@@ -464,8 +645,14 @@ export async function executeTask(
       return executeCalibrate(ctx);
     case 'analyze_paper':
       return executeAnalyzePaper(ctx);
+    case 'prepare_data':
+      return executePrepareData(ctx);
+    case 'propose_protocol':
+      return executeProposeProtocol(ctx);
     case 'generate_idea':
       return executeGenerateIdea(ctx);
+    case 'screen_idea':
+      return executeScreenIdea(ctx);
     case 'discover_comparison':
       return executeDiscoverComparison(ctx);
     case 'reproduce_comparison':
@@ -475,6 +662,6 @@ export async function executeTask(
     case 'run_experiment':
       return executeRunExperiment(ctx);
     default:
-      return { status: 'completed', kind: ctx.task.kind };
+      throw new Error(`unknown task kind: ${ctx.task.kind}`);
   }
 }

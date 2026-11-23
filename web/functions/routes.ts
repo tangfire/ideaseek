@@ -560,10 +560,13 @@ export function application(deps: Deps) {
     if (path === '/app/step' && request.method === 'POST') {
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-      const ownerId = viewer.ownerId ?? 'anonymous';
-      
-      // M5: per-owner 成本限制检查
-      const quotaCheck = await checkOwnerQuota(db, ownerId, BackendError);
+      // 匿名项目的 owner_id 是系统匿名 Owner 的 UUID，不是字符串 'anonymous'；
+      // 配额必须按同一个主体对齐，否则匿名限额永远查不到项目、永远放行。
+      const ownerId = viewer.ownerId ?? viewer.anonymousOwnerId ?? 'anonymous';
+
+      // M5: per-owner 成本限制检查。blocked 是泵的正常终态之一，走 200：
+      // 429 会被前端 mutateJson 映射成固定"请求过于频繁"文案，限额原因到不了 UI。
+      const quotaCheck = await checkOwnerQuota(db, ownerId, !viewer.ownerId, BackendError);
       if (!quotaCheck.allowed) {
         return Response.json({
           action: 'blocked',
@@ -571,11 +574,10 @@ export function application(deps: Deps) {
           run: null,
           task: null,
           events: [],
-        }, { status: 429 });
+        });
       }
-      
-      const deepseekApiKey = request.headers.get('X-Deepseek-Api-Key');
-      return stepView(db, body, BackendError, ownerId, deepseekApiKey);
+
+      return stepView(db, body, BackendError, ownerId, viewer.anonymousOwnerId);
     }
 
     throw new BackendError('not_found', 404);
@@ -611,57 +613,47 @@ interface QuotaCheckResult {
 
 /**
  * 检查 Owner 的成本是否超过限制。
- * 
+ *
  * 默认限制：每个 Owner 最多 $10 USD（10,000,000 micro USD）。
- * 匿名用户的成本限制更严格：$1 USD（1,000,000 micro USD）。
+ * 匿名用户（含系统匿名 Owner）限制更严格：$1 USD（1,000,000 micro USD）。
+ *
+ * 只用 deps.ts 里验证过的 eq 查询面，不用 `.in()`：受管 SDK 是否支持它没有
+ * 部署读数，fake-db 也没实现——配额闸门不能建立在未验证的动词上。
  */
 async function checkOwnerQuota(
   db: Db,
   ownerId: string,
+  isAnonymous: boolean,
   BackendError: BackendErrorLike,
 ): Promise<QuotaCheckResult> {
-  // 匿名用户限制更严格
-  const isAnonymous = ownerId === 'anonymous' || ownerId === 'null';
   const limitUsdMicro = isAnonymous ? 1_000_000 : 10_000_000; // $1 or $10
-  
-  // 查询该 Owner 所有项目的总成本
+
   const projects = rows<{ id: string }>(
     await db.from<{ id: string }>('cloud_project')
       .select('id')
       .eq('owner_id', ownerId),
     BackendError,
   );
-  
-  if (projects.length === 0) {
-    return { allowed: true, spentUsdMicro: 0, limitUsdMicro };
+
+  let totalSpent = 0;
+  for (const project of projects) {
+    const runs = rows<{ id: string }>(
+      await db.from<{ id: string }>('cloud_run')
+        .select('id')
+        .eq('project_id', project.id),
+      BackendError,
+    );
+    for (const run of runs) {
+      const costs = rows<{ usd_micro: number }>(
+        await db.from<{ usd_micro: number }>('cloud_cost_entry')
+          .select('usd_micro')
+          .eq('run_id', run.id),
+        BackendError,
+      );
+      totalSpent += costs.reduce((sum, c) => sum + (c.usd_micro ?? 0), 0);
+    }
   }
-  
-  const projectIds = projects.map((p) => p.id);
-  
-  // 查询这些项目的所有 run
-  const runs = rows<{ id: string }>(
-    await db.from<{ id: string }>('cloud_run')
-      .select('id')
-      .in('project_id', projectIds),
-    BackendError,
-  );
-  
-  if (runs.length === 0) {
-    return { allowed: true, spentUsdMicro: 0, limitUsdMicro };
-  }
-  
-  const runIds = runs.map((r) => r.id);
-  
-  // 查询所有成本记录
-  const costs = rows<{ usd_micro: number }>(
-    await db.from<{ usd_micro: number }>('cloud_cost_entry')
-      .select('usd_micro')
-      .in('run_id', runIds),
-    BackendError,
-  );
-  
-  const totalSpent = costs.reduce((sum, c) => sum + (c.usd_micro ?? 0), 0);
-  
+
   if (totalSpent >= limitUsdMicro) {
     return {
       allowed: false,
@@ -670,7 +662,7 @@ async function checkOwnerQuota(
       limitUsdMicro,
     };
   }
-  
+
   // 接近限额时警告（80%）
   if (totalSpent >= limitUsdMicro * 0.8) {
     return {
@@ -680,6 +672,6 @@ async function checkOwnerQuota(
       limitUsdMicro,
     };
   }
-  
+
   return { allowed: true, spentUsdMicro: totalSpent, limitUsdMicro };
 }

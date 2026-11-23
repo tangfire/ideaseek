@@ -12,8 +12,7 @@
  * 没有 queued 任务时检查当前 run 阶段，看是否需要推进到下一阶段并生成新任务。
  */
 import type { BackendErrorLike, Db } from '../deps.ts';
-import { rows } from '../deps.ts';
-import { CloudEngine, type CloudRun, type CloudTask } from './cloud-engine.ts';
+import { CloudEngine, type CloudRun, type CloudTask, type RunPhase } from './cloud-engine.ts';
 import { executeTask as executeRealTask } from './task-executors.ts';
 
 export interface StepRequest {
@@ -56,11 +55,11 @@ export async function handleStep(
   BackendError: BackendErrorLike,
   body: StepRequest,
   ownerId: string,
-  deepseekApiKey?: string | null,
+  anonymousOwnerId?: string | null,
 ): Promise<StepResult> {
   const engine = new CloudEngine(db, BackendError);
 
-  const run = await resolveRun(engine, BackendError, body, ownerId);
+  const run = await resolveRun(engine, body, ownerId, anonymousOwnerId);
   if (!run) return { action: 'idle', message: '没有活跃的运行' };
   if (run.status === 'succeeded' || run.phase_tag === 'COMPLETED') {
     return { action: 'completed', run, message: '运行已完成' };
@@ -68,13 +67,35 @@ export async function handleStep(
 
   const claim = await engine.claimNextTask(run.id, 'step-driver');
   if (claim) {
-    const result = await executeTaskUnit(engine, run, claim.task, claim.leaseEpoch, deepseekApiKey);
+    const result = await executeTaskUnit(engine, run, claim.task, claim.leaseEpoch);
     return {
       action: 'claimed',
       task: result.task,
       run: result.run,
       events: result.events,
       message: `执行了 ${claim.task.kind} 任务`,
+    };
+  }
+
+  // 当前阶段有重试耗尽的失败任务时阻断推进：失败不是可以静默跳过的阶段。
+  const tasks = await engine.listTasks(run.id);
+  const failedHere = tasks.filter((t) => t.phase_tag === run.phase_tag && t.status === 'failed');
+  if (failedHere.length > 0) {
+    const blockedRun = await engine.setRunPhase(run.id, run.phase_tag as RunPhase, { status: 'blocked', blockReason: 'task_failed' });
+    await engine.setStageProgress(run.id, run.phase_tag, 'failed', { blockerCode: 'task_failed' });
+    if (run.status !== 'blocked') {
+      await engine.appendEvent({
+        runId: run.id,
+        type: 'run_blocked',
+        summary: `阶段 ${run.phase_tag} 有 ${failedHere.length} 个任务重试耗尽，运行已阻断`,
+        phaseTag: run.phase_tag,
+        level: 'error',
+      });
+    }
+    return {
+      action: 'blocked',
+      run: blockedRun,
+      message: `阶段 ${run.phase_tag} 的 ${failedHere.map((t) => t.kind).join('、')} 任务失败（重试已耗尽）：${failedHere[0]!.error_summary ?? '未知错误'}`,
     };
   }
 
@@ -91,37 +112,42 @@ export async function handleStep(
   return { action: 'idle', run, message: `阶段 ${run.phase_tag} 无待执行任务` };
 }
 
+/** 归属判定与读侧的演示放开一致：自己的项目，或系统匿名 Owner 的共享演示项目。 */
+function canDrive(projectOwnerId: string, ownerId: string, anonymousOwnerId?: string | null): boolean {
+  return projectOwnerId === ownerId || (anonymousOwnerId != null && projectOwnerId === anonymousOwnerId);
+}
+
 async function resolveRun(
   engine: CloudEngine,
-  BackendError: BackendErrorLike,
   body: StepRequest,
   ownerId: string,
+  anonymousOwnerId?: string | null,
 ): Promise<CloudRun | null> {
   // 优先用 internal run_id
-  if (body.run_id) return engine.getRun(body.run_id);
+  if (body.run_id) {
+    const run = await engine.getRun(body.run_id);
+    if (!run) return null;
+    const project = await engine.getProjectById(run.project_id);
+    return project && canDrive(project.owner_id, ownerId, anonymousOwnerId) ? run : null;
+  }
 
   // 支持 external_run_id（前端传递的）
   if (body.external_run_id && body.project_id) {
-    // 将 project_id 作为 external_id 查找项目
     const project = await engine.getProjectByExternal(body.project_id);
-    if (project) {
-      return engine.getRunByExternal(project.id, body.external_run_id);
-    }
-    return null;
+    if (!project || !canDrive(project.owner_id, ownerId, anonymousOwnerId)) return null;
+    return engine.getRunByExternal(project.id, body.external_run_id);
   }
 
   // 用 project_id 找活跃 run（project_id 是 external_id）
   if (body.project_id) {
     const project = await engine.getProjectByExternal(body.project_id);
-    if (project) {
-      const runs = await engine.listActiveRuns(project.id);
-      return runs[0] ?? null;
-    }
+    if (!project || !canDrive(project.owner_id, ownerId, anonymousOwnerId)) return null;
+    const runs = await engine.listActiveRuns(project.id);
+    return runs[0] ?? null;
   }
 
-  // 找任意活跃 run
-  const allRuns = await engine.listActiveRuns();
-  return allRuns[0] ?? null;
+  // 不带任何定位参数时不动任何人的运行：兜底"任意活跃 run"会让访客步进别人的项目。
+  return null;
 }
 
 async function executeTaskUnit(
@@ -129,7 +155,6 @@ async function executeTaskUnit(
   run: CloudRun,
   task: CloudTask,
   leaseEpoch: number,
-  deepseekApiKey?: string | null,
 ): Promise<{ task: CloudTask; run: CloudRun; events: Array<{ seq: number; type: string; summary: string }> }> {
   const events: Array<{ seq: number; type: string; summary: string }> = [];
 
@@ -144,7 +169,7 @@ async function executeTaskUnit(
   events.push({ seq: startEvent.seq, type: startEvent.type, summary: startEvent.summary });
 
   try {
-    const taskResult = await executeRealTask({ engine, run, task, deepseekApiKey });
+    const taskResult = await executeRealTask({ engine, run, task });
 
     const committed = await engine.commitTask({
       taskId: task.id,
@@ -205,12 +230,17 @@ async function tryAdvancePhase(engine: CloudEngine, run: CloudRun): Promise<Clou
   const taskKind = PHASE_TASK_KIND[nextPhase];
 
   if (!taskKind) {
-    const updated = await engine.setRunPhase(run.id, nextPhase);
-    await engine.setStageProgress(run.id, nextPhase, 'active');
+    const completing = nextPhase === 'COMPLETED';
+    const updated = await engine.setRunPhase(run.id, nextPhase, {
+      status: completing ? 'succeeded' : undefined,
+      blockReason: null,
+    });
+    await engine.setStageProgress(run.id, nextPhase, completing ? 'passed' : 'active');
+    await engine.setStageProgress(run.id, run.phase_tag, 'passed');
     await engine.appendEvent({
       runId: run.id,
       type: 'phase_advanced',
-      summary: `进入 ${nextPhase} 阶段`,
+      summary: completing ? '运行完成' : `进入 ${nextPhase} 阶段`,
       phaseTag: nextPhase,
     });
     return updated;
@@ -220,7 +250,7 @@ async function tryAdvancePhase(engine: CloudEngine, run: CloudRun): Promise<Clou
   const hasPendingForNext = tasks.some((t) => t.phase_tag === nextPhase && (t.status === 'queued' || t.status === 'claimed'));
   if (hasPendingForNext) return null;
 
-  const updated = await engine.setRunPhase(run.id, nextPhase, { status: 'running' });
+  const updated = await engine.setRunPhase(run.id, nextPhase, { status: 'running', blockReason: null });
   await engine.setStageProgress(run.id, nextPhase, 'active');
   await engine.setStageProgress(run.id, run.phase_tag, 'passed');
 
@@ -305,13 +335,14 @@ export async function stepView(
   body: Record<string, unknown>,
   BackendError: BackendErrorLike,
   ownerId: string,
-  deepseekApiKey?: string | null,
+  anonymousOwnerId?: string | null,
 ): Promise<Response> {
   const req: StepRequest = {
     project_id: typeof body.project_id === 'string' ? body.project_id : undefined,
     run_id: typeof body.run_id === 'string' ? body.run_id : undefined,
+    external_run_id: typeof body.external_run_id === 'string' ? body.external_run_id : undefined,
   };
 
-  const result = await handleStep(db, BackendError, req, ownerId, deepseekApiKey);
+  const result = await handleStep(db, BackendError, req, ownerId, anonymousOwnerId);
   return Response.json(result);
 }

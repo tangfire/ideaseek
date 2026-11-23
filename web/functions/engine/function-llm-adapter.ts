@@ -2,7 +2,7 @@
  * Function 侧 LLM 适配器：直接 HTTP 调用 DeepSeek API（OpenAI 兼容端点）。
  *
  * 与 DshAdapter 的区别：不起子进程，不依赖 node_modules，单次 fetch ≤45s。
- * 凭据来自 Function 环境（Qoder Sites Secret），不读本地文件。
+ * 凭据：显式注入 / Deno.env 优先，均未设置时落回 moyu.cn 渠道的写死 Key（演示用）。
  *
  * 提示词组装沿用 dsh-adapter.ts 的 composeInput 契约：
  *   instruction + ## Inputs + ## Output contract → 要求纯 JSON 返回
@@ -26,10 +26,12 @@ export interface LlmCallResult {
   finishReason: string | null;
 }
 
-const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
+// moyu.cn 渠道：Key 与模型名都只在该渠道有效，官方 api.deepseek.com 会 401。
+// 模型名区分大小写，渠道 /v1/models 列出的就是这一种写法。
+const DEFAULT_MODEL = 'DeepSeek-V4.1-Flash-1017';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TIMEOUT_MS = 45_000;
-const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
+const DEEPSEEK_API_URL = 'https://moyu.cn/v1/chat/completions';
 
 // 写死的 API Key（来自 moyu.cn 渠道）
 const HARDCODED_API_KEY = 'sk-PBqt9sFeTGaXCaiSUk0RLVwdxONtRzL3ymfVefVw2i1YAzXw';
@@ -134,15 +136,9 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 }
 
 function getApiKey(): string | null {
-  // 优先使用写死的 API Key（moyu.cn 渠道）
-  if (HARDCODED_API_KEY && HARDCODED_API_KEY.length > 0) {
-    return HARDCODED_API_KEY;
-  }
-
-  try {
-    const key = (globalThis as Record<string, unknown>).__DEEPSEEK_API_KEY;
-    if (typeof key === 'string' && key.length > 0) return key;
-  } catch { /* ignore */ }
+  // 显式注入优先：setApiKey('') 表示"明确没有 Key"，必须抛错而不是落回写死值。
+  const injected = (globalThis as Record<string, unknown>).__DEEPSEEK_API_KEY;
+  if (typeof injected === 'string') return injected.length > 0 ? injected : null;
 
   try {
     const env = (globalThis as Record<string, unknown>).Deno as { env?: { get(k: string): string | undefined } } | undefined;
@@ -150,7 +146,7 @@ function getApiKey(): string | null {
     if (key && key.length > 0) return key;
   } catch { /* ignore */ }
 
-  return null;
+  return HARDCODED_API_KEY.length > 0 ? HARDCODED_API_KEY : null;
 }
 
 export function setApiKey(key: string): void {
