@@ -98,11 +98,7 @@ async function resolveRun(
 
   // 支持 external_run_id（前端传递的）
   if (body.external_run_id && body.project_id) {
-    // 先尝试直接查找（project_id 可能是 internal ID）
-    const run = await engine.getRunByExternal(body.project_id, body.external_run_id);
-    if (run) return run;
-    
-    // 如果没找到，尝试将 project_id 作为 external_id 查找
+    // 将 project_id 作为 external_id 查找项目
     const project = await engine.getProjectByExternal(body.project_id);
     if (project) {
       return engine.getRunByExternal(project.id, body.external_run_id);
@@ -110,13 +106,8 @@ async function resolveRun(
     return null;
   }
 
-  // 用 project_id 找活跃 run（project_id 可能是 external_id 或 internal ID）
+  // 用 project_id 找活跃 run（project_id 是 external_id）
   if (body.project_id) {
-    // 先尝试作为 internal ID 查找
-    const runs = await engine.listActiveRuns(body.project_id);
-    if (runs.length > 0) return runs[0];
-    
-    // 如果没找到，尝试作为 external_id 查找项目，再找 run
     const project = await engine.getProjectByExternal(body.project_id);
     if (project) {
       const runs = await engine.listActiveRuns(project.id);
