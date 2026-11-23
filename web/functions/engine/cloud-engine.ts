@@ -120,6 +120,11 @@ export class CloudEngine {
     return rows(result, this.BackendError)[0] ?? null;
   }
 
+  async getProjectByExternal(externalId: string): Promise<{ id: string } | null> {
+    const result = await this.db.from<{ id: string }>('cloud_project').select('id').eq('external_id', externalId).limit(1);
+    return rows(result, this.BackendError)[0] ?? null;
+  }
+
   async getRunByExternal(projectId: string, externalRunId: string): Promise<CloudRun | null> {
     const result = await this.db.from<CloudRun>('cloud_run')
       .select('*')
