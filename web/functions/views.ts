@@ -15,6 +15,8 @@ import { ContractError } from './contract.ts';
 
 export interface Viewer {
   ownerId: string | null;
+  /** 系统匿名 Owner ID：匿名用户创建的项目都归到这个 owner 下 */
+  anonymousOwnerId: string | null;
   /** 来自 cloud_grant：被邀读者（Q8），role=reviewer，读到 L1（full）。 */
   grantedProjectIds: string[];
   /** role=viewer 的授权：能打开项目，但只到 L2——邀请时选了"只读降级"的人。 */
@@ -46,9 +48,17 @@ export async function resolveViewer(
   user: { id: string } | null,
   BackendError: BackendErrorLike,
 ): Promise<Viewer> {
+  // 查找系统匿名 Owner ID（用于匿名用户创建的项目）
+  const ANONYMOUS_EMAIL = '__anonymous__@system';
+  const anonymousOwner = rows<{ id: string }>(
+    await db.from<{ id: string }>('cloud_owner').select('id').eq('email', ANONYMOUS_EMAIL).limit(1),
+    BackendError,
+  )[0];
+  const anonymousOwnerId = anonymousOwner?.id ?? null;
+
   if (!user) {
     const share = new URL(request.url).searchParams.get('share');
-    if (!share) return { ownerId: null, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: null };
+    if (!share) return { ownerId: null, anonymousOwnerId, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: null };
     // share token 只存哈希；撤销即失效（revoked_at 非空就当不存在）。
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(share));
     const hash = Array.from(new Uint8Array(digest))
@@ -59,7 +69,7 @@ export async function resolveViewer(
       BackendError,
     );
     const active = found.find((row) => !row.revoked_at);
-    return { ownerId: null, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: active ? active.project_id : null };
+    return { ownerId: null, anonymousOwnerId, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: active ? active.project_id : null };
   }
 
   // 网关注入的 user_id 映射到 cloud_owner：Owner 首次登录时按需建行。
@@ -90,6 +100,7 @@ export async function resolveViewer(
   const active = grants.filter((grant) => !grant.revoked_at);
   return {
     ownerId,
+    anonymousOwnerId,
     grantedProjectIds: active.filter((grant) => grant.role !== 'viewer').map((grant) => grant.project_id),
     limitedProjectIds: active.filter((grant) => grant.role === 'viewer').map((grant) => grant.project_id),
     shareProjectId: null,
@@ -118,6 +129,8 @@ export type ReadLevel = 'full' | 'l2';
 
 export function canRead(viewer: Viewer, project: ProjectRow): boolean {
   if (viewer.ownerId && viewer.ownerId === project.owner_id) return true;
+  // 匿名用户可以看自己创建的项目（归在系统匿名 Owner 下）
+  if (!viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return true;
   if (viewer.grantedProjectIds.includes(project.id)) return true;
   if (viewer.limitedProjectIds.includes(project.id)) return true;
   // `listed` 的项目必须能打开：F2.1 让匿名访客在列表里看到它，点了却 403/404
@@ -129,6 +142,8 @@ export function canRead(viewer: Viewer, project: ProjectRow): boolean {
 
 export function readLevel(viewer: Viewer, project: ProjectRow): ReadLevel {
   if (viewer.ownerId && viewer.ownerId === project.owner_id) return 'full';
+  // 匿名用户对自己创建的项目有 full 权限
+  if (!viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return 'full';
   return viewer.grantedProjectIds.includes(project.id) ? 'full' : 'l2';
 }
 
@@ -214,8 +229,12 @@ export async function projectIndex(db: Db, viewer: Viewer, BackendError: Backend
     BackendError,
   ).filter((project) => {
     if (project.archived_at) return false;
-    // 列表页只列 Owner 自己的、被邀的，以及公开 listed 的。
-    return viewer.ownerId === project.owner_id || viewer.grantedProjectIds.includes(project.id) || viewer.limitedProjectIds.includes(project.id) || project.visibility === 'listed';
+    // 列表页只列 Owner 自己的、被邀的、公开 listed 的，以及匿名用户自己创建的。
+    return viewer.ownerId === project.owner_id 
+      || (!viewer.ownerId && viewer.anonymousOwnerId === project.owner_id)  // 匿名用户看自己创建的
+      || viewer.grantedProjectIds.includes(project.id) 
+      || viewer.limitedProjectIds.includes(project.id) 
+      || project.visibility === 'listed';
   });
 
   const projects = [];
