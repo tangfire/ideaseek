@@ -131,6 +131,8 @@ export function canRead(viewer: Viewer, project: ProjectRow): boolean {
   if (viewer.ownerId && viewer.ownerId === project.owner_id) return true;
   // 匿名用户可以看自己创建的项目（归在系统匿名 Owner 下）
   if (!viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return true;
+  // 登录用户也可以访问匿名 owner 的项目（同一浏览器创建的项目）
+  if (viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return true;
   if (viewer.grantedProjectIds.includes(project.id)) return true;
   if (viewer.limitedProjectIds.includes(project.id)) return true;
   // `listed` 的项目必须能打开：F2.1 让匿名访客在列表里看到它，点了却 403/404
@@ -144,6 +146,8 @@ export function readLevel(viewer: Viewer, project: ProjectRow): ReadLevel {
   if (viewer.ownerId && viewer.ownerId === project.owner_id) return 'full';
   // 匿名用户对自己创建的项目有 full 权限
   if (!viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return 'full';
+  // 登录用户访问匿名 owner 的项目也有 full 权限
+  if (viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return 'full';
   return viewer.grantedProjectIds.includes(project.id) ? 'full' : 'l2';
 }
 
