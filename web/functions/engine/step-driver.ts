@@ -14,6 +14,7 @@
 import type { BackendErrorLike, Db } from '../deps.ts';
 import { rows } from '../deps.ts';
 import { CloudEngine, type CloudRun, type CloudTask } from './cloud-engine.ts';
+import { executeTask as executeRealTask } from './task-executors.ts';
 
 export interface StepRequest {
   project_id?: string;
@@ -61,7 +62,7 @@ export async function handleStep(
 
   const claim = await engine.claimNextTask(run.id, 'step-driver');
   if (claim) {
-    const result = await executeTask(engine, run, claim.task, claim.leaseEpoch);
+    const result = await executeTaskUnit(engine, run, claim.task, claim.leaseEpoch);
     return {
       action: 'claimed',
       task: result.task,
@@ -101,7 +102,7 @@ async function resolveRun(
   return allRuns[0] ?? null;
 }
 
-async function executeTask(
+async function executeTaskUnit(
   engine: CloudEngine,
   run: CloudRun,
   task: CloudTask,
@@ -120,7 +121,7 @@ async function executeTask(
   events.push({ seq: startEvent.seq, type: startEvent.type, summary: startEvent.summary });
 
   try {
-    const taskResult = await performTaskWork(engine, run, task);
+    const taskResult = await executeRealTask({ engine, run, task });
 
     const committed = await engine.commitTask({
       taskId: task.id,
@@ -170,52 +171,6 @@ async function executeTask(
     events.push({ seq: failEvent.seq, type: failEvent.type, summary: failEvent.summary });
 
     return { task: failed, run, events };
-  }
-}
-
-/**
- * 执行单个任务的实际工作。
- * 最小闭环：Class A 阶段全是 LLM 推理，这里返回结构化占位结果。
- * M2 阶段接入 FunctionLlmAdapter 做真实的论文分析与 idea 生成。
- */
-async function performTaskWork(
-  engine: CloudEngine,
-  run: CloudRun,
-  task: CloudTask,
-): Promise<Record<string, unknown>> {
-  switch (task.kind) {
-    case 'calibrate':
-      return { calibrated: true, strategy: 'standard' };
-
-    case 'analyze_paper': {
-      const paperId = (task.payload as Record<string, unknown> | null)?.paper_id as string | undefined;
-      const nodeId = `paper-${paperId ?? task.external_task_id}`;
-      await engine.upsertResearchNode({
-        runId: run.id,
-        nodeId,
-        kind: 'paper_analysis',
-        status: 'succeeded',
-        title: paperId ? `Paper ${paperId}` : 'Paper analysis',
-        detail: { task_id: task.external_task_id, kind: task.kind },
-      });
-      return { paper_id: paperId ?? null, claims_extracted: 0, status: 'analyzed' };
-    }
-
-    case 'generate_idea': {
-      const nodeId = `idea-${task.external_task_id}`;
-      await engine.upsertResearchNode({
-        runId: run.id,
-        nodeId,
-        kind: 'idea',
-        status: 'proposed',
-        title: 'Generated idea',
-        detail: { task_id: task.external_task_id },
-      });
-      return { idea_id: nodeId, status: 'proposed' };
-    }
-
-    default:
-      return { status: 'completed', kind: task.kind };
   }
 }
 

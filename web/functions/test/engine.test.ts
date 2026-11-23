@@ -13,6 +13,55 @@ import assert from 'node:assert/strict';
 import { createFakeDb } from '../dev/fake-db.ts';
 import { CloudEngine } from '../engine/cloud-engine.ts';
 import { handleStep } from '../engine/step-driver.ts';
+import { setApiKey } from '../engine/function-llm-adapter.ts';
+
+function mockLlmFetch() {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const urlStr = String(url);
+    if (urlStr.includes('deepseek.com')) {
+      const body = JSON.parse(init?.body as string ?? '{}');
+      const schemaMatch = body?.messages?.[1]?.content?.match(/Schema:\s*(\S+)/);
+      const schema = schemaMatch?.[1] ?? 'unknown';
+
+      let mockOutput: Record<string, unknown>;
+      if (schema.startsWith('papercard')) {
+        mockOutput = {
+          title: 'Mock Paper Title',
+          problem: 'Mock research problem',
+          method_summary: 'Mock method description',
+          claims: [{ text: 'Mock claim 1', confidence: 'high', evidence_type: 'empirical' }],
+          unknowns: ['Mock limitation 1'],
+          keywords: ['mock', 'test'],
+        };
+      } else if (schema.startsWith('idea')) {
+        mockOutput = {
+          title: 'Mock Research Idea',
+          hypothesis: 'Mock testable hypothesis',
+          mechanism_summary: 'Mock mechanism',
+          motivation: 'Mock motivation',
+          feasibility: 'medium',
+          novelty_claim: 'Mock novelty',
+          suggested_experiments: [{ name: 'exp1', purpose: 'validate', expected_outcome: 'positive' }],
+          references_paper_ids: [],
+        };
+      } else if (schema.startsWith('calibration')) {
+        mockOutput = { feasible: true, strategy: 'standard', estimated_papers: 3, notes: 'Mock calibration' };
+      } else {
+        mockOutput = { status: 'ok' };
+      }
+
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(mockOutput) }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+        model: 'deepseek-chat-mock',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(url, init);
+  }) as typeof fetch;
+
+  return () => { globalThis.fetch = originalFetch; };
+}
 
 function setup() {
   const fake = createFakeDb();
@@ -218,22 +267,28 @@ test('setRunPhase + setStageProgress', async () => {
 
 test('handleStep 端到端：从 queued 到 succeeded', async () => {
   const { fake, engine, run } = setup();
+  setApiKey('test-key-for-mock');
+  const restore = mockLlmFetch();
 
-  await engine.enqueueTask({
-    runId: run.id,
-    kind: 'analyze_paper',
-    phaseTag: 'PAPER_ANALYSIS',
-    externalTaskId: 'task-step-1',
-    payload: { paper_id: 'paper-1' },
-  });
+  try {
+    await engine.enqueueTask({
+      runId: run.id,
+      kind: 'analyze_paper',
+      phaseTag: 'PAPER_ANALYSIS',
+      externalTaskId: 'task-step-1',
+      payload: { paper_id: 'paper-1' },
+    });
 
-  const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'owner-1');
+    const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'owner-1');
 
-  assert.equal(result.action, 'claimed');
-  assert.ok(result.task);
-  assert.equal(result.task.status, 'succeeded');
-  assert.ok(result.events);
-  assert.ok(result.events.length >= 2, '至少有 task_started + task_completed');
+    assert.equal(result.action, 'claimed');
+    assert.ok(result.task);
+    assert.equal(result.task.status, 'succeeded');
+    assert.ok(result.events);
+    assert.ok(result.events.length >= 2, '至少有 task_started + task_completed');
+  } finally {
+    restore();
+  }
 });
 
 test('handleStep idle：无 queued 任务时尝试推进阶段', async () => {
@@ -274,4 +329,66 @@ test('upsertResearchNode 幂等 + 成功节点不降级', async () => {
     title: '不应该降级',
   });
   assert.equal(third.created, false);
+});
+
+test('callLlm 缺 API key 抛错', async () => {
+  const { callLlm } = await import('../engine/function-llm-adapter.ts');
+  setApiKey('');
+  await assert.rejects(
+    () => callLlm({ instruction: 'test', inputs: [], outputSchema: 'test' }),
+    (err: Error) => {
+      assert.ok(err.message.includes('DEEPSEEK_API_KEY'));
+      return true;
+    },
+  );
+});
+
+test('callLlm 正常返回解析 JSON', async () => {
+  const { callLlm } = await import('../engine/function-llm-adapter.ts');
+  setApiKey('test-key');
+  const restore = mockLlmFetch();
+
+  try {
+    const result = await callLlm({
+      instruction: 'Analyze this paper',
+      inputs: [{ name: 'Paper', content: 'Test paper content' }],
+      outputSchema: 'papercard-v1: {"title": "string"}',
+    });
+
+    assert.ok(result.parsed, '应该解析出 JSON');
+    assert.equal(result.parsed.title, 'Mock Paper Title');
+    assert.equal(result.model, 'deepseek-chat-mock');
+    assert.equal(result.usage.inputTokens, 100);
+  } finally {
+    restore();
+  }
+});
+
+test('handleStep idea 生成：从 queued 到 research node', async () => {
+  const { fake, engine, run } = setup();
+  setApiKey('test-key');
+  const restore = mockLlmFetch();
+
+  try {
+    await engine.setRunPhase(run.id, 'IDEA_GENERATION', { status: 'running' });
+
+    await engine.enqueueTask({
+      runId: run.id,
+      kind: 'generate_idea',
+      phaseTag: 'IDEA_GENERATION',
+      externalTaskId: 'task-idea-1',
+    });
+
+    const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'owner-1');
+
+    assert.equal(result.action, 'claimed');
+    assert.ok(result.task);
+    assert.equal(result.task.status, 'succeeded');
+
+    const events = await engine.listEvents(run.id);
+    const ideaEvent = events.find((e) => e.type === 'idea_generated');
+    assert.ok(ideaEvent, '应该有 idea_generated 事件');
+  } finally {
+    restore();
+  }
 });

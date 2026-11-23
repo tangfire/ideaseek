@@ -160,6 +160,8 @@ M0 任一项不过 → 记录 blocker，退回 §7 决策 1 的备选底座，�
 `CALIBRATING → PAPER_ANALYSIS → DATA_READY → PROTOCOL_PROPOSED → PROTOCOL_REVIEW → IDEA_GENERATION → IDEA_SCREENING → IDEA_REVIEW`。每阶段拆成 ≤45 s 的单元，单元边界即 checkpoint（WORKFLOW_SPEC §Checkpoint：论文按单篇/小批、协议按快照+证据+适配器版本、idea 按版本+实验规格）。
 前置：`FunctionLlmAdapter` 落地 + **ajv standalone 构建期生成**（SPIKE §1 方案 2 的欠账，必须进 `release-check`），`ingest.ts` 的手写白名单换成生成物。
 
+**✅ M2 已完成（2026-11-23）**：`FunctionLlmAdapter`（`web/functions/engine/function-llm-adapter.ts`）直接 HTTP 调用 DeepSeek API（OpenAI 兼容端点），≤45s 超时，凭据走 Function 环境。三个 Class A 执行器落地（`task-executors.ts`）：`calibrate`（校准研究问题）、`analyze_paper`（论文→PaperCard+ResearchNode）、`generate_idea`（已分析论文→Idea+ResearchNode）。step-driver 的 `performTaskWork` 占位替换为真实 LLM 调用。测试：llm-adapter.test.ts 9 项 + engine.test.ts 13 项全绿。
+
 ### M3 — Class B 计算阶段（4–6 天，依赖 §7 决策 1）
 `COMPARISON_DISCOVERY → COMPARISON_REPRODUCTION → BASELINE_VALIDATED → EXPERIMENTING` + 代码实现与 smoke test。实现为 QCA Session 派发 + 事件游标 reconcile + 产物入 Storage + metric 入库。恢复语义：Session 断线用游标重放，**不重跑已成功的实验**。
 
