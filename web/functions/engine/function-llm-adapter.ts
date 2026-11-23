@@ -15,6 +15,7 @@ export interface LlmCallInput {
   model?: string;
   maxTokens?: number;
   timeoutMs?: number;
+  apiKey?: string;
 }
 
 export interface LlmCallResult {
@@ -63,7 +64,7 @@ function extractJson(text: string): Record<string, unknown> | null {
 }
 
 export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
-  const apiKey = getApiKey();
+  const apiKey = input.apiKey ?? getApiKey();
   if (!apiKey) throw new Error('DEEPSEEK_API_KEY not configured');
 
   const model = input.model ?? DEFAULT_MODEL;
@@ -141,8 +142,7 @@ function getApiKey(): string | null {
     if (key && key.length > 0) return key;
   } catch { /* ignore */ }
 
-  // TODO: 临时硬编码用于测试，配置好 Qoder Sites Secret 后删除
-  return 'sk-PBqt9sFeTGaXCaiSUk0RLVwdxONtRzL3ymfVefVw2i1YAzXw';
+  return null;
 }
 
 export function setApiKey(key: string): void {

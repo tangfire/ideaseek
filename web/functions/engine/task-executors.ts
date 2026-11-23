@@ -11,6 +11,7 @@ export interface TaskExecutionContext {
   engine: CloudEngine;
   run: CloudRun;
   task: CloudTask;
+  deepseekApiKey?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,7 @@ export async function executeAnalyzePaper(ctx: TaskExecutionContext): Promise<Re
     inputs: [{ name: 'Paper content', content: paperText.slice(0, 12_000) }],
     outputSchema: PAPER_ANALYSIS_SCHEMA,
     maxTokens: 2048,
+    apiKey: ctx.deepseekApiKey ?? undefined,
   });
 
   const parsed = result.parsed ?? {};
@@ -131,6 +133,7 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
     ],
     outputSchema: IDEA_GENERATION_SCHEMA,
     maxTokens: 2048,
+    apiKey: ctx.deepseekApiKey ?? undefined,
   });
 
   const parsed = result.parsed ?? {};
@@ -184,6 +187,7 @@ export async function executeCalibrate(ctx: TaskExecutionContext): Promise<Recor
     inputs: [{ name: 'Research question', content: ctx.run.question ?? 'Not specified' }],
     outputSchema: `calibration-v1: {"feasible": boolean, "strategy": "starter|standard|research", "estimated_papers": number, "notes": "string"}`,
     maxTokens: 512,
+    apiKey: ctx.deepseekApiKey ?? undefined,
   });
 
   const parsed = result.parsed ?? {};

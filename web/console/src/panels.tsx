@@ -1010,6 +1010,84 @@ export function AuditLedger() {
   );
 }
 
+// --------------------------------------------------------------------------- API Key 配置
+
+/**
+ * API Key 配置组件：让用户在前端配置 DeepSeek API Key。
+ * Key 存储在 localStorage，通过请求头传递给 Function。
+ */
+export function ApiKeyConfig() {
+  const [key, setKey] = useState(() => localStorage.getItem('deepseek_api_key') ?? '');
+  const [saved, setSaved] = useState(false);
+  const [visible, setVisible] = useState(false);
+
+  const save = () => {
+    if (key.trim()) {
+      localStorage.setItem('deepseek_api_key', key.trim());
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    }
+  };
+
+  const clear = () => {
+    localStorage.removeItem('deepseek_api_key');
+    setKey('');
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div className="panel" style={{ marginTop: 12 }}>
+      <h4 style={{ margin: '0 0 8px', fontSize: 14 }}>🔑 DeepSeek API Key 配置</h4>
+      <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
+        API Key 仅存储在浏览器本地，每次请求通过请求头传递给云端 Function。
+        可从 <a href="https://moyu.cn" target="_blank" rel="noopener">moyu.cn</a> 获取。
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input
+          type={visible ? 'text' : 'password'}
+          style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}
+          placeholder="sk-..."
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+        />
+        <button
+          className="btn-secondary"
+          onClick={() => setVisible(!visible)}
+          style={{ fontSize: 12 }}
+        >
+          {visible ? '隐藏' : '显示'}
+        </button>
+        <button
+          className="btn-primary"
+          onClick={save}
+          disabled={!key.trim()}
+          style={{ fontSize: 12 }}
+        >
+          {saved ? '✓ 已保存' : '保存'}
+        </button>
+        <button
+          className="btn-danger"
+          onClick={clear}
+          disabled={!key}
+          style={{ fontSize: 12 }}
+        >
+          清除
+        </button>
+      </div>
+      {key ? (
+        <p className="muted" style={{ margin: '8px 0 0', fontSize: 11 }}>
+          已配置：{key.slice(0, 8)}...{key.slice(-4)}
+        </p>
+      ) : (
+        <p className="status-chip" data-state="fail" style={{ margin: '8px 0 0', fontSize: 11 }}>
+          未配置 API Key，LLM 调用将失败
+        </p>
+      )}
+    </div>
+  );
+}
+
 // --------------------------------------------------------------------------- 步进泵
 
 interface StepResult {
@@ -1025,7 +1103,7 @@ interface StepResult {
  * 浏览器泵：每 2s 调用 POST /app/step，驱动云原生引擎推进阶段。
  * 显示当前动作、任务状态和阶段进度。
  */
-export function StepPump({ runId }: { runId: string }) {
+export function StepPump({ projectId, externalRunId }: { projectId: string; externalRunId: string }) {
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<StepResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1034,9 +1112,14 @@ export function StepPump({ runId }: { runId: string }) {
     if (!running) return;
     const interval = setInterval(async () => {
       try {
+        const apiKey = localStorage.getItem('deepseek_api_key');
+        const headers: Record<string, string> = {};
+        if (apiKey) headers['X-Deepseek-Api-Key'] = apiKey;
+        
         const result = await mutateJson<StepResult>(`${APP}/step`, {
           method: 'POST',
-          body: JSON.stringify({ run_id: runId }),
+          body: JSON.stringify({ project_id: projectId, external_run_id: externalRunId }),
+          headers,
         });
         setLastResult(result);
         setError(null);
@@ -1048,11 +1131,18 @@ export function StepPump({ runId }: { runId: string }) {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [running, runId]);
+  }, [running, projectId, externalRunId]);
+
+  const hasApiKey = Boolean(localStorage.getItem('deepseek_api_key'));
 
   return (
     <div className="panel" style={{ marginTop: 12 }}>
       <h4 style={{ margin: '0 0 8px', fontSize: 14 }}>☁️ 云原生引擎</h4>
+      {!hasApiKey ? (
+        <p className="status-chip" data-state="fail" style={{ marginBottom: 8 }}>
+          ⚠ 未配置 DeepSeek API Key，请在上方「API Key 配置」中填写
+        </p>
+      ) : null}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
         <button
           className="btn-primary"

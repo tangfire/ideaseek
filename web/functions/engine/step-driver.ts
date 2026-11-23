@@ -19,6 +19,7 @@ import { executeTask as executeRealTask } from './task-executors.ts';
 export interface StepRequest {
   project_id?: string;
   run_id?: string;
+  external_run_id?: string;
 }
 
 export interface StepResult {
@@ -51,6 +52,7 @@ export async function handleStep(
   BackendError: BackendErrorLike,
   body: StepRequest,
   ownerId: string,
+  deepseekApiKey?: string | null,
 ): Promise<StepResult> {
   const engine = new CloudEngine(db, BackendError);
 
@@ -62,7 +64,7 @@ export async function handleStep(
 
   const claim = await engine.claimNextTask(run.id, 'step-driver');
   if (claim) {
-    const result = await executeTaskUnit(engine, run, claim.task, claim.leaseEpoch);
+    const result = await executeTaskUnit(engine, run, claim.task, claim.leaseEpoch, deepseekApiKey);
     return {
       action: 'claimed',
       task: result.task,
@@ -89,15 +91,23 @@ async function resolveRun(
   engine: CloudEngine,
   BackendError: BackendErrorLike,
   body: StepRequest,
-  _ownerId: string,
+  ownerId: string,
 ): Promise<CloudRun | null> {
+  // 优先用 internal run_id
   if (body.run_id) return engine.getRun(body.run_id);
 
+  // 支持 external_run_id（前端传递的）
+  if (body.external_run_id && body.project_id) {
+    return engine.getRunByExternal(body.project_id, body.external_run_id);
+  }
+
+  // 用 project_id 找活跃 run
   if (body.project_id) {
     const runs = await engine.listActiveRuns(body.project_id);
     return runs[0] ?? null;
   }
 
+  // 找任意活跃 run
   const allRuns = await engine.listActiveRuns();
   return allRuns[0] ?? null;
 }
@@ -107,6 +117,7 @@ async function executeTaskUnit(
   run: CloudRun,
   task: CloudTask,
   leaseEpoch: number,
+  deepseekApiKey?: string | null,
 ): Promise<{ task: CloudTask; run: CloudRun; events: Array<{ seq: number; type: string; summary: string }> }> {
   const events: Array<{ seq: number; type: string; summary: string }> = [];
 
@@ -121,7 +132,7 @@ async function executeTaskUnit(
   events.push({ seq: startEvent.seq, type: startEvent.type, summary: startEvent.summary });
 
   try {
-    const taskResult = await executeRealTask({ engine, run, task });
+    const taskResult = await executeRealTask({ engine, run, task, deepseekApiKey });
 
     const committed = await engine.commitTask({
       taskId: task.id,
@@ -254,12 +265,13 @@ export async function stepView(
   body: Record<string, unknown>,
   BackendError: BackendErrorLike,
   ownerId: string,
+  deepseekApiKey?: string | null,
 ): Promise<Response> {
   const req: StepRequest = {
     project_id: typeof body.project_id === 'string' ? body.project_id : undefined,
     run_id: typeof body.run_id === 'string' ? body.run_id : undefined,
   };
 
-  const result = await handleStep(db, BackendError, req, ownerId);
+  const result = await handleStep(db, BackendError, req, ownerId, deepseekApiKey);
   return Response.json(result);
 }

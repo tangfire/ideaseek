@@ -561,7 +561,8 @@ export function application(deps: Deps) {
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       const body = await request.json().catch(() => ({})) as Record<string, unknown>;
       const ownerId = viewer.ownerId ?? 'anonymous';
-      return stepView(db, body, BackendError, ownerId);
+      const deepseekApiKey = request.headers.get('X-Deepseek-Api-Key');
+      return stepView(db, body, BackendError, ownerId, deepseekApiKey);
     }
 
     throw new BackendError('not_found', 404);

@@ -106,13 +106,13 @@ export async function requestJson<T>(path: string, signal?: AbortSignal): Promis
  * M6: 写操作（POST/DELETE/PATCH）。与 requestJson 同一套错误映射，
  * 但接受自定义 method 和 body。
  */
-export async function mutateJson<T>(path: string, init: { method: string; body?: string }): Promise<T> {
+export async function mutateJson<T>(path: string, init: { method: string; body?: string; headers?: Record<string, string> }): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
       method: init.method,
       credentials: 'same-origin',
-      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      headers: { accept: 'application/json', 'content-type': 'application/json', ...init.headers },
       body: init.body,
     });
   } catch {
