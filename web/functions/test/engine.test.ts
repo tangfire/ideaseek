@@ -163,6 +163,53 @@ test('并发 claim：两个 worker 只有一个成功', async () => {
   assert.equal(successCount, 1, '并发认领恰有一个成功');
 });
 
+test('claimNextTask 读回确认：insertIfAbsent 成功但不返回行时仍能认领（线上实测行为）', async () => {
+  const { fake, run } = setup();
+
+  // 模拟受管 SDK：lease 插入成功，但 await 结果 data 为空。
+  const origFrom = fake.db.from.bind(fake.db);
+  const silentDb = {
+    from: (name: string) => {
+      const q = origFrom(name) as unknown as Record<string, (...a: unknown[]) => unknown>;
+      if (name !== 'cloud_task_lease') return q;
+      const orig = q.insertIfAbsent.bind(q);
+      q.insertIfAbsent = (...args: unknown[]) => {
+        const result = orig(...args);
+        const chain = {
+          select: () => chain,
+          then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+            Promise.resolve(result).then(() => resolve({ data: null, error: null }), reject),
+        };
+        return chain;
+      };
+      return q;
+    },
+  } as unknown as typeof fake.db;
+
+  const engine = new CloudEngine(silentDb, fake.BackendError);
+  const { task } = await engine.enqueueTask({
+    runId: run.id,
+    kind: 'analyze_paper',
+    phaseTag: 'PAPER_ANALYSIS',
+    externalTaskId: 'task-silent-lease',
+  });
+
+  // 别人的 lease 在先：读回归属不是自己，必须放弃认领。
+  fake.seed('cloud_task_lease', {
+    task_id: task.id,
+    worker_id: 'worker-B',
+    lease_epoch: 1,
+    leased_at: '2026-11-23T00:00:00.000Z',
+    expires_at: '2026-11-23T00:05:00.000Z',
+  });
+  assert.equal(await engine.claimNextTask(run.id, 'worker-A'), null, 'lease 属于别人时不得认领');
+  await origFrom('cloud_task_lease').delete().eq('task_id', task.id);
+
+  const claim = await engine.claimNextTask(run.id, 'worker-A');
+  assert.ok(claim, '插入成功但无返回行时，读回确认归属后必须认领成功');
+  assert.equal(claim.task.status, 'claimed');
+});
+
 test('commitTask CAS：用旧 leaseEpoch 提交失败', async () => {
   const { engine, run } = setup();
 

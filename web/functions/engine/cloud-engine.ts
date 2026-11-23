@@ -237,7 +237,19 @@ export class CloudEngine {
       );
 
     const leaseRows = rows(leaseResult, this.BackendError);
-    if (!leaseRows[0]) return null;
+    if (!leaseRows[0]) {
+      // 受管 SDK 的 insertIfAbsent 插入成功也可能不返回行（2026-11-23 线上实测：
+      // lease 已落库但 data 为空，认领被误判为失败，任务永远停在 queued）。
+      // 读回确认归属：lease 是自己的才算认领成功，是别人的说明竞争输了。
+      const readBack = rows(
+        await this.db.from<{ task_id: string; worker_id: string; lease_epoch: number }>('cloud_task_lease')
+          .select('task_id,worker_id,lease_epoch')
+          .eq('task_id', task.id)
+          .limit(1),
+        this.BackendError,
+      )[0];
+      if (!readBack || readBack.worker_id !== workerId || readBack.lease_epoch !== leaseEpoch) return null;
+    }
 
     const casResult = await this.db.from<CloudTask>('cloud_task')
       .update({
