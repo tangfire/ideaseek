@@ -425,3 +425,82 @@ test('机器凭据两条路都认：自定义头是部署态唯一可用的那�
     '短凭据不得进库查询',
   );
 });
+
+// ---------------------------------------------------------------------------
+// /app/step：配额闸门与归属
+// ---------------------------------------------------------------------------
+
+const stepBody = (body: Record<string, unknown>): RequestInit => ({
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+test('/app/step 配额：匿名项目按系统匿名 Owner 计账，超限回 200+blocked', async () => {
+  const { fake, as } = await build();
+  // 匿名创建的项目 owner_id 是系统匿名 Owner 的 UUID，不是字符串 'anonymous'。
+  const anonOwner = fake.seed('cloud_owner', { email: '__anonymous__@system', display_name: 'Anonymous User' });
+  const project = fake.seed('cloud_project', {
+    owner_id: anonOwner.id,
+    external_id: 'prj-anon-quota',
+    title: '匿名项目',
+    question: '配额测试',
+    visibility: 'private',
+    archived_at: null,
+    last_sync_at: null,
+  });
+  const run = fake.seed('cloud_run', {
+    project_id: project.id,
+    external_run_id: 'run-anon-quota',
+    status: 'running',
+    phase_tag: 'CALIBRATING',
+    question: '配额测试',
+    block_reason: null,
+    started_at: null,
+    finished_at: null,
+    heartbeat_at: null,
+    summary: null,
+  });
+  fake.seed('cloud_cost_entry', {
+    run_id: run.id,
+    external_cost_id: 'cost-anon-1',
+    kind: 'token',
+    usd_micro: 1_500_000, // $1.5 > 匿名 $1 限额
+    tokens_in: 100,
+    tokens_out: 50,
+    ts: '2026-11-23T00:00:00.000Z',
+  });
+
+  const res = await call(as(null), '/app/step', stepBody({ project_id: 'prj-anon-quota' }));
+  assert.equal(res.status, 200, 'blocked 是泵的正常终态；429 会被前端映射成"请求过于频繁"，限额原因到不了 UI');
+  assert.equal(res.json.action, 'blocked');
+  assert.ok(String(res.json.message).includes('成本限额'), '阻断消息必须带限额原因');
+});
+
+test('/app/step：限额内的 Owner 能步进自己的 run（external_run_id 定位）', async () => {
+  const { fake, as, listed } = await build();
+  fake.seed('cloud_run', {
+    project_id: listed.id,
+    external_run_id: 'run-step-ok',
+    status: 'created',
+    phase_tag: 'INIT',
+    question: '步进测试',
+    block_reason: null,
+    started_at: null,
+    finished_at: null,
+    heartbeat_at: null,
+    summary: null,
+  });
+
+  const res = await call(as('owner-1'), '/app/step', stepBody({ project_id: 'prj-listed', external_run_id: 'run-step-ok' }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.action, 'advanced');
+  assert.equal(res.json.newPhase, 'INPUT_READY');
+});
+
+test('/app/step 归属：陌生登录者步进别人的项目 = idle，不是悄悄替他执行', async () => {
+  const { as } = await build();
+  const res = await call(as('stranger-1'), '/app/step', stepBody({ project_id: 'prj-listed' }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.action, 'idle');
+});

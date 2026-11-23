@@ -19,7 +19,7 @@ function mockLlmFetch() {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
     const urlStr = String(url);
-    if (urlStr.includes('deepseek.com')) {
+    if (urlStr.includes('moyu.cn') || urlStr.includes('deepseek.com')) {
       const body = JSON.parse(init?.body as string ?? '{}');
       const schemaMatch = body?.messages?.[1]?.content?.match(/Schema:\s*(\S+)/);
       const schema = schemaMatch?.[1] ?? 'unknown';
@@ -266,7 +266,7 @@ test('setRunPhase + setStageProgress', async () => {
 });
 
 test('handleStep 端到端：从 queued 到 succeeded', async () => {
-  const { fake, engine, run } = setup();
+  const { fake, engine, owner, run } = setup();
   setApiKey('test-key-for-mock');
   const restore = mockLlmFetch();
 
@@ -279,7 +279,7 @@ test('handleStep 端到端：从 queued 到 succeeded', async () => {
       payload: { paper_id: 'paper-1' },
     });
 
-    const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'owner-1');
+    const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
 
     assert.equal(result.action, 'claimed');
     assert.ok(result.task);
@@ -292,9 +292,9 @@ test('handleStep 端到端：从 queued 到 succeeded', async () => {
 });
 
 test('handleStep idle：无 queued 任务时尝试推进阶段', async () => {
-  const { fake, engine, run } = setup();
+  const { fake, owner, run } = setup();
 
-  const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'owner-1');
+  const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
 
   assert.equal(result.action, 'advanced');
   assert.ok(result.newPhase, '应该推进到下一阶段');
@@ -365,7 +365,7 @@ test('callLlm 正常返回解析 JSON', async () => {
 });
 
 test('handleStep idea 生成：从 queued 到 research node', async () => {
-  const { fake, engine, run } = setup();
+  const { fake, engine, owner, run } = setup();
   setApiKey('test-key');
   const restore = mockLlmFetch();
 
@@ -379,7 +379,7 @@ test('handleStep idea 生成：从 queued 到 research node', async () => {
       externalTaskId: 'task-idea-1',
     });
 
-    const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'owner-1');
+    const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
 
     assert.equal(result.action, 'claimed');
     assert.ok(result.task);
@@ -391,4 +391,83 @@ test('handleStep idea 生成：从 queued 到 research node', async () => {
   } finally {
     restore();
   }
+});
+
+test('handleStep 失败阻断：重试耗尽的任务不允许推进阶段', async () => {
+  const { fake, engine, owner, run } = setup();
+
+  await engine.enqueueTask({
+    runId: run.id,
+    kind: 'analyze_paper',
+    phaseTag: 'PAPER_ANALYSIS',
+    externalTaskId: 'task-fail-1',
+    maxAttempts: 1,
+  });
+  const claim = await engine.claimNextTask(run.id, 'worker-A');
+  assert.ok(claim);
+  await engine.failTask({
+    taskId: claim.task.id,
+    workerId: 'worker-A',
+    leaseEpoch: claim.leaseEpoch,
+    errorClass: 'LlmAuthError',
+    errorSummary: 'API auth failed: 401',
+  });
+
+  const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
+  assert.equal(result.action, 'blocked', '失败不是可以静默跳过的阶段');
+  assert.equal(result.run?.status, 'blocked');
+  assert.equal(result.run?.phase_tag, 'PAPER_ANALYSIS', '不得推进');
+  assert.ok(result.message.includes('401'), '阻断消息要带真实失败原因');
+
+  const events = await engine.listEvents(run.id);
+  assert.ok(events.some((e) => e.type === 'run_blocked'));
+});
+
+test('handleStep 归属：别人的 run 不能步进；无定位参数不动任何 run', async () => {
+  const { fake, owner, run } = setup();
+
+  const stranger = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'not-the-owner');
+  assert.equal(stranger.action, 'idle');
+
+  const noTarget = await handleStep(fake.db, fake.BackendError, {}, 'not-the-owner');
+  assert.equal(noTarget.action, 'idle', '兜底"任意活跃 run"会让访客步进别人的项目');
+
+  // 系统匿名 Owner 的演示项目对登录用户放开（与读侧 readLevel 的演示放开一致）。
+  const shared = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'logged-in-visitor', owner.id);
+  assert.equal(shared.action, 'advanced');
+});
+
+test('handleStep external_run_id：前端泵的定位参数生效，错配不兜底', async () => {
+  const { fake, owner, project, run } = setup();
+
+  const result = await handleStep(
+    fake.db,
+    fake.BackendError,
+    { project_id: project.external_id, external_run_id: run.external_run_id },
+    owner.id,
+  );
+  assert.equal(result.action, 'advanced');
+  assert.equal(result.newPhase, 'DATA_READY');
+
+  const wrong = await handleStep(
+    fake.db,
+    fake.BackendError,
+    { project_id: project.external_id, external_run_id: 'run-does-not-exist' },
+    owner.id,
+  );
+  assert.equal(wrong.action, 'idle', 'external_run_id 错配时不得落回"随便一个活跃 run"');
+});
+
+test('handleStep 完成：COMPLETED 标 succeeded + finished_at，再步返回 completed', async () => {
+  const { fake, engine, owner, run } = setup();
+  await engine.setRunPhase(run.id, 'IDEA_REVIEW', { status: 'running' });
+
+  const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
+  assert.equal(result.action, 'advanced');
+  assert.equal(result.run?.phase_tag, 'COMPLETED');
+  assert.equal(result.run?.status, 'succeeded');
+  assert.ok(result.run?.finished_at, '完成必须落 finished_at，否则 UI 永远"进行中"');
+
+  const again = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
+  assert.equal(again.action, 'completed');
 });
