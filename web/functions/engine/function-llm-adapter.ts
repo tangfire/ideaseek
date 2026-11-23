@@ -26,10 +26,13 @@ export interface LlmCallResult {
   finishReason: string | null;
 }
 
-const DEFAULT_MODEL = 'deepseek-chat';
+const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
+
+// 写死的 API Key（来自 moyu.cn 渠道）
+const HARDCODED_API_KEY = 'sk-PBqt9sFeTGaXCaiSUk0RLVwdxONtRzL3ymfVefVw2i1YAzXw';
 
 function composePrompt(input: LlmCallInput): string {
   const parts: string[] = [input.instruction];
@@ -131,6 +134,11 @@ export async function callLlm(input: LlmCallInput): Promise<LlmCallResult> {
 }
 
 function getApiKey(): string | null {
+  // 优先使用写死的 API Key（moyu.cn 渠道）
+  if (HARDCODED_API_KEY && HARDCODED_API_KEY.length > 0) {
+    return HARDCODED_API_KEY;
+  }
+
   try {
     const key = (globalThis as Record<string, unknown>).__DEEPSEEK_API_KEY;
     if (typeof key === 'string' && key.length > 0) return key;
