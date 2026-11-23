@@ -25,7 +25,7 @@ export function isOwner(viewer: Viewer): boolean {
   return viewer.ownerId !== null;
 }
 
-interface ProjectRow {
+export interface ProjectRow {
   id: string;
   owner_id: string;
   external_id: string;
@@ -140,7 +140,7 @@ export function deniesAsAbsent(viewer: Viewer): boolean {
   return viewer.ownerId === null && viewer.shareProjectId === null && viewer.grantedProjectIds.length === 0;
 }
 
-async function byExternalId(db: Db, externalId: string, BackendError: BackendErrorLike): Promise<ProjectRow | undefined> {
+export async function byExternalId(db: Db, externalId: string, BackendError: BackendErrorLike): Promise<ProjectRow | undefined> {
   return rows<ProjectRow>(
     await db.from<ProjectRow>('cloud_project').select('*').eq('external_id', externalId).limit(1),
     BackendError,

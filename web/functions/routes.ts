@@ -13,6 +13,7 @@ import { authenticateSyncToken, assertProjectAllowed, SYNC_TOKEN_HEADER } from '
 import { ingestBatch } from './ingest.ts';
 import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
+import { agentCommandHeartbeat, agentHeartbeat, agentView, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
 
 export interface Deps {
   db: Db;
@@ -307,6 +308,65 @@ export function application(deps: Deps) {
         if (socket.readyState === WebSocket.OPEN) socket.close(1000, 'lifetime');
       }, LIVE_LIMITS.LIFETIME_MS);
       return response;
+    }
+
+    // Phase 2/4: 本地 Agent 心跳——回写结果、上报仓库/文件读数、领走待执行命令。
+    // 只认 sync token + `commands` 范围：这是机器对机器的通道，浏览者身份不该能领命令。
+    if (path === '/agent/heartbeat' && request.method === 'POST') {
+      const principal = await authenticateSyncToken(request, db, BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return agentHeartbeat(db, principal, body as object, BackendError);
+    }
+
+    if (path === '/agent/command' && request.method === 'POST') {
+      const principal = await authenticateSyncToken(request, db, BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return agentCommandHeartbeat(db, principal, body as { command_id?: unknown; status?: unknown }, BackendError);
+    }
+
+    // Phase 3/4: 命令排队（Owner-only，见 commands.ts 头注第 2/3 条）。
+    const commandMatch = path.match(/^\/commands\/([a-z_]+)$/);
+    if (commandMatch && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return enqueueCommand(db, viewer, commandMatch[1]!, body as Record<string, unknown>, BackendError);
+    }
+
+    // 创建项目同样是排队：云端不建项目行，只把 `ideaseek start` 交给本机 Agent，
+    // 项目行由本地投影写回来（投影表不由浏览器写）。
+    if (path === '/projects' && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return projectCreateView(db, viewer, body as Record<string, unknown>, BackendError);
+    }
+
+    if (path === '/views/commands' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return commandView(db, viewer, externalId, BackendError);
+    }
+
+    if (path === '/views/agent' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return agentView(db, viewer, externalId, BackendError);
+    }
+
+    if (path === '/views/repo' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return repoView(db, viewer, externalId, BackendError);
     }
 
     throw new BackendError('not_found', 404);

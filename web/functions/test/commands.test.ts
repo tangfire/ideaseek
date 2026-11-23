@@ -1,0 +1,324 @@
+/**
+ * 反向通道（Web → 命令队列 → 本地 Agent）的本地回归。
+ *
+ * 这里刻意**不**断言任何执行结果：云端没有执行能力（F6.5），能断言的是排队语义、
+ * 写权限、幂等、租约与降级。跑法 `node --test web/functions/test/commands.test.ts`。
+ *
+ * 身份面与 routes.test.ts 同一套：浏览者走 `getUser` 注入，Agent 走 `x-ideaseek-token`
+ * 的哈希比对（部署态网关会剥 Authorization，实测 SPIKE_SITES_RUNTIME.md §10）。
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { application } from '../routes.ts';
+import type { SiteContext } from '../routes.ts';
+import { createFakeDb, sha256Hex } from '../dev/fake-db.ts';
+import { SYNC_TOKEN_HEADER } from '../token.ts';
+
+// 构造式凭据夹具：既过 token.ts 的 ≥32 下限，也不是一串能被当成真 key 的高熵值。
+const fakeToken = (label: string): string => `${label}-sync-fixture-${'0'.repeat(28)}`;
+const AGENT_TOKEN = fakeToken('agent');
+const SCOPED_TOKEN = fakeToken('scoped');
+const PUSH_ONLY_TOKEN = fakeToken('pushonly');
+
+async function build() {
+  const fake = createFakeDb();
+  const owner = fake.seed('cloud_owner', { email: 'owner-1', display_name: null });
+  const stranger = fake.seed('cloud_owner', { email: 'stranger-1', display_name: null });
+  for (const [token, scopes, projectScope] of [
+    [AGENT_TOKEN, ['push', 'commands'], []],
+    [SCOPED_TOKEN, ['push', 'commands'], ['prj-listed']],
+    [PUSH_ONLY_TOKEN, ['push'], []],
+  ] as const) {
+    fake.seed('cloud_sync_token', {
+      owner_id: owner.id,
+      token_hash: await sha256Hex(token),
+      scopes,
+      project_scope: projectScope,
+      revoked_at: null,
+    });
+  }
+  const listed = fake.seed('cloud_project', {
+    owner_id: owner.id,
+    external_id: 'prj-listed',
+    title: '公开列表项目',
+    question: '这个问题会公开',
+    strategy: 'standard',
+    autonomy: 'guided',
+    visibility: 'listed',
+    archived_at: null,
+    last_sync_at: '2026-11-23T00:00:00.000Z',
+  });
+  fake.seed('cloud_project', {
+    owner_id: stranger.id,
+    external_id: 'prj-other',
+    title: '别人的项目',
+    question: null,
+    strategy: null,
+    autonomy: null,
+    visibility: 'private',
+    archived_at: null,
+    last_sync_at: null,
+  });
+
+  const as = (user: string | null) =>
+    application({
+      db: fake.db,
+      BackendError: fake.BackendError,
+      getUser: () => (user ? { id: user } : null),
+      upgradeWebSocket: () => {
+        throw new Error('本用例不测握手');
+      },
+    });
+
+  return { fake, as, owner, stranger, listed };
+}
+
+async function call(handle: (ctx: SiteContext) => Promise<Response>, path: string, init?: RequestInit) {
+  try {
+    const response = await handle({ request: new Request(`https://site.test/functions/v1/app${path}`, init), requestId: 'test' });
+    const raw = await response.text();
+    return { status: response.status, raw, json: raw ? (JSON.parse(raw) as Record<string, unknown>) : {}, code: raw ? String((JSON.parse(raw) as Record<string, unknown>).code ?? '') : '' };
+  } catch (error) {
+    // 与 index.ts 的边界一致：BackendError 由平台的 errorResponse 变成状态码，
+    // 本地入口没有那层，这里自己接住，断言的仍是同一个 code。
+    const thrown = error as { code?: string; status?: number };
+    const code = thrown.code ?? 'internal';
+    return { status: thrown.status ?? 500, raw: JSON.stringify({ code }), json: { code }, code };
+  }
+}
+
+const web = (json: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) });
+const agent = (token: string, json: unknown): RequestInit => ({ method: 'POST', headers: { [SYNC_TOKEN_HEADER]: token, 'content-type': 'application/json' }, body: JSON.stringify(json) });
+
+// --------------------------------------------------------------------------- 排队
+
+test('Owner 排队一条 run_start：只写队列，不动投影', async () => {
+  const { fake, as } = await build();
+  const out = await call(as('owner-1'), '/commands/run_start', web({ external_id: 'prj-listed', question: '能不能少标注一半数据', command_id: 'cmd-1' }));
+  assert.equal(out.status, 200);
+  assert.equal(out.json.message, '命令已排队，等待本地 Agent 执行');
+  const rows = fake.rowsOf('cloud_command');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.status, 'queued');
+  assert.equal(rows[0]!.external_command_id, 'cmd-1');
+  assert.deepEqual(rows[0]!.payload, { question: '能不能少标注一半数据' });
+  // 投影表没有被浏览器写过：下一次 cloud push 会覆盖云上直改的值，所以那条路禁止。
+  assert.equal(fake.rowsOf('cloud_project').length, 2);
+});
+
+test('同一 command_id 重复提交回原记录，不排第二个命令', async () => {
+  const { fake, as } = await build();
+  const handle = as('owner-1');
+  await call(handle, '/commands/run_start', web({ external_id: 'prj-listed', question: '第一遍', command_id: 'cmd-dup' }));
+  const again = await call(handle, '/commands/run_start', web({ external_id: 'prj-listed', question: '超时后重试', command_id: 'cmd-dup' }));
+  assert.equal(again.json.replayed, true);
+  assert.equal(fake.rowsOf('cloud_command').length, 1);
+});
+
+test('写权限只有 Owner：陌生人 403、匿名先被 401、不存在的 external_id 404', async () => {
+  const { as } = await build();
+  assert.equal((await call(as('stranger-1'), '/commands/run_start', web({ external_id: 'prj-listed', question: 'q' }))).status, 403);
+  // 匿名访客在**任何**写面上都是 401：先确认身份再谈存在性，不给出"这个项目存不存在"的读数。
+  assert.equal((await call(as(null), '/commands/run_start', web({ external_id: 'prj-listed', question: 'q' }))).code, 'login_required');
+  const absent = await call(as('stranger-1'), '/commands/run_start', web({ external_id: 'prj-does-not-exist', question: 'q' }));
+  assert.equal(absent.status, 404);
+});
+
+test('未知命令、越界路径、强推与凭据形状的载荷都在排队前拒掉', async () => {
+  const { fake, as } = await build();
+  const handle = as('owner-1');
+  assert.equal((await call(handle, '/commands/run_destroy', web({ external_id: 'prj-listed' }))).code, 'not_found');
+  assert.equal((await call(handle, '/commands/file_delete', web({ external_id: 'prj-listed', path: '../papers/x.pdf' }))).status, 400);
+  assert.equal((await call(handle, '/commands/file_delete', web({ external_id: 'prj-listed', path: '/etc/passwd' }))).status, 400);
+  assert.equal((await call(handle, '/commands/git_push', web({ external_id: 'prj-listed', force: true }))).status, 400);
+  assert.equal((await call(handle, '/commands/run_start', web({ external_id: 'prj-listed', question: 'api_key=sk-live-123' }))).status, 400);
+  assert.equal(fake.rowsOf('cloud_command').length, 0);
+});
+
+test('创建项目排成命令而不是写投影', async () => {
+  const { fake, as } = await build();
+  const out = await call(as('owner-1'), '/projects', web({ name: '新课题', question: '小样本能不能站住', strategy: 'starter', autonomy: 'guided' }));
+  assert.equal(out.status, 200);
+  assert.equal(out.json.message, '创建请求已排队，等待本地 Agent 执行');
+  const command = fake.rowsOf('cloud_command')[0]!;
+  assert.equal(command.type, 'project_create');
+  assert.equal(command.project_id, null);
+  assert.equal(fake.rowsOf('cloud_project').length, 2, '云端不替本地引擎建项目行');
+});
+
+test('设置与归档也只能排队', async () => {
+  const { fake, as } = await build();
+  const handle = as('owner-1');
+  await call(handle, '/commands/project_settings', web({ external_id: 'prj-listed', visibility: 'listed', title: '改过的标题' }));
+  assert.deepEqual(fake.rowsOf('cloud_command')[0]!.payload, { title: '改过的标题', visibility: 'listed' });
+  assert.equal(fake.rowsOf('cloud_project')[0]!.title, '公开列表项目', '投影里的标题仍来自本地');
+  assert.equal((await call(handle, '/commands/project_settings', web({ external_id: 'prj-listed', visibility: 'public' }))).status, 400, 'Q1 只有三档');
+});
+
+// --------------------------------------------------------------------------- 心跳与领取
+
+test('Agent 心跳领走 queued 命令并标成 claimed', async () => {
+  const { fake, as } = await build();
+  await call(as('owner-1'), '/commands/run_start', web({ external_id: 'prj-listed', question: 'q', command_id: 'cmd-a' }));
+  const beat = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { agent_version: '0.1.0', local_projects: [{ path: '/srv/p1', name: 'p1', external_id: 'prj-listed' }] }));
+  assert.equal(beat.status, 200);
+  const commands = beat.json.commands as Array<Record<string, unknown>>;
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0]!.command_id, 'cmd-a');
+  assert.equal(fake.rowsOf('cloud_command')[0]!.status, 'claimed');
+  const agentRow = fake.rowsOf('cloud_agent')[0]!;
+  assert.equal(agentRow.agent_version, '0.1.0');
+  assert.equal((agentRow.local_projects as Array<Record<string, unknown>>)[0]!.external_id, 'prj-listed');
+
+  // 已领取的不会被第二次心跳重复下发——重复下发等于重复花费。
+  const second = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, {}));
+  assert.equal((second.json.commands as unknown[]).length, 0);
+});
+
+test('没有 commands 范围的 token 领不到命令', async () => {
+  const { as } = await build();
+  const out = await call(as(null), '/agent/heartbeat', agent(PUSH_ONLY_TOKEN, {}));
+  assert.equal(out.code, 'no_access');
+});
+
+test('project_scope 限死的 token 不领越界命令、也不写越界状态', async () => {
+  const { fake, as } = await build();
+  const other = fake.rowsOf('cloud_project')[1]!;
+  fake.seed('cloud_command', {
+    project_id: other.id,
+    external_command_id: 'cmd-other-owner',
+    type: 'run_start',
+    payload: { question: '别人排的' },
+    status: 'queued',
+    created_by: other.owner_id,
+    created_at: new Date().toISOString(),
+  });
+  const beat = await call(as(null), '/agent/heartbeat', agent(SCOPED_TOKEN, { reported: { git: [{ external_id: 'prj-other', branch: 'main' }] } }));
+  assert.equal((beat.json.commands as unknown[]).length, 0);
+  assert.equal(fake.rowsOf('cloud_git_state').length, 0, '不在范围内的项目连状态都写不进来');
+});
+
+test('结果回写：终态推进一次，重复回写忽略', async () => {
+  const { fake, as } = await build();
+  await call(as('owner-1'), '/commands/run_start', web({ external_id: 'prj-listed', question: 'q', command_id: 'cmd-r' }));
+  await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, {}));
+  const beat = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { results: [{ command_id: 'cmd-r', status: 'succeeded', result: { run_id: 'run-1', exit_code: 0 } }] }));
+  assert.equal((beat.json.applied_results as Array<Record<string, unknown>>)[0]!.applied, true);
+  const row = fake.rowsOf('cloud_command')[0]!;
+  assert.equal(row.status, 'succeeded');
+  assert.ok(row.finished_at);
+  assert.deepEqual(row.result, { run_id: 'run-1', exit_code: 0 });
+
+  const replay = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { results: [{ command_id: 'cmd-r', status: 'failed', error: '迟到的失败' }] }));
+  assert.equal((replay.json.applied_results as Array<Record<string, unknown>>)[0]!.reason, 'already_terminal');
+  assert.equal(fake.rowsOf('cloud_command')[0]!.status, 'succeeded');
+});
+
+test('回写不属于自己的命令被当作不存在', async () => {
+  const { fake, as } = await build();
+  const other = fake.rowsOf('cloud_project')[1]!;
+  fake.seed('cloud_command', {
+    project_id: other.id,
+    external_command_id: 'cmd-priv',
+    type: 'run_cancel',
+    payload: {},
+    status: 'claimed',
+    created_by: other.owner_id,
+    created_at: new Date().toISOString(),
+  });
+  const beat = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { results: [{ command_id: 'cmd-priv', status: 'succeeded' }] }));
+  assert.equal((beat.json.applied_results as Array<Record<string, unknown>>)[0]!.reason, 'not_found');
+  assert.equal(fake.rowsOf('cloud_command')[0]!.status, 'claimed');
+});
+
+test('领取后 15 分钟没有结果 = 租约过期，只标记不自动重排', async () => {
+  const { fake, as } = await build();
+  const stale = new Date(Date.now() - 16 * 60_000).toISOString();
+  fake.seed('cloud_command', {
+    project_id: fake.rowsOf('cloud_project')[0]!.id,
+    external_command_id: 'cmd-stale',
+    type: 'run_start',
+    payload: { question: 'q' },
+    status: 'claimed',
+    created_by: fake.rowsOf('cloud_owner')[0]!.id,
+    created_at: stale,
+    claimed_at: stale,
+  });
+  const beat = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, {}));
+  assert.deepEqual(beat.json.expired_commands, ['cmd-stale']);
+  assert.equal(fake.rowsOf('cloud_command')[0]!.status, 'expired');
+  // 重排等于重复花费，所以过期命令不会再被下发。
+  assert.equal((beat.json.commands as unknown[]).length, 0);
+});
+
+test('长任务续租：running 心跳刷新租约但不领新命令', async () => {
+  const { fake, as } = await build();
+  await call(as('owner-1'), '/commands/run_start', web({ external_id: 'prj-listed', question: 'q', command_id: 'cmd-long' }));
+  await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, {}));
+  const beat = await call(as(null), '/agent/command', agent(AGENT_TOKEN, { command_id: 'cmd-long', status: 'running' }));
+  assert.equal(beat.json.status, 'running');
+  assert.equal(fake.rowsOf('cloud_command')[0]!.status, 'running');
+  assert.equal((await call(as(null), '/agent/command', agent(AGENT_TOKEN, { command_id: 'cmd-long', status: 'succeeded' }))).status, 400);
+});
+
+// --------------------------------------------------------------------------- 上报与读数
+
+test('仓库状态与文件清单按最新一轮上报出示', async () => {
+  const { fake, as } = await build();
+  const first = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { reported: { git: [{ external_id: 'prj-listed', branch: 'main', ahead: 2, dirty: true, staged: 1 }], files: [{ external_id: 'prj-listed', nodes: [{ path: 'papers/a.pdf', kind: 'paper', size: 10 }, { path: 'papers/gone.pdf', kind: 'paper', size: 5 }] }] } }));
+  assert.equal(first.status, 200);
+  const second = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { reported: { files: [{ external_id: 'prj-listed', nodes: [{ path: 'papers/a.pdf', kind: 'paper', size: 12 }] }] } }));
+  assert.deepEqual((second.json.applied_reported as Record<string, unknown>).files, ['prj-listed']);
+
+  const repo = await call(as('owner-1'), '/views/repo?external_id=prj-listed');
+  const git = repo.json.git as Record<string, unknown>;
+  assert.equal(git.branch, 'main');
+  assert.equal(git.ahead, 2);
+  const files = repo.json.files as Array<Record<string, unknown>>;
+  assert.equal(repo.json.file_count, 1, '上一轮已删除的文件不再出现');
+  assert.equal(files[0]!.path, 'papers/a.pdf');
+  assert.equal(files[0]!.size, 12);
+});
+
+test('Agent 在线状态：90 秒内算在线，本地有没有对应目录单独说', async () => {
+  const { fake, as } = await build();
+  await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { local_projects: [{ path: '/srv/p1', name: 'p1', external_id: 'prj-listed' }] }));
+  const online = await call(as('owner-1'), '/views/agent?external_id=prj-listed');
+  assert.equal(online.json.online, true);
+  assert.equal(online.json.reported_for_project, true);
+
+  const staleRow = fake.rowsOf('cloud_agent')[0]!;
+  staleRow.last_seen_at = new Date(Date.now() - 10 * 60_000).toISOString();
+  const offline = await call(as('owner-1'), '/views/agent?external_id=prj-listed');
+  assert.equal(offline.json.online, false);
+  assert.ok(offline.json.last_seen_at);
+});
+
+test('命令与仓库读数按可见性降级：L2 拿不到载荷，匿名拿不到仓库', async () => {
+  const { fake, as } = await build();
+  await call(as('owner-1'), '/commands/run_start', web({ external_id: 'prj-listed', question: 'L1 里的问题', command_id: 'cmd-vis' }));
+  await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { reported: { git: [{ external_id: 'prj-listed', branch: 'secret-branch-name' }] } }));
+
+  const anon = await call(as(null), '/views/commands?external_id=prj-listed');
+  assert.equal(anon.json.projection_level, 'l2');
+  assert.ok(!anon.raw.includes('L1 里的问题'), 'listed 的匿名读者不该看到命令载荷');
+  assert.ok(!anon.raw.includes('secret-branch-name'));
+  // 仓库面没有"L2 版本"：分支名、文件名整级都是 L1，降级后没有任何可出示的字段，
+  // 所以宁可 403，也不给前端一个"看起来是空的"的读数。
+  assert.equal((await call(as(null), '/views/repo?external_id=prj-listed')).code, 'no_access');
+  assert.equal((await call(as(null), '/views/agent?external_id=prj-listed')).code, 'no_access');
+
+  // 被邀读者按 §4 就是 full 读者：能看到 L1，但仍然不能写（上面的 403 已验）。
+  fake.seed('cloud_grant', { owner_id: fake.rowsOf('cloud_owner')[1]!.id, project_id: fake.rowsOf('cloud_project')[0]!.id, revoked_at: null });
+  const granted = await call(as('stranger-1'), '/views/repo?external_id=prj-listed');
+  assert.equal(granted.status, 200);
+  assert.equal((granted.json.git as Record<string, unknown>).branch, 'secret-branch-name');
+  assert.equal((await call(as('stranger-1'), '/commands/git_commit', web({ external_id: 'prj-listed', message: '被邀读者不能提交' }))).status, 403);
+});
+
+test('未知路径仍然 404，命令面没有兜底成功', async () => {
+  const { as } = await build();
+  assert.equal((await call(as('owner-1'), '/commands/')).code, 'not_found');
+  assert.equal((await call(as('owner-1'), '/projects/prj-listed', { method: 'DELETE' })).code, 'not_found');
+  assert.equal((await call(as('owner-1'), '/files/papers/a.pdf')).code, 'not_found');
+});
