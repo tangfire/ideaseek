@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "IdeaSeek 控制台",
+  "design": {
+    "version": 1,
+    "pages": [
+      {
+        "path": "/",
+        "title": "Home"
+      }
+    ],
+    "capabilities": []
+  },
+  "publication": {
+    "actionId": "6ba7b816-9dad-11d1-80b4-00c04fd430c8",
+    "projectId": "01a20236-0bb5-70d0-8725-85eb306c8203",
+    "siteId": "01a20236-0bb8-7b28-97ba-6d14e9abbfad",
+    "deploymentId": "01a20758-1ae0-7de5-93ef-24aaa2187cbf",
+    "artifactSha256": "b3d4f96ac5c4973fc19064e2d600f107e2a84028c6d18a9702a1ab5872ec5b52",
+    "indexSha256": "75493bd399bfbe0e359a44edbc00cb829712d34caf00414222be8c7bb150c2e1",
+    "indexHtml": "PCFkb2N0eXBlIGh0bWw+CjxodG1sIGxhbmc9InpoLUNOIj4KICA8aGVhZD4KICAgIDxtZXRhIGNoYXJzZXQ9InV0Zi04IiAvPgogICAgPG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xIiAvPgogICAgPHRpdGxlPklkZWFTZWVrIOaOp+WItuWPsDwvdGl0bGU+CiAgICA8bWV0YQogICAgICBuYW1lPSJkZXNjcmlwdGlvbiIKICAgICAgY29udGVudD0iSWRlYVNlZWsg56eR56CU5bel5L2c5rWB55qE5Y+q6K+76L+b5bqm5oqV5b2x77ya5byV5pOO6L+Q6KGM5Zyo5L2g6Ieq5bex55qE5py65Zmo5LiK77yM5LqR56uv5Y+q5pyJ6ISx5pWP5ZCO55qE6L+Q6KGM54q25oCB5LiO5LqL5Lu244CCIgogICAgLz4KICAgIDxzY3JpcHQgdHlwZT0ibW9kdWxlIiBjcm9zc29yaWdpbiBzcmM9Ii9hc3NldHMvaW5kZXgtQm40MVhhLVIuanMiPjwvc2NyaXB0PgogICAgPGxpbmsgcmVsPSJzdHlsZXNoZWV0IiBjcm9zc29yaWdpbiBocmVmPSIvYXNzZXRzL2luZGV4LUN4THBoeDI4LmNzcyI+CiAgPC9oZWFkPgogIDxib2R5PgogICAgPGRpdiBpZD0icm9vdCI+PC9kaXY+CiAgPC9ib2R5Pgo8L2h0bWw+Cg==",
+    "releaseId": "01a20758-4c23-783a-a146-a03386912e90"
+  },
+  "actionId": "6ba7b816-9dad-11d1-80b4-00c04fd430c8",
+  "projectId": "01a20236-0bb5-70d0-8725-85eb306c8203",
+  "siteId": "01a20236-0bb8-7b28-97ba-6d14e9abbfad",
+  "deploymentId": "01a20758-1ae0-7de5-93ef-24aaa2187cbf",
+  "artifactSha256": "b3d4f96ac5c4973fc19064e2d600f107e2a84028c6d18a9702a1ab5872ec5b52",
+  "indexSha256": "75493bd399bfbe0e359a44edbc00cb829712d34caf00414222be8c7bb150c2e1",
+  "indexHtml": "PCFkb2N0eXBlIGh0bWw+CjxodG1sIGxhbmc9InpoLUNOIj4KICA8aGVhZD4KICAgIDxtZXRhIGNoYXJzZXQ9InV0Zi04IiAvPgogICAgPG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xIiAvPgogICAgPHRpdGxlPklkZWFTZWVrIOaOp+WItuWPsDwvdGl0bGU+CiAgICA8bWV0YQogICAgICBuYW1lPSJkZXNjcmlwdGlvbiIKICAgICAgY29udGVudD0iSWRlYVNlZWsg56eR56CU5bel5L2c5rWB55qE5Y+q6K+76L+b5bqm5oqV5b2x77ya5byV5pOO6L+Q6KGM5Zyo5L2g6Ieq5bex55qE5py65Zmo5LiK77yM5LqR56uv5Y+q5pyJ6ISx5pWP5ZCO55qE6L+Q6KGM54q25oCB5LiO5LqL5Lu244CCIgogICAgLz4KICAgIDxzY3JpcHQgdHlwZT0ibW9kdWxlIiBjcm9zc29yaWdpbiBzcmM9Ii9hc3NldHMvaW5kZXgtQm40MVhhLVIuanMiPjwvc2NyaXB0PgogICAgPGxpbmsgcmVsPSJzdHlsZXNoZWV0IiBjcm9zc29yaWdpbiBocmVmPSIvYXNzZXRzL2luZGV4LUN4THBoeDI4LmNzcyI+CiAgPC9oZWFkPgogIDxib2R5PgogICAgPGRpdiBpZD0icm9vdCI+PC9kaXY+CiAgPC9ib2R5Pgo8L2h0bWw+Cg==",
+  "releaseId": "01a20758-4c23-783a-a146-a03386912e90"
+}

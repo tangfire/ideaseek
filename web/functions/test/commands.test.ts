@@ -437,7 +437,6 @@ test('云端 project_create 写真实投影：项目 + 运行 + 阶段 + 事件 
     question: '验证真执行',
     strategy: 'starter',
     autonomy: 'autonomous',
-    execution_mode: 'cloud',
   }));
   assert.equal(res.status, 200, `期望 200，实际 ${res.status}: ${res.raw}`);
   assert.equal(res.json.ok, true);
@@ -492,7 +491,6 @@ test('云端 project_create 幂等回放：同 command_id 不重复创建', asyn
     question: null,
     strategy: 'standard',
     autonomy: 'guided',
-    execution_mode: 'cloud',
   };
   const first = await call(as(null), '/projects', web(body));
   assert.equal(first.status, 200);
@@ -514,7 +512,6 @@ test('云端 project_create 缺 name 返回 400', async () => {
     question: '没有名字',
     strategy: 'standard',
     autonomy: 'guided',
-    execution_mode: 'cloud',
   }));
   assert.equal(res.status, 400);
   assert.ok(res.code.includes('invalid_input'), `错误码包含 invalid_input: ${res.code}`);
@@ -529,7 +526,6 @@ test('云端 project_create 的 command CAS 更新：并发重入只有一个成
     question: null,
     strategy: 'starter',
     autonomy: 'guided',
-    execution_mode: 'cloud',
   };
 
   // 模拟并发：两个请求同时到达（fake-db 是单线程，但测试 CAS 逻辑）

@@ -1,18 +1,16 @@
 /**
  * Web-First 操作面板（Phase 3/4/5/6/8）。
  *
- * 这一整层的措辞受同一条约束支配：**云端不执行任何东西**（F6.5）。所有按钮写的是
- * "已排队/等待本地 Agent 执行"，永远不写"已提交成功"或"已完成"——后者是本地引擎
- * 回写结果之后才允许出现的读数。把排队说成执行，等于给用户一个看不见的假状态，
- * 和审批面"只记意向不记生效"（R2）是同一条红线的两个方向。
+ * 云原生架构：所有操作直接在云端 Function 内执行，不排队等待本地 Agent（M0 起 local-agent 已删除）。
+ * 按钮文案直接反映云端执行结果（"已创建"、"执行中"），不再说"排队"。
  *
- * 第二层约束：写操作只认 Owner。`writable` 来自 Function（`views.ts` /
- * `commands.ts`），不是前端用可见性字段推断的——被邀读者是 full 读者但没有写权。
+ * 写操作只认 Owner。`writable` 来自 Function（`views.ts` / `commands.ts`），
+ * 不是前端用可见性字段推断的——被邀读者是 full 读者但没有写权。
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, mutateJson, requestJson } from './api';
-import type { AccessView, AgentPresenceView, CommandStatus, CommandsView, ProjectView, RepoView } from './types';
+import type { AccessView, CommandStatus, CommandsView, ProjectView, RepoView } from './types';
 
 const APP = '/functions/v1/app';
 
@@ -127,161 +125,6 @@ function ErrorLine({ error }: { error: Error | null }) {
   );
 }
 
-// --------------------------------------------------------------------------- Agent 在线
-
-/** 不传 projectId = 读 Owner 自己的全局在线状态（首页用）。 */
-export function AgentPresence({ projectId }: { projectId?: string }) {
-  const query = useQuery({
-    queryKey: ['agent', projectId ?? ''],
-    queryFn: () => requestJson<AgentPresenceView>(`${APP}/views/agent?external_id=${encodeURIComponent(projectId ?? '')}`),
-    refetchInterval: 20_000,
-  });
-  const [showSetup, setShowSetup] = useState(false);
-
-  if (query.isPending) return <span className="muted mono">Agent 状态读取中…</span>;
-  if (query.error) {
-    const code = query.error instanceof ApiError ? query.error.code : 'network';
-    // 403 是"你没有 full 读级"、401 是"还没登录"，都不是"Agent 离线"：把权限问题
-    // 说成连接问题，用户会去重启一个根本没在跑的 Agent。
-    const text =
-      code === 'no_access' ? 'Agent 状态仅 Owner 可读' : code === 'login_required' ? '登录后才显示 Agent 状态' : 'Agent 状态读不到';
-    return <span className="muted mono">{text}</span>;
-  }
-  const view = query.data;
-  const dir = projectId ? (view.local_projects.find((entry) => entry.external_id === projectId) ?? null) : null;
-
-  return (
-    <div className="panel">
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span className="status-chip" data-state={view.online ? 'ok' : 'fail'}>{view.online ? '本地 Agent 在线' : '本地 Agent 离线'}</span>
-        <span className="muted">心跳 {ago(view.last_seen_at)}</span>
-        {view.agent_version ? <span className="muted mono">{view.agent_version}</span> : null}
-        {view.active_commands > 0 ? <span className="status-chip" data-state="active">{`${view.active_commands} 条正在执行`}</span> : null}
-        {view.local_projects.length > 0 ? (
-          <span className="muted mono" style={{ fontSize: 11 }}>{`本机上报 ${view.local_projects.length} 个目录`}</span>
-        ) : null}
-      </div>
-      <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
-        {view.online
-          ? !projectId
-            ? '命令排队后会被本机领取执行；云端不运行任何东西。'
-            : view.reported_for_project
-              ? `本机的对应目录是 ${dir?.path ?? '（未上报路径）'}。`
-              : '本机在线，但这个项目目录还没在本地上报清单里——创建或归档类命令仍可领取，运行类命令要等目录出现。'
-          : '命令会继续排队。Agent 恢复心跳后领取；超过 15 分钟没有结果回写的命令标记为超时未回写，不会自动重排。'}
-      </p>
-      {view.online ? null : (
-        <>
-          <button
-            className="btn-primary"
-            style={{ marginTop: 8 }}
-            onClick={() => setShowSetup(!showSetup)}
-          >
-            {showSetup ? '收起设置指南' : '如何启动 Agent？'}
-          </button>
-          {showSetup && <AgentSetupGuide baseUrl={`${window.location.origin}${APP}`} projectId={projectId} />}
-          <pre style={{ marginTop: 8 }}>ideaseek-agent start --base {`${APP}`} --token "&lt;本地 cloud link 保存的 sync token&gt;"</pre>
-        </>
-      )}
-    </div>
-  );
-}
-
-/**
- * Agent 设置指南：分步骤引导用户下载、配置并启动 Local Agent。
- * 检测用户平台并提供对应的下载链接和命令。
- */
-function AgentSetupGuide({ baseUrl, projectId }: { baseUrl: string; projectId?: string }) {
-  const [platform, setPlatform] = useState<'windows' | 'macos' | 'linux' | 'unknown'>(() => {
-    if (typeof navigator === 'undefined') return 'unknown';
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('win')) return 'windows';
-    if (ua.includes('mac')) return 'macos';
-    if (ua.includes('linux')) return 'linux';
-    return 'unknown';
-  });
-
-  const downloadUrl = '/local-agent/dist/ideaseek-agent.zip';
-  const defaultRoot = projectId ? `./${projectId}` : './ideaseek-projects';
-
-  const steps = {
-    windows: [
-      `下载 Agent：点击 <a href="${downloadUrl}" class="btn-secondary" style="display:inline-block;padding:4px 12px;font-size:12px">Windows 版本</a>`,
-      '解压到任意目录（例如 C:\\ideaseek-agent\\）',
-      '打开 PowerShell 或 CMD，进入解压目录',
-      '运行启动命令（复制下方命令）：',
-    ],
-    macos: [
-      `下载 Agent：点击 <a href="${downloadUrl}" class="btn-secondary" style="display:inline-block;padding:4px 12px;font-size:12px">macOS 版本</a>`,
-      '解压到任意目录（例如 ~/ideaseek-agent/）',
-      '打开终端，进入解压目录',
-      '运行启动命令（复制下方命令）：',
-    ],
-    linux: [
-      `下载 Agent：点击 <a href="${downloadUrl}" class="btn-secondary" style="display:inline-block;padding:4px 12px;font-size:12px">Linux 版本</a>`,
-      '解压到任意目录（例如 ~/ideaseek-agent/）',
-      '打开终端，进入解压目录',
-      '运行启动命令（复制下方命令）：',
-    ],
-    unknown: [
-      `下载 Agent：<a href="${downloadUrl}">ideaseek-agent.zip</a>`,
-      '解压到任意目录',
-      '打开终端，进入解压目录',
-      '运行启动命令：',
-    ],
-  };
-
-  const startCommand = `node dist/cli.js start --base ${baseUrl} --token "<你的 sync token>" --root ${defaultRoot}`;
-
-  return (
-    <div style={{ marginTop: 12, padding: 12, background: 'var(--panel)', borderRadius: 6, border: '1px solid var(--line)' }}>
-      <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>🚀 Local Agent 设置指南</h4>
-      
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ fontSize: 12, marginRight: 8 }}>检测到平台：</label>
-        <select
-          value={platform}
-          onChange={(e) => setPlatform(e.target.value as typeof platform)}
-          style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}
-        >
-          <option value="windows">Windows</option>
-          <option value="macos">macOS</option>
-          <option value="linux">Linux</option>
-          <option value="unknown">其他</option>
-        </select>
-      </div>
-
-      <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.8 }}>
-        {steps[platform].map((step, i) => (
-          <li key={i} dangerouslySetInnerHTML={{ __html: step }} />
-        ))}
-      </ol>
-
-      <div style={{ marginTop: 12, padding: 8, background: 'var(--bg)', borderRadius: 4, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
-        <div style={{ marginBottom: 4, color: 'var(--muted)', fontSize: 10 }}>启动命令：</div>
-        <code>{startCommand}</code>
-      </div>
-
-      <div style={{ marginTop: 12, padding: 8, background: '#fff3cd', borderRadius: 4, fontSize: 12, border: '1px solid #ffc107' }}>
-        <strong>⚠️ 重要提示：</strong>
-        <ul style={{ margin: '4px 0 0', paddingLeft: 20 }}>
-          <li>Sync Token 在"设置 → Token 管理"中创建（scope 需包含 <code>commands</code>）</li>
-          <li>Agent 启动后会每 15 秒发送心跳，本页面会自动刷新状态</li>
-          <li>Agent 必须保持运行才能执行排队的命令</li>
-        </ul>
-      </div>
-
-      <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
-        💡 <strong>什么是 Local Agent？</strong>
-        <p style={{ margin: '4px 0 0' }}>
-          IdeaSeek 采用 Web-First 架构：浏览器只负责排队命令，实际的代码执行、文件操作都在你的本地机器上完成。
-          Local Agent 就是运行在你机器上的"工人"，它从云端领取命令、执行后回写结果。
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // --------------------------------------------------------------------------- 创建项目
 
 export function CreateProjectPanel() {
@@ -290,20 +133,19 @@ export function CreateProjectPanel() {
   const [question, setQuestion] = useState('');
   const [strategy, setStrategy] = useState('standard');
   const [autonomy, setAutonomy] = useState('guided');
-  const [executionMode, setExecutionMode] = useState<'local' | 'cloud'>('local');
   const [notice, setNotice] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: (commandId: string) =>
       mutateJson<{ ok: boolean; message?: string; cloud_executed?: boolean }>(`${APP}/projects`, {
         method: 'POST',
-        body: JSON.stringify({ command_id: commandId, name, question, strategy, autonomy, execution_mode: executionMode }),
+        body: JSON.stringify({ command_id: commandId, name, question, strategy, autonomy }),
       }),
     onSuccess: (data) => {
       if (data.cloud_executed) {
-        setNotice('✅ 项目已在云端创建（演示模式），投影将立即同步。');
+        setNotice('✅ 项目已在云端创建，投影将立即同步。');
       } else {
-        setNotice('创建请求已排队，本地 Agent 执行后项目才会出现在投影里。');
+        setNotice('项目创建中…');
       }
       void client.invalidateQueries({ queryKey: ['index'] });
       void client.invalidateQueries({ queryKey: ['commands', ''] });
@@ -314,39 +156,11 @@ export function CreateProjectPanel() {
     <div className="panel" style={{ marginTop: 16 }}>
       <h3 style={{ margin: '0 0 8px' }}>创建项目</h3>
       <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
-        {executionMode === 'cloud' 
-          ? '☁️ 云端模式：立即在云端沙箱执行（演示用，不创建真实文件）'
-          : '🖥️ 本地模式：排队等待 Local Agent 执行（创建真实项目目录）'}
+        ☁️ 云端模式：立即在云端沙箱执行（演示用，不创建真实文件）
       </p>
       
-      <div style={{ marginBottom: 12, padding: 8, background: 'var(--bg)', borderRadius: 4 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, marginRight: 8 }}>执行模式：</label>
-        <label style={{ fontSize: 12, marginRight: 12, cursor: 'pointer' }}>
-          <input
-            type="radio"
-            name="executionMode"
-            value="local"
-            checked={executionMode === 'local'}
-            onChange={(e) => setExecutionMode(e.target.value as 'local' | 'cloud')}
-            style={{ marginRight: 4 }}
-          />
-          🖥️ 本地执行
-        </label>
-        <label style={{ fontSize: 12, cursor: 'pointer' }}>
-          <input
-            type="radio"
-            name="executionMode"
-            value="cloud"
-            checked={executionMode === 'cloud'}
-            onChange={(e) => setExecutionMode(e.target.value as 'local' | 'cloud')}
-            style={{ marginRight: 4 }}
-          />
-          ☁️ 云端演示
-        </label>
-      </div>
-      
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <input style={{ flex: '1 1 180px' }} placeholder="项目名称（同时作为本地目录名）" value={name} onChange={(event) => setName(event.target.value)} />
+        <input style={{ flex: '1 1 180px' }} placeholder="项目名称" value={name} onChange={(event) => setName(event.target.value)} />
         <select value={strategy} onChange={(event) => setStrategy(event.target.value)} aria-label="运行策略">
           <option value="starter">starter</option>
           <option value="standard">standard</option>
@@ -370,7 +184,7 @@ export function CreateProjectPanel() {
           disabled={mutation.isPending || name.trim().length === 0}
           onClick={() => mutation.mutate(crypto.randomUUID())}
         >
-          {mutation.isPending ? (executionMode === 'cloud' ? '执行中…' : '排队中…') : (executionMode === 'cloud' ? '立即创建（云端）' : '排队创建（本地）')}
+          {mutation.isPending ? '创建中…' : '立即创建'}
         </button>
         {notice ? <span className="muted mono" style={{ fontSize: 12 }}>{notice}</span> : null}
       </div>

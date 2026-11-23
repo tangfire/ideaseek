@@ -515,19 +515,8 @@ export async function projectCreateView(
   body: Record<string, unknown>,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
-  // 支持 execution_mode 参数：'local'（默认）或 'cloud'
-  const executionMode = String(body.execution_mode ?? 'local');
-  if (!['local', 'cloud'].includes(executionMode)) {
-    throw new BackendError('invalid_input:execution_mode', 400);
-  }
-  
-  // 云端模式：直接执行，不排队
-  if (executionMode === 'cloud') {
-    return executeInCloud(db, viewer, 'project_create', body, BackendError);
-  }
-  
-  // 本地模式：排队等待 Local Agent
-  return enqueueCommand(db, viewer, 'project_create', body, BackendError);
+  // 云原生模式：直接在 Function 内执行，不排队（M0 起 local-agent 已删除）
+  return executeInCloud(db, viewer, 'project_create', body, BackendError);
 }
 
 /**
