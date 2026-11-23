@@ -4,7 +4,7 @@ import { Route, Switch, useLocation } from 'wouter';
 import { ApiError, loginHref, requestJson, mutateJson } from './api';
 import { openLive, type Transport } from './live';
 import type { EventRow, IndexView, IdeaSummary, LiveFrame, PaperCard, ClaimRow, ExperimentResult, ProtocolSummary, ProjectView, RunSummary, ApprovalRequest, CostSummary, EgressEntry, SyncToken, SyncHealth } from './types';
-import { AccessPanel, AgentPresence, AuditLedger, CreateProjectPanel, FilePanel, ProvisioningList, RepoPanel, RunControl, SettingsPanel } from './panels';
+import { AccessPanel, AuditLedger, CreateProjectPanel, ProvisioningList, RunControl, SettingsPanel } from './panels';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -486,7 +486,6 @@ function ConsoleHome() {
         </button>
       </div>
 
-      <AgentPresence />
       <ProvisioningList />
       {creating ? <CreateProjectPanel /> : null}
 
@@ -621,7 +620,7 @@ function Project({ id }: { id: string }) {
   const canWrite = view.writable === true;
   // 设置与协作两面只有 Owner 有可写的东西：设置要排队给本地引擎，协作是云端 ACL。
   // 给被邀读者挂上它们，只会换来一句"你没有权限"，不如不显示。
-  const tabs = (l2 ? (['概览', '运行', '设置', '协作'] as const) : (['概览', '运行', '仓库', '文件', '设置', '协作'] as const)).filter(
+  const tabs = (['概览', '运行', '设置', '协作'] as const).filter(
     (name) => (name !== '设置' && name !== '协作') || canWrite,
   );
   const active = tabs.includes(tab as (typeof tabs)[number]) ? tab : tabs[0];
@@ -700,16 +699,6 @@ function Project({ id }: { id: string }) {
       ) : null}
 
       {active === '运行' ? <RunControl projectId={id} writable={canWrite} run={latest} /> : null}
-
-      {/* 仓库与文件来自 Agent 上报表，只有 full 读级才拿得到（L2 下 Function 直接 403）。 */}
-      {active === '仓库' ? (
-        <>
-          <AgentPresence projectId={id} />
-          <RepoPanel projectId={id} writable={canWrite} />
-        </>
-      ) : null}
-
-      {active === '文件' ? <FilePanel projectId={id} writable={canWrite} /> : null}
 
       {active === '设置' ? <SettingsPanel projectId={id} view={view} /> : null}
       {active === '协作' ? <AccessPanel projectId={id} view={view} /> : null}

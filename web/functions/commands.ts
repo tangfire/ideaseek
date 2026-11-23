@@ -23,7 +23,7 @@ import { byExternalId, canRead, deniesAsAbsent, readLevel } from './views.ts';
 import type { SyncPrincipal } from './token.ts';
 import { assertProjectAllowed } from './token.ts';
 
-/** Agent 必须实现这几个 type；不在表里的一律 400，不给"未知命令"留排队机会。 */
+/** 云端支持的命令类型；不在表里的一律 400。 */
 export const COMMAND_TYPES = [
   'project_create',
   'project_settings',
@@ -33,16 +33,6 @@ export const COMMAND_TYPES = [
   'run_resume',
   'run_continue',
   'run_cancel',
-  'git_commit',
-  'git_push',
-  'git_pull',
-  'git_fetch',
-  'git_branch',
-  'git_branch_delete',
-  'git_checkout',
-  'git_merge',
-  'git_merge_abort',
-  'file_delete',
 ] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
@@ -225,69 +215,6 @@ export function validatePayload(
       const out: Record<string, unknown> = {};
       if (body.run !== undefined) out.run = text(body.run, 64) ?? fail('run');
       return out;
-    }
-    case 'git_commit': {
-      const message = text(body.message, TEXT_CAP) ?? fail('message');
-      if (body.files === undefined) return { message, files: null };
-      if (!Array.isArray(body.files) || body.files.length > 200) fail('files');
-      const files = (body.files as unknown[]).map((f) => (isSafeRelativePath(f) ? f : fail('files')));
-      return { message, files };
-    }
-    case 'git_push':
-    case 'git_pull': {
-      const out: Record<string, unknown> = {};
-      if (body.remote !== undefined) out.remote = isSafeRef(body.remote) ? body.remote : fail('remote');
-      if (body.branch !== undefined) out.branch = isSafeRef(body.branch) ? body.branch : fail('branch');
-      // 只允许 fast-forward 之外的常规动作；`--force` 不接受——云端按钮不该有能力
-      // 覆盖历史，需要强推的人应当在自己终端上做这件事。
-      if (body.force === true) fail('force');
-      if (type === 'git_pull' && body.rebase === true) out.rebase = true;
-      return out;
-    }
-    case 'git_fetch': {
-      const out: Record<string, unknown> = {};
-      if (body.remote !== undefined) out.remote = isSafeRef(body.remote) ? body.remote : fail('remote');
-      if (body.prune === true) out.prune = true;
-      return out;
-    }
-    case 'git_branch': {
-      const name = text(body.name, 80) ?? fail('name');
-      if (!isSafeRef(name)) fail('name');
-      const out: Record<string, unknown> = { name };
-      if (body.checkout === true) out.checkout = true;
-      // 基于哪个提交/分支建：同样只接受 ref 形状，不接受任意 rev-parse 表达式。
-      if (body.from !== undefined) out.from = isSafeRef(body.from) ? body.from : fail('from');
-      return out;
-    }
-    case 'git_branch_delete': {
-      const name = text(body.name, 80) ?? fail('name');
-      if (!isSafeRef(name)) fail('name');
-      if (PROTECTED_BRANCHES.has(name)) fail('protected_branch');
-      return { name };
-    }
-    case 'git_checkout': {
-      const branch = isSafeRef(body.branch) ? body.branch : fail('branch');
-      const out: Record<string, unknown> = { branch };
-      if (body.create === true) out.create = true;
-      // 不带 `--force`：把工作区丢进云端按钮里等于给用户一个"没提示就没了改动"的入口。
-      if (body.discard_uncommitted === true) fail('discard_uncommitted');
-      return out;
-    }
-    case 'git_merge': {
-      const target = isSafeRef(body.target) ? body.target : fail('target');
-      const strategy = body.strategy ?? 'ff-only';
-      if (!['ff-only', 'no-ff', 'squash'].includes(String(strategy))) fail('strategy');
-      const out: Record<string, unknown> = { target, strategy };
-      // 合并带进的消息同样过凭据检查（text() 里那条）。
-      if (body.message !== undefined) out.message = text(body.message, TEXT_CAP) ?? fail('message');
-      if (body.squash === true && strategy !== 'squash') fail('strategy');
-      return out;
-    }
-    case 'git_merge_abort':
-      return {};
-    case 'file_delete': {
-      const path = isSafeRelativePath(body.path) ? body.path : fail('path');
-      return { path };
     }
     default:
       throw new BackendError(`invalid_input:unknown_type`, 400);
