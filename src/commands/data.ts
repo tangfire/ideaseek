@@ -360,8 +360,26 @@ export function registerDataCommand(program: Command): void {
                   createdAt: slice.generatedAt,
                 });
               }
+              // Supersede the previous from-protocol generation: slices from
+              // an older protocol or snapshot are rebuildable by rule + seed,
+              // and leaving them registered blocks the single-snapshot gate at
+              // `confirm protocol` forever. Other slice sources (--build-from,
+              // federated mounts) are never touched, and a partial --scales
+              // rebuild only supersedes the scales it rebuilt.
+              const builtIds = new Set(built.map((slice) => slice.sliceId));
+              const scaleSet = new Set(scales);
+              const superseded: string[] = [];
+              for (const record of await runtime.db.listSlices()) {
+                if (builtIds.has(record.sliceId)) continue;
+                const slice = record.record as { generatedBy?: unknown; scale?: unknown };
+                if (slice.generatedBy !== 'ideaseek data slices --from-protocol') continue;
+                if (typeof slice.scale === 'string' && !scaleSet.has(slice.scale as SliceScale)) {
+                  continue;
+                }
+                if (await runtime.db.deleteSlice(record.sliceId)) superseded.push(record.sliceId);
+              }
               if (opts.json) {
-                process.stdout.write(jsonLine({ built: built.length, slices: built }));
+                process.stdout.write(jsonLine({ built: built.length, superseded, slices: built }));
                 return 0;
               }
               process.stdout.write(
@@ -372,6 +390,12 @@ export function registerDataCommand(program: Command): void {
                   `  ${slice.scale.padEnd(9)} ${slice.sliceId}  ${slice.stats.selectedRows}/${slice.stats.totalRows} rows\n` +
                     `    ${slice.rule}\n`,
                 );
+              }
+              if (superseded.length > 0) {
+                process.stdout.write(
+                  `superseded ${superseded.length} stale from-protocol slice record(s) (rebuildable by rule + seed):\n`,
+                );
+                for (const id of superseded) process.stdout.write(`  - ${id}\n`);
               }
               process.stdout.write('next: ideaseek data slices --scale smoke\n');
               return 0;
