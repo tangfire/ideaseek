@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Route, Switch, useLocation } from 'wouter';
 import { ApiError, loginHref, requestJson } from './api';
 import { openLive, type Transport } from './live';
-import type { EventRow, IndexView, LiveFrame, ProjectView, RunSummary } from './types';
+import type { EventRow, IndexView, IdeaSummary, LiveFrame, PaperCard, ClaimRow, ExperimentResult, ProtocolSummary, ProjectView, RunSummary } from './types';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -565,6 +565,18 @@ function Project({ id }: { id: string }) {
       ) : null}
       <h2>运行历史</h2>
       <RunHistory runs={view.runs} />
+      {/* F8: Idea 看板——L1 字段，L2 降级时不显示 */}
+      {view.ideas && view.ideas.length > 0 && !l2 ? (
+        <IdeaBoard ideas={view.ideas} />
+      ) : null}
+      {/* F9: 证据链追溯——L1 字段，L2 降级时不显示 */}
+      {view.papers && view.claims && !l2 ? (
+        <EvidenceChain papers={view.papers} claims={view.claims} />
+      ) : null}
+      {/* F10: 实验结果与协议对比——L1 字段，L2 降级时不显示 */}
+      {view.experiments && view.protocols && !l2 ? (
+        <ExperimentView experiments={view.experiments} protocols={view.protocols} />
+      ) : null}
       <h2>事件</h2>
       <EventList events={[...view.events, ...liveEvents].slice(-80)} redacted={l2} lastSyncAt={view.project.last_sync_at} />
     </>
@@ -602,6 +614,291 @@ function getVisibilityDescription(visibility: 'private' | 'link' | 'listed'): st
     case 'listed':
       return '出现在公开项目列表中，任何人都可以查看（L2 降级投影）';
   }
+}
+
+/**
+ * F8.1: Idea 卡片——标题、机制摘要、状态、结论。
+ *
+ * F8.3: DRAFT_COMPOSITION 徽标——无理由拼接的候选必须标出，不得混入"有效 idea"。
+ * F8.5: 假设全文按 hypothesis_disclosure 分级显示。
+ * F8.6: 结论徽章——SUPPORTED/NEEDS_REVISION/REJECTED/INVALID_RUN。
+ */
+function IdeaCard({ idea }: { idea: IdeaSummary }) {
+  const isDraft = idea.status === 'DRAFT_COMPOSITION';
+  const verdictState = idea.verdict === 'SUPPORTED' ? 'ok'
+    : idea.verdict === 'REJECTED' || idea.verdict === 'INVALID_RUN' ? 'fail'
+    : idea.verdict === 'NEEDS_REVISION' ? 'blocked'
+    : 'idle';
+  return (
+    <div className="panel" style={{ opacity: isDraft ? 0.6 : 1, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <strong style={{ fontSize: 15 }}>{idea.title}</strong>
+        {isDraft ? (
+          <span className="status-chip" data-state="blocked" style={{ fontSize: 11 }}>
+            DRAFT_COMPOSITION
+          </span>
+        ) : null}
+        <span className="status-chip" data-state="idle" style={{ fontSize: 11 }}>
+          v{idea.version}
+        </span>
+      </div>
+      {idea.mechanism_summary ? (
+        <p style={{ margin: '0 0 8px', fontSize: 13 }}>{idea.mechanism_summary}</p>
+      ) : null}
+      {/* F8.5: 假设全文按 disclosure 分级 */}
+      {idea.hypothesis_disclosure === 'full' && idea.hypothesis ? (
+        <details style={{ marginBottom: 8 }}>
+          <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>查看假设全文</summary>
+          <p style={{ margin: '8px 0', fontSize: 13, whiteSpace: 'pre-wrap' }}>{idea.hypothesis}</p>
+        </details>
+      ) : idea.hypothesis_disclosure === 'structure' ? (
+        <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+          假设结构已公开，全文需 Owner 授权
+        </p>
+      ) : (
+        <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+          假设全文未公开（withheld）
+        </p>
+      )}
+      {/* F8.6: 结论徽章 */}
+      {idea.verdict ? (
+        <span className="status-chip" data-state={verdictState}>
+          {idea.verdict}
+        </span>
+      ) : (
+        <span className="status-chip" data-state="idle">无结论</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * F8.2: 版本树——parent_idea_id 链。
+ *
+ * 按 parent_idea_id 递归构建树结构，显示 idea 的演化历史。
+ */
+function VersionTree({ ideas }: { ideas: IdeaSummary[] }) {
+  const byId = new Map(ideas.map((i) => [i.external_idea_id, i]));
+  const roots = ideas.filter((i) => !i.parent_idea_id || !byId.has(i.parent_idea_id));
+
+  if (roots.length === 0) return <p className="muted">还没有 idea。</p>;
+
+  const renderTree = (idea: IdeaSummary, depth: number): JSX.Element => {
+    const children = ideas.filter((i) => i.parent_idea_id === idea.external_idea_id);
+    return (
+      <div key={idea.external_idea_id} style={{ marginLeft: depth * 20, marginBottom: 8 }}>
+        <IdeaCard idea={idea} />
+        {children.map((child) => renderTree(child, depth + 1))}
+      </div>
+    );
+  };
+
+  return <div>{roots.map((root) => renderTree(root, 0))}</div>;
+}
+
+/**
+ * F9: 证据链追溯组件。
+ *
+ * F9.1: 论文卡片列表——标题、问题、方法摘要、解析状态。
+ * F9.2: claim → 页码定位——点击结论跳到 evidence_ref(page, section)。
+ * F9.3: unknown/uncertain 呈现——缺失字段显示"未确认"而非空白或猜测。
+ * F9.4: 结论—证据—实验三跳——idea ↔ claim ↔ metric 互链。
+ */
+function PaperCardList({ papers }: { papers: PaperCard[] }) {
+  if (papers.length === 0) return <p className="muted">还没有论文卡片。</p>;
+  return (
+    <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+      {papers.map((paper) => (
+        <div key={paper.external_paper_id} className="panel" style={{ marginBottom: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <strong style={{ fontSize: 14 }}>{paper.title}</strong>
+            <span className="status-chip" data-state={paper.parse_status === 'parsed' ? 'ok' : 'blocked'} style={{ fontSize: 11 }}>
+              {paper.parse_status}
+            </span>
+          </div>
+          {paper.question ? <p style={{ margin: '0 0 8px', fontSize: 13 }}>{paper.question}</p> : null}
+          {paper.method_summary ? <p className="muted" style={{ margin: 0, fontSize: 12 }}>{paper.method_summary}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClaimList({ claims }: { claims: ClaimRow[] }) {
+  if (claims.length === 0) return <p className="muted">还没有结论陈述。</p>;
+  return (
+    <div style={{ marginTop: 12 }}>
+      {claims.map((claim) => (
+        <div key={claim.external_claim_id} className="panel" style={{ marginBottom: 8 }}>
+          <p style={{ margin: '0 0 8px' }}>{claim.text}</p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="status-chip" data-state={claim.support_level === 'supported' ? 'ok' : claim.support_level === 'uncertain' ? 'blocked' : 'idle'} style={{ fontSize: 11 }}>
+              {claim.support_level}
+            </span>
+            {/* F9.2: claim → 页码定位 */}
+            {claim.evidence_ref?.paper_external_id ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                出处：{claim.evidence_ref.paper_external_id}
+                {claim.evidence_ref.page ? ` 第 ${claim.evidence_ref.page} 页` : ''}
+                {claim.evidence_ref.section ? ` §${claim.evidence_ref.section}` : ''}
+              </span>
+            ) : (
+              // F9.3: unknown/uncertain 呈现
+              <span className="muted" style={{ fontSize: 12 }}>出处：未确认</span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * F9: 证据链追溯视图——论文卡片 + 结论陈述。
+ */
+function EvidenceChain({ papers, claims }: { papers: PaperCard[]; claims: ClaimRow[] }) {
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>证据链追溯</h2>
+      <h3 style={{ fontSize: 15 }}>论文卡片</h3>
+      <PaperCardList papers={papers} />
+      <h3 style={{ fontSize: 15, marginTop: 16 }}>结论陈述</h3>
+      <ClaimList claims={claims} />
+    </div>
+  );
+}
+
+/**
+ * F10: 实验结果与协议对比组件。
+ *
+ * F10.1: 指标表——主/辅指标、方差、方向。
+ * F10.2: baseline 对比——与 comparison 的 delta。
+ * F10.3: 数据规模标签——smoke/quick/standard/handoff_manifest 醒目。
+ * F10.4: 协议详情——锁定的 ExperimentalProtocol 与规则来源。
+ * F10.5: 失败分类——failure-diagnosis 的层级与证据摘录。
+ */
+function ExperimentResults({ experiments }: { experiments: ExperimentResult[] }) {
+  if (experiments.length === 0) return <p className="muted">还没有实验结果。</p>;
+  return (
+    <div style={{ marginTop: 12 }}>
+      {experiments.map((exp) => {
+        // F10.3: 数据规模标签
+        const scaleState = exp.scale === 'standard' ? 'ok'
+          : exp.scale === 'quick' ? 'active'
+          : exp.scale === 'smoke' ? 'blocked'
+          : 'idle'; // handoff_manifest
+        return (
+          <div key={exp.external_spec_id} className="panel" style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <strong className="mono" style={{ fontSize: 13 }}>{exp.external_spec_id.slice(0, 12)}…</strong>
+              <span className="status-chip" data-state={scaleState} style={{ fontSize: 11 }}>
+                {exp.scale}
+                {exp.scale === 'handoff_manifest' ? ' · 未执行' : ''}
+              </span>
+              <span className="status-chip" data-state={exp.status === 'succeeded' ? 'ok' : 'fail'} style={{ fontSize: 11 }}>
+                {exp.status}
+              </span>
+            </div>
+            {/* F10.1: 指标表 */}
+            {exp.metrics && Object.keys(exp.metrics).length > 0 ? (
+              <div style={{ marginTop: 8 }}>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>指标</div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {Object.entries(exp.metrics).map(([key, value]) => (
+                    <span key={key} className="mono" style={{ fontSize: 12 }}>
+                      {key}={typeof value === 'number' ? value.toFixed(4) : String(value)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {exp.verdict ? (
+              <div style={{ marginTop: 8 }}>
+                <span className="status-chip" data-state={exp.verdict === 'supported' ? 'ok' : exp.verdict === 'rejected' ? 'fail' : 'blocked'} style={{ fontSize: 11 }}>
+                  {exp.verdict}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProtocolList({ protocols }: { protocols: ProtocolSummary[] }) {
+  if (protocols.length === 0) return <p className="muted">还没有协议。</p>;
+  return (
+    <div style={{ marginTop: 12 }}>
+      {protocols.map((proto) => (
+        <div key={proto.external_protocol_id} className="panel" style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <strong className="mono" style={{ fontSize: 13 }}>{proto.external_protocol_id.slice(0, 12)}…</strong>
+            {proto.locked_at ? (
+              <span className="muted" style={{ fontSize: 11 }}>锁定于 {new Date(proto.locked_at).toLocaleDateString()}</span>
+            ) : (
+              <span className="status-chip" data-state="blocked" style={{ fontSize: 11 }}>未锁定</span>
+            )}
+          </div>
+          {/* F10.4: 协议详情——规则来源 */}
+          {proto.provenance ? (
+            <p className="muted" style={{ margin: 0, fontSize: 12 }}>来源：{proto.provenance}</p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * F10: 实验结果与协议对比视图。
+ */
+function ExperimentView({ experiments, protocols }: { experiments: ExperimentResult[]; protocols: ProtocolSummary[] }) {
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>实验结果</h2>
+      <ExperimentResults experiments={experiments} />
+      <h2 style={{ marginTop: 24 }}>实验协议</h2>
+      <ProtocolList protocols={protocols} />
+    </div>
+  );
+}
+
+/**
+ * F8: Idea 看板——按状态分列显示。
+ *
+ * DRAFT_COMPOSITION 单独一列且灰显，不与有效候选混排。
+ */
+function IdeaBoard({ ideas }: { ideas: IdeaSummary[] }) {
+  const active = ideas.filter((i) => i.status !== 'DRAFT_COMPOSITION' && i.status !== 'REJECTED');
+  const drafts = ideas.filter((i) => i.status === 'DRAFT_COMPOSITION');
+  const rejected = ideas.filter((i) => i.status === 'REJECTED');
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>Idea 看板</h2>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+        <div>
+          <h3 style={{ fontSize: 14, color: 'var(--ok)' }}>有效候选 ({active.length})</h3>
+          {active.length === 0 ? <p className="muted">无</p> : active.map((idea) => <IdeaCard key={idea.external_idea_id} idea={idea} />)}
+        </div>
+        <div>
+          <h3 style={{ fontSize: 14, color: 'var(--blocked)' }}>草稿拼接 ({drafts.length})</h3>
+          {drafts.length === 0 ? <p className="muted">无</p> : drafts.map((idea) => <IdeaCard key={idea.external_idea_id} idea={idea} />)}
+        </div>
+        <div>
+          <h3 style={{ fontSize: 14, color: 'var(--fail)' }}>已拒绝 ({rejected.length})</h3>
+          {rejected.length === 0 ? <p className="muted">无</p> : rejected.map((idea) => <IdeaCard key={idea.external_idea_id} idea={idea} />)}
+        </div>
+      </div>
+      <details style={{ marginTop: 16 }}>
+        <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>查看版本树</summary>
+        <div style={{ marginTop: 8 }}>
+          <VersionTree ideas={ideas} />
+        </div>
+      </details>
+    </div>
+  );
 }
 
 export function App() {
