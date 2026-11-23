@@ -172,6 +172,7 @@ const SHAPE: Record<string, readonly string[]> = {
     'autonomy_mode',
     'agent_allow_tools',
   ],
+  cloud: ['site', 'token_ref'],
 };
 
 const TOP_LEVEL = ['config_version', ...Object.keys(SHAPE)];

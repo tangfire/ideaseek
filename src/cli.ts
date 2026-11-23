@@ -63,6 +63,7 @@ import { registerRunCommand } from './commands/run.js';
 import { registerSetupCommand } from './commands/setup.js';
 import { registerSynthesizeCommand } from './commands/synthesize.js';
 import { registerSearchCommand } from './commands/search.js';
+import { registerCloudCommand } from './commands/cloud.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerStreamCommands } from './commands/stream.js';
@@ -146,6 +147,7 @@ export function buildProgram(): Command {
   registerModelsCommand(program);
   registerEventsCommand(program);
   registerSearchCommand(program);
+  registerCloudCommand(program);
   registerStreamCommands(program);
   registerSuperviseCommand(program);
   registerPaperCommand(program);
@@ -301,6 +303,7 @@ const HELP_GROUPS: { title: string; commands: string[] }[] = [
       'restore',
       'cleanup',
       'logs',
+      'cloud',
     ],
   },
   {
