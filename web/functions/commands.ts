@@ -353,11 +353,18 @@ export async function enqueueCommand(
   )[0];
   if (existing) {
     if (existing.created_by !== viewer.ownerId) throw new BackendError('no_access', 403);
+    // 幂等键撞车但载荷不同：客户端把同一个 id 用在了两件事上。仍然只返回原记录
+    // （不插第二行、不改状态），但必须把 mismatch 说出来——静默回放会让界面显示一条
+    // 用户其实没打算排的动作。
+    const mismatch = JSON.stringify(existing.payload ?? null) !== JSON.stringify(payload);
     return Response.json({
       ok: true,
       replayed: true,
-      command: commandCard(existing, existing.created_by === viewer.ownerId),
-      message: '命令已存在，返回原记录（未重复排队）',
+      payload_mismatch: mismatch,
+      command: commandCard(existing, true),
+      message: mismatch
+        ? '同一个 command_id 已经排过一条不同载荷的命令：返回原记录，没有排第二条'
+        : '命令已存在，返回原记录（未重复排队）',
     });
   }
 
@@ -397,6 +404,61 @@ export async function enqueueCommand(
     command: commandCard(row, true),
     message: projectId === null ? '创建请求已排队，等待本地 Agent 执行' : '命令已排队，等待本地 Agent 执行',
   });
+}
+
+/**
+ * 撤回一条还在排队的命令（Phase 10.1，UC-08 的取消路径）。
+ *
+ * 这是云端队列自己的动作，不是投影写：queued 的命令在本机还没有任何副作用，撤掉它
+ * 只是"不再下发"。claimed/running 的不在这里改——中断一个正在跑的进程是本地的事，
+ * Web 面能排的是 `run_cancel`；把撤回做成强制中断，等于云端撒谎说它停下了一个其实
+ * 还在跑的东西，而界面上的"已取消"就是那条假读数。
+ */
+export async function cancelCommand(
+  db: Db,
+  viewer: Viewer,
+  body: Record<string, unknown>,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  if (!viewer.ownerId) throw new BackendError('login_required', 401);
+  const externalId = text(body.external_id, 64);
+  const commandId = text(body.command_id, 64);
+  if (!externalId) throw new BackendError('invalid_input:external_id', 400);
+  if (!commandId) throw new BackendError('invalid_input:command_id', 400);
+  const project = await resolveProject(db, externalId, BackendError);
+  if (project.owner_id !== viewer.ownerId) {
+    throw new BackendError(deniesAsAbsent(viewer) ? 'not_found' : 'no_access', deniesAsAbsent(viewer) ? 404 : 403);
+  }
+
+  const row = rows<CommandRow>(
+    await db
+      .from<CommandRow>('cloud_command')
+      .select('*')
+      .eq('external_command_id', commandId)
+      .eq('project_id', project.id)
+      .limit(1),
+    BackendError,
+  )[0];
+  if (!row) throw new BackendError('not_found', 404);
+
+  if (row.status !== 'queued') {
+    // 交出去之后就不在云端手里了：回 200 + ignored，让界面能说清按钮为什么没改变状态，
+    // 而不是把"已经有人在执行"报成一次失败。
+    return Response.json({
+      ok: true,
+      ignored: 'already_claimed',
+      command: commandCard(row, true),
+      message: '这条命令已被本地 Agent 领取，云端不中断正在执行的命令；要停止运行请排队"取消运行"',
+    });
+  }
+
+  const stamp = new Date().toISOString();
+  const updated = rows<CommandRow>(
+    await db.from<CommandRow>('cloud_command').update({ status: 'canceled', finished_at: stamp }).eq('id', row.id).select('*'),
+    BackendError,
+  )[0];
+  if (!updated) throw new BackendError('write_failed', 500);
+  return Response.json({ ok: true, command: commandCard(updated, true), message: '命令已撤回，本地不会执行' });
 }
 
 /**

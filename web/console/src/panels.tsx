@@ -87,7 +87,7 @@ function useEnqueue(projectId: string) {
   const client = useQueryClient();
   const mutation = useMutation({
     mutationFn: (input: { type: string; commandId: string; payload: Record<string, unknown> }) =>
-      mutateJson<{ ok: boolean; message?: string; replayed?: boolean }>(`${APP}/commands/${input.type}`, {
+      mutateJson<{ ok: boolean; message?: string; replayed?: boolean; payload_mismatch?: boolean }>(`${APP}/commands/${input.type}`, {
         method: 'POST',
         body: JSON.stringify({ external_id: projectId, command_id: input.commandId, ...input.payload }),
       }),
@@ -105,7 +105,13 @@ function useEnqueue(projectId: string) {
   };
 
   useEffect(() => {
-    if (mutation.isSuccess) setNotice(mutation.data?.message ?? '命令已排队，等待本地 Agent 执行');
+    if (mutation.isSuccess) {
+      setNotice(
+        mutation.data?.payload_mismatch
+          ? '同一个 command_id 已经排过一条不同载荷的命令：返回原记录，没有排第二条'
+          : mutation.data?.message ?? '命令已排队，等待本地 Agent 执行',
+      );
+    }
   }, [mutation.isSuccess, mutation.data]);
 
   return { submit, notice, pending: mutation.isPending, error: mutation.error as Error | null };
@@ -280,13 +286,25 @@ export function ProvisioningList() {
 
 // --------------------------------------------------------------------------- 命令队列
 
-export function CommandQueue({ projectId }: { projectId: string }) {
+export function CommandQueue({ projectId, writable }: { projectId: string; writable?: boolean }) {
+  const client = useQueryClient();
   const query = useQuery({
     queryKey: ['commands', projectId],
     queryFn: () => requestJson<CommandsView>(`${APP}/views/commands?external_id=${encodeURIComponent(projectId)}`),
     // 有未终态的命令时缩短到 5 秒，否则维持默认 staleTime：轮询频率要跟着队列状态走，
     // 空闲项目没必要一直打云端。
     refetchInterval: (state) => (state.state.data?.commands.some((c) => c.status === 'queued' || c.status === 'claimed' || c.status === 'running') ? 5_000 : false),
+  });
+
+  const cancel = useMutation({
+    mutationFn: (commandId: string) =>
+      mutateJson<{ ok: boolean; ignored?: string; message?: string }>(`${APP}/commands/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ external_id: projectId, command_id: commandId }),
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ['commands', projectId] });
+    },
   });
 
   if (query.isPending) return <p className="muted">正在读取命令队列…</p>;
@@ -302,6 +320,7 @@ export function CommandQueue({ projectId }: { projectId: string }) {
           <th>状态</th>
           <th>排队时间</th>
           <th>读数</th>
+          {writable ? <th>操作</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -330,6 +349,17 @@ export function CommandQueue({ projectId }: { projectId: string }) {
                 <span>等待本地 Agent 领取</span>
               )}
             </td>
+            {writable ? (
+              <td data-label="操作">
+                {command.status === 'queued' ? (
+                  <button className="btn-danger" disabled={cancel.isPending} onClick={() => cancel.mutate(command.command_id)}>
+                    撤回排队
+                  </button>
+                ) : command.status === 'claimed' || command.status === 'running' ? (
+                  <span className="muted" style={{ fontSize: 11 }}>已交给本机，云端不中断</span>
+                ) : null}
+              </td>
+            ) : null}
           </tr>
         ))}
       </tbody>
@@ -388,7 +418,7 @@ export function RunControl({ projectId, writable, run }: { projectId: string; wr
       <ErrorLine error={error} />
       <div style={{ marginTop: 12 }}>
         <h3 style={{ margin: '0 0 8px' }}>命令队列</h3>
-        <CommandQueue projectId={projectId} />
+        <CommandQueue projectId={projectId} writable={writable} />
       </div>
     </div>
   );

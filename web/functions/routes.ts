@@ -13,7 +13,7 @@ import { authenticateSyncToken, assertProjectAllowed, SYNC_TOKEN_HEADER } from '
 import { ingestBatch } from './ingest.ts';
 import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
-import { agentCommandHeartbeat, agentHeartbeat, agentView, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
+import { agentCommandHeartbeat, agentHeartbeat, agentView, cancelCommand, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
 import { accessView, grantCreate, grantRevoke, shareCreate, shareRevoke } from './access.ts';
 
 export interface Deps {
@@ -330,6 +330,16 @@ export function application(deps: Deps) {
     }
 
     // Phase 3/4: 命令排队（Owner-only，见 commands.ts 头注第 2/3 条）。
+    // 撤回必须排在通用的 /commands/{type} 之前：否则 `cancel` 会被当成一种命令类型，
+    // 在 validatePayload 之前就被 404 掉——那是一条界面说不清、日志里也像拼错路径的错路。
+    if (path === '/commands/cancel' && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return cancelCommand(db, viewer, body as Record<string, unknown>, BackendError);
+    }
+
     const commandMatch = path.match(/^\/commands\/([a-z_]+)$/);
     if (commandMatch && request.method === 'POST') {
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);

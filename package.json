@@ -30,7 +30,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run && vitest run --config vitest.lane-interactive.ts && pnpm test:python",
     "test:watch": "vitest",
-    "test:function": "node --test web/functions/test/routes.test.ts web/functions/test/identity.test.ts web/functions/test/commands.test.ts web/functions/test/access.test.ts",
+    "test:function": "node --test web/functions/test/routes.test.ts web/functions/test/identity.test.ts web/functions/test/commands.test.ts web/functions/test/access.test.ts web/functions/test/hardening.test.ts",
     "test:python": "node worker/python/run-tests.mjs",
     "release-check": "node scripts/release-check.mjs",
     "docs:site": "node scripts/docs-site.mjs build && node scripts/docs-site.mjs check",
