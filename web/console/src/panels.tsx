@@ -1021,6 +1021,8 @@ export function ApiKeyConfig() {
   const [saved, setSaved] = useState(false);
   const [visible, setVisible] = useState(false);
 
+  const hasKey = Boolean(key.trim());
+
   const save = () => {
     if (key.trim()) {
       localStorage.setItem('deepseek_api_key', key.trim());
@@ -1043,6 +1045,11 @@ export function ApiKeyConfig() {
         API Key 仅存储在浏览器本地，每次请求通过请求头传递给云端 Function。
         可从 <a href="https://moyu.cn" target="_blank" rel="noopener">moyu.cn</a> 获取。
       </p>
+      {!hasKey ? (
+        <p className="status-chip" data-state="fail" style={{ margin: '0 0 12px', fontSize: 12 }}>
+          ⚠ 未配置 API Key，LLM 调用将失败。请在下方输入框粘贴 API Key 后点击"保存"。
+        </p>
+      ) : null}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input
           type={visible ? 'text' : 'password'}
@@ -1069,21 +1076,17 @@ export function ApiKeyConfig() {
         <button
           className="btn-danger"
           onClick={clear}
-          disabled={!key}
+          disabled={!hasKey}
           style={{ fontSize: 12 }}
         >
           清除
         </button>
       </div>
-      {key ? (
+      {hasKey ? (
         <p className="muted" style={{ margin: '8px 0 0', fontSize: 11 }}>
           已配置：{key.slice(0, 8)}...{key.slice(-4)}
         </p>
-      ) : (
-        <p className="status-chip" data-state="fail" style={{ margin: '8px 0 0', fontSize: 11 }}>
-          未配置 API Key，LLM 调用将失败
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }
