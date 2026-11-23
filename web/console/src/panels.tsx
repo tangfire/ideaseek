@@ -1009,3 +1009,101 @@ export function AuditLedger() {
     </div>
   );
 }
+
+// --------------------------------------------------------------------------- 步进泵
+
+interface StepResult {
+  action: 'claimed' | 'advanced' | 'idle' | 'completed';
+  task?: { external_task_id: string; kind: string; status: string };
+  run?: { external_run_id: string; phase_tag: string; status: string };
+  newPhase?: string;
+  events?: Array<{ seq: number; type: string; summary: string }>;
+  message: string;
+}
+
+/**
+ * 浏览器泵：每 2s 调用 POST /app/step，驱动云原生引擎推进阶段。
+ * 显示当前动作、任务状态和阶段进度。
+ */
+export function StepPump({ runId }: { runId: string }) {
+  const [running, setRunning] = useState(false);
+  const [lastResult, setLastResult] = useState<StepResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!running) return;
+    const interval = setInterval(async () => {
+      try {
+        const result = await mutateJson<StepResult>(`${APP}/step`, {
+          method: 'POST',
+          body: JSON.stringify({ run_id: runId }),
+        });
+        setLastResult(result);
+        setError(null);
+        if (result.action === 'completed') {
+          setRunning(false);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [running, runId]);
+
+  return (
+    <div className="panel" style={{ marginTop: 12 }}>
+      <h4 style={{ margin: '0 0 8px', fontSize: 14 }}>☁️ 云原生引擎</h4>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+        <button
+          className="btn-primary"
+          onClick={() => setRunning(!running)}
+          disabled={lastResult?.action === 'completed'}
+        >
+          {running ? '⏸ 暂停' : lastResult?.action === 'completed' ? '✅ 已完成' : '▶ 启动'}
+        </button>
+        {running ? <span className="status-chip" data-state="active">运行中</span> : null}
+      </div>
+      
+      {error ? (
+        <p className="status-chip" data-state="fail">错误：{error}</p>
+      ) : lastResult ? (
+        <div style={{ fontSize: 12 }}>
+          <p style={{ margin: '4px 0' }}>
+            <strong>动作：</strong>{' '}
+            <span className="status-chip" data-state={lastResult.action === 'claimed' ? 'active' : lastResult.action === 'completed' ? 'ok' : 'idle'}>
+              {lastResult.action}
+            </span>
+          </p>
+          <p className="muted" style={{ margin: '4px 0' }}>{lastResult.message}</p>
+          {lastResult.run ? (
+            <p style={{ margin: '4px 0' }}>
+              <strong>阶段：</strong>{lastResult.run.phase_tag} · <strong>状态：</strong>{lastResult.run.status}
+            </p>
+          ) : null}
+          {lastResult.task ? (
+            <p style={{ margin: '4px 0' }}>
+              <strong>任务：</strong>{lastResult.task.kind} · <strong>状态：</strong>{lastResult.task.status}
+            </p>
+          ) : null}
+          {lastResult.newPhase ? (
+            <p style={{ margin: '4px 0' }}>
+              <strong>推进到：</strong>{lastResult.newPhase}
+            </p>
+          ) : null}
+          {lastResult.events && lastResult.events.length > 0 ? (
+            <div style={{ margin: '8px 0', padding: 8, background: 'var(--bg)', borderRadius: 4, fontSize: 11 }}>
+              <strong>事件流：</strong>
+              <ul style={{ margin: '4px 0 0', paddingLeft: 20 }}>
+                {lastResult.events.map((e, i) => (
+                  <li key={i} className="muted">{e.type}: {e.summary}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="muted" style={{ fontSize: 12 }}>点击"启动"开始驱动引擎执行任务。</p>
+      )}
+    </div>
+  );
+}

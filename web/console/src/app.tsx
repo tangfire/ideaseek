@@ -4,7 +4,7 @@ import { Route, Switch, useLocation } from 'wouter';
 import { ApiError, loginHref, requestJson, mutateJson } from './api';
 import { openLive, type Transport } from './live';
 import type { EventRow, IndexView, IdeaSummary, LiveFrame, PaperCard, ClaimRow, ExperimentResult, ProtocolSummary, ProjectView, RunSummary, ApprovalRequest, CostSummary, EgressEntry, SyncToken, SyncHealth } from './types';
-import { AccessPanel, AuditLedger, CreateProjectPanel, ProvisioningList, RunControl, SettingsPanel } from './panels';
+import { AccessPanel, AuditLedger, CreateProjectPanel, ProvisioningList, RunControl, SettingsPanel, StepPump } from './panels';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -660,6 +660,7 @@ function Project({ id }: { id: string }) {
         <>
           <Chips run={latest} />
           <BlockReasonCard run={latest} />
+          <StepPump runId={latest.external_run_id} />
         </>
       ) : (
         <p className="muted">云端还没有这个项目的运行。</p>
