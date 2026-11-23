@@ -592,6 +592,42 @@ describe('dataset discovery: deterministic candidates, dedup and enrichment', ()
     expect(checked[0]!.local).toBeNull();
     expect(checked[0]!.status).toBe('recommended');
   });
+
+  it('re-verifies a linked path on manifest re-check instead of re-deriving by name', () => {
+    // A link binds candidateId → path. Fresh derivation matches local facts by
+    // file name, so a hash-named file (acquire output) never matches its
+    // benchmark name — the link must be kept by verifying the path is still a
+    // local input, and dropped only when the file is actually gone.
+    const previous = [
+      makeCandidate({
+        candidateId: 'ds-imageneta',
+        status: 'validated',
+        local: {
+          path: 'datasets/train-00000-of-00002-ab6d3d8ffc378699.parquet',
+          sha256: FILE_HASH,
+          datasetSnapshotId: `data-${'c'.repeat(12)}`,
+        },
+        downloadStatus: 'local-present',
+      }),
+    ];
+    const fresh = [makeCandidate({ candidateId: 'ds-imageneta' })];
+    const present = new Set(['datasets/train-00000-of-00002-ab6d3d8ffc378699.parquet']);
+    const kept = mergeWithPrevious(fresh, previous, {
+      localSourcesChecked: true,
+      linkedPathsPresent: present,
+    });
+    expect(kept[0]!.local).not.toBeNull();
+    expect(kept[0]!.local!.datasetSnapshotId).toBe(`data-${'c'.repeat(12)}`);
+    expect(kept[0]!.status).toBe('validated');
+    expect(kept[0]!.downloadStatus).toBe('local-present');
+    expect(kept[0]!.notes.join(' ')).toMatch(/re-verified against the local manifest/);
+    const gone = mergeWithPrevious(fresh, previous, {
+      localSourcesChecked: true,
+      linkedPathsPresent: new Set(),
+    });
+    expect(gone[0]!.local).toBeNull();
+    expect(gone[0]!.status).toBe('recommended');
+  });
 });
 
 describe('dataset discovery: authorization, link and the promotion gate', () => {

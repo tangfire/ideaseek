@@ -1022,6 +1022,7 @@ export function registerDataCommand(program: Command): void {
               (localReport.status === 'ok' || localReport.status === 'empty');
             const candidates = mergeWithPrevious(enriched, existing?.candidates ?? null, {
               localSourcesChecked,
+              linkedPathsPresent: new Set(ctx.facts.flatMap((fact) => fact.paths)),
             });
             const incompleteSources = ctx.sources.some(
               (source) =>
