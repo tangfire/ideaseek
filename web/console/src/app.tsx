@@ -305,7 +305,7 @@ function EventList({ events, redacted, lastSyncAt }: { events: EventRow[]; redac
           {levelOptions.map((l) => <option key={l} value={l}>{l}</option>)}
         </select>
         {(stageFilter || typeFilter || levelFilter) ? (
-          <button onClick={() => { setStageFilter(''); setTypeFilter(''); setLevelFilter(''); setPage(0); }} style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>
+          <button onClick={() => { setStageFilter(''); setTypeFilter(''); setLevelFilter(''); setPage(0); }} className="btn-secondary">
             清除过滤
           </button>
         ) : null}
@@ -339,13 +339,13 @@ function EventList({ events, redacted, lastSyncAt }: { events: EventRow[]; redac
       {/* 分页控制 */}
       {totalPages > 1 ? (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
-          <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 12px', cursor: page === 0 ? 'not-allowed' : 'pointer', opacity: page === 0 ? 0.5 : 1 }}>
+          <button onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} className="btn-secondary" style={{ opacity: page === 0 ? 0.5 : 1, cursor: page === 0 ? 'not-allowed' : 'pointer' }}>
             上一页
           </button>
           <span className="muted" style={{ display: 'flex', alignItems: 'center' }}>
             {page + 1} / {totalPages}
           </span>
-          <button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1} style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 12px', cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer', opacity: page >= totalPages - 1 ? 0.5 : 1 }}>
+          <button onClick={() => setPage(Math.min(totalPages - 1, page + 1))} disabled={page >= totalPages - 1} className="btn-secondary" style={{ opacity: page >= totalPages - 1 ? 0.5 : 1, cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer' }}>
             下一页
           </button>
         </div>
@@ -354,7 +354,74 @@ function EventList({ events, redacted, lastSyncAt }: { events: EventRow[]; redac
   );
 }
 
-function Landing() {
+function HomePage() {
+  const [, navigate] = useLocation();
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+      <div style={{ textAlign: 'center', maxWidth: 600 }}>
+        <h1 style={{ fontSize: 48, marginBottom: 16, letterSpacing: '-1px' }}>IdeaSeek</h1>
+        <p style={{ fontSize: 18, color: 'var(--muted)', marginBottom: 32, lineHeight: 1.6 }}>
+          从研究问题，到可验证发现
+        </p>
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 48 }}>
+          <span className="status-chip" data-state="ok">证据链</span>
+          <span className="status-chip" data-state="ok">恢复语义</span>
+          <span className="status-chip" data-state="ok">公平性锁定</span>
+          <span className="status-chip" data-state="ok">审计门禁</span>
+        </div>
+        <button onClick={() => navigate('/console')} className="btn-primary" style={{ fontSize: 16, padding: '12px 32px' }}>
+          开始
+        </button>
+        <div style={{ marginTop: 48, paddingTop: 32, borderTop: '1px solid var(--line)' }}>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+            科研引擎运行在你自己的机器上，云端只有脱敏后的运行状态与事件投影。
+          </p>
+          <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <a href="https://gitee.com/tangfire216/ideaseek" target="_blank" rel="noopener" className="btn-secondary">阅读文档</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConsoleLayout({ children }: { children: ReactElement }) {
+  const [location] = useLocation();
+  const currentPath = location === '/console' || location === '/console/' ? '/console' : location.startsWith('/p/') ? '/p/:id' : location;
+
+  return (
+    <div className="app-layout">
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <h1>IdeaSeek</h1>
+          <div className="subtitle">research console</div>
+        </div>
+        <ul className="sidebar-nav">
+          <li><a href="#/console" className={currentPath === '/console' ? 'active' : ''}>项目列表</a></li>
+          <li><a href="#/p/demo" className={currentPath === '/p/:id' ? 'active' : ''}>演示项目</a></li>
+        </ul>
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">文档</div>
+          <ul className="sidebar-nav">
+            <li><a href="https://gitee.com/tangfire216/ideaseek" target="_blank" rel="noopener">项目文档</a></li>
+          </ul>
+        </div>
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">连接</div>
+          <ul className="sidebar-nav">
+            <li><span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>后端：未连接</span></li>
+            <li><span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>本地预览模式</span></li>
+          </ul>
+        </div>
+      </aside>
+      <div className="main-content">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ConsoleHome() {
   const query = useQuery({
     queryKey: ['index'],
     queryFn: () => requestJson<IndexView>('/functions/v1/app/views/index'),
@@ -362,121 +429,63 @@ function Landing() {
   const [, navigate] = useLocation();
   return (
     <>
-      {/* F6.1: 落地页 Hero */}
-      <div className="hero" style={{ textAlign: 'center', padding: '48px 24px', marginBottom: 32 }}>
-        <h1 style={{ fontSize: 32, marginBottom: 16 }}>IdeaSeek</h1>
-        <p style={{ fontSize: 18, color: 'var(--muted)', marginBottom: 24 }}>
-          从研究问题，到可验证发现
+      <h2 style={{ marginTop: 0 }}>项目列表</h2>
+      {query.isPending ? <p className="muted">正在连接后端…</p> : null}
+      {query.error instanceof ApiError && query.error.code === 'login_required' ? (
+        <p>
+          <a href={loginHref('/#/console')}>登录 Qoder</a> 后继续。
         </p>
-        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 24 }}>
-          <span className="status-chip" data-state="ok">证据链</span>
-          <span className="status-chip" data-state="ok">恢复语义</span>
-          <span className="status-chip" data-state="ok">公平性锁定</span>
-          <span className="status-chip" data-state="ok">审计门禁</span>
-        </div>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => navigate('/#/p/demo')} style={{ background: 'var(--active)', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 14 }}>
-            查看演示项目
-          </button>
-          <a href="#docs" style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 20px', textDecoration: 'none', fontSize: 14 }}>
-            阅读文档
-          </a>
-        </div>
-      </div>
-
-      {/* F6.2: 差异化定位段 */}
-      <div className="panel" style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 18, marginTop: 0 }}>与"单 Agent 直接写论文"的三条差异</h2>
-        <ol style={{ paddingLeft: 20, margin: '12px 0' }}>
-          <li style={{ marginBottom: 8 }}>
-            <strong>引擎在哪里</strong>：科研引擎运行在<strong>你自己的机器</strong>上，云端不碰你的论文和数据。云端只有脱敏后的运行状态与事件投影。
-          </li>
-          <li style={{ marginBottom: 8 }}>
-            <strong>结论怎么来的</strong>：每个 idea 都有论文证据、baseline 局限、可检验假设和停止条件。不是 Agent 拍脑袋，是有据可查的证据链。
-          </li>
-          <li style={{ marginBottom: 8 }}>
-            <strong>失败了怎么办</strong>：额度耗尽、网络中断、审批阻塞——每种异常都有明确的恢复路径。不是"重跑一遍"，是精确续接。
-          </li>
-        </ol>
-      </div>
-
-      {/* F6.3: 公开项目入口 */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 18 }}>在线项目</h2>
-        {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
-        {query.error instanceof ApiError && query.error.code === 'login_required' ? (
-          <p>
-            <a href={loginHref('/#/')}>登录 Qoder</a> 后继续。
+      ) : null}
+      {query.error && !(query.error instanceof ApiError && query.error.code === 'login_required') ? (
+        <div className="panel">
+          <p style={{ margin: '0 0 8px' }}>后端服务未连接</p>
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            当前为本地预览模式。部署到 Qoder Sites 后，项目数据将通过引擎同步显示。
           </p>
-        ) : null}
-        {query.error && !(query.error instanceof ApiError && query.error.code === 'login_required') ? (
-          <p className="status-chip" data-state="fail">
-            {(query.error as Error).message}
+        </div>
+      ) : null}
+      {query.data && query.data.projects.length === 0 ? (
+        <div className="panel">
+          <p style={{ margin: '0 0 8px' }}>还没有可见项目</p>
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            运行 <code className="mono">ideaseek cloud push</code> 同步项目到云端。
           </p>
-        ) : null}
-        {query.data && query.data.projects.length === 0 ? (
-          <>
-            <p className="muted">还没有可见项目。</p>
-            {/* F7.3: 首访引导——匿名访客默认落到演示项目 */}
-            <p>
-              可以先查看 <a href="#/p/demo">合成演示项目</a>，了解控制台的观测能力。
-            </p>
-          </>
-        ) : null}
-        {query.data ? (
-          <table>
-            <tbody>
-              {query.data.projects.map((project) => (
-                <tr
-                  key={project.external_id}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => navigate(`/p/${project.external_id}`)}
-                >
-                  <td>
-                    {project.title}
-                    {/* F7.4: 演示数据指标诚实标注 */}
-                    {project.external_id === 'demo' ? (
-                      <span className="status-chip" data-state="active" style={{ marginLeft: 8, fontSize: 11 }}>
-                        演示数据
-                      </span>
-                    ) : null}
-                    <div className="muted mono">{project.external_id}</div>
-                  </td>
-                  <td className="muted">最后同步 {ago(project.last_sync_at)}</td>
-                  <td>{project.latest_run ? <Chips run={project.latest_run} /> : <span className="muted">无运行</span>}</td>
-                  <td className="status-chip">{project.visibility}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : null}
-      </div>
-
-      {/* F6.4 + F6.5: 文档站 + 安装指引 */}
-      <div id="docs" className="panel" style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 18, marginTop: 0 }}>快速开始</h2>
-        <p>在本地安装 IdeaSeek，科研引擎在你的机器上运行：</p>
-        <pre style={{ background: 'var(--bg)', padding: 12, borderRadius: 4, overflow: 'auto', fontSize: 13 }}>
-          <code className="mono">
-{`# 安装
-curl -fsSL https://ideaseek.dev/setup.sh | bash
-
-# 初始化项目
-ideaseek init my-research
-
-# 启动交互式会话
-ideaseek start`}
-          </code>
-        </pre>
-        <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-          云端不含引擎。投影同步是可选的：<code className="mono">ideaseek cloud link</code> 建立连接后，<code className="mono">ideaseek cloud push</code> 将脱敏状态推送到云端，让你在手机或任意浏览器远程观察。
-        </p>
-      </div>
-
-      {/* 底部说明 */}
-      <div className="banner" style={{ fontSize: 13 }}>
-        <strong>隐私承诺</strong>：论文正文、数据集、凭据、原始日志永远不离开你的机器。云端只有脱敏后的运行状态与事件投影。
-      </div>
+        </div>
+      ) : null}
+      {query.data && query.data.projects.length > 0 ? (
+        <table>
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>同步时间</th>
+              <th>状态</th>
+              <th>可见性</th>
+            </tr>
+          </thead>
+          <tbody>
+            {query.data.projects.map((project) => (
+              <tr
+                key={project.external_id}
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate(`/p/${project.external_id}`)}
+              >
+                <td>
+                  {project.title}
+                  {project.external_id === 'demo' ? (
+                    <span className="status-chip" data-state="active" style={{ marginLeft: 8, fontSize: 10 }}>
+                      演示
+                    </span>
+                  ) : null}
+                  <div className="muted mono" style={{ fontSize: 11 }}>{project.external_id}</div>
+                </td>
+                <td className="muted">{ago(project.last_sync_at)}</td>
+                <td>{project.latest_run ? <Chips run={project.latest_run} /> : <span className="muted">无运行</span>}</td>
+                <td><span className="status-chip" data-state={project.visibility === 'listed' ? 'ok' : project.visibility === 'link' ? 'active' : 'idle'}>{project.visibility}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
     </>
   );
 }
@@ -528,10 +537,9 @@ function Project({ id }: { id: string }) {
   return (
     <>
       <p>
-        <a href="#/">← 项目列表</a>
+        <a href="#/console">← 项目列表</a>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-        <h1 style={{ margin: 0 }}>{view.project.title}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>        <h1 style={{ margin: 0 }}>{view.project.title}</h1>
         {/* F5.1: 可见性徽标 */}
         <VisibilityBadge visibility={view.visibility} />
       </div>
@@ -1052,7 +1060,7 @@ function IntentForm({ onSubmit, disabled, options }: { onSubmit: (choice: string
         <input value={choice} onChange={(e) => setChoice(e.target.value)} placeholder="选择" style={{ width: '100%', marginBottom: 8, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '6px 8px' }} />
       )}
       <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注（可选）" rows={2} style={{ width: '100%', marginBottom: 8, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '6px 8px', resize: 'vertical' }} />
-      <button onClick={() => { if (choice) { onSubmit(choice, note); setNote(''); } }} disabled={disabled || !choice} style={{ background: 'var(--active)', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 16px', cursor: disabled || !choice ? 'not-allowed' : 'pointer', opacity: disabled || !choice ? 0.5 : 1 }}>
+      <button onClick={() => { if (choice) { onSubmit(choice, note); setNote(''); } }} disabled={disabled || !choice} className="btn-primary" style={{ opacity: disabled || !choice ? 0.5 : 1, cursor: disabled || !choice ? 'not-allowed' : 'pointer' }}>
         提交意向
       </button>
       <p className="muted" style={{ fontSize: 11, margin: '8px 0 0' }}>
@@ -1310,7 +1318,7 @@ function TokenManager({ projectId }: { projectId: string }) {
               {token.revoked_at ? (
                 <span className="status-chip" data-state="fail" style={{ fontSize: 10 }}>已吊销</span>
               ) : (
-                <button onClick={() => handleRevoke(token.id)} style={{ background: 'none', color: 'var(--fail)', border: '1px solid var(--fail)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
+                <button onClick={() => handleRevoke(token.id)} className="btn-danger">
                   吊销
                 </button>
               )}
@@ -1322,7 +1330,7 @@ function TokenManager({ projectId }: { projectId: string }) {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="名称（可选）" style={{ flex: 1, minWidth: 120, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} />
             <input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="范围（逗号分隔）" style={{ flex: 1, minWidth: 120, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} />
-            <button onClick={handleCreate} disabled={creating} style={{ background: 'var(--active)', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 12px', cursor: creating ? 'not-allowed' : 'pointer', fontSize: 12, opacity: creating ? 0.5 : 1 }}>
+            <button onClick={handleCreate} disabled={creating} className="btn-primary" style={{ opacity: creating ? 0.5 : 1, cursor: creating ? 'not-allowed' : 'pointer' }}>
               签发新 Token
             </button>
           </div>
@@ -1388,14 +1396,30 @@ function TokenManager({ projectId }: { projectId: string }) {
 }
 
 export function App() {
-  return (
-    <main>
+  const [location] = useLocation();
+  const isConsole = location === '/console' || location === '/console/' || location.startsWith('/p/');
+
+  if (!isConsole) {
+    return (
       <Switch>
-        <Route path="/p/:id">{(params: { id: string }) => <Project id={params.id} />}</Route>
         <Route path="/">
-          <Landing />
+          <HomePage />
         </Route>
       </Switch>
-    </main>
+    );
+  }
+
+  return (
+    <ConsoleLayout>
+      <Switch>
+        <Route path="/p/:id">{(params: { id: string }) => <Project id={params.id} />}</Route>
+        <Route path="/console">
+          <ConsoleHome />
+        </Route>
+        <Route path="/">
+          <ConsoleHome />
+        </Route>
+      </Switch>
+    </ConsoleLayout>
   );
 }
