@@ -250,11 +250,13 @@ async function tryAdvancePhase(engine: CloudEngine, run: CloudRun): Promise<Clou
   const hasPendingForNext = tasks.some((t) => t.phase_tag === nextPhase && (t.status === 'queued' || t.status === 'claimed'));
   if (hasPendingForNext) return null;
 
+  // 先入队再推进：入队失败时 run 停在当前阶段，下一步重试；
+  // 反过来会让失败的阶段被静默跳过（线上曾因缺列 400 而空跑全部阶段）。
+  await enqueueTasksForPhase(engine, run, nextPhase, taskKind);
+
   const updated = await engine.setRunPhase(run.id, nextPhase, { status: 'running', blockReason: null });
   await engine.setStageProgress(run.id, nextPhase, 'active');
   await engine.setStageProgress(run.id, run.phase_tag, 'passed');
-
-  await enqueueTasksForPhase(engine, run, nextPhase, taskKind);
 
   await engine.appendEvent({
     runId: run.id,
