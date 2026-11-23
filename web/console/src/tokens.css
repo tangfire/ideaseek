@@ -117,3 +117,105 @@ td {
   border-bottom: 1px solid var(--line);
   font-weight: 500;
 }
+
+/* F15.1: 响应式布局——360px 起 */
+@media (max-width: 768px) {
+  main {
+    padding: 12px 8px 48px;
+  }
+
+  /* F15.2: 流水线横向滚动 */
+  .pipeline {
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pipeline li {
+    flex-shrink: 0;
+  }
+
+  /* F15.5: 表格降级为卡片 */
+  table {
+    display: block;
+    border: none;
+  }
+
+  table thead {
+    display: none;
+  }
+
+  table tbody {
+    display: block;
+  }
+
+  table tr {
+    display: block;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+
+  table td {
+    display: block;
+    border: none;
+    padding: 4px 0;
+  }
+
+  table td:first-child {
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  table td:before {
+    content: attr(data-label);
+    font-weight: 500;
+    color: var(--muted);
+    margin-right: 8px;
+  }
+
+  /* Hero 区域移动端适配 */
+  .hero {
+    padding: 24px 12px !important;
+  }
+
+  .hero h1 {
+    font-size: 24px !important;
+  }
+
+  .hero p {
+    font-size: 15px !important;
+  }
+
+  /* 过滤器垂直堆叠 */
+  div[style*="display: flex"][style*="gap: 8px"] {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  select, button {
+    width: 100%;
+  }
+}
+
+/* F15.3: 关键状态首屏可见——360px 下阶段/阻塞/待确认置顶 */
+@media (max-width: 360px) {
+  .status-chip {
+    font-size: 11px;
+    padding: 1px 6px;
+  }
+
+  h1 {
+    font-size: 20px;
+  }
+
+  h2 {
+    font-size: 16px;
+  }
+
+  .panel {
+    padding: 10px 12px;
+  }
+}

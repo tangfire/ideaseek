@@ -362,45 +362,121 @@ function Landing() {
   const [, navigate] = useLocation();
   return (
     <>
-      <div className="banner">
-        科研引擎运行在<strong>你自己的机器</strong>上。云端只有脱敏后的运行状态与事件投影——不含论文正文、数据集与凭据。
+      {/* F6.1: 落地页 Hero */}
+      <div className="hero" style={{ textAlign: 'center', padding: '48px 24px', marginBottom: 32 }}>
+        <h1 style={{ fontSize: 32, marginBottom: 16 }}>IdeaSeek</h1>
+        <p style={{ fontSize: 18, color: 'var(--muted)', marginBottom: 24 }}>
+          从研究问题，到可验证发现
+        </p>
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 24 }}>
+          <span className="status-chip" data-state="ok">证据链</span>
+          <span className="status-chip" data-state="ok">恢复语义</span>
+          <span className="status-chip" data-state="ok">公平性锁定</span>
+          <span className="status-chip" data-state="ok">审计门禁</span>
+        </div>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button onClick={() => navigate('/#/p/demo')} style={{ background: 'var(--active)', color: '#fff', border: 'none', borderRadius: 6, padding: '10px 20px', cursor: 'pointer', fontSize: 14 }}>
+            查看演示项目
+          </button>
+          <a href="#docs" style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 6, padding: '10px 20px', textDecoration: 'none', fontSize: 14 }}>
+            阅读文档
+          </a>
+        </div>
       </div>
-      <h1>IdeaSeek 控制台</h1>
-      {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
-      {query.error instanceof ApiError && query.error.code === 'login_required' ? (
-        <p>
-          <a href={loginHref('/#/')}>登录 Qoder</a> 后继续。
+
+      {/* F6.2: 差异化定位段 */}
+      <div className="panel" style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 18, marginTop: 0 }}>与"单 Agent 直接写论文"的三条差异</h2>
+        <ol style={{ paddingLeft: 20, margin: '12px 0' }}>
+          <li style={{ marginBottom: 8 }}>
+            <strong>引擎在哪里</strong>：科研引擎运行在<strong>你自己的机器</strong>上，云端不碰你的论文和数据。云端只有脱敏后的运行状态与事件投影。
+          </li>
+          <li style={{ marginBottom: 8 }}>
+            <strong>结论怎么来的</strong>：每个 idea 都有论文证据、baseline 局限、可检验假设和停止条件。不是 Agent 拍脑袋，是有据可查的证据链。
+          </li>
+          <li style={{ marginBottom: 8 }}>
+            <strong>失败了怎么办</strong>：额度耗尽、网络中断、审批阻塞——每种异常都有明确的恢复路径。不是"重跑一遍"，是精确续接。
+          </li>
+        </ol>
+      </div>
+
+      {/* F6.3: 公开项目入口 */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 18 }}>在线项目</h2>
+        {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
+        {query.error instanceof ApiError && query.error.code === 'login_required' ? (
+          <p>
+            <a href={loginHref('/#/')}>登录 Qoder</a> 后继续。
+          </p>
+        ) : null}
+        {query.error && !(query.error instanceof ApiError && query.error.code === 'login_required') ? (
+          <p className="status-chip" data-state="fail">
+            {(query.error as Error).message}
+          </p>
+        ) : null}
+        {query.data && query.data.projects.length === 0 ? (
+          <>
+            <p className="muted">还没有可见项目。</p>
+            {/* F7.3: 首访引导——匿名访客默认落到演示项目 */}
+            <p>
+              可以先查看 <a href="#/p/demo">合成演示项目</a>，了解控制台的观测能力。
+            </p>
+          </>
+        ) : null}
+        {query.data ? (
+          <table>
+            <tbody>
+              {query.data.projects.map((project) => (
+                <tr
+                  key={project.external_id}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/p/${project.external_id}`)}
+                >
+                  <td>
+                    {project.title}
+                    {/* F7.4: 演示数据指标诚实标注 */}
+                    {project.external_id === 'demo' ? (
+                      <span className="status-chip" data-state="active" style={{ marginLeft: 8, fontSize: 11 }}>
+                        演示数据
+                      </span>
+                    ) : null}
+                    <div className="muted mono">{project.external_id}</div>
+                  </td>
+                  <td className="muted">最后同步 {ago(project.last_sync_at)}</td>
+                  <td>{project.latest_run ? <Chips run={project.latest_run} /> : <span className="muted">无运行</span>}</td>
+                  <td className="status-chip">{project.visibility}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+      </div>
+
+      {/* F6.4 + F6.5: 文档站 + 安装指引 */}
+      <div id="docs" className="panel" style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 18, marginTop: 0 }}>快速开始</h2>
+        <p>在本地安装 IdeaSeek，科研引擎在你的机器上运行：</p>
+        <pre style={{ background: 'var(--bg)', padding: 12, borderRadius: 4, overflow: 'auto', fontSize: 13 }}>
+          <code className="mono">
+{`# 安装
+curl -fsSL https://ideaseek.dev/setup.sh | bash
+
+# 初始化项目
+ideaseek init my-research
+
+# 启动交互式会话
+ideaseek start`}
+          </code>
+        </pre>
+        <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+          云端不含引擎。投影同步是可选的：<code className="mono">ideaseek cloud link</code> 建立连接后，<code className="mono">ideaseek cloud push</code> 将脱敏状态推送到云端，让你在手机或任意浏览器远程观察。
         </p>
-      ) : null}
-      {query.error && !(query.error instanceof ApiError && query.error.code === 'login_required') ? (
-        <p className="status-chip" data-state="fail">
-          {(query.error as Error).message}
-        </p>
-      ) : null}
-      {query.data && query.data.projects.length === 0 ? (
-        <p className="muted">还没有可见项目。在本地运行 <code className="mono">ideaseek cloud link</code> 建立投影。</p>
-      ) : null}
-      {query.data ? (
-        <table>
-          <tbody>
-            {query.data.projects.map((project) => (
-              <tr
-                key={project.external_id}
-                style={{ cursor: 'pointer' }}
-                onClick={() => navigate(`/p/${project.external_id}`)}
-              >
-                <td>
-                  {project.title}
-                  <div className="muted mono">{project.external_id}</div>
-                </td>
-                <td className="muted">最后同步 {ago(project.last_sync_at)}</td>
-                <td>{project.latest_run ? <Chips run={project.latest_run} /> : <span className="muted">无运行</span>}</td>
-                <td className="status-chip">{project.visibility}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+      </div>
+
+      {/* 底部说明 */}
+      <div className="banner" style={{ fontSize: 13 }}>
+        <strong>隐私承诺</strong>：论文正文、数据集、凭据、原始日志永远不离开你的机器。云端只有脱敏后的运行状态与事件投影。
+      </div>
     </>
   );
 }
@@ -454,7 +530,11 @@ function Project({ id }: { id: string }) {
       <p>
         <a href="#/">← 项目列表</a>
       </p>
-      <h1>{view.project.title}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <h1 style={{ margin: 0 }}>{view.project.title}</h1>
+        {/* F5.1: 可见性徽标 */}
+        <VisibilityBadge visibility={view.visibility} />
+      </div>
       {view.projection_level === 'l2' ? (
         // 降级要说明降了什么，否则空区块会被读成"没有数据"（缺口⑨ 的同一类错误）。
         <p className="banner">
@@ -489,6 +569,39 @@ function Project({ id }: { id: string }) {
       <EventList events={[...view.events, ...liveEvents].slice(-80)} redacted={l2} lastSyncAt={view.project.last_sync_at} />
     </>
   );
+}
+
+/**
+ * F5.1: 可见性徽标——显示当前项目的可见性级别。
+ *
+ * 三态语义（Q1）：
+ * - private: 只有 Owner 与被邀读者可读
+ * - link: 持有分享链接的人可读
+ * - listed: 出现在公开列表中
+ */
+function VisibilityBadge({ visibility }: { visibility: 'private' | 'link' | 'listed' }) {
+  const labels = {
+    private: { text: '私有', state: 'idle' as const },
+    link: { text: '链接可见', state: 'active' as const },
+    listed: { text: '公开', state: 'ok' as const },
+  };
+  const { text, state } = labels[visibility];
+  return (
+    <span className="status-chip" data-state={state} title={getVisibilityDescription(visibility)}>
+      {text}
+    </span>
+  );
+}
+
+function getVisibilityDescription(visibility: 'private' | 'link' | 'listed'): string {
+  switch (visibility) {
+    case 'private':
+      return '只有项目所有者和被邀请的读者可以查看';
+    case 'link':
+      return '持有分享链接的人可以查看，但不会出现在公开列表中';
+    case 'listed':
+      return '出现在公开项目列表中，任何人都可以查看（L2 降级投影）';
+  }
 }
 
 export function App() {
