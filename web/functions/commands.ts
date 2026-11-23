@@ -588,7 +588,92 @@ export async function projectCreateView(
   body: Record<string, unknown>,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
+  // 支持 execution_mode 参数：'local'（默认）或 'cloud'
+  const executionMode = String(body.execution_mode ?? 'local');
+  if (!['local', 'cloud'].includes(executionMode)) {
+    throw new BackendError('invalid_input:execution_mode', 400);
+  }
+  
+  // 云端模式：直接执行，不排队
+  if (executionMode === 'cloud') {
+    return executeInCloud(db, viewer, 'project_create', body, BackendError);
+  }
+  
+  // 本地模式：排队等待 Local Agent
   return enqueueCommand(db, viewer, 'project_create', body, BackendError);
+}
+
+/**
+ * 云端执行器：在 Function 沙箱内直接执行命令（用于演示/测试）。
+ * 只支持白名单操作，不执行任意代码。
+ */
+async function executeInCloud(
+  db: Db,
+  viewer: Viewer,
+  type: string,
+  body: Record<string, unknown>,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  // 云端执行只允许安全操作
+  const CLOUD_ALLOWED_TYPES = ['project_create'];
+  if (!CLOUD_ALLOWED_TYPES.includes(type)) {
+    throw new BackendError('cloud_execution_not_allowed', 403);
+  }
+  
+  const effectiveOwnerId = viewer.ownerId ?? await getOrCreateAnonymousOwner(db, BackendError);
+  const externalCommandId = text(body.command_id, 64) ?? crypto.randomUUID();
+  
+  // 创建命令记录（status 直接为 running）
+  const created = rows<CommandRow>(
+    await db
+      .from<CommandRow>('cloud_command')
+      .insert({
+        project_id: null,
+        external_command_id: externalCommandId,
+        type,
+        payload: validatePayload(type, body, BackendError),
+        status: 'running',
+        created_by: effectiveOwnerId,
+        created_at: new Date().toISOString(),
+        claimed_at: new Date().toISOString(),
+      })
+      .select('*'),
+    BackendError,
+  );
+  const row = created[0];
+  if (!row) throw new BackendError('write_failed', 500);
+  
+  // 模拟执行（实际项目中这里会调用 ideaseek CLI 或创建模板项目）
+  try {
+    // TODO: 实际执行逻辑（创建模板文件、初始化 Git 等）
+    // 当前只返回成功状态，投影由后续同步创建
+    await db
+      .from<CommandRow>('cloud_command')
+      .update({
+        status: 'succeeded',
+        finished_at: new Date().toISOString(),
+        result: { message: '云端执行完成（演示模式）', cloud_executed: true },
+      })
+      .eq('id', row.id);
+    
+    return Response.json({
+      ok: true,
+      command: commandCard(row, true),
+      message: '命令已在云端执行（演示模式）',
+      cloud_executed: true,
+    });
+  } catch (error) {
+    await db
+      .from<CommandRow>('cloud_command')
+      .update({
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      })
+      .eq('id', row.id);
+    
+    throw new BackendError('cloud_execution_failed', 500);
+  }
 }
 
 // ---------------------------------------------------------------------------

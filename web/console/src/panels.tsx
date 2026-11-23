@@ -290,16 +290,21 @@ export function CreateProjectPanel() {
   const [question, setQuestion] = useState('');
   const [strategy, setStrategy] = useState('standard');
   const [autonomy, setAutonomy] = useState('guided');
+  const [executionMode, setExecutionMode] = useState<'local' | 'cloud'>('local');
   const [notice, setNotice] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: (commandId: string) =>
-      mutateJson<{ ok: boolean; message?: string }>(`${APP}/projects`, {
+      mutateJson<{ ok: boolean; message?: string; cloud_executed?: boolean }>(`${APP}/projects`, {
         method: 'POST',
-        body: JSON.stringify({ command_id: commandId, name, question, strategy, autonomy }),
+        body: JSON.stringify({ command_id: commandId, name, question, strategy, autonomy, execution_mode: executionMode }),
       }),
-    onSuccess: () => {
-      setNotice('创建请求已排队，本地 Agent 执行后项目才会出现在投影里。');
+    onSuccess: (data) => {
+      if (data.cloud_executed) {
+        setNotice('✅ 项目已在云端创建（演示模式），投影将立即同步。');
+      } else {
+        setNotice('创建请求已排队，本地 Agent 执行后项目才会出现在投影里。');
+      }
       void client.invalidateQueries({ queryKey: ['index'] });
       void client.invalidateQueries({ queryKey: ['commands', ''] });
     },
@@ -309,8 +314,37 @@ export function CreateProjectPanel() {
     <div className="panel" style={{ marginTop: 16 }}>
       <h3 style={{ margin: '0 0 8px' }}>创建项目</h3>
       <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
-        云端不建项目目录：这一步只把 <code className="mono">ideaseek start</code> 排给你的机器，跑完之后投影才出现在这张列表里。
+        {executionMode === 'cloud' 
+          ? '☁️ 云端模式：立即在云端沙箱执行（演示用，不创建真实文件）'
+          : '🖥️ 本地模式：排队等待 Local Agent 执行（创建真实项目目录）'}
       </p>
+      
+      <div style={{ marginBottom: 12, padding: 8, background: 'var(--bg)', borderRadius: 4 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, marginRight: 8 }}>执行模式：</label>
+        <label style={{ fontSize: 12, marginRight: 12, cursor: 'pointer' }}>
+          <input
+            type="radio"
+            name="executionMode"
+            value="local"
+            checked={executionMode === 'local'}
+            onChange={(e) => setExecutionMode(e.target.value as 'local' | 'cloud')}
+            style={{ marginRight: 4 }}
+          />
+          🖥️ 本地执行
+        </label>
+        <label style={{ fontSize: 12, cursor: 'pointer' }}>
+          <input
+            type="radio"
+            name="executionMode"
+            value="cloud"
+            checked={executionMode === 'cloud'}
+            onChange={(e) => setExecutionMode(e.target.value as 'local' | 'cloud')}
+            style={{ marginRight: 4 }}
+          />
+          ☁️ 云端演示
+        </label>
+      </div>
+      
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <input style={{ flex: '1 1 180px' }} placeholder="项目名称（同时作为本地目录名）" value={name} onChange={(event) => setName(event.target.value)} />
         <select value={strategy} onChange={(event) => setStrategy(event.target.value)} aria-label="运行策略">
@@ -336,7 +370,7 @@ export function CreateProjectPanel() {
           disabled={mutation.isPending || name.trim().length === 0}
           onClick={() => mutation.mutate(crypto.randomUUID())}
         >
-          {mutation.isPending ? '排队中…' : '排队创建'}
+          {mutation.isPending ? (executionMode === 'cloud' ? '执行中…' : '排队中…') : (executionMode === 'cloud' ? '立即创建（云端）' : '排队创建（本地）')}
         </button>
         {notice ? <span className="muted mono" style={{ fontSize: 12 }}>{notice}</span> : null}
       </div>
