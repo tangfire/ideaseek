@@ -20,6 +20,12 @@ export interface RunSummary {
   budget_usd_micro?: number;
   spent_usd_micro?: number;
   summary?: string | null;
+  /** F2.5: 阻塞原因的详细说明——卡在哪、等什么、下一步建议。L1 字段。 */
+  block_detail?: {
+    kind: string;
+    message: string;
+    next?: string;
+  } | null;
 }
 
 export interface StageProgress {
