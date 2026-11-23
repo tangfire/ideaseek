@@ -176,15 +176,30 @@ M0 任一项不过 → 记录 blocker，退回 §7 决策 1 的备选底座，�
 
 ---
 
-## 7. 待决决策（已提问，未回；M1 之后按此分叉）
+## 7. 已决决策（2026-11-23 确认）
 
-1. **Class B（代码实现/实验/PDF 解析）的算力底座**
-   a) QCA 云环境 Session（推荐，唯一"完全脱离本地"且有算力的路；需授权 `ensure_backend(qoder)`，平台会自动创建并配置你账号的 `QODER_PAT`）
-   b) 纯 Function + LLM（最快，但代码实现与实验只能是"生成产物 + 待执行"，演示里不能声称实验跑完）
-   c) 自管容器 worker（复用现有引擎，需要一台云主机，平台外依赖）
-2. **`local-agent/`、Git 与文件面板**：降级为可选节点，还是彻底删除。
-3. **必须端到端真实可跑的阶段范围**（决定 M3 是做全套还是做一段）。
-4. **节奏**：先 1 天 M0 再排期 / 3 天最小闭环 / 1–2 周完整迁移。
+1. **Class B（代码实现/实验/PDF 解析）的算力底座**：**QCA 云环境 Session**
+   - 推荐路径：Function 下发任务到 Qoder Cloud Agents 云环境，代码实现与实验在云端跑，天然突破 60 s 限制
+   - 需授权 `ensure_backend(qoder)`，平台会自动创建并配置 `QODER_PAT`
+   - M3 阶段启用，当前 M0-M2 先用 Class A（纯 LLM 推理）
+
+2. **`local-agent/`、Git 与文件面板**：**彻底删除**
+   - 删除 `local-agent/` 整目录
+   - 删除 `web/functions/commands.ts` 的 `git_*`/`file_delete` 命令族
+   - 删除 `cloud_git_state`/`cloud_file_node` 写路径
+   - 删除 `web/console/src/panels.tsx` 的 `AgentPresence`/`RepoPanel`/`BranchPanel`/`FilePanel`
+   - 更新文档引用（README.md、ARCHITECTURE.md 等）
+
+3. **演示范围（3 天最小闭环）**：**输入上传 + 论文解析 + idea 生成**
+   - M0: 云端项目创建（✅ 已完成）
+   - M1: Postgres WorkflowDb 适配器
+   - M2: Class A 推理阶段（`PAPER_ANALYSIS` + `IDEA_GENERATION`）
+   - 全部是 LLM 推理阶段，不需要重计算
+
+4. **节奏**：**3 天最小闭环**
+   - Day 1: M1 Postgres 适配器 + 删除 local-agent
+   - Day 2: M2 Class A 阶段（论文解析 + idea 生成）
+   - Day 3: 端到端验收 + 文档收口
 
 ---
 
