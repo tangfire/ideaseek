@@ -604,7 +604,7 @@ export async function projectCreateView(
 }
 
 /**
- * 云端执行器：在 Function 沙箱内直接执行命令（用于演示/测试）。
+ * 云端执行器：在 Function 内直接执行命令（M0.3 起为真执行，不再是演示桩）。
  * 只支持白名单操作，不执行任意代码。
  */
 async function executeInCloud(
@@ -619,50 +619,230 @@ async function executeInCloud(
   if (!CLOUD_ALLOWED_TYPES.includes(type)) {
     throw new BackendError('cloud_execution_not_allowed', 403);
   }
-  
-  const effectiveOwnerId = viewer.ownerId ?? await getOrCreateAnonymousOwner(db, BackendError);
+
+  if (type === 'project_create') {
+    return createProjectInCloud(db, viewer, body, BackendError);
+  }
+
+  // 未来扩展：run_start / run_pause / etc. 各走自己的 handler
+  throw new BackendError('cloud_execution_not_allowed', 403);
+}
+
+/**
+ * 真实创建项目：写 cloud_project + cloud_run + cloud_stage + cloud_event + live_outbox，
+ * 再把 cloud_command 的 project_id 与 status 更新为 succeeded。
+ * 任何一步失败 → command 标 failed，不返回假成功。
+ */
+async function createProjectInCloud(
+  db: Db,
+  viewer: Viewer,
+  body: Record<string, unknown>,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  const effectiveOwnerId = viewer.ownerId ?? (await getOrCreateAnonymousOwner(db, BackendError));
   const externalCommandId = text(body.command_id, 64) ?? crypto.randomUUID();
-  
-  // 创建命令记录（status 直接为 running）
-  const created = rows<CommandRow>(
+
+  // 幂等回放：同一个 command_id 已存在 → 返回原记录
+  const existingCommand = rows<CommandRow>(
+    await db.from<CommandRow>('cloud_command').select('*').eq('external_command_id', externalCommandId).limit(1),
+    BackendError,
+  )[0];
+  if (existingCommand) {
+    if (existingCommand.created_by !== effectiveOwnerId) throw new BackendError('no_access', 403);
+    const mismatch = JSON.stringify(existingCommand.payload ?? null) !== JSON.stringify(validatePayload('project_create', body, BackendError));
+    return Response.json({
+      ok: true,
+      replayed: true,
+      payload_mismatch: mismatch,
+      command: commandCard(existingCommand, true),
+      cloud_executed: existingCommand.status === 'succeeded',
+      message: mismatch
+        ? '同一个 command_id 已执行过一条不同载荷的命令：返回原记录'
+        : '命令已执行过，返回原记录（未重复创建）',
+    });
+  }
+
+  const payload = validatePayload('project_create', body, BackendError);
+  const externalProjectId = `proj-${crypto.randomUUID().slice(0, 12)}`;
+  const externalRunId = `run-${crypto.randomUUID().slice(0, 12)}`;
+  const now = new Date().toISOString();
+
+  // 1. 创建命令记录（status=running，先占位）
+  const commandCreated = rows<CommandRow>(
     await db
       .from<CommandRow>('cloud_command')
       .insert({
         project_id: null,
         external_command_id: externalCommandId,
-        type,
-        payload: validatePayload(type, body, BackendError),
+        type: 'project_create',
+        payload,
         status: 'running',
         created_by: effectiveOwnerId,
-        created_at: new Date().toISOString(),
-        claimed_at: new Date().toISOString(),
+        created_at: now,
+        claimed_at: now,
       })
       .select('*'),
     BackendError,
   );
-  const row = created[0];
-  if (!row) throw new BackendError('write_failed', 500);
-  
-  // 模拟执行（实际项目中这里会调用 ideaseek CLI 或创建模板项目）
+  const commandRow = commandCreated[0];
+  if (!commandRow) throw new BackendError('write_failed', 500);
+
   try {
-    // TODO: 实际执行逻辑（创建模板文件、初始化 Git 等）
-    // 当前只返回成功状态，投影由后续同步创建
-    await db
-      .from<CommandRow>('cloud_command')
-      .update({
-        status: 'succeeded',
-        finished_at: new Date().toISOString(),
-        result: { message: '云端执行完成（演示模式）', cloud_executed: true },
-      })
-      .eq('id', row.id);
-    
+    // 2. 创建项目
+    const projectCreated = rows<{ id: string }>(
+      await db
+        .from<{ id: string }>('cloud_project')
+        .insert({
+          owner_id: effectiveOwnerId,
+          external_id: externalProjectId,
+          title: String(payload.name),
+          question: payload.question ?? null,
+          strategy: String(payload.strategy),
+          autonomy: String(payload.autonomy),
+          visibility: 'private',
+          source_host: null,
+          schema_version: 1,
+          last_sync_at: now,
+          archived_at: null,
+          created_at: now,
+        })
+        .select('id'),
+      BackendError,
+    );
+    const projectId = projectCreated[0]?.id;
+    if (!projectId) throw new Error('project write returned no id');
+
+    // 3. 创建运行
+    const runCreated = rows<{ id: string }>(
+      await db
+        .from<{ id: string }>('cloud_run')
+        .insert({
+          project_id: projectId,
+          external_run_id: externalRunId,
+          status: 'created',
+          phase_tag: 'INIT',
+          question: payload.question ?? null,
+          block_reason: null,
+          error_class: null,
+          summary: 'Project created in cloud',
+          started_at: now,
+          finished_at: null,
+          heartbeat_at: now,
+          config_hash: null,
+          budget_usd_micro: 0,
+          spent_usd_micro: 0,
+          synced_at: now,
+        })
+        .select('id'),
+      BackendError,
+    );
+    const runId = runCreated[0]?.id;
+    if (!runId) throw new Error('run write returned no id');
+
+    // 4. 创建初始阶段（INIT 阶段 active）
+    rows(
+      await db
+        .from('cloud_stage_progress')
+        .insert({
+          run_id: runId,
+          stage: 'INIT',
+          state: 'active',
+          stage_known: true,
+          gate_note: 'Project created, awaiting input',
+          blocker_code: null,
+          entered_at: now,
+          exited_at: null,
+        })
+        .select('id'),
+      BackendError,
+    );
+
+    // 5. 创建首条事件
+    rows(
+      await db
+        .from('cloud_run_event')
+        .insert({
+          run_id: runId,
+          seq: 1,
+          ts: now,
+          phase_tag: 'INIT',
+          object_type: 'project',
+          object_id: externalProjectId,
+          actor_role: 'system',
+          type: 'project_created',
+          summary: `Project "${payload.name}" created in cloud`,
+          truncated: false,
+          level: 'info',
+          artifact_refs: null,
+        })
+        .select('id'),
+      BackendError,
+    );
+
+    // 6. 写 live_outbox 帧（让 UI 立即看到）
+    const latestSeq = rows<{ seq: number }>(
+      await db
+        .from<{ seq: number }>('live_outbox')
+        .select('seq')
+        .eq('project_id', projectId)
+        .order('seq', { ascending: false })
+        .limit(1),
+      BackendError,
+    );
+    const nextSeq = (latestSeq[0]?.seq ?? 0) + 1;
+    try {
+      rows(
+        await db
+          .from('live_outbox')
+          .insert({
+            project_id: projectId,
+            frame_type: 'state',
+            payload: {
+              project: { external_id: externalProjectId, title: payload.name, visibility: 'private' },
+              run: { external_run_id: externalRunId, status: 'created', phase_tag: 'INIT' },
+              event: { seq: 1, type: 'project_created' },
+            },
+            seq: nextSeq,
+          })
+          .select('id'),
+        BackendError,
+      );
+    } catch {
+      // 广播失败不阻塞主流程，UI 下次轮询会看到
+    }
+
+    // 7. 更新命令：成功 + 关联项目（CAS：eq status='running' 防并发重入）
+    const updated = rows<CommandRow>(
+      await db
+        .from<CommandRow>('cloud_command')
+        .update({
+          project_id: projectId,
+          status: 'succeeded',
+          finished_at: new Date().toISOString(),
+          result: {
+            cloud_executed: true,
+            project_external_id: externalProjectId,
+            run_external_id: externalRunId,
+            message: '项目已在云端创建',
+          },
+        })
+        .eq('id', commandRow.id)
+        .eq('status', 'running')
+        .select('*'),
+      BackendError,
+    );
+    if (!updated[0]) throw new Error('command CAS update failed (status changed or no row)');
+
     return Response.json({
       ok: true,
-      command: commandCard(row, true),
-      message: '命令已在云端执行（演示模式）',
+      command: commandCard(updated[0], true),
       cloud_executed: true,
+      project_external_id: externalProjectId,
+      run_external_id: externalRunId,
+      message: '项目已在云端创建',
     });
   } catch (error) {
+    // 失败：标 command 为 failed
     await db
       .from<CommandRow>('cloud_command')
       .update({
@@ -670,8 +850,8 @@ async function executeInCloud(
         finished_at: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       })
-      .eq('id', row.id);
-    
+      .eq('id', commandRow.id);
+
     throw new BackendError('cloud_execution_failed', 500);
   }
 }

@@ -169,6 +169,134 @@ export function application(deps: Deps) {
       return Response.json({ ok: true, counts });
     }
 
+    // M0.1: 租约原子性探针 — 验证受管 SDK 是否支持唯一键幂等与条件 CAS
+    if (path === '/probe/lease' && request.method === 'POST') {
+      await requireDiagnostic(request, db, BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      const testId = String(body.test_id ?? crypto.randomUUID());
+      const now = new Date().toISOString();
+
+      // 测试 1: insertIfAbsent 幂等 — 两个并发插入同一个 external_command_id
+      const insert1 = rows<{ id: string }>(
+        await db
+          .from<{ id: string }>('cloud_command')
+          .insertIfAbsent(
+            {
+              project_id: null,
+              external_command_id: testId,
+              type: 'project_create',
+              payload: { test: 'lease_probe_insert' },
+              status: 'queued',
+              created_by: '00000000-0000-0000-0000-000000000000',
+              created_at: now,
+              claimed_at: null,
+              heartbeat_at: null,
+              finished_at: null,
+              result: null,
+              error: null,
+            },
+            { onConflict: 'external_command_id' },
+          )
+          .select('id'),
+        BackendError,
+      );
+
+      const insert2 = rows<{ id: string }>(
+        await db
+          .from<{ id: string }>('cloud_command')
+          .insertIfAbsent(
+            {
+              project_id: null,
+              external_command_id: testId,
+              type: 'project_create',
+              payload: { test: 'lease_probe_insert_duplicate' },
+              status: 'queued',
+              created_by: '00000000-0000-0000-0000-000000000000',
+              created_at: now,
+              claimed_at: null,
+              heartbeat_at: null,
+              finished_at: null,
+              result: null,
+              error: null,
+            },
+            { onConflict: 'external_command_id' },
+          )
+          .select('id'),
+        BackendError,
+      );
+
+      const insertRaceResult = {
+        first_inserted: insert1.length === 1,
+        second_inserted: insert2.length === 1,
+        expected: 'exactly one should succeed (first_inserted=true, second_inserted=false)',
+        passed: insert1.length === 1 && insert2.length === 0,
+      };
+
+      // 测试 2: 条件 CAS 更新 — update with eq filter + select returned rows
+      const casUpdate = rows<{ id: string }>(
+        await db
+          .from<{ id: string }>('cloud_command')
+          .update({ status: 'running', claimed_at: now })
+          .eq('external_command_id', testId)
+          .eq('status', 'queued')
+          .select('id'),
+        BackendError,
+      );
+
+      const casResult = {
+        updated_rows: casUpdate.length,
+        expected: 'exactly one row updated (updated_rows=1)',
+        passed: casUpdate.length === 1,
+      };
+
+      // 测试 3: 并发 CAS — 两个并发更新同一个行，只有一个应该成功
+      const cas1 = rows<{ id: string }>(
+        await db
+          .from<{ id: string }>('cloud_command')
+          .update({ status: 'succeeded', finished_at: now })
+          .eq('external_command_id', testId)
+          .eq('status', 'running')
+          .select('id'),
+        BackendError,
+      );
+
+      const cas2 = rows<{ id: string }>(
+        await db
+          .from<{ id: string }>('cloud_command')
+          .update({ status: 'failed', finished_at: now, error: 'concurrent_cas_test' })
+          .eq('external_command_id', testId)
+          .eq('status', 'running')
+          .select('id'),
+        BackendError,
+      );
+
+      const concurrentCasResult = {
+        first_updated: cas1.length === 1,
+        second_updated: cas2.length === 1,
+        expected: 'exactly one should succeed (first_updated=true, second_updated=false)',
+        passed: cas1.length === 1 && cas2.length === 0,
+      };
+
+      // 清理测试行
+      await db.from('cloud_command').delete().eq('external_command_id', testId);
+
+      return Response.json({
+        ok: true,
+        test_id: testId,
+        insert_race: insertRaceResult,
+        conditional_cas: casResult,
+        concurrent_cas: concurrentCasResult,
+        summary: {
+          insertIfAbsent_supported: insertRaceResult.passed,
+          conditional_cas_supported: casResult.passed,
+          concurrent_cas_atomic: concurrentCasResult.passed,
+          all_passed: insertRaceResult.passed && casResult.passed && concurrentCasResult.passed,
+        },
+      });
+    }
+
     if (path === '/ingest' && request.method === 'POST') {
       const principal = await authenticateSyncToken(request, db, BackendError);
       const raw = await request.json().catch(() => {

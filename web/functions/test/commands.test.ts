@@ -425,3 +425,128 @@ test('分支、冲突与远端上报：只留 ref 名与路径，正文与凭据
   assert.ok(!JSON.stringify(view.json).includes('host/private'), 'remote URL 不落库：带凭据的地址不能被读出来');
   assert.equal(fake.rowsOf('cloud_git_state').length, 1);
 });
+
+// --------------------------------------------------------------------------- M0.3 云端执行（真）
+
+test('云端 project_create 写真实投影：项目 + 运行 + 阶段 + 事件 + outbox', async () => {
+  const { fake, as } = await build();
+  const commandId = crypto.randomUUID();
+  const res = await call(as(null), '/projects', web({
+    command_id: commandId,
+    name: '云端测试项目',
+    question: '验证真执行',
+    strategy: 'starter',
+    autonomy: 'autonomous',
+    execution_mode: 'cloud',
+  }));
+  assert.equal(res.status, 200, `期望 200，实际 ${res.status}: ${res.raw}`);
+  assert.equal(res.json.ok, true);
+  assert.equal(res.json.cloud_executed, true, '必须真执行，不是假成功');
+  assert.ok(res.json.project_external_id, '返回 project_external_id');
+  assert.ok(res.json.run_external_id, '返回 run_external_id');
+
+  // 验证投影行全部写入
+  const projects = fake.rowsOf('cloud_project');
+  assert.equal(projects.length, 3, '新增 1 个项目（原有 2 个夹具）');
+  const created = projects.find((p) => p.external_id === res.json.project_external_id);
+  assert.ok(created, '项目行存在');
+  assert.equal(created.title, '云端测试项目');
+  assert.equal(created.strategy, 'starter');
+  assert.equal(created.autonomy, 'autonomous');
+  assert.equal(created.visibility, 'private');
+
+  const runs = fake.rowsOf('cloud_run');
+  assert.equal(runs.length, 1, '新增 1 个运行');
+  assert.equal(runs[0].external_run_id, res.json.run_external_id);
+  assert.equal(runs[0].status, 'created');
+  assert.equal(runs[0].phase_tag, 'INIT');
+
+  const stages = fake.rowsOf('cloud_stage_progress');
+  assert.equal(stages.length, 1, '新增 1 个阶段');
+  assert.equal(stages[0].stage, 'INIT');
+  assert.equal(stages[0].state, 'active');
+
+  const events = fake.rowsOf('cloud_run_event');
+  assert.equal(events.length, 1, '新增 1 个事件');
+  assert.equal(events[0].type, 'project_created');
+  assert.equal(events[0].seq, 1);
+
+  const outbox = fake.rowsOf('live_outbox');
+  assert.equal(outbox.length, 1, '新增 1 个 outbox 帧');
+  assert.equal(outbox[0].frame_type, 'state');
+
+  const commands = fake.rowsOf('cloud_command');
+  const cmd = commands.find((c) => c.external_command_id === commandId);
+  assert.ok(cmd, '命令行存在');
+  assert.equal(cmd.status, 'succeeded');
+  assert.equal(cmd.project_id, created.id, '命令关联到项目');
+  assert.equal((cmd.result as Record<string, unknown>).cloud_executed, true);
+});
+
+test('云端 project_create 幂等回放：同 command_id 不重复创建', async () => {
+  const { fake, as } = await build();
+  const commandId = crypto.randomUUID();
+  const body = {
+    command_id: commandId,
+    name: '幂等测试',
+    question: null,
+    strategy: 'standard',
+    autonomy: 'guided',
+    execution_mode: 'cloud',
+  };
+  const first = await call(as(null), '/projects', web(body));
+  assert.equal(first.status, 200);
+  const firstProjectId = first.json.project_external_id;
+
+  const second = await call(as(null), '/projects', web(body));
+  assert.equal(second.status, 200);
+  assert.equal(second.json.replayed, true, '第二次调用返回 replayed=true');
+  assert.equal(second.json.project_external_id, firstProjectId, '返回同一个 project_external_id');
+
+  const projects = fake.rowsOf('cloud_project');
+  assert.equal(projects.length, 3, '没有新增项目（原有 2 个夹具 + 第一次创建 1 个）');
+});
+
+test('云端 project_create 缺 name 返回 400', async () => {
+  const { as } = await build();
+  const res = await call(as(null), '/projects', web({
+    command_id: crypto.randomUUID(),
+    question: '没有名字',
+    strategy: 'standard',
+    autonomy: 'guided',
+    execution_mode: 'cloud',
+  }));
+  assert.equal(res.status, 400);
+  assert.ok(res.code.includes('invalid_input'), `错误码包含 invalid_input: ${res.code}`);
+});
+
+test('云端 project_create 的 command CAS 更新：并发重入只有一个成功', async () => {
+  const { fake, as } = await build();
+  const commandId = crypto.randomUUID();
+  const body = {
+    command_id: commandId,
+    name: 'CAS 测试',
+    question: null,
+    strategy: 'starter',
+    autonomy: 'guided',
+    execution_mode: 'cloud',
+  };
+
+  // 模拟并发：两个请求同时到达（fake-db 是单线程，但测试 CAS 逻辑）
+  const [first, second] = await Promise.all([
+    call(as(null), '/projects', web(body)),
+    call(as(null), '/projects', web(body)),
+  ]);
+
+  // 两个都应该成功（幂等回放），但只有一个真正创建
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+
+  const projects = fake.rowsOf('cloud_project');
+  const created = projects.filter((p) => p.external_id.startsWith('proj-'));
+  assert.equal(created.length, 1, '只创建了 1 个项目');
+
+  // 第二次调用应该返回 replayed=true
+  const replayed = [first, second].find((r) => r.json.replayed === true);
+  assert.ok(replayed, '至少有一个返回 replayed=true');
+});
