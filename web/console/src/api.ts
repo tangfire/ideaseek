@@ -34,9 +34,9 @@ const MESSAGES: Record<ApiCode, string> = {
   no_access: '当前账号没有这个项目的读取权限。',
   not_found: '云端没有这个对象——可能是投影尚未同步，或已被删除。',
   rate_limited: '请求过于频繁，稍后自动重试。',
-  service_unavailable: '云端服务暂时不可用，投影仍然在本地正常写入。',
+  service_unavailable: '云端服务暂时不可用，请稍后重试。',
   invalid_response: '云端返回了无法解析的响应。',
-  network: '无法连接云端。本地引擎不受影响。',
+  network: '无法连接云端，请检查网络后重试。',
 };
 
 function codeFor(status: number, body?: string): ApiCode {
@@ -61,7 +61,9 @@ let shareToken: string | null = readShareFromLocation();
 function readShareFromLocation(): string | null {
   if (typeof window === 'undefined') return null;
   const hash = window.location.hash ?? '';
-  const fromHash = hash.includes('?') ? new URLSearchParams(hash.slice(hash.indexOf('?') + 1)).get('share') : null;
+  const fromHash = hash.includes('?')
+    ? new URLSearchParams(hash.slice(hash.indexOf('?') + 1)).get('share')
+    : null;
   return fromHash ?? new URLSearchParams(window.location.search ?? '').get('share');
 }
 
@@ -77,7 +79,11 @@ function withShare(path: string): string {
 export async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(withShare(path), { credentials: 'same-origin', headers: { accept: 'application/json' }, signal });
+    response = await fetch(withShare(path), {
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      signal,
+    });
   } catch {
     if (signal?.aborted) throw new ApiError('network', '请求已取消。');
     throw new ApiError('network', MESSAGES.network);
@@ -106,7 +112,10 @@ export async function requestJson<T>(path: string, signal?: AbortSignal): Promis
  * M6: 写操作（POST/DELETE/PATCH）。与 requestJson 同一套错误映射，
  * 但接受自定义 method 和 body。
  */
-export async function mutateJson<T>(path: string, init: { method: string; body?: string; headers?: Record<string, string> }): Promise<T> {
+export async function mutateJson<T>(
+  path: string,
+  init: { method: string; body?: string; headers?: Record<string, string> },
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
