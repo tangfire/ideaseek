@@ -16,8 +16,8 @@ import type { BackendErrorLike, Db } from './deps.ts';
 import { rows } from './deps.ts';
 import type { SyncPrincipal } from './token.ts';
 
-/** M1 已实装的集合；未列出的会被拒绝而不是忽略。 */
-const IMPLEMENTED = ['runs', 'stages', 'events'] as const;
+/** M1 已实装的集合；M6 新增 approvals/costs/egress。未列出的会被拒绝而不是忽略。 */
+const IMPLEMENTED = ['runs', 'stages', 'events', 'approvals', 'costs', 'egress'] as const;
 
 function present(batch: BatchEnvelope): string[] {
   return Object.entries(batch.entities)
@@ -248,6 +248,173 @@ async function writeEvents(
 }
 
 /**
+ * M6: 审批请求写入——幂等 upsert by (run_id, external_approval_id)。
+ *
+ * 注意：这里只写投影，不触发执行。审批请求是引擎向 Owner 发出的确认邀请，
+ * Owner 在界面上提交意向后，意向由本地引擎 pull 并 adjudicate。
+ */
+async function writeApprovals(
+  db: Db,
+  runIds: Map<string, string>,
+  list: Record<string, unknown>[],
+  BackendError: BackendErrorLike,
+): Promise<number> {
+  let written = 0;
+  for (const approval of list) {
+    const runId = runIds.get(String(approval.run_external_id));
+    if (!runId) throw new ContractError(`审批引用了批内不存在的运行：${String(approval.run_external_id)}`);
+    const externalApprovalId = requiredText(approval.external_approval_id, 'approval/external_approval_id', 128);
+    const kind = requiredText(approval.kind, 'approval/kind', 32);
+    if (!['protocol', 'decision', 'repair'].includes(kind)) {
+      throw new ContractError(`/approvals/kind 必须是 protocol|decision|repair，收到 ${kind}`);
+    }
+    const row = {
+      run_id: runId,
+      external_approval_id: externalApprovalId,
+      kind,
+      summary: requiredText(approval.summary, 'approval/summary', 800),
+      options: Array.isArray(approval.options) ? approval.options : null,
+      payload_hash: approval.payload_hash === null || approval.payload_hash === undefined ? null : String(approval.payload_hash),
+      status: text(approval.status, 'approval/status', 32) ?? 'pending',
+      created_at: iso(approval.created_at),
+      resolved_at: iso(approval.resolved_at),
+    };
+    const existing = rows(
+      await db
+        .from<{ id: string }>('cloud_approval_request')
+        .select('id')
+        .eq('run_id', runId)
+        .eq('external_approval_id', externalApprovalId)
+        .limit(1),
+      BackendError,
+    );
+    if (existing[0]) {
+      rows(await db.from('cloud_approval_request').update(row).eq('id', existing[0].id).select('id'), BackendError);
+    } else {
+      rows(
+        await db.from<{ id: string }>('cloud_approval_request').insert(row).select('id'),
+        BackendError,
+      );
+    }
+    written += 1;
+  }
+  return written;
+}
+
+/**
+ * M6: 成本条目写入——幂等 upsert by (run_id, external_cost_id)。
+ *
+ * F12.1: 整数微美元，避免浮点累加误差。Function 必须解析并拒绝 NaN/Infinity。
+ */
+async function writeCosts(
+  db: Db,
+  runIds: Map<string, string>,
+  list: Record<string, unknown>[],
+  BackendError: BackendErrorLike,
+): Promise<number> {
+  let written = 0;
+  for (const cost of list) {
+    const runId = runIds.get(String(cost.run_external_id));
+    if (!runId) throw new ContractError(`成本引用了批内不存在的运行：${String(cost.run_external_id)}`);
+    const externalCostId = requiredText(cost.external_cost_id, 'cost/external_cost_id', 128);
+    const kind = requiredText(cost.kind, 'cost/kind', 32);
+    if (!['token', 'compute', 'storage', 'other'].includes(kind)) {
+      throw new ContractError(`/costs/kind 必须是 token|compute|storage|other，收到 ${kind}`);
+    }
+    const usdMicro = cost.usd_micro;
+    if (!Number.isInteger(usdMicro) || (usdMicro as number) < 0) {
+      throw new ContractError('/costs/usd_micro 必须是非负整数（微美元）');
+    }
+    // F12.1: 拒绝 NaN/Infinity
+    if (typeof usdMicro === 'number' && (!Number.isFinite(usdMicro) || Number.isNaN(usdMicro))) {
+      throw new ContractError('/costs/usd_micro 不得为 NaN 或 Infinity');
+    }
+    const row = {
+      run_id: runId,
+      external_cost_id: externalCostId,
+      kind,
+      model_route: text(cost.model_route, 'cost/model_route', 128),
+      agent_role: text(cost.agent_role, 'cost/agent_role', 64),
+      usd_micro: usdMicro as number,
+      tokens_in: Number.isInteger(cost.tokens_in) ? (cost.tokens_in as number) : null,
+      tokens_out: Number.isInteger(cost.tokens_out) ? (cost.tokens_out as number) : null,
+      ts: iso(cost.ts) ?? new Date().toISOString(),
+    };
+    const existing = rows(
+      await db
+        .from<{ id: string }>('cloud_cost_entry')
+        .select('id')
+        .eq('run_id', runId)
+        .eq('external_cost_id', externalCostId)
+        .limit(1),
+      BackendError,
+    );
+    if (existing[0]) {
+      rows(await db.from('cloud_cost_entry').update(row).eq('id', existing[0].id).select('id'), BackendError);
+    } else {
+      rows(
+        await db.from<{ id: string }>('cloud_cost_entry').insert(row).select('id'),
+        BackendError,
+      );
+    }
+    written += 1;
+  }
+  return written;
+}
+
+/**
+ * M6: 外发条目写入——幂等 upsert by (run_id, external_egress_id)。
+ *
+ * 缺口⑫：只有类别与计数，没有 prompt 字段，也不该将来加一个。
+ */
+async function writeEgress(
+  db: Db,
+  runIds: Map<string, string>,
+  list: Record<string, unknown>[],
+  BackendError: BackendErrorLike,
+): Promise<number> {
+  let written = 0;
+  for (const egress of list) {
+    const runId = runIds.get(String(egress.run_external_id));
+    if (!runId) throw new ContractError(`外发引用了批内不存在的运行：${String(egress.run_external_id)}`);
+    const externalEgressId = requiredText(egress.external_egress_id, 'egress/external_egress_id', 128);
+    const destinationClass = requiredText(egress.destination_class, 'egress/destination_class', 64);
+    const eventCount = egress.event_count;
+    if (!Number.isInteger(eventCount) || (eventCount as number) < 0) {
+      throw new ContractError('/egress/event_count 必须是非负整数');
+    }
+    const row = {
+      run_id: runId,
+      external_egress_id: externalEgressId,
+      destination_class: destinationClass,
+      data_class: text(egress.data_class, 'egress/data_class', 32),
+      event_count: eventCount as number,
+      bytes_approx: Number.isInteger(egress.bytes_approx) ? (egress.bytes_approx as number) : null,
+      ts: iso(egress.ts) ?? new Date().toISOString(),
+    };
+    const existing = rows(
+      await db
+        .from<{ id: string }>('cloud_egress_entry')
+        .select('id')
+        .eq('run_id', runId)
+        .eq('external_egress_id', externalEgressId)
+        .limit(1),
+      BackendError,
+    );
+    if (existing[0]) {
+      rows(await db.from('cloud_egress_entry').update(row).eq('id', existing[0].id).select('id'), BackendError);
+    } else {
+      rows(
+        await db.from<{ id: string }>('cloud_egress_entry').insert(row).select('id'),
+        BackendError,
+      );
+    }
+    written += 1;
+  }
+  return written;
+}
+
+/**
  * outbox 是投影表与 WS 之间唯一的耦合点（F17.3）：ingest 事务内写，广播侧消费。
  * seq 由这里赋值——受管 DDL 没有 serial/identity，顺序号只能是应用侧概念。
  * 读最大值再 +1 在并发下会给两个批同一个 seq；M1 接受这个已知弱点并在
@@ -317,11 +484,15 @@ export async function ingestBatch(
   const runIds = await upsertRuns(db, project.id, (batch.entities.runs ?? []) as Record<string, unknown>[], BackendError);
   const stages = await writeStages(db, runIds, (batch.entities.stages ?? []) as Record<string, unknown>[], BackendError);
   const events = await writeEvents(db, runIds, (batch.entities.events ?? []) as Record<string, unknown>[], BackendError);
+  // M6: 新增集合写入
+  const approvals = await writeApprovals(db, runIds, (batch.entities.approvals ?? []) as Record<string, unknown>[], BackendError);
+  const costs = await writeCosts(db, runIds, (batch.entities.costs ?? []) as Record<string, unknown>[], BackendError);
+  const egress = await writeEgress(db, runIds, (batch.entities.egress ?? []) as Record<string, unknown>[], BackendError);
 
   await appendOutbox(
     db,
     project.id,
-    { external_id: batch.project.external_id, runs: runIds.size, stages, events, at: new Date().toISOString() },
+    { external_id: batch.project.external_id, runs: runIds.size, stages, events, approvals, costs, egress, at: new Date().toISOString() },
     BackendError,
   );
 
@@ -329,6 +500,6 @@ export async function ingestBatch(
     ok: true,
     status: 'accepted',
     external_batch_id: batch.external_batch_id,
-    counts: { runs: runIds.size, stages, events },
+    counts: { runs: runIds.size, stages, events, approvals, costs, egress },
   });
 }

@@ -168,3 +168,101 @@ export interface ProtocolSummary {
   locked_at?: string | null;
   provenance?: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// M6: 审批信箱 / 成本 / 外发 / Token 管理
+// ---------------------------------------------------------------------------
+
+/**
+ * F11: 审批请求——云端只存意向，生效需本地 pull + Owner 二次确认（REQUIREMENTS.md §3.3）。
+ * kind 三值：protocol（协议审批）、decision（决策审批）、repair（修复审批）。
+ */
+export interface ApprovalRequest {
+  id: string;
+  run_external_id: string;
+  external_approval_id: string;
+  kind: 'protocol' | 'decision' | 'repair';
+  summary: string;
+  options: string[] | null;
+  payload_hash: string | null;
+  status: 'pending' | 'resolved' | 'expired';
+  created_at: string;
+  resolved_at: string | null;
+  /** F11.4: 已提交的意向列表——多个审批人可能选不同选项，并列展示不自动合并。 */
+  intents?: ApprovalIntent[];
+}
+
+/**
+ * F11.3-F11.5: 审批意向——Owner 在界面上提交的选择，待本地引擎拉取后生效。
+ * 生命周期：submitted → delivered → consumed。
+ */
+export interface ApprovalIntent {
+  id: string;
+  choice: string;
+  note: string | null;
+  submitted_at: string;
+  delivered_at: string | null;
+  consumed_at: string | null;
+}
+
+/** F12: 成本条目——整数微美元，避免浮点累加误差。 */
+export interface CostEntry {
+  id: string;
+  run_external_id: string;
+  external_cost_id: string;
+  kind: 'token' | 'compute' | 'storage' | 'other';
+  model_route: string | null;
+  agent_role: string | null;
+  usd_micro: number;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  ts: string;
+}
+
+/** F12: 成本汇总——按 run 聚合。 */
+export interface CostSummary {
+  run_external_id: string;
+  total_usd_micro: number;
+  total_tokens_in: number;
+  total_tokens_out: number;
+  budget_usd_micro: number;
+  spent_usd_micro: number;
+  /** F12.3: 重复成本标记——同一 run 内相同 model_route + kind 出现多次。 */
+  duplicate_candidates: number;
+  by_route: Record<string, number>;
+}
+
+/** F13: 外发条目——只有类别与计数，没有 prompt 字段（缺口⑫）。 */
+export interface EgressEntry {
+  id: string;
+  run_external_id: string;
+  external_egress_id: string;
+  destination_class: string;
+  data_class: string | null;
+  event_count: number;
+  bytes_approx: number | null;
+  ts: string;
+}
+
+/** F16: 同步 Token——只存哈希，明文永不入库（NFR-02）。 */
+export interface SyncToken {
+  id: string;
+  label: string | null;
+  scopes: string[];
+  project_scope: string[];
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** F16.2: 同步健康自检——最近批次状态与拒绝原因分布。 */
+export interface SyncHealth {
+  latest_batch: {
+    external_batch_id: string;
+    status: string;
+    requested_at: string;
+    rejected_reasons: string[] | null;
+  } | null;
+  pending_batches: number;
+  rejected_reason_distribution: Record<string, number>;
+}

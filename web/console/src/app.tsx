@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Route, Switch, useLocation } from 'wouter';
-import { ApiError, loginHref, requestJson } from './api';
+import { ApiError, loginHref, requestJson, mutateJson } from './api';
 import { openLive, type Transport } from './live';
-import type { EventRow, IndexView, IdeaSummary, LiveFrame, PaperCard, ClaimRow, ExperimentResult, ProtocolSummary, ProjectView, RunSummary } from './types';
+import type { EventRow, IndexView, IdeaSummary, LiveFrame, PaperCard, ClaimRow, ExperimentResult, ProtocolSummary, ProjectView, RunSummary, ApprovalRequest, CostSummary, EgressEntry, SyncToken, SyncHealth } from './types';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -577,6 +577,15 @@ function Project({ id }: { id: string }) {
       {view.experiments && view.protocols && !l2 ? (
         <ExperimentView experiments={view.experiments} protocols={view.protocols} />
       ) : null}
+      {/* M6: 审批信箱 / 成本 / 外发 / Token 管理——L1 字段，L2 降级时不显示 */}
+      {!l2 ? (
+        <>
+          <ApprovalInbox projectId={id} />
+          <CostDashboard projectId={id} />
+          <EgressLedger projectId={id} />
+          <TokenManager projectId={id} />
+        </>
+      ) : null}
       <h2>事件</h2>
       <EventList events={[...view.events, ...liveEvents].slice(-80)} redacted={l2} lastSyncAt={view.project.last_sync_at} />
     </>
@@ -683,7 +692,7 @@ function VersionTree({ ideas }: { ideas: IdeaSummary[] }) {
 
   if (roots.length === 0) return <p className="muted">还没有 idea。</p>;
 
-  const renderTree = (idea: IdeaSummary, depth: number): JSX.Element => {
+  const renderTree = (idea: IdeaSummary, depth: number): ReactElement => {
     const children = ideas.filter((i) => i.parent_idea_id === idea.external_idea_id);
     return (
       <div key={idea.external_idea_id} style={{ marginLeft: depth * 20, marginBottom: 8 }}>
@@ -897,6 +906,483 @@ function IdeaBoard({ ideas }: { ideas: IdeaSummary[] }) {
           <VersionTree ideas={ideas} />
         </div>
       </details>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// M6: 审批信箱 / 成本 / 外发 / Token 管理
+// ---------------------------------------------------------------------------
+
+/**
+ * F11: 审批信箱——待确认列表 + 详情 + 意向提交。
+ *
+ * F11.1: 跨项目聚合 pending 审批请求。
+ * F11.2: 审批详情——原因、选项、影响范围、来源事件。
+ * F11.3: 提交意向——文案必须说"待本地确认"，UI 永不显示"已批准/已生效"。
+ * F11.4: 冲突意向并列——多个审批人选择不同选项全部列出，不自动合并。
+ * F11.5: intent 生命周期——submitted → delivered → consumed。
+ * F11.6: autonomous 模式只读——自动通过的门槛不得被 web 阻塞或改写。
+ */
+function ApprovalInbox({ projectId }: { projectId: string }) {
+  const query = useQuery({
+    queryKey: ['approvals', projectId],
+    queryFn: () => requestJson<{ ok: boolean; approvals: ApprovalRequest[] }>(`/functions/v1/app/views/approvals?project_id=${encodeURIComponent(projectId)}`),
+  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<string | null>(null);
+
+  if (query.isPending) return <p className="muted">正在加载审批信箱…</p>;
+  if (query.error) return <p className="status-chip" data-state="fail">{(query.error as Error).message}</p>;
+  const approvals = query.data?.approvals ?? [];
+  const pending = approvals.filter((a) => a.status === 'pending');
+  const selected = selectedId ? approvals.find((a) => a.id === selectedId) : null;
+
+  const handleSubmitIntent = async (choice: string, note: string) => {
+    if (!selectedId) return;
+    setSubmitting(true);
+    setSubmitResult(null);
+    try {
+      const res = await mutateJson<{ ok: boolean; message: string }>(`/functions/v1/app/approvals/${selectedId}/intent`, {
+        method: 'POST',
+        body: JSON.stringify({ choice, note }),
+      });
+      setSubmitResult(res.ok ? `意向已提交：${res.message}` : `提交失败`);
+      void query.refetch();
+    } catch (err) {
+      setSubmitResult(`提交失败：${(err as Error).message}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>审批信箱</h2>
+      {pending.length === 0 ? (
+        <p className="muted">没有待确认的审批请求。</p>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 16 }}>
+          {/* F11.1: 待确认列表 */}
+          <div>
+            <h3 style={{ fontSize: 14 }}>待确认 ({pending.length})</h3>
+            {pending.map((approval) => (
+              <div
+                key={approval.id}
+                className="panel"
+                style={{ marginBottom: 8, cursor: 'pointer', borderLeftColor: selectedId === approval.id ? 'var(--active)' : 'var(--line)' }}
+                onClick={() => setSelectedId(approval.id)}
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                  <span className="status-chip" data-state="blocked" style={{ fontSize: 11 }}>{approval.kind}</span>
+                  <strong style={{ fontSize: 13 }}>{approval.external_approval_id.slice(0, 12)}…</strong>
+                </div>
+                <p style={{ margin: 0, fontSize: 12 }} className="muted">{approval.summary.slice(0, 80)}{approval.summary.length > 80 ? '…' : ''}</p>
+                <p style={{ margin: '4px 0 0', fontSize: 11 }} className="muted">{ago(approval.created_at)}</p>
+              </div>
+            ))}
+          </div>
+          {/* F11.2-F11.4: 审批详情 + 意向提交 + 冲突并列 */}
+          <div>
+            {selected ? (
+              <div className="panel">
+                <h3 style={{ fontSize: 14, marginTop: 0 }}>审批详情</h3>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <span className="status-chip" data-state="blocked">{selected.kind}</span>
+                  <span className="mono" style={{ fontSize: 12 }}>{selected.external_approval_id}</span>
+                </div>
+                <p style={{ margin: '0 0 8px' }}>{selected.summary}</p>
+                {selected.payload_hash ? (
+                  <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                    载荷哈希：<code className="mono">{selected.payload_hash.slice(0, 16)}…</code>
+                  </p>
+                ) : null}
+                {/* F11.2: 选项列表 */}
+                {selected.options && selected.options.length > 0 ? (
+                  <div style={{ marginBottom: 12 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>可选方案</div>
+                    {selected.options.map((opt) => (
+                      <div key={opt} style={{ padding: '4px 8px', background: 'var(--bg)', borderRadius: 4, marginBottom: 4, fontSize: 13 }}>
+                        {opt}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {/* F11.4: 冲突意向并列 */}
+                {selected.intents && selected.intents.length > 0 ? (
+                  <div style={{ marginBottom: 12 }}>
+                    <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>已提交的意向（{selected.intents.length}）</div>
+                    {selected.intents.map((intent) => (
+                      <div key={intent.id} style={{ padding: '4px 8px', background: 'var(--bg)', borderRadius: 4, marginBottom: 4, fontSize: 12 }}>
+                        <span className="status-chip" data-state={intent.consumed_at ? 'ok' : intent.delivered_at ? 'active' : 'blocked'} style={{ fontSize: 10 }}>
+                          {intent.consumed_at ? '已生效' : intent.delivered_at ? '已送达' : '已提交'}
+                        </span>
+                        {' '}{intent.choice}
+                        {intent.note ? <span className="muted"> · {intent.note}</span> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {/* F11.3: 提交意向——文案必须说"待本地确认" */}
+                <IntentForm onSubmit={handleSubmitIntent} disabled={submitting} options={selected.options ?? []} />
+                {submitResult ? <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>{submitResult}</p> : null}
+              </div>
+            ) : (
+              <p className="muted">选择一个审批请求查看详情。</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IntentForm({ onSubmit, disabled, options }: { onSubmit: (choice: string, note: string) => void; disabled: boolean; options: string[] }) {
+  const [choice, setChoice] = useState(options[0] ?? '');
+  const [note, setNote] = useState('');
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>提交意向</div>
+      {options.length > 0 ? (
+        <select value={choice} onChange={(e) => setChoice(e.target.value)} style={{ width: '100%', marginBottom: 8, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '6px 8px' }}>
+          {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      ) : (
+        <input value={choice} onChange={(e) => setChoice(e.target.value)} placeholder="选择" style={{ width: '100%', marginBottom: 8, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '6px 8px' }} />
+      )}
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注（可选）" rows={2} style={{ width: '100%', marginBottom: 8, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '6px 8px', resize: 'vertical' }} />
+      <button onClick={() => { if (choice) { onSubmit(choice, note); setNote(''); } }} disabled={disabled || !choice} style={{ background: 'var(--active)', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 16px', cursor: disabled || !choice ? 'not-allowed' : 'pointer', opacity: disabled || !choice ? 0.5 : 1 }}>
+        提交意向
+      </button>
+      <p className="muted" style={{ fontSize: 11, margin: '8px 0 0' }}>
+        提交后状态为"待本地确认"——意向需本地引擎拉取并二次确认后才会生效。
+      </p>
+    </div>
+  );
+}
+
+/**
+ * F12: 成本与额度面板——花费汇总 + 预算进度 + 重复标记 + 路由分布。
+ *
+ * F12.1: 花费汇总——token 数、USD micro。
+ * F12.2: 预算进度——spent / budget，接近上限时高亮。
+ * F12.3: 重复成本标记——同一 run 内相同 model_route + kind 出现多次。
+ * F12.4: 按模型路由分布——各 route 的花费占比。
+ * F12.5: 额度耗尽引导——指向 ideaseek doctor + continue。
+ */
+function CostDashboard({ projectId }: { projectId: string }) {
+  const query = useQuery({
+    queryKey: ['costs', projectId],
+    queryFn: () => requestJson<{ ok: boolean; runs: CostSummary[]; summary: { total_usd_micro: number; total_tokens_in: number; total_tokens_out: number; by_route: Record<string, number> } | null }>(`/functions/v1/app/views/costs?external_id=${encodeURIComponent(projectId)}`),
+  });
+
+  if (query.isPending) return <p className="muted">正在加载成本数据…</p>;
+  if (query.error) return <p className="status-chip" data-state="fail">{(query.error as Error).message}</p>;
+  const data = query.data;
+  if (!data || !data.summary) return <p className="muted">成本数据不在公开降级投影（L2）这一级。</p>;
+
+  const { summary, runs } = data;
+  const totalUsd = summary.total_usd_micro / 1_000_000;
+  const totalBudget = runs.reduce((sum, r) => sum + r.budget_usd_micro, 0) / 1_000_000;
+  const totalSpent = runs.reduce((sum, r) => sum + r.spent_usd_micro, 0) / 1_000_000;
+  const budgetRatio = totalBudget > 0 ? totalSpent / totalBudget : 0;
+  // F12.2: 接近上限时高亮
+  const nearCap = budgetRatio > 0.8;
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>成本与额度</h2>
+      {/* F12.1: 花费汇总 */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+        <div className="panel" style={{ marginBottom: 0 }}>
+          <div className="muted" style={{ fontSize: 12 }}>总花费</div>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>${totalUsd.toFixed(4)}</div>
+        </div>
+        <div className="panel" style={{ marginBottom: 0 }}>
+          <div className="muted" style={{ fontSize: 12 }}>Token 输入</div>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>{summary.total_tokens_in.toLocaleString()}</div>
+        </div>
+        <div className="panel" style={{ marginBottom: 0 }}>
+          <div className="muted" style={{ fontSize: 12 }}>Token 输出</div>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>{summary.total_tokens_out.toLocaleString()}</div>
+        </div>
+      </div>
+      {/* F12.2: 预算进度 */}
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+          <span className="muted" style={{ fontSize: 12 }}>预算进度</span>
+          <span className="mono" style={{ fontSize: 12 }}>${totalSpent.toFixed(4)} / ${totalBudget.toFixed(4)}</span>
+        </div>
+        <div style={{ background: 'var(--bg)', borderRadius: 4, height: 8, overflow: 'hidden' }}>
+          <div style={{ width: `${Math.min(budgetRatio * 100, 100)}%`, height: '100%', background: nearCap ? 'var(--fail)' : 'var(--active)', transition: 'width 0.3s' }} />
+        </div>
+        {nearCap ? (
+          <p className="muted" style={{ fontSize: 12, margin: '8px 0 0', color: 'var(--fail)' }}>
+            预算已使用 {Math.round(budgetRatio * 100)}%，接近上限。
+          </p>
+        ) : null}
+      </div>
+      {/* F12.4: 按模型路由分布 */}
+      {Object.keys(summary.by_route).length > 0 ? (
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>按模型路由分布</div>
+          {Object.entries(summary.by_route).map(([route, micro]) => {
+            const pct = summary.total_usd_micro > 0 ? (micro / summary.total_usd_micro) * 100 : 0;
+            return (
+              <div key={route} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span className="mono" style={{ fontSize: 12, minWidth: 100 }}>{route}</span>
+                <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: 'var(--active)' }} />
+                </div>
+                <span className="mono" style={{ fontSize: 11 }}>${(micro / 1_000_000).toFixed(4)} ({pct.toFixed(0)}%)</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      {/* F12.3: 重复成本标记 */}
+      {runs.some((r) => r.duplicate_candidates > 0) ? (
+        <div className="panel" style={{ marginBottom: 16, borderLeftColor: 'var(--quota)' }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>重复成本标记</div>
+          {runs.filter((r) => r.duplicate_candidates > 0).map((r) => (
+            <div key={r.run_external_id} style={{ fontSize: 12, marginBottom: 4 }}>
+              <span className="mono">{r.run_external_id.slice(0, 8)}…</span>
+              {' '}有 <span className="status-chip" data-state="quota" style={{ fontSize: 10 }}>{r.duplicate_candidates}</span> 条可能的重复成本（同一 model_route + kind 多次出现，可能是重试导致）
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {/* F12.5: 额度耗尽引导 */}
+      {runs.some((r) => r.spent_usd_micro >= r.budget_usd_micro && r.budget_usd_micro > 0) ? (
+        <div className="panel" style={{ borderLeftColor: 'var(--fail)' }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>额度耗尽引导</div>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            部分运行已触及预算上限。额度耗尽不是科学失败（WORKFLOW_SPEC.md:27），请执行：
+          </p>
+          <pre style={{ background: 'var(--bg)', padding: 8, borderRadius: 4, fontSize: 12, margin: '8px 0 0' }}>
+            <code className="mono">ideaseek doctor → 检查额度 → ideaseek continue</code>
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * F13: 外发透明度台账——按 run 聚合外发汇总。
+ *
+ * F13.1: 按 run 聚合——channel / target_class / count / bytes。
+ * F13.2: 与启动授权对照——显示是否超出用户授权范围。
+ * F13.3: 引擎侧计数来源——若引擎未产生数据，台账为空并显式说明。
+ *
+ * 缺口⑫：只有类别与计数，没有 prompt 字段，也不该将来加一个。
+ */
+function EgressLedger({ projectId }: { projectId: string }) {
+  const query = useQuery({
+    queryKey: ['egress', projectId],
+    queryFn: () => requestJson<{ ok: boolean; runs: { run_external_id: string; entries: EgressEntry[]; total_event_count: number; total_bytes: number }[] }>(`/functions/v1/app/views/egress?external_id=${encodeURIComponent(projectId)}`),
+  });
+
+  if (query.isPending) return <p className="muted">正在加载外发台账…</p>;
+  if (query.error) return <p className="status-chip" data-state="fail">{(query.error as Error).message}</p>;
+  const runs = query.data?.runs ?? [];
+
+  // F13.3: 若引擎未产生数据，显式说明
+  if (runs.length === 0 || runs.every((r) => r.entries.length === 0)) {
+    return (
+      <div style={{ marginTop: 24 }}>
+        <h2>外发透明度台账</h2>
+        <p className="muted">引擎尚未产生外发计数数据。台账功能已就绪，待引擎侧接入后自动展示（缺口⑫）。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>外发透明度台账</h2>
+      <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+        只有类别与计数，不含 prompt 正文（缺口⑫）。
+      </p>
+      {runs.map((run) => (
+        <div key={run.run_external_id} className="panel" style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <strong className="mono" style={{ fontSize: 13 }}>{run.run_external_id.slice(0, 12)}…</strong>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {run.total_event_count} 次外发 · {(run.total_bytes / 1024).toFixed(1)} KB
+            </span>
+          </div>
+          {run.entries.length > 0 ? (
+            <table style={{ width: '100%', fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left' }}>目标类别</th>
+                  <th style={{ textAlign: 'left' }}>数据类别</th>
+                  <th style={{ textAlign: 'right' }}>次数</th>
+                  <th style={{ textAlign: 'right' }}>字节</th>
+                </tr>
+              </thead>
+              <tbody>
+                {run.entries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td className="mono">{entry.destination_class}</td>
+                    <td>{entry.data_class ?? 'unknown'}</td>
+                    <td style={{ textAlign: 'right' }}>{entry.event_count}</td>
+                    <td style={{ textAlign: 'right' }}>{entry.bytes_approx ? `${(entry.bytes_approx / 1024).toFixed(1)} KB` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="muted" style={{ fontSize: 12 }}>该运行无外发记录。</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * F16: Token 管理页——签发 / 名称 / 范围 / 吊销 + 同步健康自检。
+ *
+ * F16.1: token 管理——只存哈希（NFR-02），明文只在创建时显示一次。
+ * F16.2: 同步健康自检——最近批次状态、拒绝原因分布。
+ */
+function TokenManager({ projectId }: { projectId: string }) {
+  const tokenQuery = useQuery({
+    queryKey: ['tokens'],
+    queryFn: () => requestJson<{ ok: boolean; tokens: SyncToken[] }>('/functions/v1/app/views/tokens'),
+  });
+  const healthQuery = useQuery({
+    queryKey: ['health', projectId],
+    queryFn: () => requestJson<{ ok: boolean; health: SyncHealth | null }>(`/functions/v1/app/views/health?external_id=${encodeURIComponent(projectId)}`),
+  });
+  const [creating, setCreating] = useState(false);
+  const [newToken, setNewToken] = useState<string | null>(null);
+  const [label, setLabel] = useState('');
+  const [scopes, setScopes] = useState('sync');
+
+  const handleCreate = async () => {
+    setCreating(true);
+    setNewToken(null);
+    try {
+      const res = await mutateJson<{ ok: boolean; plain_token: string; message: string }>('/functions/v1/app/views/tokens', {
+        method: 'POST',
+        body: JSON.stringify({ label: label || null, scopes: scopes.split(',').map((s) => s.trim()).filter(Boolean), project_scope: [] }),
+      });
+      if (res.ok) setNewToken(res.plain_token);
+      void tokenQuery.refetch();
+    } catch {
+      // ignore
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRevoke = async (tokenId: string) => {
+    if (!confirm('确定要吊销此 token 吗？吊销后不可恢复。')) return;
+    try {
+      await mutateJson(`/functions/v1/app/views/tokens/${tokenId}`, { method: 'DELETE' });
+      void tokenQuery.refetch();
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <h2>Token 管理</h2>
+      {/* F16.1: Token 列表 */}
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 14, marginTop: 0 }}>同步 Token</h3>
+        {tokenQuery.isPending ? <p className="muted">加载中…</p> : null}
+        {tokenQuery.data?.tokens.length === 0 ? <p className="muted">还没有签发过 token。</p> : null}
+        {tokenQuery.data?.tokens.map((token) => (
+          <div key={token.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+            <div>
+              <strong style={{ fontSize: 13 }}>{token.label ?? '(未命名)'}</strong>
+              <div className="muted" style={{ fontSize: 11 }}>
+                范围：{token.scopes.join(', ')} · 创建于 {ago(token.created_at)}
+                {token.last_used_at ? ` · 最后使用 ${ago(token.last_used_at)}` : ''}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {token.revoked_at ? (
+                <span className="status-chip" data-state="fail" style={{ fontSize: 10 }}>已吊销</span>
+              ) : (
+                <button onClick={() => handleRevoke(token.id)} style={{ background: 'none', color: 'var(--fail)', border: '1px solid var(--fail)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}>
+                  吊销
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        {/* 创建新 Token */}
+        <div style={{ marginTop: 12, padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="名称（可选）" style={{ flex: 1, minWidth: 120, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} />
+            <input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="范围（逗号分隔）" style={{ flex: 1, minWidth: 120, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }} />
+            <button onClick={handleCreate} disabled={creating} style={{ background: 'var(--active)', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 12px', cursor: creating ? 'not-allowed' : 'pointer', fontSize: 12, opacity: creating ? 0.5 : 1 }}>
+              签发新 Token
+            </button>
+          </div>
+          {/* F16.1: 明文只显示一次 */}
+          {newToken ? (
+            <div className="panel" style={{ marginTop: 8, borderLeftColor: 'var(--ok)', background: 'var(--bg)' }}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 600 }}>请立即保存此 token，关闭页面后将无法再次查看：</p>
+              <code className="mono" style={{ fontSize: 13, wordBreak: 'break-all' }}>{newToken}</code>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {/* F16.2: 同步健康自检 */}
+      <div className="panel">
+        <h3 style={{ fontSize: 14, marginTop: 0 }}>同步健康</h3>
+        {healthQuery.isPending ? <p className="muted">加载中…</p> : null}
+        {healthQuery.data?.health ? (
+          <>
+            {healthQuery.data.health.latest_batch ? (
+              <div style={{ marginBottom: 8 }}>
+                <div className="muted" style={{ fontSize: 12 }}>最近批次</div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span className="mono" style={{ fontSize: 12 }}>{healthQuery.data.health.latest_batch.external_batch_id}</span>
+                  <span className="status-chip" data-state={healthQuery.data.health.latest_batch.status === 'accepted' ? 'ok' : 'fail'} style={{ fontSize: 10 }}>
+                    {healthQuery.data.health.latest_batch.status}
+                  </span>
+                  <span className="muted" style={{ fontSize: 11 }}>{ago(healthQuery.data.health.latest_batch.requested_at)}</span>
+                </div>
+                {healthQuery.data.health.latest_batch.rejected_reasons && healthQuery.data.health.latest_batch.rejected_reasons.length > 0 ? (
+                  <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    拒绝原因：{healthQuery.data.health.latest_batch.rejected_reasons.join(', ')}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="muted" style={{ fontSize: 12 }}>还没有同步批次。</p>
+            )}
+            <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+              <div>
+                <div className="muted" style={{ fontSize: 12 }}>待处理批次</div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>{healthQuery.data.health.pending_batches}</div>
+              </div>
+            </div>
+            {/* 拒绝原因分布 */}
+            {Object.keys(healthQuery.data.health.rejected_reason_distribution).length > 0 ? (
+              <div style={{ marginTop: 12 }}>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>拒绝原因分布</div>
+                {Object.entries(healthQuery.data.health.rejected_reason_distribution).map(([reason, count]) => (
+                  <div key={reason} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '2px 0' }}>
+                    <span>{reason}</span>
+                    <span className="mono">{count}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <p className="muted" style={{ fontSize: 12 }}>健康数据不在公开降级投影（L2）这一级。</p>
+        )}
+      </div>
     </div>
   );
 }

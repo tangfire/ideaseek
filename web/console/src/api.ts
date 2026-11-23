@@ -76,6 +76,38 @@ export async function requestJson<T>(path: string, signal?: AbortSignal): Promis
   return payload as T;
 }
 
+/**
+ * M6: 写操作（POST/DELETE/PATCH）。与 requestJson 同一套错误映射，
+ * 但接受自定义 method 和 body。
+ */
+export async function mutateJson<T>(path: string, init: { method: string; body?: string }): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: init.method,
+      credentials: 'same-origin',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: init.body,
+    });
+  } catch {
+    throw new ApiError('network', MESSAGES.network);
+  }
+
+  const type = response.headers.get('content-type') ?? '';
+  if (!response.ok || !type.includes('application/json')) {
+    const code = codeFor(response.status);
+    throw new ApiError(code, MESSAGES[code], response.status);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ApiError('invalid_response', MESSAGES.invalid_response, response.status);
+  }
+  return payload as T;
+}
+
 /** 401 时给用户的出口：网关登录入口只接受本站相对回跳路径。 */
 export function loginHref(returnPath: string): string {
   const local = returnPath.startsWith('/') && !returnPath.startsWith('//') ? returnPath : '/';

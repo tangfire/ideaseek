@@ -11,7 +11,7 @@ import { rows } from './deps.ts';
 import { ContractError, parseEnvelope } from './contract.ts';
 import { authenticateSyncToken, assertProjectAllowed, SYNC_TOKEN_HEADER } from './token.ts';
 import { ingestBatch } from './ingest.ts';
-import { projectIndex, projectView, resolveViewer } from './views.ts';
+import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
 
 export interface Deps {
@@ -186,6 +186,68 @@ export function application(deps: Deps) {
       if (!externalId) throw new BackendError('invalid_input', 400);
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       return projectView(db, viewer, externalId, BackendError);
+    }
+
+    // M6: 审批信箱（F11）
+    if (path === '/views/approvals' && request.method === 'GET') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return approvalIndex(db, viewer, BackendError);
+    }
+
+    // M6: 提交审批意向（F11.3）
+    const intentMatch = path.match(/^\/approvals\/([^/]+)\/intent$/);
+    if (intentMatch && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      }) as { choice?: string; note?: string };
+      if (!body.choice || typeof body.choice !== 'string') throw new BackendError('invalid_input', 400);
+      return submitIntent(db, viewer, intentMatch[1]!, body.choice, body.note ?? null, BackendError);
+    }
+
+    // M6: 成本与额度（F12）
+    if (path === '/views/costs' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return costView(db, viewer, externalId, BackendError);
+    }
+
+    // M6: 外发台账（F13）
+    if (path === '/views/egress' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return egressView(db, viewer, externalId, BackendError);
+    }
+
+    // M6: Token 管理（F16）
+    if (path === '/views/tokens' && request.method === 'GET') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return tokenList(db, viewer, BackendError);
+    }
+
+    if (path === '/views/tokens' && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      }) as { label?: string; scopes?: string[]; project_scope?: string[] };
+      if (!body.scopes || !Array.isArray(body.scopes)) throw new BackendError('invalid_input', 400);
+      return tokenCreate(db, viewer, body.label ?? null, body.scopes, body.project_scope ?? [], BackendError);
+    }
+
+    const tokenRevokeMatch = path.match(/^\/views\/tokens\/([^/]+)$/);
+    if (tokenRevokeMatch && request.method === 'DELETE') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return tokenRevoke(db, viewer, tokenRevokeMatch[1]!, BackendError);
+    }
+
+    // M6: 同步健康自检（F16.2）
+    if (path === '/views/health' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return syncHealth(db, viewer, externalId, BackendError);
     }
 
     if (path === '/live') {
