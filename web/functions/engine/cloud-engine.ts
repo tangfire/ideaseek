@@ -499,4 +499,29 @@ export class CloudEngine {
       created_at: new Date().toISOString(),
     });
   }
+
+  // ---- 成本记录 ----
+
+  async recordCost(input: {
+    runId: string;
+    kind: string;
+    modelRoute: string;
+    agentRole: string;
+    usdMicro: number;
+    tokensIn: number;
+    tokensOut: number;
+  }): Promise<void> {
+    const externalCostId = `cost-${crypto.randomUUID().slice(0, 12)}`;
+    await this.db.from('cloud_cost_entry').insert({
+      run_id: input.runId,
+      external_cost_id: externalCostId,
+      kind: input.kind,
+      model_route: input.modelRoute,
+      agent_role: input.agentRole,
+      usd_micro: input.usdMicro,
+      tokens_in: input.tokensIn,
+      tokens_out: input.tokensOut,
+      ts: new Date().toISOString(),
+    });
+  }
 }

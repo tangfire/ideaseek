@@ -14,6 +14,31 @@ export interface TaskExecutionContext {
   deepseekApiKey?: string | null;
 }
 
+// 粗略成本估算：DeepSeek 约 $0.14/1M input tokens, $0.28/1M output tokens
+const COST_PER_1M_INPUT_TOKENS = 0.14;
+const COST_PER_1M_OUTPUT_TOKENS = 0.28;
+
+async function recordLlmCost(
+  ctx: TaskExecutionContext,
+  result: LlmCallResult,
+  taskKind: string,
+): Promise<void> {
+  const inputCost = (result.usage.inputTokens / 1_000_000) * COST_PER_1M_INPUT_TOKENS;
+  const outputCost = (result.usage.outputTokens / 1_000_000) * COST_PER_1M_OUTPUT_TOKENS;
+  const totalUsd = inputCost + outputCost;
+  const usdMicro = Math.round(totalUsd * 1_000_000);
+
+  await ctx.engine.recordCost({
+    runId: ctx.run.id,
+    kind: taskKind,
+    modelRoute: result.model,
+    agentRole: ctx.task.agent_role ?? 'engine',
+    usdMicro,
+    tokensIn: result.usage.inputTokens,
+    tokensOut: result.usage.outputTokens,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // analyze_paper：一篇论文 → 一张 PaperCard
 // ---------------------------------------------------------------------------
@@ -73,6 +98,8 @@ export async function executeAnalyzePaper(ctx: TaskExecutionContext): Promise<Re
     objectType: 'paper',
     objectId: paperId,
   });
+
+  await recordLlmCost(ctx, result, 'analyze_paper');
 
   return {
     paper_id: paperId,
@@ -165,6 +192,8 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
     objectId: ideaId,
   });
 
+  await recordLlmCost(ctx, result, 'generate_idea');
+
   return {
     idea_id: ideaId,
     title: parsed.title,
@@ -198,6 +227,8 @@ export async function executeCalibrate(ctx: TaskExecutionContext): Promise<Recor
     summary: `校准完成：策略=${String(parsed.strategy ?? 'standard')}，预估论文=${String(parsed.estimated_papers ?? '?')}`,
     phaseTag: 'CALIBRATING',
   });
+
+  await recordLlmCost(ctx, result, 'calibrate');
 
   return {
     calibrated: true,
@@ -277,6 +308,8 @@ For each comparison, identify:
     objectType: 'comparison',
     objectId: ctx.task.external_task_id,
   });
+
+  await recordLlmCost(ctx, result, 'discover_comparison');
 
   return {
     comparisons,
