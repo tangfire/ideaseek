@@ -1094,7 +1094,7 @@ export function ApiKeyConfig() {
 // --------------------------------------------------------------------------- 步进泵
 
 interface StepResult {
-  action: 'claimed' | 'advanced' | 'idle' | 'completed';
+  action: 'claimed' | 'advanced' | 'idle' | 'completed' | 'blocked';
   task?: { external_task_id: string; kind: string; status: string };
   run?: { external_run_id: string; phase_tag: string; status: string };
   newPhase?: string;
@@ -1126,7 +1126,7 @@ export function StepPump({ projectId, externalRunId }: { projectId: string; exte
         });
         setLastResult(result);
         setError(null);
-        if (result.action === 'completed') {
+        if (result.action === 'completed' || result.action === 'blocked') {
           setRunning(false);
         }
       } catch (err) {
@@ -1163,11 +1163,13 @@ export function StepPump({ projectId, externalRunId }: { projectId: string; exte
         <div style={{ fontSize: 12 }}>
           <p style={{ margin: '4px 0' }}>
             <strong>动作：</strong>{' '}
-            <span className="status-chip" data-state={lastResult.action === 'claimed' ? 'active' : lastResult.action === 'completed' ? 'ok' : 'idle'}>
+            <span className="status-chip" data-state={lastResult.action === 'claimed' ? 'active' : lastResult.action === 'completed' ? 'ok' : lastResult.action === 'blocked' ? 'quota' : 'idle'}>
               {lastResult.action}
             </span>
           </p>
-          <p className="muted" style={{ margin: '4px 0' }}>{lastResult.message}</p>
+          <p className={lastResult.action === 'blocked' ? 'status-chip' : 'muted'} data-state={lastResult.action === 'blocked' ? 'quota' : undefined} style={{ margin: '4px 0' }}>
+            {lastResult.message}
+          </p>
           {lastResult.run ? (
             <p style={{ margin: '4px 0' }}>
               <strong>阶段：</strong>{lastResult.run.phase_tag} · <strong>状态：</strong>{lastResult.run.status}

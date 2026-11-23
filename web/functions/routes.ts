@@ -561,6 +561,19 @@ export function application(deps: Deps) {
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       const body = await request.json().catch(() => ({})) as Record<string, unknown>;
       const ownerId = viewer.ownerId ?? 'anonymous';
+      
+      // M5: per-owner 成本限制检查
+      const quotaCheck = await checkOwnerQuota(db, ownerId, BackendError);
+      if (!quotaCheck.allowed) {
+        return Response.json({
+          action: 'blocked',
+          message: quotaCheck.reason,
+          run: null,
+          task: null,
+          events: [],
+        }, { status: 429 });
+      }
+      
       const deepseekApiKey = request.headers.get('X-Deepseek-Api-Key');
       return stepView(db, body, BackendError, ownerId, deepseekApiKey);
     }
@@ -583,4 +596,90 @@ export function application(deps: Deps) {
 /** 契约错误映射成它的 HTTP 码，其余交给平台的 errorResponse 边界。 */
 export function isContractError(error: unknown): error is ContractError {
   return error instanceof ContractError;
+}
+
+// ---------------------------------------------------------------------------
+// M5: per-owner 成本限制引擎
+// ---------------------------------------------------------------------------
+
+interface QuotaCheckResult {
+  allowed: boolean;
+  reason?: string;
+  spentUsdMicro?: number;
+  limitUsdMicro?: number;
+}
+
+/**
+ * 检查 Owner 的成本是否超过限制。
+ * 
+ * 默认限制：每个 Owner 最多 $10 USD（10,000,000 micro USD）。
+ * 匿名用户的成本限制更严格：$1 USD（1,000,000 micro USD）。
+ */
+async function checkOwnerQuota(
+  db: Db,
+  ownerId: string,
+  BackendError: BackendErrorLike,
+): Promise<QuotaCheckResult> {
+  // 匿名用户限制更严格
+  const isAnonymous = ownerId === 'anonymous' || ownerId === 'null';
+  const limitUsdMicro = isAnonymous ? 1_000_000 : 10_000_000; // $1 or $10
+  
+  // 查询该 Owner 所有项目的总成本
+  const projects = rows<{ id: string }>(
+    await db.from<{ id: string }>('cloud_project')
+      .select('id')
+      .eq('owner_id', ownerId),
+    BackendError,
+  );
+  
+  if (projects.length === 0) {
+    return { allowed: true, spentUsdMicro: 0, limitUsdMicro };
+  }
+  
+  const projectIds = projects.map((p) => p.id);
+  
+  // 查询这些项目的所有 run
+  const runs = rows<{ id: string }>(
+    await db.from<{ id: string }>('cloud_run')
+      .select('id')
+      .in('project_id', projectIds),
+    BackendError,
+  );
+  
+  if (runs.length === 0) {
+    return { allowed: true, spentUsdMicro: 0, limitUsdMicro };
+  }
+  
+  const runIds = runs.map((r) => r.id);
+  
+  // 查询所有成本记录
+  const costs = rows<{ usd_micro: number }>(
+    await db.from<{ usd_micro: number }>('cloud_cost_entry')
+      .select('usd_micro')
+      .in('run_id', runIds),
+    BackendError,
+  );
+  
+  const totalSpent = costs.reduce((sum, c) => sum + (c.usd_micro ?? 0), 0);
+  
+  if (totalSpent >= limitUsdMicro) {
+    return {
+      allowed: false,
+      reason: `成本限额已用尽（$${(totalSpent / 1_000_000).toFixed(4)} / $${(limitUsdMicro / 1_000_000).toFixed(2)}）。额度耗尽不是科学失败，请联系管理员提升限额。`,
+      spentUsdMicro: totalSpent,
+      limitUsdMicro,
+    };
+  }
+  
+  // 接近限额时警告（80%）
+  if (totalSpent >= limitUsdMicro * 0.8) {
+    return {
+      allowed: true,
+      reason: `警告：成本已使用 ${(totalSpent / limitUsdMicro * 100).toFixed(0)}%（$${(totalSpent / 1_000_000).toFixed(4)} / $${(limitUsdMicro / 1_000_000).toFixed(2)}）`,
+      spentUsdMicro: totalSpent,
+      limitUsdMicro,
+    };
+  }
+  
+  return { allowed: true, spentUsdMicro: totalSpent, limitUsdMicro };
 }

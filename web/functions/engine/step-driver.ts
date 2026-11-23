@@ -23,7 +23,7 @@ export interface StepRequest {
 }
 
 export interface StepResult {
-  action: 'claimed' | 'advanced' | 'idle' | 'completed';
+  action: 'claimed' | 'advanced' | 'idle' | 'completed' | 'blocked';
   task?: CloudTask;
   run?: CloudRun;
   newPhase?: string;
