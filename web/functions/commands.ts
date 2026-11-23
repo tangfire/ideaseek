@@ -312,13 +312,42 @@ export async function enqueueCommand(
   });
 }
 
-/** 命令列表 + 尚未落到投影的排队创建请求。 */
+/**
+ * Owner 的全局待创建队列：`external_id` 为空时用它。
+ *
+ * 首页在项目还没落地之前就需要看到"排队中的创建请求"和本机是否在线，而那些命令
+ * 根本没有 project_id，按项目查是查不到的。这里只返回 Owner 自己的行——匿名没有
+ * Owner 身份，直接 401，不返回一个看起来像"没有待创建"的空列表。
+ */
+async function ownerProvisioningOnly(db: Db, viewer: Viewer, BackendError: BackendErrorLike): Promise<Response> {
+  if (!viewer.ownerId) throw new BackendError('login_required', 401);
+  const rowsFound = rows<CommandRow>(
+    await db.from<CommandRow>('cloud_command').select('*').eq('type', 'project_create').order('created_at', { ascending: false }).limit(20),
+    BackendError,
+  ).filter((row) => row.created_by === viewer.ownerId && row.project_id === null);
+  return Response.json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    projection_level: 'full',
+    writable: true,
+    commands: [],
+    provisioning: rowsFound.map((row) => ({
+      command_id: row.external_command_id,
+      status: row.status,
+      created_at: row.created_at,
+      name: (row.payload as { name?: unknown })?.name ?? null,
+    })),
+  });
+}
+
+/** 命令列表 + 尚未落到投影的排队创建请求；`externalId` 为空 = Owner 的全局待创建。 */
 export async function commandView(
   db: Db,
   viewer: Viewer,
   externalId: string,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
+  if (externalId === '') return ownerProvisioningOnly(db, viewer, BackendError);
   const project = await byExternalId(db, externalId, BackendError);
   if (!project) throw new BackendError('not_found', 404);
   if (!canRead(viewer, project)) throw new BackendError(deniesAsAbsent(viewer) ? 'not_found' : 'no_access', deniesAsAbsent(viewer) ? 404 : 403);
@@ -341,6 +370,7 @@ export async function commandView(
     ok: true,
     generated_at: new Date().toISOString(),
     projection_level: full ? 'full' : 'l2',
+    writable: viewer.ownerId === project.owner_id,
     commands: found.map((row) => commandCard(row, full)),
     provisioning: provisioning.map((row) => ({
       command_id: row.external_command_id,
@@ -746,6 +776,26 @@ async function requireFullRead(db: Db, viewer: Viewer, externalId: string, Backe
 }
 
 export async function agentView(db: Db, viewer: Viewer, externalId: string, BackendError: BackendErrorLike): Promise<Response> {
+  // 首页没有项目可锚定：`external_id` 为空时按 Owner 自己那行 cloud_agent 报在线。
+  if (externalId === '') {
+    if (!viewer.ownerId) throw new BackendError('login_required', 401);
+    const mine = rows<AgentRow>(
+      await db.from<AgentRow>('cloud_agent').select('*').eq('owner_id', viewer.ownerId).limit(1),
+      BackendError,
+    )[0];
+    const mineSeen = mine ? Date.parse(mine.last_seen_at) : Number.NaN;
+    return Response.json({
+      ok: true,
+      generated_at: new Date().toISOString(),
+      online: Number.isFinite(mineSeen) && Date.now() - mineSeen < ONLINE_WINDOW_MS,
+      writable: true,
+      last_seen_at: mine?.last_seen_at ?? null,
+      agent_version: mine?.agent_version ?? null,
+      active_commands: mine?.active_commands ?? 0,
+      local_projects: Array.isArray(mine?.local_projects) ? mine.local_projects : [],
+      reported_for_project: false,
+    });
+  }
   const project = await requireFullRead(db, viewer, externalId, BackendError);
   const agent = rows<AgentRow>(
     await db.from<AgentRow>('cloud_agent').select('*').eq('owner_id', project.owner_id).limit(1),
@@ -757,6 +807,7 @@ export async function agentView(db: Db, viewer: Viewer, externalId: string, Back
     ok: true,
     generated_at: new Date().toISOString(),
     online,
+    writable: viewer.ownerId === project.owner_id,
     last_seen_at: agent?.last_seen_at ?? null,
     agent_version: agent?.agent_version ?? null,
     active_commands: agent?.active_commands ?? 0,
@@ -787,6 +838,7 @@ export async function repoView(db: Db, viewer: Viewer, externalId: string, Backe
     ok: true,
     generated_at: new Date().toISOString(),
     projection_level: 'full',
+    writable: viewer.ownerId === project.owner_id,
     git: git ?? null,
     files: current,
     file_count: current.length,

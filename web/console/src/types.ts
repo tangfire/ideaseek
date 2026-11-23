@@ -67,6 +67,8 @@ export interface ProjectView {
   visibility: 'private' | 'link' | 'listed';
   /** Function 侧的列级降级判定（F5.2）：`l2` 时下面这些 L1 字段不会出现在响应里。 */
   projection_level: 'full' | 'l2';
+  /** 写权限只属于 Owner：前端据此隐藏排队按钮，不自己从可见性推断。 */
+  writable?: boolean;
   redacted_fields?: string[];
   project: {
     external_id: string;
@@ -265,4 +267,94 @@ export interface SyncHealth {
   } | null;
   pending_batches: number;
   rejected_reason_distribution: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// Web-First 反向通道：命令队列 / 本地 Agent 在线 / 仓库与文件上报
+// 对应 `web/functions/commands.ts`，字段名沿用 cloud_command 列名（NFR-12）。
+// ---------------------------------------------------------------------------
+
+/** 命令状态机：queued→claimed→running→终态；expired 不会自动重排。 */
+export type CommandStatus = 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'expired' | 'canceled';
+
+export interface CommandCard {
+  command_id: string;
+  type: string;
+  status: CommandStatus;
+  created_at: string;
+  claimed_at: string | null;
+  finished_at: string | null;
+  projection_level: 'full' | 'l2';
+  /** full 级才有这三个：载荷含研究问题，错误首行含本地路径线索。 */
+  payload?: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+/** 排了队但还没落到投影的创建请求：project_create 成功后项目行才由本地引擎写回来。 */
+export interface ProvisioningEntry {
+  command_id: string;
+  status: CommandStatus;
+  created_at: string;
+  name: string | null;
+}
+
+export interface CommandsView {
+  ok: true;
+  generated_at: string;
+  projection_level: 'full' | 'l2';
+  writable: boolean;
+  commands: CommandCard[];
+  provisioning: ProvisioningEntry[];
+}
+
+export interface LocalProjectEntry {
+  path: string | null;
+  name: string | null;
+  external_id: string | null;
+}
+
+export interface AgentPresenceView {
+  ok: true;
+  generated_at: string;
+  writable: boolean;
+  online: boolean;
+  last_seen_at: string | null;
+  agent_version: string | null;
+  active_commands: number;
+  local_projects: LocalProjectEntry[];
+  reported_for_project: boolean;
+}
+
+export interface GitState {
+  branch: string | null;
+  ahead: number | null;
+  behind: number | null;
+  staged: number | null;
+  unstaged: number | null;
+  untracked: number | null;
+  last_commit_hash: string | null;
+  last_commit_at: string | null;
+  last_commit_text: string | null;
+  dirty: boolean | null;
+  reported_at: string;
+}
+
+export interface FileNode {
+  path: string;
+  kind: string;
+  size: number | null;
+  mime_type: string | null;
+  updated_at: string | null;
+  reported_at: string;
+}
+
+export interface RepoView {
+  ok: true;
+  generated_at: string;
+  projection_level: 'full';
+  writable: boolean;
+  git: GitState | null;
+  files: FileNode[];
+  file_count: number;
 }

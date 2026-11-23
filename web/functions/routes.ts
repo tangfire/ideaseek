@@ -348,16 +348,16 @@ export function application(deps: Deps) {
       return projectCreateView(db, viewer, body as Record<string, unknown>, BackendError);
     }
 
+    // 这两个视图允许 `external_id` 为空：空值代表"Owner 自己的全局读数"（首页的
+    // 待创建队列与本机在线状态），不是缺参数。/views/repo 仍然必须带项目。
     if (path === '/views/commands' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
-      if (!externalId) throw new BackendError('invalid_input', 400);
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       return commandView(db, viewer, externalId, BackendError);
     }
 
     if (path === '/views/agent' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
-      if (!externalId) throw new BackendError('invalid_input', 400);
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       return agentView(db, viewer, externalId, BackendError);
     }

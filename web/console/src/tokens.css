@@ -271,6 +271,33 @@ button.danger:hover, .btn-danger:hover {
   color: var(--muted);
 }
 
+/* 详情页标签导航：只用现有的线与字色，不引入第三种表面。 */
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  margin: 12px 0 16px;
+}
+
+.tabs button {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tabs button[aria-selected='true'] {
+  color: var(--text);
+  border-color: var(--line);
+  border-radius: 6px 6px 0 0;
+  background: var(--panel);
+}
+
 table {
   border-collapse: collapse;
   width: 100%;

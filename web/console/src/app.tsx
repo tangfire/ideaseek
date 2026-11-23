@@ -4,6 +4,7 @@ import { Route, Switch, useLocation } from 'wouter';
 import { ApiError, loginHref, requestJson, mutateJson } from './api';
 import { openLive, type Transport } from './live';
 import type { EventRow, IndexView, IdeaSummary, LiveFrame, PaperCard, ClaimRow, ExperimentResult, ProtocolSummary, ProjectView, RunSummary, ApprovalRequest, CostSummary, EgressEntry, SyncToken, SyncHealth } from './types';
+import { AgentPresence, CreateProjectPanel, FilePanel, ProvisioningList, RepoPanel, RunControl, SettingsPanel } from './panels';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -407,10 +408,10 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
           </ul>
         </div>
         <div className="sidebar-section">
-          <div className="sidebar-section-title">连接</div>
+          <div className="sidebar-section-title">运行位置</div>
           <ul className="sidebar-nav">
-            <li><span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>后端：未连接</span></li>
-            <li><span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>本地预览模式</span></li>
+            <li><span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>引擎：本机 Agent</span></li>
+            <li><span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>云端：脱敏投影 + 命令队列</span></li>
           </ul>
         </div>
       </aside>
@@ -421,16 +422,75 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
   );
 }
 
+/** 列表页的过滤条件全部在客户端算：投影一次就发全量（M7 的读数上限），没必要为排序再打一次云端。 */
+const LIST_FILTERS = ['全部', '运行中', '需人工', '已结束', '无运行'] as const;
+
+function runFilter(run: RunSummary | null): (typeof LIST_FILTERS)[number] {
+  if (!run) return '无运行';
+  const status = run.status ?? '';
+  if (status === 'RUNNING' || status === 'INIT') return '运行中';
+  if (status === 'SUCCEEDED' || status === 'COMPLETED' || status === 'FAILED' || status === 'CANCELED' || status === 'FAILED_RECOVERABLE') return '已结束';
+  return '需人工';
+}
+
 function ConsoleHome() {
   const query = useQuery({
     queryKey: ['index'],
     queryFn: () => requestJson<IndexView>('/functions/v1/app/views/index'),
   });
   const [, navigate] = useLocation();
+  const [creating, setCreating] = useState(false);
+  const [filter, setFilter] = useState<(typeof LIST_FILTERS)[number]>('全部');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('最近同步');
+  const [layout, setLayout] = useState<'列表' | '卡片'>('列表');
+
+  const projects = (query.data?.projects ?? [])
+    .filter((project) => (filter === '全部' ? true : runFilter(project.latest_run) === filter))
+    .filter((project) => {
+      const needle = search.trim().toLowerCase();
+      if (!needle) return true;
+      return `${project.title} ${project.external_id} ${project.latest_run?.question ?? ''}`.toLowerCase().includes(needle);
+    })
+    .sort((a, b) =>
+      sort === '标题'
+        ? a.title.localeCompare(b.title)
+        : (b.last_sync_at ?? '').localeCompare(a.last_sync_at ?? ''),
+    );
+
   return (
     <>
       <h2 style={{ marginTop: 0 }}>项目列表</h2>
-      {query.isPending ? <p className="muted">正在连接后端…</p> : null}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+        <input
+          style={{ flex: '1 1 220px', maxWidth: 320 }}
+          placeholder="搜索标题、目录名或研究问题"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          aria-label="搜索项目"
+        />
+        <select value={filter} onChange={(event) => setFilter(event.target.value as (typeof LIST_FILTERS)[number])} aria-label="状态筛选">
+          {LIST_FILTERS.map((entry) => (
+            <option key={entry} value={entry}>{entry}</option>
+          ))}
+        </select>
+        <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序">
+          <option value="最近同步">最近同步</option>
+          <option value="标题">标题</option>
+        </select>
+        <button className="btn-secondary" onClick={() => setLayout(layout === '列表' ? '卡片' : '列表')}>
+          {layout === '列表' ? '卡片视图' : '列表视图'}
+        </button>
+        <button className="btn-primary" onClick={() => setCreating(!creating)}>
+          {creating ? '收起' : '新建项目'}
+        </button>
+      </div>
+
+      <AgentPresence />
+      <ProvisioningList />
+      {creating ? <CreateProjectPanel /> : null}
+
+      {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
       {query.error instanceof ApiError && query.error.code === 'login_required' ? (
         <p>
           <a href={loginHref('/#/console')}>登录 Qoder</a> 后继续。
@@ -438,21 +498,23 @@ function ConsoleHome() {
       ) : null}
       {query.error && !(query.error instanceof ApiError && query.error.code === 'login_required') ? (
         <div className="panel">
-          <p style={{ margin: '0 0 8px' }}>后端服务未连接</p>
+          <p style={{ margin: '0 0 8px' }}>云端投影读不到</p>
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-            当前为本地预览模式。部署到 Qoder Sites 后，项目数据将通过引擎同步显示。
+            {(query.error as Error).message} 本地引擎不受影响，投影仍在正常写入。
           </p>
         </div>
       ) : null}
-      {query.data && query.data.projects.length === 0 ? (
+      {query.data && projects.length === 0 ? (
         <div className="panel">
-          <p style={{ margin: '0 0 8px' }}>还没有可见项目</p>
+          <p style={{ margin: '0 0 8px' }}>{query.data.projects.length === 0 ? '还没有可见项目' : '没有符合筛选条件的项目'}</p>
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-            运行 <code className="mono">ideaseek cloud push</code> 同步项目到云端。
+            {query.data.projects.length === 0
+              ? '点上方"新建项目"把创建排给本机 Agent；也可以运行 ideaseek cloud push 把已有项目同步上来。'
+              : '清空搜索或换一个筛选条件即可看到全部。'}
           </p>
         </div>
       ) : null}
-      {query.data && query.data.projects.length > 0 ? (
+      {layout === '列表' ? (
         <table>
           <thead>
             <tr>
@@ -463,7 +525,7 @@ function ConsoleHome() {
             </tr>
           </thead>
           <tbody>
-            {query.data.projects.map((project) => (
+            {projects.map((project) => (
               <tr
                 key={project.external_id}
                 style={{ cursor: 'pointer' }}
@@ -485,7 +547,26 @@ function ConsoleHome() {
             ))}
           </tbody>
         </table>
-      ) : null}
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+          {projects.map((project) => (
+            <div
+              key={project.external_id}
+              className="panel"
+              style={{ cursor: 'pointer', marginBottom: 0 }}
+              onClick={() => navigate(`/p/${project.external_id}`)}
+            >
+              <strong>{project.title}</strong>
+              <div className="muted mono" style={{ fontSize: 11, marginBottom: 6 }}>{project.external_id}</div>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>{project.latest_run?.question ?? '没有记录研究问题'}</div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                {project.latest_run ? <Chips run={project.latest_run} /> : <span className="muted">无运行</span>}
+                <span className="muted" style={{ fontSize: 11 }}>{ago(project.last_sync_at)}同步</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -498,6 +579,8 @@ function Project({ id }: { id: string }) {
   const [transport, setTransport] = useState<Transport>('connecting');
   const [liveEvents, setLiveEvents] = useState<EventRow[]>([]);
   const [revoked, setRevoked] = useState<string | null>(null);
+  // hook 必须在任何提前 return 之前声明：这个项目页有 3 条 loading/error 分支。
+  const [tab, setTab] = useState<string>('概览');
   const refetch = query.refetch;
 
   useEffect(() => {
@@ -534,6 +617,11 @@ function Project({ id }: { id: string }) {
   const view = query.data;
   const latest = view.runs[0];
   const l2 = view.projection_level === 'l2';
+  const canWrite = view.writable === true;
+  const tabs = (l2 ? (['概览', '运行', '设置'] as const) : (['概览', '运行', '仓库', '文件', '设置'] as const)).filter(
+    (name) => name !== '设置' || canWrite,
+  );
+  const active = tabs.includes(tab as (typeof tabs)[number]) ? tab : tabs[0];
   return (
     <>
       <p>
@@ -556,6 +644,15 @@ function Project({ id }: { id: string }) {
           {transport === 'websocket' ? '服务端推送' : transport === 'polling' ? '降级：15 s 轮询' : '连接中'}
         </span>
       </p>
+      <div className="tabs" role="tablist">
+        {tabs.map((name) => (
+          <button key={name} role="tab" aria-selected={active === name} onClick={() => setTab(name)}>
+            {name}
+          </button>
+        ))}
+      </div>
+      {active === '概览' ? (
+        <>
       {view.project.question ? <p className="panel">{view.project.question}</p> : null}
       {latest ? (
         <>
@@ -596,6 +693,22 @@ function Project({ id }: { id: string }) {
       ) : null}
       <h2>事件</h2>
       <EventList events={[...view.events, ...liveEvents].slice(-80)} redacted={l2} lastSyncAt={view.project.last_sync_at} />
+        </>
+      ) : null}
+
+      {active === '运行' ? <RunControl projectId={id} writable={canWrite} run={latest} /> : null}
+
+      {/* 仓库与文件来自 Agent 上报表，只有 full 读级才拿得到（L2 下 Function 直接 403）。 */}
+      {active === '仓库' ? (
+        <>
+          <AgentPresence projectId={id} />
+          <RepoPanel projectId={id} writable={canWrite} />
+        </>
+      ) : null}
+
+      {active === '文件' ? <FilePanel projectId={id} writable={canWrite} /> : null}
+
+      {active === '设置' ? <SettingsPanel projectId={id} view={view} /> : null}
     </>
   );
 }

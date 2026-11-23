@@ -328,6 +328,9 @@ export async function projectView(
     generated_at: new Date().toISOString(),
     visibility: project.visibility,
     projection_level: level,
+    // 反向通道的写权限只认 Owner（commands.ts 第 2 条）。前端要按这个决定按钮是
+    // 禁用还是消失，所以读数必须来自 Function，不能让前端用别的字段猜。
+    writable: viewer.ownerId !== null && viewer.ownerId === project.owner_id,
     ...(level === 'full' ? {} : { redacted_fields: L2_REDACTED }),
     project: {
       external_id: project.external_id,

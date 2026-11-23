@@ -322,3 +322,49 @@ test('未知路径仍然 404，命令面没有兜底成功', async () => {
   assert.equal((await call(as('owner-1'), '/projects/prj-listed', { method: 'DELETE' })).code, 'not_found');
   assert.equal((await call(as('owner-1'), '/files/papers/a.pdf')).code, 'not_found');
 });
+
+// --------------------------------------------------------------------------- 首页（无项目锚点）
+
+test('首页视图：待创建队列与本机在线状态不挂在某个项目上', async () => {
+  const { fake, as } = await build();
+  await call(as('owner-1'), '/projects', web({ command_id: 'cmd-new', name: '新项目', question: '排队之后才存在' }));
+  // 别人排的创建请求不属于自己的队列：按 created_by 过滤，否则首页会串号。
+  const strangerOwner = fake.rowsOf('cloud_owner')[1]!;
+  fake.seed('cloud_command', {
+    project_id: null,
+    external_command_id: 'cmd-new-stranger',
+    type: 'project_create',
+    payload: { name: '别人的新项目' },
+    status: 'queued',
+    created_by: strangerOwner.id,
+    created_at: new Date().toISOString(),
+  });
+
+  const before = await call(as('owner-1'), '/views/commands?external_id=');
+  assert.equal(before.status, 200);
+  assert.deepEqual(before.json.commands, [], '全局视图不掺项目命令');
+  const queued = before.json.provisioning as Array<Record<string, unknown>>;
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]!.name, '新项目');
+  assert.equal(queued[0]!.status, 'queued');
+
+  await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, { agent_version: '0.1.0', local_projects: [{ path: '/srv/p1', name: 'p1', external_id: 'prj-listed' }] }));
+
+  // 领取之后仍未落到投影，所以它还该留在待创建里，只是状态换了——消失会被读成"没排过"。
+  const after = await call(as('owner-1'), '/views/commands?external_id=');
+  const claimedRow = (after.json.provisioning as Array<Record<string, unknown>>)[0]!;
+  assert.equal(claimedRow.status, 'claimed');
+
+  const presence = await call(as('owner-1'), '/views/agent?external_id=');
+  assert.equal(presence.json.online, true);
+  assert.equal(presence.json.agent_version, '0.1.0');
+  assert.equal((presence.json.local_projects as unknown[]).length, 1);
+  assert.equal(presence.json.reported_for_project, false, '没有项目可比，就不假装有');
+
+  // 未登录时是 401，不是一个看起来"没有待创建"的空读数。
+  assert.equal((await call(as(null), '/views/commands?external_id=')).code, 'login_required');
+  assert.equal((await call(as(null), '/views/agent?external_id=')).code, 'login_required');
+
+  // 仓库面仍然必须带项目：没有 project_id 就找不到任何上报行。
+  assert.equal((await call(as('owner-1'), '/views/repo?external_id=')).code, 'invalid_input');
+});
