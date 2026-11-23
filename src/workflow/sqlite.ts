@@ -752,6 +752,15 @@ export class SqliteWorkflowDb implements WorkflowDb {
     return Promise.resolve(row ? rowToRun(row) : null);
   }
 
+  listRuns(projectId: string, limit = 200): Promise<RunRecord[]> {
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM run WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?',
+      )
+      .all(projectId, limit) as unknown as RunRow[];
+    return Promise.resolve(rows.map(rowToRun));
+  }
+
   setRunPhase(runId: string, phase: RunPhase): Promise<RunRecord> {
     return Promise.resolve().then(() =>
       this.tx(() => {
@@ -2817,6 +2826,51 @@ export class SqliteWorkflowDb implements WorkflowDb {
           .run(status, JSON.stringify(result), now, specId);
         return this.requireExperiment(specId);
       }),
+    );
+  }
+
+  schemaVersion(): number {
+    const row = this.db
+      .prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_version')
+      .get() as { v: number };
+    return Number(row.v);
+  }
+
+  readSnapshot<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.depth > 0) return fn();
+    // query_only makes "the projector never writes" a SQLite-enforced fact
+    // instead of a comment: a write inside the snapshot fails loudly.
+    this.db.exec('PRAGMA query_only=ON');
+    this.db.exec('BEGIN');
+    this.depth = 1;
+    const end = (commit: boolean): void => {
+      this.depth = 0;
+      try {
+        this.db.exec(commit ? 'COMMIT' : 'ROLLBACK');
+      } catch {
+        // Snapshot already aborted; the caller's error is the one that matters.
+      } finally {
+        this.db.exec('PRAGMA query_only=OFF');
+      }
+    };
+    // fn() 可以同步抛（被 query_only 挡下的写就是这样）：那也必须走完回滚，
+    // 否则这条连接会带着一个开着的事务和 query_only=ON 回到调用方手里。
+    let pending: Promise<T>;
+    try {
+      pending = fn();
+    } catch (error) {
+      end(false);
+      throw error;
+    }
+    return pending.then(
+      (value) => {
+        end(true);
+        return value;
+      },
+      (error: unknown) => {
+        end(false);
+        throw error;
+      },
     );
   }
 

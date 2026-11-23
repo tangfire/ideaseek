@@ -157,6 +157,21 @@ export interface ListEventsOptions {
 export interface WorkflowDb {
   close(): Promise<void>;
 
+  /**
+   * Highest applied migration version of this database file (0 before any).
+   * The cloud projector stamps it into `local_schema_version` so the console
+   * can show which engine build produced a view.
+   */
+  schemaVersion(): number;
+
+  /**
+   * Run `fn` inside a single read transaction (F1.15). Under WAL the whole
+   * callback sees one snapshot, so a projector cannot pair `run_event seq=100`
+   * with a `stage_progress` row from a later write. Nested calls join the
+   * enclosing transaction; the callback must not write.
+   */
+  readSnapshot<T>(fn: () => Promise<T>): Promise<T>;
+
   // Projects
   ensureProject(input: CreateProjectInput): Promise<ProjectRecord>;
   getProjectByRoot(root: string): Promise<ProjectRecord | null>;
@@ -165,6 +180,12 @@ export interface WorkflowDb {
   createRun(input: CreateRunInput): Promise<RunRecord>;
   getRun(runId: string): Promise<RunRecord | null>;
   getLatestRun(projectId: string): Promise<RunRecord | null>;
+  /**
+   * Runs of one project, newest first. `limit` guards the cloud projector:
+   * a batch is capped by contract size, so an unbounded read here would build
+   * an in-memory snapshot the transport then has to re-split.
+   */
+  listRuns(projectId: string, limit?: number): Promise<RunRecord[]>;
   setRunPhase(runId: string, phase: RunPhase): Promise<RunRecord>;
   pauseRun(runId: string, opts: { hard: boolean }): Promise<RunRecord>;
   resumeRun(runId: string): Promise<RunRecord>;
