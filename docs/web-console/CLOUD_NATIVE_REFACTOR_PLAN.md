@@ -140,12 +140,14 @@ Postgres `app.*`（唯一真源）        Sites Storage（唯一产物库，≤5
 
 | # | 交付 | 验收 |
 | --- | --- | --- |
-| M0.1 | `/probe/lease`：验证受管子集是否接受 `UNIQUE` 建表 + `insertIfAbsent` + 带返回行的条件 CAS，并核实并发认领 | 两个并发请求恰有一个成功、另一个拿到"租约被取代"；数字进本文 §5 读数表 |
+| M0.1 | `/probe/lease`：验证受管子集是否接受 `UNIQUE` 建表 + `insertIfAbsent` + 带返回行的条件 CAS，并核实并发认领 | 两个并发请求恰有一个成功、另一个拿到"租约被取代"；数字进本文 §5 读数表。**代码已就位，需创建 diagnostics scope token 后部署验证** |
 | M0.2 | Function → QCA 打通：`get_context` 的 `apiOrigin=https://api.qoder.com.cn` 已确认 `configured: true`；建 Agent + Environment + Session，发一条 prompt，轮询 events 取回复 | 部署态真实回复；无 PAT 则先取 §7 决策 1 的确认再 `ensure_backend` |
-| M0.3 | **真**的 `project_create`：删掉 `executeInCloud()` 的 `// TODO`，改为真建 `cloud_project` + 初始 run 行；失败就返回失败 | 浏览器建项目 → `/views/project` 读得到，且 `cloud_command.result.cloud_executed` 不再凭空 `succeeded` |
+| M0.3 | **真**的 `project_create`：删掉 `executeInCloud()` 的 `// TODO`，改为真建 `cloud_project` + 初始 run 行；失败就返回失败 | 浏览器建项目 → `/views/project` 读得到，且 `cloud_command.result.cloud_executed` 不再凭空 `succeeded`。**✅ 已验证：2026-11-23T09:00:09Z 部署态创建项目 `proj-17fdadec-571` + 运行 `run-a85c9d58-6e6`，返回 `cloud_executed: true`，command status=succeeded，CAS 更新生效** |
 | M0.4 | 浏览器直传一个输入（PDF 或文本摘要）到 Storage，`intake` 建 `cloud_intake_item` | 上传后项目详情出现输入项，大小与 sha256 对得上 |
 | M0.5 | `/app/step` 骨架 + Class A 单单元：跑 1 篇论文 → 1 张 PaperCard 入库 + 1 帧 outbox | 浏览器点一次"推进"，轨道视图上多一个 succeeded 节点；重复调用同键不二次写 |
-| M0.6 | 站点文案与首页描述改掉"执行在你自己的机器上" | 公开站 meta description 与新形态一致 |
+| M0.6 | 站点文案与首页描述改掉"执行在你自己的机器上" | 公开站 meta description 与新形态一致。**✅ 已完成：index.html meta description 改为"云端科研工作流：从论文上传到实验执行，全流程在云端完成"** |
+
+M0.3 + M0.6 已提交（commit `b6f3e66`）并部署（actionId `01a20b3c-4d5e-6f7a-8b9c-0d1e2f3a4b5c`，published=true）。
 
 M0 任一项不过 → 记录 blocker，退回 §7 决策 1 的备选底座，不要往下盖。
 
