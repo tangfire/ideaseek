@@ -472,6 +472,14 @@ export class CloudEngine {
     return { created: true };
   }
 
+  async listResearchNodes(runId: string): Promise<Array<{ id: string; node_id: string; kind: string; status: string; title: string | null; detail: Record<string, unknown> | null }>> {
+    const result = await this.db.from('cloud_research_node')
+      .select('*')
+      .eq('run_id', runId)
+      .order('created_at', { ascending: true });
+    return rows(result, this.BackendError);
+  }
+
   // ---- Outbox（实时推送） ----
 
   async publishOutboxFrame(projectId: string, frameType: string, payload: Record<string, unknown>): Promise<void> {

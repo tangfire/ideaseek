@@ -340,6 +340,55 @@ export async function projectView(
         )
       : [];
 
+  // 研究节点：ideas、papers、experiments 等（L1 字段）
+  const researchNodes =
+    level === 'full' && latest
+      ? rows<{ node_id: string; kind: string; status: string; title: string | null; detail: Record<string, unknown> | null }>(
+          await db
+            .from('cloud_research_node')
+            .select('node_id,kind,status,title,detail')
+            .eq('run_id', await runId(db, project.id, latest.external_run_id, BackendError))
+            .order('created_at', { ascending: true }),
+          BackendError,
+        )
+      : [];
+
+  // 映射到前端类型
+  const ideas = researchNodes
+    .filter((n) => n.kind === 'idea')
+    .map((n) => ({
+      external_idea_id: n.node_id,
+      title: n.title ?? 'Untitled idea',
+      hypothesis: (n.detail as Record<string, unknown> | null)?.hypothesis as string | null ?? null,
+      hypothesis_disclosure: 'full' as const,
+      mechanism_summary: (n.detail as Record<string, unknown> | null)?.mechanism_summary as string | null ?? null,
+      status: n.status,
+      verdict: null,
+      version: 1,
+      parent_idea_id: null,
+    }));
+
+  const papers = researchNodes
+    .filter((n) => n.kind === 'paper_analysis')
+    .map((n) => ({
+      external_paper_id: n.node_id,
+      title: n.title ?? 'Untitled paper',
+      question: (n.detail as Record<string, unknown> | null)?.problem as string | null ?? null,
+      method_summary: (n.detail as Record<string, unknown> | null)?.method_summary as string | null ?? null,
+      parse_status: n.status,
+    }));
+
+  const experiments = researchNodes
+    .filter((n) => n.kind === 'experiment')
+    .map((n) => ({
+      external_spec_id: n.node_id,
+      idea_id: (n.detail as Record<string, unknown> | null)?.idea_id as string | null ?? null,
+      scale: 'standard' as const,
+      status: n.status,
+      metrics: (n.detail as Record<string, unknown> | null)?.metrics as Record<string, number> | null ?? null,
+      verdict: null,
+    }));
+
   // L2 的输出是**逐字段构造**的，不是"少选了列"：以后有人给 full 分支加字段，
   // 不会顺手漏进公开投影里。
   const shaped =
@@ -376,6 +425,16 @@ export async function projectView(
     stages: shapedStages,
     events: eventRows.map((event, index) => ({ ...event, gap_before: gapBefore(eventRows)[index] ?? 0 })),
     unsynced: { pending_batches: pending.length, dropped_events: 0 },
+    // F8/F9/F10: 研究节点数据（L1 字段，L2 降级时不返回）
+    ...(level === 'full'
+      ? {
+          ideas,
+          papers,
+          experiments,
+          claims: [], // 暂未实现 claim 解析
+          protocols: [], // 暂未实现 protocol 管理
+        }
+      : {}),
   });
 }
 

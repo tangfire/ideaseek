@@ -210,6 +210,216 @@ export async function executeCalibrate(ctx: TaskExecutionContext): Promise<Recor
 }
 
 // ---------------------------------------------------------------------------
+// Class B: discover_comparison — 发现对比方法
+// ---------------------------------------------------------------------------
+
+const COMPARISON_DISCOVERY_SCHEMA = `comparison-discovery-v1:
+{
+  "comparisons": [{
+    "name": "string — method/baseline name",
+    "type": "official|community|reimplementation",
+    "paper_title": "string — original paper title",
+    "paper_url": "string — optional",
+    "relevance": "high|medium|low",
+    "notes": "string — why this is a relevant comparison"
+  }]
+}`;
+
+export async function executeDiscoverComparison(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  const papers = await ctx.engine.listTasks(ctx.run.id);
+  const analyzedPapers = papers.filter((t) => t.kind === 'analyze_paper' && t.status === 'succeeded');
+
+  const paperContexts: string[] = [];
+  for (const p of analyzedPapers.slice(0, 5)) {
+    const pResult = (p.result as Record<string, unknown> | null) ?? {};
+    paperContexts.push([
+      `Paper: ${pResult.title ?? p.external_task_id}`,
+      `Problem: ${pResult.problem ?? 'N/A'}`,
+      `Method: ${pResult.method_summary ?? 'N/A'}`,
+    ].join('\n'));
+  }
+
+  const researchQuestion = ctx.run.question ?? 'Open research question not specified';
+
+  const result = await callLlm({
+    instruction: `Based on the research question and analyzed papers, discover relevant comparison methods/baselines. 
+For each comparison, identify:
+1. The method name and type (official implementation, community implementation, or reimplementation)
+2. The original paper title
+3. Why it's relevant to compare against
+4. Relevance level (high/medium/low)`,
+    inputs: [
+      { name: 'Research question', content: researchQuestion },
+      { name: 'Analyzed papers', content: paperContexts.join('\n---\n') || 'No papers analyzed yet.' },
+    ],
+    outputSchema: COMPARISON_DISCOVERY_SCHEMA,
+    maxTokens: 2048,
+    apiKey: ctx.deepseekApiKey ?? undefined,
+  });
+
+  const parsed = result.parsed ?? {};
+  const comparisons = Array.isArray(parsed.comparisons) ? parsed.comparisons : [];
+
+  await ctx.engine.upsertResearchNode({
+    runId: ctx.run.id,
+    nodeId: `comparison-discovery-${ctx.task.external_task_id}`,
+    kind: 'comparison_discovery',
+    status: 'succeeded',
+    title: '对比方法发现',
+    detail: { comparisons },
+  });
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'comparisons_discovered',
+    summary: `发现 ${comparisons.length} 个对比方法`,
+    phaseTag: 'COMPARISON_DISCOVERY',
+    objectType: 'comparison',
+    objectId: ctx.task.external_task_id,
+  });
+
+  return {
+    comparisons,
+    llm_usage: result.usage,
+    llm_model: result.model,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Class B: reproduce_comparison — 复现对比方法（需要 QCA Session）
+// ---------------------------------------------------------------------------
+
+export async function executeReproduceComparison(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  // Class B 重计算单元：需要 QCA Session 执行代码
+  // 当前使用模拟实现，真实集成需要 ensure_backend(qoder) 授权
+  
+  const taskPayload = (ctx.task.payload as Record<string, unknown> | null) ?? {};
+  const comparisonName = String(taskPayload.comparison_name ?? ctx.task.external_task_id);
+
+  // 模拟复现结果
+  const reproductionResult = {
+    comparison_name: comparisonName,
+    status: 'simulated',
+    metrics: {
+      accuracy: 0.85 + Math.random() * 0.1,
+      f1_score: 0.82 + Math.random() * 0.12,
+    },
+    artifacts: [],
+    notes: '模拟结果：真实复现需要 QCA Session 执行代码',
+  };
+
+  await ctx.engine.upsertResearchNode({
+    runId: ctx.run.id,
+    nodeId: `comparison-repro-${comparisonName}`,
+    kind: 'comparison_reproduction',
+    status: 'succeeded',
+    title: `复现：${comparisonName}`,
+    detail: reproductionResult,
+  });
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'comparison_reproduced',
+    summary: `复现完成：${comparisonName}（模拟）`,
+    phaseTag: 'COMPARISON_REPRODUCTION',
+    objectType: 'comparison',
+    objectId: comparisonName,
+  });
+
+  return reproductionResult;
+}
+
+// ---------------------------------------------------------------------------
+// Class B: validate_baseline — 验证基线（需要 QCA Session）
+// ---------------------------------------------------------------------------
+
+export async function executeValidateBaseline(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  // Class B 重计算单元：需要 QCA Session 执行验证脚本
+  // 当前使用模拟实现
+  
+  const taskPayload = (ctx.task.payload as Record<string, unknown> | null) ?? {};
+  const baselineName = String(taskPayload.baseline_name ?? 'default-baseline');
+
+  const validationResult = {
+    baseline_name: baselineName,
+    status: 'simulated',
+    validation_passed: true,
+    metrics: {
+      accuracy: 0.88 + Math.random() * 0.08,
+      f1_score: 0.85 + Math.random() * 0.1,
+      runtime_seconds: 120 + Math.random() * 60,
+    },
+    notes: '模拟结果：真实验证需要 QCA Session 执行验证脚本',
+  };
+
+  await ctx.engine.upsertResearchNode({
+    runId: ctx.run.id,
+    nodeId: `baseline-validation-${baselineName}`,
+    kind: 'baseline_validation',
+    status: 'succeeded',
+    title: `基线验证：${baselineName}`,
+    detail: validationResult,
+  });
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'baseline_validated',
+    summary: `基线验证通过：${baselineName}（模拟）`,
+    phaseTag: 'BASELINE_VALIDATED',
+    objectType: 'baseline',
+    objectId: baselineName,
+  });
+
+  return validationResult;
+}
+
+// ---------------------------------------------------------------------------
+// Class B: run_experiment — 执行实验（需要 QCA Session）
+// ---------------------------------------------------------------------------
+
+export async function executeRunExperiment(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
+  // Class B 重计算单元：需要 QCA Session 执行实验代码
+  // 当前使用模拟实现
+  
+  const taskPayload = (ctx.task.payload as Record<string, unknown> | null) ?? {};
+  const experimentName = String(taskPayload.experiment_name ?? ctx.task.external_task_id);
+  const ideaId = String(taskPayload.idea_id ?? 'unknown');
+
+  const experimentResult = {
+    experiment_name: experimentName,
+    idea_id: ideaId,
+    status: 'simulated',
+    metrics: {
+      accuracy: 0.90 + Math.random() * 0.08,
+      f1_score: 0.88 + Math.random() * 0.1,
+      improvement_vs_baseline: 0.05 + Math.random() * 0.1,
+    },
+    artifacts: [],
+    notes: '模拟结果：真实实验需要 QCA Session 执行实验代码',
+  };
+
+  await ctx.engine.upsertResearchNode({
+    runId: ctx.run.id,
+    nodeId: `experiment-${experimentName}`,
+    kind: 'experiment',
+    status: 'completed',
+    title: `实验：${experimentName}`,
+    detail: experimentResult,
+  });
+
+  await ctx.engine.appendEvent({
+    runId: ctx.run.id,
+    type: 'experiment_completed',
+    summary: `实验完成：${experimentName}（模拟）`,
+    phaseTag: 'EXPERIMENTING',
+    objectType: 'experiment',
+    objectId: experimentName,
+  });
+
+  return experimentResult;
+}
+
+// ---------------------------------------------------------------------------
 // 分发器
 // ---------------------------------------------------------------------------
 
@@ -223,6 +433,14 @@ export async function executeTask(
       return executeAnalyzePaper(ctx);
     case 'generate_idea':
       return executeGenerateIdea(ctx);
+    case 'discover_comparison':
+      return executeDiscoverComparison(ctx);
+    case 'reproduce_comparison':
+      return executeReproduceComparison(ctx);
+    case 'validate_baseline':
+      return executeValidateBaseline(ctx);
+    case 'run_experiment':
+      return executeRunExperiment(ctx);
     default:
       return { status: 'completed', kind: ctx.task.kind };
   }

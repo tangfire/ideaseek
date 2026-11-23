@@ -43,8 +43,12 @@ const PHASE_TASK_KIND: Record<string, string> = {
   PAPER_ANALYSIS: 'analyze_paper',
   DATA_READY: 'prepare_data',
   PROTOCOL_PROPOSED: 'propose_protocol',
+  COMPARISON_DISCOVERY: 'discover_comparison',
+  COMPARISON_REPRODUCTION: 'reproduce_comparison',
+  BASELINE_VALIDATED: 'validate_baseline',
   IDEA_GENERATION: 'generate_idea',
   IDEA_SCREENING: 'screen_idea',
+  EXPERIMENTING: 'run_experiment',
 };
 
 export async function handleStep(
@@ -246,6 +250,34 @@ async function enqueueTasksForPhase(
         kind,
         phaseTag: phase,
         payload: { paper_id: `paper-${i}`, index: i },
+      });
+    }
+  } else if (phase === 'COMPARISON_DISCOVERY') {
+    await engine.enqueueTask({
+      runId: run.id,
+      kind,
+      phaseTag: phase,
+      payload: { discovery_round: 1 },
+    });
+  } else if (phase === 'EXPERIMENTING') {
+    // 为每个待验证的 idea 创建实验任务
+    const nodes = await engine.listResearchNodes(run.id);
+    const proposedIdeas = nodes.filter((n) => n.kind === 'idea' && n.status === 'proposed');
+    for (const idea of proposedIdeas.slice(0, 3)) {
+      await engine.enqueueTask({
+        runId: run.id,
+        kind,
+        phaseTag: phase,
+        payload: { idea_id: idea.node_id, experiment_name: `exp-${idea.node_id.slice(-8)}` },
+      });
+    }
+    // 如果没有待验证的 idea，创建一个默认实验任务
+    if (proposedIdeas.length === 0) {
+      await engine.enqueueTask({
+        runId: run.id,
+        kind,
+        phaseTag: phase,
+        payload: { experiment_name: 'default-experiment' },
       });
     }
   } else if (phase === 'IDEA_GENERATION') {
