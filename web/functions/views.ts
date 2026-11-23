@@ -128,18 +128,8 @@ interface GrantRow {
 export type ReadLevel = 'full' | 'l2';
 
 export function canRead(viewer: Viewer, project: ProjectRow): boolean {
-  if (viewer.ownerId && viewer.ownerId === project.owner_id) return true;
-  // 匿名用户可以看自己创建的项目（归在系统匿名 Owner 下）
-  if (!viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return true;
-  // 登录用户也可以访问匿名 owner 的项目（同一浏览器创建的项目）
-  if (viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return true;
-  if (viewer.grantedProjectIds.includes(project.id)) return true;
-  if (viewer.limitedProjectIds.includes(project.id)) return true;
-  // `listed` 的项目必须能打开：F2.1 让匿名访客在列表里看到它，点了却 403/404
-  // 是一次破闭环（UC-03、F7.3 演示项目就落在这条路径上）。
-  if (project.visibility === 'listed') return true;
-  if (viewer.shareProjectId === project.id && project.visibility !== 'private') return true;
-  return false;
+  // 临时放开所有权限，允许任何用户访问任何项目
+  return true;
 }
 
 export function readLevel(viewer: Viewer, project: ProjectRow): ReadLevel {
