@@ -136,6 +136,7 @@ export function AgentPresence({ projectId }: { projectId?: string }) {
     queryFn: () => requestJson<AgentPresenceView>(`${APP}/views/agent?external_id=${encodeURIComponent(projectId ?? '')}`),
     refetchInterval: 20_000,
   });
+  const [showSetup, setShowSetup] = useState(false);
 
   if (query.isPending) return <span className="muted mono">Agent 状态读取中…</span>;
   if (query.error) {
@@ -170,8 +171,113 @@ export function AgentPresence({ projectId }: { projectId?: string }) {
           : '命令会继续排队。Agent 恢复心跳后领取；超过 15 分钟没有结果回写的命令标记为超时未回写，不会自动重排。'}
       </p>
       {view.online ? null : (
-        <pre style={{ marginTop: 8 }}>ideaseek-agent start --base {`${APP}`} --token "&lt;本地 cloud link 保存的 sync token&gt;"</pre>
+        <>
+          <button
+            className="btn-primary"
+            style={{ marginTop: 8 }}
+            onClick={() => setShowSetup(!showSetup)}
+          >
+            {showSetup ? '收起设置指南' : '如何启动 Agent？'}
+          </button>
+          {showSetup && <AgentSetupGuide baseUrl={`${window.location.origin}${APP}`} projectId={projectId} />}
+          <pre style={{ marginTop: 8 }}>ideaseek-agent start --base {`${APP}`} --token "&lt;本地 cloud link 保存的 sync token&gt;"</pre>
+        </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Agent 设置指南：分步骤引导用户下载、配置并启动 Local Agent。
+ * 检测用户平台并提供对应的下载链接和命令。
+ */
+function AgentSetupGuide({ baseUrl, projectId }: { baseUrl: string; projectId?: string }) {
+  const [platform, setPlatform] = useState<'windows' | 'macos' | 'linux' | 'unknown'>(() => {
+    if (typeof navigator === 'undefined') return 'unknown';
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes('win')) return 'windows';
+    if (ua.includes('mac')) return 'macos';
+    if (ua.includes('linux')) return 'linux';
+    return 'unknown';
+  });
+
+  const downloadUrl = '/local-agent/dist/ideaseek-agent.zip';
+  const defaultRoot = projectId ? `./${projectId}` : './ideaseek-projects';
+
+  const steps = {
+    windows: [
+      `下载 Agent：点击 <a href="${downloadUrl}" class="btn-secondary" style="display:inline-block;padding:4px 12px;font-size:12px">Windows 版本</a>`,
+      '解压到任意目录（例如 C:\\ideaseek-agent\\）',
+      '打开 PowerShell 或 CMD，进入解压目录',
+      '运行启动命令（复制下方命令）：',
+    ],
+    macos: [
+      `下载 Agent：点击 <a href="${downloadUrl}" class="btn-secondary" style="display:inline-block;padding:4px 12px;font-size:12px">macOS 版本</a>`,
+      '解压到任意目录（例如 ~/ideaseek-agent/）',
+      '打开终端，进入解压目录',
+      '运行启动命令（复制下方命令）：',
+    ],
+    linux: [
+      `下载 Agent：点击 <a href="${downloadUrl}" class="btn-secondary" style="display:inline-block;padding:4px 12px;font-size:12px">Linux 版本</a>`,
+      '解压到任意目录（例如 ~/ideaseek-agent/）',
+      '打开终端，进入解压目录',
+      '运行启动命令（复制下方命令）：',
+    ],
+    unknown: [
+      `下载 Agent：<a href="${downloadUrl}">ideaseek-agent.zip</a>`,
+      '解压到任意目录',
+      '打开终端，进入解压目录',
+      '运行启动命令：',
+    ],
+  };
+
+  const startCommand = `node dist/cli.js start --base ${baseUrl} --token "<你的 sync token>" --root ${defaultRoot}`;
+
+  return (
+    <div style={{ marginTop: 12, padding: 12, background: 'var(--panel)', borderRadius: 6, border: '1px solid var(--line)' }}>
+      <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>🚀 Local Agent 设置指南</h4>
+      
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 12, marginRight: 8 }}>检测到平台：</label>
+        <select
+          value={platform}
+          onChange={(e) => setPlatform(e.target.value as typeof platform)}
+          style={{ background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', fontSize: 12 }}
+        >
+          <option value="windows">Windows</option>
+          <option value="macos">macOS</option>
+          <option value="linux">Linux</option>
+          <option value="unknown">其他</option>
+        </select>
+      </div>
+
+      <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, lineHeight: 1.8 }}>
+        {steps[platform].map((step, i) => (
+          <li key={i} dangerouslySetInnerHTML={{ __html: step }} />
+        ))}
+      </ol>
+
+      <div style={{ marginTop: 12, padding: 8, background: 'var(--bg)', borderRadius: 4, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+        <div style={{ marginBottom: 4, color: 'var(--muted)', fontSize: 10 }}>启动命令：</div>
+        <code>{startCommand}</code>
+      </div>
+
+      <div style={{ marginTop: 12, padding: 8, background: '#fff3cd', borderRadius: 4, fontSize: 12, border: '1px solid #ffc107' }}>
+        <strong>⚠️ 重要提示：</strong>
+        <ul style={{ margin: '4px 0 0', paddingLeft: 20 }}>
+          <li>Sync Token 在"设置 → Token 管理"中创建（scope 需包含 <code>commands</code>）</li>
+          <li>Agent 启动后会每 15 秒发送心跳，本页面会自动刷新状态</li>
+          <li>Agent 必须保持运行才能执行排队的命令</li>
+        </ul>
+      </div>
+
+      <div style={{ marginTop: 12, fontSize: 12, color: 'var(--muted)' }}>
+        💡 <strong>什么是 Local Agent？</strong>
+        <p style={{ margin: '4px 0 0' }}>
+          IdeaSeek 采用 Web-First 架构：浏览器只负责排队命令，实际的代码执行、文件操作都在你的本地机器上完成。
+          Local Agent 就是运行在你机器上的"工人"，它从云端领取命令、执行后回写结果。
+        </p>
+      </div>
     </div>
   );
 }
