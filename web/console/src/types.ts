@@ -299,6 +299,21 @@ export interface ProvisioningEntry {
   name: string | null;
 }
 
+/**
+ * 操作台账的一行（Phase 9.4）。它就是 cloud_command 那一行本身，不是另造的审计表：
+ * `error` 只有首行且截到 200 字符，本地路径与输出正文不进云。
+ */
+export interface AuditEntry {
+  command_id: string;
+  type: string;
+  status: CommandStatus;
+  created_at: string;
+  finished_at: string | null;
+  /** 命令还没落到某个项目上时为 null（例如待创建的 project_create）。 */
+  project: string | null;
+  error: string | null;
+}
+
 export interface CommandsView {
   ok: true;
   generated_at: string;
@@ -306,6 +321,8 @@ export interface CommandsView {
   writable: boolean;
   commands: CommandCard[];
   provisioning: ProvisioningEntry[];
+  /** 只有 `external_id` 为空的全局读数才有；项目视图用 commands 自身当台账。 */
+  audit?: AuditEntry[];
 }
 
 export interface LocalProjectEntry {
@@ -337,7 +354,23 @@ export interface GitState {
   last_commit_at: string | null;
   last_commit_text: string | null;
   dirty: boolean | null;
+  /**
+   * Phase 7：都由 Agent 上一轮心跳盖上，`null` = Agent 还没上报过这一项，
+   * 与"上报了但是空集合"是两回事，前端不能把 null 画成"没有分支"。
+   */
+  branches?: GitBranchEntry[] | null;
+  /** 只有路径：冲突正文不进云，解决动作在用户自己的终端里做。 */
+  conflicts?: string[] | null;
+  /** 只有名字。URL 可能内嵌凭据，云端不落库。 */
+  remotes?: string[] | null;
   reported_at: string;
+}
+
+export interface GitBranchEntry {
+  name: string;
+  current: boolean;
+  ahead: number | null;
+  behind: number | null;
 }
 
 export interface FileNode {
@@ -357,4 +390,34 @@ export interface RepoView {
   git: GitState | null;
   files: FileNode[];
   file_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9 协作与分享：对应 `web/functions/access.ts`
+// ---------------------------------------------------------------------------
+
+/** `joined` 按邮箱有没有 cloud_owner 行算，不是按 owner_id 回填——邀请先于首次登录是常态。 */
+export interface GrantEntry {
+  id: string;
+  email: string | null;
+  /** reviewer 读到 full（含 L1），viewer 只到 L2；平台没有 editor 这一档。 */
+  role: 'reviewer' | 'viewer';
+  joined: boolean;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+/** 链接行只有 id 与时间：明文 token 在创建响应里出现一次，云端只留哈希。 */
+export interface ShareEntry {
+  id: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface AccessView {
+  ok: true;
+  generated_at: string;
+  writable: true;
+  grants: GrantEntry[];
+  shares: ShareEntry[];
 }

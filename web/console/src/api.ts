@@ -48,10 +48,36 @@ function codeFor(status: number, body?: string): ApiCode {
   return body === 'invalid_json' ? 'invalid_response' : 'network';
 }
 
+/**
+ * 未记名分享链接（Phase 9.5）。明文 token 只存在于访客手里的那条 URL 里，云端只留哈希，
+ * 所以链接要真能读，SPA 必须把它附到**读**请求上——控制台是哈希路由，视图路径是前端
+ * 自己拼的，网关不会替我们带。
+ *
+ * 只加在 `requestJson`（读）上，`mutateJson` 一律不带：share token 的授权上限就是 L2
+ * 读，写面认它等于把"链接能打开"说成"链接能改"。
+ */
+let shareToken: string | null = readShareFromLocation();
+
+function readShareFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash ?? '';
+  const fromHash = hash.includes('?') ? new URLSearchParams(hash.slice(hash.indexOf('?') + 1)).get('share') : null;
+  return fromHash ?? new URLSearchParams(window.location.search ?? '').get('share');
+}
+
+export function currentShareToken(): string | null {
+  return shareToken;
+}
+
+function withShare(path: string): string {
+  if (!shareToken || path.includes('share=')) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}share=${encodeURIComponent(shareToken)}`;
+}
+
 export async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json' }, signal });
+    response = await fetch(withShare(path), { credentials: 'same-origin', headers: { accept: 'application/json' }, signal });
   } catch {
     if (signal?.aborted) throw new ApiError('network', '请求已取消。');
     throw new ApiError('network', MESSAGES.network);
