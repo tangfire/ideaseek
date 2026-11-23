@@ -368,3 +368,60 @@ test('首页视图：待创建队列与本机在线状态不挂在某个项目�
   // 仓库面仍然必须带项目：没有 project_id 就找不到任何上报行。
   assert.equal((await call(as('owner-1'), '/views/repo?external_id=')).code, 'invalid_input');
 });
+
+// --------------------------------------------------------------------------- Phase 7：高级 git
+
+test('git 载荷只钉机械不变量：ref 形状、主分支保护、不丢弃改动、合并策略白名单', async () => {
+  const { fake, as } = await build();
+  const handle = as('owner-1');
+  const post = (type: string, body: Record<string, unknown>) => call(handle, `/commands/${type}`, web({ external_id: 'prj-listed', ...body }));
+
+  assert.equal((await post('git_checkout', { branch: 'feature/x' })).status, 200);
+  // 以 `-` 开头会被 git 当成开关；`@{`/空格是 rev-parse 语法：都拼不进 argv。
+  assert.equal((await post('git_checkout', { branch: '-b' })).status, 400, '开关形状的分支名');
+  assert.equal((await post('git_checkout', { branch: 'feature@{1}' })).status, 400, 'rev-parse 表达式');
+  assert.equal((await post('git_checkout', { branch: 'a b' })).status, 400, '带空格的分支名');
+  assert.equal((await post('git_checkout', { branch: 'main', discard_uncommitted: true })).status, 400, '丢弃改动不在云端能力里');
+  // 未知字段被丢掉，不透传给 Agent。
+  const sneak = await call(handle, '/commands/git_merge', web({ external_id: 'prj-listed', target: 'feature/x', strategy: 'squash', force: true }));
+  assert.equal(sneak.status, 200);
+  const queued = fake.rowsOf('cloud_command');
+  assert.ok(!JSON.stringify(queued.at(-1)!.payload).includes('force'), '载荷里没有 force 的容身之处');
+
+  assert.equal((await post('git_branch_delete', { name: 'main' })).status, 400, '主分支删不掉');
+  assert.equal((await post('git_branch_delete', { name: 'feature/x' })).status, 200);
+  assert.equal((await post('git_merge', { target: 'feature/x', strategy: 'rebase' })).status, 400, '策略只有三档');
+  assert.equal((await post('git_merge_abort', {})).status, 200);
+  assert.equal((await post('git_fetch', { remote: 'origin', prune: true })).status, 200);
+  assert.equal((await post('git_branch', { name: 'release/1.2', from: 'main' })).status, 200);
+  assert.equal((await post('git_branch', { name: 'release/1.2', from: '../etc/passwd' })).status, 400, 'base 也要过 ref 形状');
+});
+
+test('分支、冲突与远端上报：只留 ref 名与路径，正文与凭据型 URL 进不来', async () => {
+  const { fake, as } = await build();
+  const beat = await call(as(null), '/agent/heartbeat', agent(AGENT_TOKEN, {
+    reported: {
+      git: [
+        {
+          external_id: 'prj-listed',
+          branch: 'main',
+          dirty: false,
+          branches: [{ name: 'main', current: true, ahead: 0, behind: 2 }, { name: 'ok/branch' }, { name: '-i/evil' }, { name: '../escape' }],
+          conflicts: ['src/model.py', '../../etc/passwd', 'papers/论文.pdf'],
+          remotes: ['origin', { name: 'upstream' }, 'https://user:tok3n@host/private.git'],
+        },
+      ],
+    },
+  }));
+  assert.equal(beat.status, 200);
+  assert.deepEqual((beat.json.applied_reported as Record<string, unknown>).git, ['prj-listed']);
+
+  const view = await call(as('owner-1'), '/views/repo?external_id=prj-listed');
+  const git = view.json.git as Record<string, unknown>;
+  const names = (git.branches as Array<Record<string, unknown>>).map((entry) => entry.name);
+  assert.deepEqual(names, ['main', 'ok/branch'], '形状不对的分支条目丢掉，不整条拒绝');
+  assert.deepEqual(git.conflicts, ['src/model.py', 'papers/论文.pdf'], '越界路径丢掉，正文本来就不在这一级');
+  assert.deepEqual(git.remotes, ['origin', 'upstream']);
+  assert.ok(!JSON.stringify(view.json).includes('host/private'), 'remote URL 不落库：带凭据的地址不能被读出来');
+  assert.equal(fake.rowsOf('cloud_git_state').length, 1);
+});

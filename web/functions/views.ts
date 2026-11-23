@@ -15,8 +15,10 @@ import { ContractError } from './contract.ts';
 
 export interface Viewer {
   ownerId: string | null;
-  /** 来自 cloud_grant：被邀读者（Q8）。 */
+  /** 来自 cloud_grant：被邀读者（Q8），role=reviewer，读到 L1（full）。 */
   grantedProjectIds: string[];
+  /** role=viewer 的授权：能打开项目，但只到 L2——邀请时选了"只读降级"的人。 */
+  limitedProjectIds: string[];
   /** 来自未记名 share token（`?share=`）；只在 link/listed 项目上生效。 */
   shareProjectId: string | null;
 }
@@ -46,7 +48,7 @@ export async function resolveViewer(
 ): Promise<Viewer> {
   if (!user) {
     const share = new URL(request.url).searchParams.get('share');
-    if (!share) return { ownerId: null, grantedProjectIds: [], shareProjectId: null };
+    if (!share) return { ownerId: null, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: null };
     // share token 只存哈希；撤销即失效（revoked_at 非空就当不存在）。
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(share));
     const hash = Array.from(new Uint8Array(digest))
@@ -57,7 +59,7 @@ export async function resolveViewer(
       BackendError,
     );
     const active = found.find((row) => !row.revoked_at);
-    return { ownerId: null, grantedProjectIds: [], shareProjectId: active ? active.project_id : null };
+    return { ownerId: null, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: active ? active.project_id : null };
   }
 
   // 网关注入的 user_id 映射到 cloud_owner：Owner 首次登录时按需建行。
@@ -77,11 +79,27 @@ export async function resolveViewer(
 
   // 撤销过的 grant 不再给读权限：SDK 的 null 谓词没在本地验证过，所以在这里过滤，
   // 不靠 `.eq(col, null)` 的平台语义（share token 同一处理方式）。
-  const grants = rows<{ project_id: string; revoked_at: string | null }>(
-    await db.from<{ project_id: string; revoked_at: string | null }>('cloud_grant').select('project_id,revoked_at').eq('owner_id', ownerId),
-    BackendError,
-  );
-  return { ownerId, grantedProjectIds: grants.filter((g) => !g.revoked_at).map((g) => g.project_id), shareProjectId: null };
+  //
+  // 两条匹配路径（Phase 9.2）：`owner_id` 是对方已经登录过、行已建好的情形；
+  // `email` 覆盖"先邀请、后来才第一次登录"的情形——登录时才按需建行，只按
+  // owner_id 查会让那条邀请永远不生效，界面却显示"已邀请"。
+  const grants = [
+    ...rows<GrantRow>(await db.from<GrantRow>('cloud_grant').select('project_id,role,revoked_at').eq('owner_id', ownerId), BackendError),
+    ...rows<GrantRow>(await db.from<GrantRow>('cloud_grant').select('project_id,role,revoked_at').eq('email', user.id), BackendError),
+  ];
+  const active = grants.filter((grant) => !grant.revoked_at);
+  return {
+    ownerId,
+    grantedProjectIds: active.filter((grant) => grant.role !== 'viewer').map((grant) => grant.project_id),
+    limitedProjectIds: active.filter((grant) => grant.role === 'viewer').map((grant) => grant.project_id),
+    shareProjectId: null,
+  };
+}
+
+interface GrantRow {
+  project_id: string;
+  role: string | null;
+  revoked_at: string | null;
 }
 
 /**
@@ -101,6 +119,7 @@ export type ReadLevel = 'full' | 'l2';
 export function canRead(viewer: Viewer, project: ProjectRow): boolean {
   if (viewer.ownerId && viewer.ownerId === project.owner_id) return true;
   if (viewer.grantedProjectIds.includes(project.id)) return true;
+  if (viewer.limitedProjectIds.includes(project.id)) return true;
   // `listed` 的项目必须能打开：F2.1 让匿名访客在列表里看到它，点了却 403/404
   // 是一次破闭环（UC-03、F7.3 演示项目就落在这条路径上）。
   if (project.visibility === 'listed') return true;
@@ -137,7 +156,7 @@ const L2_REDACTED = [
  * 用户本来就知道它存在，报错要能指方向。
  */
 export function deniesAsAbsent(viewer: Viewer): boolean {
-  return viewer.ownerId === null && viewer.shareProjectId === null && viewer.grantedProjectIds.length === 0;
+  return viewer.ownerId === null && viewer.shareProjectId === null && viewer.grantedProjectIds.length === 0 && viewer.limitedProjectIds.length === 0;
 }
 
 export async function byExternalId(db: Db, externalId: string, BackendError: BackendErrorLike): Promise<ProjectRow | undefined> {
@@ -196,7 +215,7 @@ export async function projectIndex(db: Db, viewer: Viewer, BackendError: Backend
   ).filter((project) => {
     if (project.archived_at) return false;
     // 列表页只列 Owner 自己的、被邀的，以及公开 listed 的。
-    return viewer.ownerId === project.owner_id || viewer.grantedProjectIds.includes(project.id) || project.visibility === 'listed';
+    return viewer.ownerId === project.owner_id || viewer.grantedProjectIds.includes(project.id) || viewer.limitedProjectIds.includes(project.id) || project.visibility === 'listed';
   });
 
   const projects = [];

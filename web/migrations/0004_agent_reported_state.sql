@@ -1,4 +1,4 @@
--- Phase 5/6: 本地 Agent 上报的仓库状态与文件清单
+-- Phase 5/6/7: 本地 Agent 上报的仓库状态、分支与文件清单
 --
 -- 语法约束同 0003（受管子集：`app.` schema、无 IF NOT EXISTS、无 CHECK、索引只写
 -- 普通列、单份 plan ≤20 条；提交时去注释）。
@@ -11,6 +11,12 @@
 --
 -- 文件清单只存路径、大小、类型与哈希，**不存内容**（0001 不变量 3：无正文）。
 -- 论文文件名本身可能泄露研究方向，所以列在 L1：匿名与 share 链接一律读不到。
+--
+-- branches/conflicts/remotes 同一条线：只存 ref 名、冲突文件路径与 remote 名。
+-- 三栏 diff 与冲突标记编辑要的是文件正文，那部分永远不进云——需要解决冲突的人
+-- 在自己的终端里做，云端只负责说"哪里有冲突、上一轮排队了什么"。
+-- remote 不存 URL：`https://user:token@host/repo` 这种带凭据的地址一旦入库，
+-- NFR-02 的"凭据只存哈希"就作废了。
 
 CREATE TABLE app.cloud_git_state (
   id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -25,6 +31,9 @@ CREATE TABLE app.cloud_git_state (
   last_commit_at    timestamptz,
   last_commit_text  text,
   dirty             boolean,
+  branches          jsonb,
+  conflicts         jsonb,
+  remotes           jsonb,
   reported_at       timestamptz NOT NULL
 );
 

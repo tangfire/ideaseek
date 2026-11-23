@@ -36,7 +36,12 @@ export const COMMAND_TYPES = [
   'git_commit',
   'git_push',
   'git_pull',
+  'git_fetch',
   'git_branch',
+  'git_branch_delete',
+  'git_checkout',
+  'git_merge',
+  'git_merge_abort',
   'file_delete',
 ] as const;
 
@@ -88,6 +93,53 @@ function isSafeRelativePath(value: unknown): value is string {
   if (/^[a-zA-Z]:/.test(value)) return false;
   if (value.includes('\\')) return false;
   return !value.split('/').some((segment) => segment === '..' || segment === '');
+}
+
+/**
+ * git ref 名的机械不变量（Phase 7）。这里只管"能不能安全拼进 argv"，不管分支该不该
+ * 存在——后者是 Agent 的语义判断（判断归 Agent，边界归平台）。
+ * 以 `-` 开头会被 git 当成开关，`@{`/`~`/`^` 是 rev-parse 语法，`..` 是范围：
+ * 全部拒掉，不给"分支名顺带带了个开关"留路径。
+ */
+function isSafeRef(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 80) return false;
+  if (value.startsWith('-') || value.startsWith('/') || value.startsWith('.')) return false;
+  if (value.endsWith('/') || value.endsWith('.') || value.endsWith('.lock')) return false;
+  if (/[\s~^:?*[\\@{}]/.test(value)) return false;
+  if (value.includes('..')) return false;
+  return !value.split('/').some((segment) => segment === '' || segment === '.');
+}
+
+/** 删除保护：主分支不在云端可删的集合里，需要的人在自己终端上做。 */
+const PROTECTED_BRANCHES = new Set(['main', 'master']);
+
+/** 分支清单：只留 ref 名与领先/落后读数，形状不对的条目直接丢掉而不是报错。 */
+function sanitizeBranches(value: unknown): Array<Record<string, unknown>> | null {
+  if (!Array.isArray(value)) return null;
+  const out: Array<Record<string, unknown>> = [];
+  for (const item of value.slice(0, 200)) {
+    const entry = item as { name?: unknown; current?: unknown; ahead?: unknown; behind?: unknown };
+    if (!isSafeRef(entry.name)) continue;
+    out.push({ name: entry.name, current: entry.current === true, ahead: integer(entry.ahead), behind: integer(entry.behind) });
+  }
+  return out;
+}
+
+/** 冲突：只有路径。三栏 diff 需要正文，正文不进云（0004 头注）。 */
+function sanitizeConflicts(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter(isSafeRelativePath).slice(0, 200);
+}
+
+/** remote 只留名字：URL 可能内嵌凭据（`https://user:token@host`），一律不落库。 */
+function sanitizeRemotes(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const item of value.slice(0, 20)) {
+    const name = typeof item === 'string' ? item : (item as { name?: unknown })?.name;
+    if (isSafeRef(name)) out.push(name);
+  }
+  return out;
 }
 
 function text(value: unknown, cap = TEXT_CAP): string | null {
@@ -184,20 +236,55 @@ export function validatePayload(
     case 'git_push':
     case 'git_pull': {
       const out: Record<string, unknown> = {};
-      if (body.remote !== undefined) out.remote = text(body.remote, 40) ?? fail('remote');
-      if (body.branch !== undefined) out.branch = text(body.branch, 80) ?? fail('branch');
+      if (body.remote !== undefined) out.remote = isSafeRef(body.remote) ? body.remote : fail('remote');
+      if (body.branch !== undefined) out.branch = isSafeRef(body.branch) ? body.branch : fail('branch');
       // 只允许 fast-forward 之外的常规动作；`--force` 不接受——云端按钮不该有能力
       // 覆盖历史，需要强推的人应当在自己终端上做这件事。
       if (body.force === true) fail('force');
+      if (type === 'git_pull' && body.rebase === true) out.rebase = true;
+      return out;
+    }
+    case 'git_fetch': {
+      const out: Record<string, unknown> = {};
+      if (body.remote !== undefined) out.remote = isSafeRef(body.remote) ? body.remote : fail('remote');
+      if (body.prune === true) out.prune = true;
       return out;
     }
     case 'git_branch': {
       const name = text(body.name, 80) ?? fail('name');
-      if (/[\s~^:?*[\\]/.test(name) || name.includes('..')) fail('name');
+      if (!isSafeRef(name)) fail('name');
       const out: Record<string, unknown> = { name };
       if (body.checkout === true) out.checkout = true;
+      // 基于哪个提交/分支建：同样只接受 ref 形状，不接受任意 rev-parse 表达式。
+      if (body.from !== undefined) out.from = isSafeRef(body.from) ? body.from : fail('from');
       return out;
     }
+    case 'git_branch_delete': {
+      const name = text(body.name, 80) ?? fail('name');
+      if (!isSafeRef(name)) fail('name');
+      if (PROTECTED_BRANCHES.has(name)) fail('protected_branch');
+      return { name };
+    }
+    case 'git_checkout': {
+      const branch = isSafeRef(body.branch) ? body.branch : fail('branch');
+      const out: Record<string, unknown> = { branch };
+      if (body.create === true) out.create = true;
+      // 不带 `--force`：把工作区丢进云端按钮里等于给用户一个"没提示就没了改动"的入口。
+      if (body.discard_uncommitted === true) fail('discard_uncommitted');
+      return out;
+    }
+    case 'git_merge': {
+      const target = isSafeRef(body.target) ? body.target : fail('target');
+      const strategy = body.strategy ?? 'ff-only';
+      if (!['ff-only', 'no-ff', 'squash'].includes(String(strategy))) fail('strategy');
+      const out: Record<string, unknown> = { target, strategy };
+      // 合并带进的消息同样过凭据检查（text() 里那条）。
+      if (body.message !== undefined) out.message = text(body.message, TEXT_CAP) ?? fail('message');
+      if (body.squash === true && strategy !== 'squash') fail('strategy');
+      return out;
+    }
+    case 'git_merge_abort':
+      return {};
     case 'file_delete': {
       const path = isSafeRelativePath(body.path) ? body.path : fail('path');
       return { path };
@@ -325,12 +412,35 @@ async function ownerProvisioningOnly(db: Db, viewer: Viewer, BackendError: Backe
     await db.from<CommandRow>('cloud_command').select('*').eq('type', 'project_create').order('created_at', { ascending: false }).limit(20),
     BackendError,
   ).filter((row) => row.created_by === viewer.ownerId && row.project_id === null);
+
+  // 操作台账（Phase 9.4）：谁排的、什么时候、排了什么、结果如何。这里不新造一张
+  // 审计表——命令行本身就是那条记录，再造一份等于给同一个事实两个真相。
+  const projects = rows<{ id: string; external_id: string }>(
+    await db.from<{ id: string; external_id: string }>('cloud_project').select('id,external_id').limit(500),
+    BackendError,
+  );
+  const externalOf = new Map(projects.map((project) => [project.id, project.external_id]));
+  const mine = rows<CommandRow>(
+    await db.from<CommandRow>('cloud_command').select('*').eq('created_by', viewer.ownerId).order('created_at', { ascending: false }).limit(50),
+    BackendError,
+  );
+
   return Response.json({
     ok: true,
     generated_at: new Date().toISOString(),
     projection_level: 'full',
     writable: true,
     commands: [],
+    audit: mine.map((row) => ({
+      command_id: row.external_command_id,
+      type: row.type,
+      status: row.status,
+      created_at: row.created_at,
+      finished_at: row.finished_at,
+      project: row.project_id ? (externalOf.get(row.project_id) ?? null) : null,
+      // 结果与错误只给首行摘要：台账要能指路，不需要把本地输出搬进浏览器。
+      error: row.error ? row.error.split('\n')[0]!.slice(0, 200) : null,
+    })),
     provisioning: rowsFound.map((row) => ({
       command_id: row.external_command_id,
       status: row.status,
@@ -554,6 +664,9 @@ async function applyReported(
       last_commit_at: typeof entry.last_commit_at === 'string' ? entry.last_commit_at : null,
       last_commit_text: text(entry.last_commit_text, TEXT_CAP),
       dirty: typeof entry.dirty === 'boolean' ? entry.dirty : null,
+      branches: sanitizeBranches(entry.branches),
+      conflicts: sanitizeConflicts(entry.conflicts),
+      remotes: sanitizeRemotes(entry.remotes),
       reported_at: now,
     };
     const existing = rows<{ id: string }>(

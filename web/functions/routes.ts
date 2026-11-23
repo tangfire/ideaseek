@@ -14,6 +14,7 @@ import { ingestBatch } from './ingest.ts';
 import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
 import { agentCommandHeartbeat, agentHeartbeat, agentView, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
+import { accessView, grantCreate, grantRevoke, shareCreate, shareRevoke } from './access.ts';
 
 export interface Deps {
   db: Db;
@@ -367,6 +368,53 @@ export function application(deps: Deps) {
       if (!externalId) throw new BackendError('invalid_input', 400);
       const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
       return repoView(db, viewer, externalId, BackendError);
+    }
+
+    // Phase 9: 协作与分享。cloud_grant / cloud_share_token 是云端自己的 ACL，
+    // 不是投影表，所以由 Owner 直接写；写权限仍然只有 Owner 一条路。
+    if (path === '/views/access' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return accessView(db, viewer, externalId, BackendError);
+    }
+
+    if (path === '/access/grants' && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      }) as Record<string, unknown>;
+      const externalId = typeof body.external_id === 'string' ? body.external_id : '';
+      if (!externalId) throw new BackendError('invalid_input:external_id', 400);
+      return grantCreate(db, viewer, externalId, body, BackendError);
+    }
+
+    const grantRevokeMatch = path.match(/^\/access\/grants\/([0-9a-f-]{36})$/);
+    if (grantRevokeMatch && request.method === 'DELETE') {
+      // 撤销走 query 而不是 body：DELETE 带 body 在部分代理与 fetch 实现里会被丢掉，
+      // 丢了就变成"external_id 缺失"这种在界面上说不清的 400。
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input:external_id', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return grantRevoke(db, viewer, externalId, grantRevokeMatch[1]!, BackendError);
+    }
+
+    if (path === '/access/share' && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      }) as Record<string, unknown>;
+      const externalId = typeof body.external_id === 'string' ? body.external_id : '';
+      if (!externalId) throw new BackendError('invalid_input:external_id', 400);
+      return shareCreate(db, viewer, externalId, BackendError);
+    }
+
+    const shareRevokeMatch = path.match(/^\/access\/share\/([0-9a-f-]{36})$/);
+    if (shareRevokeMatch && request.method === 'DELETE') {
+      const externalId = url.searchParams.get('external_id') ?? '';
+      if (!externalId) throw new BackendError('invalid_input:external_id', 400);
+      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      return shareRevoke(db, viewer, externalId, shareRevokeMatch[1]!, BackendError);
     }
 
     throw new BackendError('not_found', 404);
