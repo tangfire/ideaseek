@@ -273,28 +273,6 @@ async function resolveProject(
  * 提交一条命令。返回的永远是"已排队"而不是"已完成"——这一条就是 R2 的同一原则
  * 用在执行面上：云端没有执行能力，界面就不许写成执行结果。
  */
-/**
- * 获取或创建匿名 Owner——用于未登录状态下的 project_create。
- * 所有匿名用户共享同一个 owner 行，避免为每次请求创建新记录。
- */
-async function getOrCreateAnonymousOwner(db: Db, BackendError: BackendErrorLike): Promise<string> {
-  const ANONYMOUS_EMAIL = '__anonymous__@system';
-  const existing = rows<{ id: string }>(
-    await db.from<{ id: string }>('cloud_owner').select('id').eq('email', ANONYMOUS_EMAIL).limit(1),
-    BackendError,
-  )[0];
-  if (existing) return existing.id;
-  
-  const created = rows<{ id: string }>(
-    await db
-      .from<{ id: string; email: string; display_name: string }>('cloud_owner')
-      .insert({ email: ANONYMOUS_EMAIL, display_name: 'Anonymous User' })
-      .select('id'),
-    BackendError,
-  )[0];
-  return created.id;
-}
-
 export async function enqueueCommand(
   db: Db,
   viewer: Viewer,
@@ -303,12 +281,10 @@ export async function enqueueCommand(
   BackendError: BackendErrorLike,
 ): Promise<Response> {
   if (!COMMAND_TYPES.includes(type as CommandType)) throw new BackendError('not_found', 404);
-  
-  // project_create 允许匿名：未登录时自动分配系统匿名 Owner
-  let effectiveOwnerId = viewer.ownerId;
-  if (!effectiveOwnerId && type === 'project_create') {
-    effectiveOwnerId = await getOrCreateAnonymousOwner(db, BackendError);
-  }
+
+  // 写面一律要会话（D1/D2 权限隔离）：匿名创建会把项目堆进系统匿名 Owner，
+  // 结果是所有人共享一堆谁也不认领的项目——"登录了只能看到自己的内容"从这里开始。
+  const effectiveOwnerId = viewer.ownerId;
   if (!effectiveOwnerId) throw new BackendError('login_required', 401);
 
   const payload = validatePayload(type, body, BackendError);
@@ -568,7 +544,9 @@ async function createProjectInCloud(
   body: Record<string, unknown>,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
-  const effectiveOwnerId = viewer.ownerId ?? (await getOrCreateAnonymousOwner(db, BackendError));
+  // 写面只认会话（D1/D2 权限隔离）：匿名不再自动落到系统匿名 Owner。
+  const effectiveOwnerId = viewer.ownerId;
+  if (!effectiveOwnerId) throw new BackendError('login_required', 401);
   const externalCommandId = text(body.command_id, 64) ?? crypto.randomUUID();
 
   // 幂等回放：同一个 command_id 已存在 → 返回原记录

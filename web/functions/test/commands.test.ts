@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { application } from '../routes.ts';
 import type { SiteContext } from '../routes.ts';
 import { createFakeDb, sha256Hex } from '../dev/fake-db.ts';
+import { ensureSession, withSession } from '../dev/test-session.ts';
 import { SYNC_TOKEN_HEADER } from '../token.ts';
 
 // 构造式凭据夹具：既过 token.ts 的 ≥32 下限，也不是一串能被当成真 key 的高熵值。
@@ -60,15 +61,26 @@ async function build() {
     last_sync_at: null,
   });
 
+  const handle = application({
+    db: fake.db,
+    BackendError: fake.BackendError,
+    // D3：平台网关身份不参与业务鉴权，身份由会话 Cookie 提供。
+    getUser: () => null,
+    upgradeWebSocket: () => {
+      throw new Error('本用例不测握手');
+    },
+  });
+  const cookies = new Map<string, string>();
   const as = (user: string | null) =>
-    application({
-      db: fake.db,
-      BackendError: fake.BackendError,
-      getUser: () => (user ? { id: user } : null),
-      upgradeWebSocket: () => {
-        throw new Error('本用例不测握手');
-      },
-    });
+    user
+      ? withSession(handle, async () => {
+          const cached = cookies.get(user);
+          if (cached) return cached;
+          const fixture = await ensureSession(fake.db, user);
+          cookies.set(user, fixture.cookie);
+          return fixture.cookie;
+        })
+      : handle;
 
   return { fake, as, owner, stranger, listed };
 }
@@ -431,7 +443,7 @@ test('分支、冲突与远端上报：只留 ref 名与路径，正文与凭据
 test('云端 project_create 写真实投影：项目 + 运行 + 阶段 + 事件 + outbox', async () => {
   const { fake, as } = await build();
   const commandId = crypto.randomUUID();
-  const res = await call(as(null), '/projects', web({
+  const res = await call(as('owner-1'), '/projects', web({
     command_id: commandId,
     name: '云端测试项目',
     question: '验证真执行',
@@ -492,11 +504,11 @@ test('云端 project_create 幂等回放：同 command_id 不重复创建', asyn
     strategy: 'standard',
     autonomy: 'guided',
   };
-  const first = await call(as(null), '/projects', web(body));
+  const first = await call(as('owner-1'), '/projects', web(body));
   assert.equal(first.status, 200);
   const firstProjectId = first.json.project_external_id;
 
-  const second = await call(as(null), '/projects', web(body));
+  const second = await call(as('owner-1'), '/projects', web(body));
   assert.equal(second.status, 200);
   assert.equal(second.json.replayed, true, '第二次调用返回 replayed=true');
   assert.equal(second.json.project_external_id, firstProjectId, '返回同一个 project_external_id');
@@ -507,7 +519,7 @@ test('云端 project_create 幂等回放：同 command_id 不重复创建', asyn
 
 test('云端 project_create 缺 name 返回 400', async () => {
   const { as } = await build();
-  const res = await call(as(null), '/projects', web({
+  const res = await call(as('owner-1'), '/projects', web({
     command_id: crypto.randomUUID(),
     question: '没有名字',
     strategy: 'standard',
@@ -519,7 +531,7 @@ test('云端 project_create 缺 name 返回 400', async () => {
 
 test('云端 project_create：研究问题留空（空串）等于没填，不是 400', async () => {
   const { fake, as } = await build();
-  const res = await call(as(null), '/projects', web({
+  const res = await call(as('owner-1'), '/projects', web({
     command_id: crypto.randomUUID(),
     name: '没写研究问题的项目',
     question: '',
@@ -556,8 +568,8 @@ test('云端 project_create 的 command CAS 更新：并发重入只有一个成
 
   // 模拟并发：两个请求同时到达（fake-db 是单线程，但测试 CAS 逻辑）
   const [first, second] = await Promise.all([
-    call(as(null), '/projects', web(body)),
-    call(as(null), '/projects', web(body)),
+    call(as('owner-1'), '/projects', web(body)),
+    call(as('owner-1'), '/projects', web(body)),
   ]);
 
   // 两个都应该成功（幂等回放），但只有一个真正创建

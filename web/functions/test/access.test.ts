@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { application } from '../routes.ts';
 import type { SiteContext } from '../routes.ts';
 import { createFakeDb, sha256Hex } from '../dev/fake-db.ts';
+import { ensureSession, withSession } from '../dev/test-session.ts';
 
 async function build() {
   const fake = createFakeDb();
@@ -56,15 +57,26 @@ async function build() {
     error: '第一行错误\n第二行带 /home/owner/私有路径',
   });
 
+  const handle = application({
+    db: fake.db,
+    BackendError: fake.BackendError,
+    // D3：平台网关身份不参与业务鉴权，身份由会话 Cookie 提供。
+    getUser: () => null,
+    upgradeWebSocket: () => {
+      throw new Error('本用例不测握手');
+    },
+  });
+  const cookies = new Map<string, string>();
   const as = (user: string | null) =>
-    application({
-      db: fake.db,
-      BackendError: fake.BackendError,
-      getUser: () => (user ? { id: user } : null),
-      upgradeWebSocket: () => {
-        throw new Error('本用例不测握手');
-      },
-    });
+    user
+      ? withSession(handle, async () => {
+          const cached = cookies.get(user);
+          if (cached) return cached;
+          const fixture = await ensureSession(fake.db, user);
+          cookies.set(user, fixture.cookie);
+          return fixture.cookie;
+        })
+      : handle;
 
   return { fake, as, owner, project };
 }

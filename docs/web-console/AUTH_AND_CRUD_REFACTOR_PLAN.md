@@ -1,6 +1,6 @@
 # 账号体系与项目 CRUD 改造方案
 
-状态：**待批准**（§10 有 5 个决策点未回）
+状态：**已批准，实施中**（2026-11-24 用户拍板 D1/D2/D4；D3/D5 按建议默认）
 诉求来源：2026-11-24 用户提出两条——① "随便可以注册然后登录就行了，账号密码注册登录，弄一个简单的，记得权限隔离，登录了只能看到自己的内容"；② "这些项目要弄一下增删改查，就是基础的 CRUD"
 本文只解决这两件事，不碰工作流引擎、不碰 LLM 渠道、不碰可见性以外的投影语义。
 
@@ -17,7 +17,7 @@
 | G1 | 未登录只能读到 `listed` 项目的 L2 投影；登录后列表**只有自己的项目**（+ 官方演示） | 不通过（`canRead` 恒 `true`，列表列全部项目） |
 | G2 | 用户 A 登录后读不到、改不了、删不了用户 B 的项目（非 owner 一律 404，不泄露存在性） | 不通过（读面无判定；写面只验"登录了没"，验不了"是不是 owner"以外的隔离） |
 | G3 | 改标题 / 改研究问题 / 改可见性：保存即生效（≤1 s），不再出现"已提交但没变化" | 不通过（`project_settings` 只入队，云端无执行者） |
-| G4 | 删除项目后，该项目所有读接口 404，子表数据一并清掉（NFR-05 被遗忘路径） | 不通过（`DELETE /projects/{id}` 路由不存在，404） |
+| G4 | 归档项目后，该项目**所有读接口 404**、从列表消失；Owner 可恢复（D4：归档软删，数据保留） | 不通过（`DELETE /projects/{id}` 路由不存在，404） |
 
 ---
 
@@ -59,8 +59,8 @@
 | --- | --- | --- |
 | A1 项目所有者 Owner | 身份来源 "Sites 平台身份" | 身份来源 **自有账号（用户名+密码）**；平台网关身份退出业务鉴权，只负责静态资源与 Function 入口 |
 | A2（新增）注册策略 | 无 | **开放注册**：任何人都能注册用户名+密码，注册即得自己的 Owner 空间 |
-| 可见性 `listed`（REQUIREMENTS:116） | 出现在公开项目列表中 | 语义拆成两条：**直链可读 L2** 保留；**是否混进他人列表**改为不混进（见 §10 D1），列表 = 自己的 + 官方演示 |
-| NFR-05（:229） | Owner 可一键删除全部云端投影 | 本次实现（§5.3） |
+| 可见性 `listed`（REQUIREMENTS:116） | 出现在公开项目列表中 | 语义拆成两条：**直链可读 L2** 保留；**不混进他人列表**（D1 已定），列表 = 自己的 + 官方演示 |
+| NFR-05（:229） | Owner 可一键删除全部云端投影 | 本次实现为**归档软删**（D4 已定）：读侧全部 404、列表消失、Owner 可恢复；**数据保留**，"彻底清除"另需显式 purge（本次不做，见 §5.3） |
 | NFR-02（:226） | sync_token 只存哈希 | **推广到会话 token 与密码**：只存哈希，可单项吊销 |
 
 ---
@@ -155,7 +155,7 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 | `views.ts:167 deniesAsAbsent` | 语义不变：匿名被拒 → **404 不是 403**（存在性不泄露，F5.5）；登录者被拒 → 403 |
 | `views.ts:216 projectIndex` | 过滤条件改为 `owner_id = 我` ∪ `granted` ∪ `listed`；排序把**官方演示项目置顶**，其余按 `last_sync_at`；**别人的 listed 不进列表**（D1） |
 | 所有写面（`/commands/*`、`/projects`、PATCH、DELETE） | 一律要求**有效会话**（否则 401 `login_required`）**且** `owner_id = 我`（否则 404，不泄露存在性） |
-| `step-driver.ts:115 canDrive` | 现状"自己的项目，或匿名演示项目"→ 收紧为"**只有 owner 能驱动**"（含演示项目，D2），防止陌生人烧 LLM token |
+| `step-driver.ts:115 canDrive` | 现状"自己的项目，或匿名演示项目"→ 收紧为"**只有 owner 能驱动**"（D2 已定：演示项目对访客**只读**），防止陌生人烧 LLM token |
 
 **列表隔离的直接效果**（对应用户原话"登录了只能看到自己的内容"）：
 
@@ -165,7 +165,7 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 ### 4.5 官方演示项目
 
 - `proj-8f6c57e4-56e` 保持 `visibility='listed'`，侧栏"演示项目"直链保留
-- 访客可看（L2），**不可驱动**（D2）；需要跑给评委看时用 Owner 账号驱动
+- 访客可看（L2），**不可驱动**（D2 已定）；需要跑给评委看时用 Owner 账号驱动
 - QA 残留项目（§11 遗留清单）在权限收口后自动从他人列表消失，无需删数据
 
 ---
@@ -179,7 +179,7 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 | **C** | `POST /projects`（已有，不动） | 登录即可 | 即时 |
 | **R** | `GET /views/index`、`GET /views/project`（已有，按 §4.4 收口） | 按可见性 | 即时 |
 | **U** | **新增** `PATCH /projects/{external_id}` | 仅 owner | 即时（不再入队） |
-| **D** | **新增** `DELETE /projects/{external_id}` | 仅 owner + 确认 | 即时（硬删，NFR-05） |
+| **D** | **新增** `DELETE /projects/{external_id}`（归档）+ `POST /projects/{external_id}/restore` | 仅 owner + 确认 | 即时（D4：归档软删，可恢复） |
 
 ### 5.2 Update：`PATCH /functions/v1/app/projects/{external_id}`
 
@@ -194,39 +194,38 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 - **审计**：同时插一行 `cloud_command`（`type=project_settings, status=succeeded, created_by=我, payload=变更摘要`）→ 审计台账不再出现"永远 queued"的假动作
 - **响应**：`{ok, project: {...}}`，前端 `invalidateQueries(['project'])` + `['index']`
 
-### 5.3 Delete：`DELETE /functions/v1/app/projects/{external_id}`（硬删 + 级联）
+### 5.3 Delete：`DELETE /functions/v1/app/projects/{external_id}`（归档软删，D4 已定）
+
+**用户拍板：归档软删**——打 `archived_at` 标记，数据全留，可恢复。与原硬删方案的取舍见文末"偏离说明"。
+
+**接口两条**：
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| DELETE | `/projects/{external_id}?confirm=<标题>` | 归档：`UPDATE cloud_project SET archived_at = now() WHERE id = ? AND owner_id = ? AND archived_at IS NULL` |
+| POST | `/projects/{external_id}/restore` | 恢复：`SET archived_at = NULL WHERE id = ? AND owner_id = ? AND archived_at IS NOT NULL` |
 
 **权限与确认**：
 
 1. 无会话 → 401；有会话但非 owner → **404**（存在性不泄露，与读侧同一条理由）
-2. 必须带 `?confirm=<项目标题>`，与库中 `title` 完全一致，否则 400 `invalid_input:confirm` —— 防手滑、防脚本误删（前端弹窗要求输入项目名）
-3. 幂等：项目已不存在 → 200 `{ok, deleted: false}`（重复调用不报错，便于失败重入）
+2. 必须带 `?confirm=<项目标题>`，与库中 `title` 完全一致，否则 400 `invalid_input:confirm` —— 防手滑、防脚本误归档（前端弹窗要求输入项目名）
+3. 幂等：已是归档态 → 200 `{ok, archived: false}`；恢复时本来就没归档 → 200 `{ok, restored: false}`（重复调用不报错）
 
-**删除顺序**（32 张表中挂 project/run 的 28 张；FK **没有** `ON DELETE CASCADE`，必须子前父后）：
+**读侧收口（软删的关键，否则"隐藏"只是列表层的假动作）**——归档项目对**所有读路径**表现为不存在：
 
-```
-① run 的子表（按 run_id）：
-   cloud_task_lease → cloud_task → cloud_run_event → cloud_stage_progress
-   → cloud_research_node → cloud_metric_result → cloud_evidence_ref
-   → cloud_artifact_ref → cloud_experiment → cloud_protocol → cloud_comparison
-   → cloud_idea → cloud_ideation_round → cloud_paper_card → cloud_claim
-   → cloud_approval_intent → cloud_approval_request
-   → cloud_cost_entry → cloud_egress_entry → cloud_sync_batch
-② project 的子表（按 project_id，①完成后）：
-   live_outbox → cloud_command → cloud_git_state → cloud_file_node
-   → cloud_grant → cloud_share_token → cloud_publication → cloud_agent
-③ cloud_run
-④ cloud_project
-```
+| 位置 | 改动 |
+| --- | --- |
+| `views.ts byExternalId()` | 加 `archived_at IS NULL` 过滤（一处改动覆盖 project/cost/egress/approval/repo/agent/live 全部读路径，它们都经它取项目） |
+| `projectIndex()` | 已滤 `archived_at`（保持） |
+| `step-driver resolveRun` | 项目已归档 → `idle`/404，不再推进 |
+| `live.ts authorizeLive` | 归档 → 拒绝握手（现有 `!project \|\| project.archived_at` 判定已在，确认复用） |
+| `cloud_grant` / `cloud_share_token` | 归档期间即使 grant 还在也读不到（随 `byExternalId` 自然失效）；恢复后自动回来 |
 
-**实现要点**：
+**恢复入口**：设置页"已归档"区 + 列表的"显示已归档"开关（默认隐藏），恢复按钮一次点击（无需标题确认，恢复是无损动作）。
 
-- 逐表 `DELETE ... WHERE run_id/project_id = ?`（managed SDK 单语句，不依赖多语句事务）
-- **每一步都幂等**：任一步失败返回 500 并带上"已完成到第 N 步"，前端可重试，重入继续删剩余表——这是"无事务"约束下唯一安全的做法
-- 不删 `cloud_owner`（账号还活着）、不删别的项目的行（`WHERE` 严格带 id）
-- 删除成功后向 `live_outbox` 推一帧 `revoked`，已打开该页面的浏览器立刻切占位态（复用现有 `LiveFrame.revoked`）
+**写入审计**：归档与恢复各写一行 `cloud_command`（`type=project_archive` / 新增 `project_restore`，`status=succeeded`，`created_by=我`），审计台账看得见谁在什么时候归档了什么。
 
-**备选（不推荐）**：`archived_at` 软删。理由：NFR-05 要求"删除后所有读接口 404"且是"被遗忘路径"，软删把用户数据留在库里，与诉求相反；列表过滤也早就做过（`projectIndex` 已滤 `archived_at`），等于什么都没解决。
+**与 NFR-05 的偏离（如实记录）**：REQUIREMENTS:229 写的是"一键删除项目全部云端投影（被遗忘路径）"。归档软删满足"**删除后所有读接口 404**"这条可验证判据，但**不满足"数据彻底清除"**——数据仍在库里。按用户 2026-11-24 决策采用软删（可反悔、无误删风险）。若日后需要真正的被遗忘权，再补一个显式 `PURGE` 动作（标题确认 + 二次确认 + 按 §5.3 原硬删顺序执行），本次不做。
 
 ### 5.4 命令队列的去留（范围控制）
 
@@ -242,8 +241,8 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 | `AuthPanel` | 登录/注册同一张表单切换；错误文案区分"用户名已存在 / 账号或密码错误 / 账号已锁定（15 分钟后重试）" |
 | 顶栏 | 显示当前用户名 + "退出登录"（调 `/auth/logout`，清本地状态，回 `#/login`） |
 | `api.ts` | `credentials: 'same-origin'` 已有（Cookie 自动带）；`login_required` 文案改"请先登录"；`loginHref` 的平台登录链接删除 |
-| 项目列表 | 每行加操作列：**重命名**（行内编辑 → PATCH）、**删除**（确认弹窗输入项目名 → DELETE）；列表空态文案改为"还没有你的项目，点右上角新建" |
-| 设置页 | 保存按钮改走 PATCH（成功提示"已保存"，失败显示真实原因，**不再出现"已提交"但没变化**）；底部加"删除项目"危险区 |
+| 项目列表 | 每行加操作列：**重命名**（行内编辑 → PATCH）、**归档**（确认弹窗输入项目名 → DELETE）；默认隐藏已归档，提供"显示已归档"开关与**恢复**按钮；列表空态文案改为"还没有你的项目，点右上角新建" |
+| 设置页 | 保存按钮改走 PATCH（成功提示"已保存"，失败显示真实原因，**不再出现"已提交"但没变化**）；底部加"归档项目"危险区（归档后原地变"恢复项目"） |
 | `live.ts` | WS 同源自动带 Cookie（M0 验证）；若降级方案触发则带 `?session=` |
 | 演示链接 | 侧栏"演示项目"保留；未登录时点击进 L2 只读页 |
 
@@ -253,7 +252,7 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 2. 注册 `alice` → 列表为空 → 新建项目 A → 列表出现 A
 3. 注册 `bob`（新浏览器/无痕）→ 列表**看不到 A**；直接访问 A 的 URL → 404 文案；尝试 `PATCH`/`DELETE` A → 404
 4. `alice` 改 A 的标题 → 刷新即变（≤1 s）；审计页出现一条 `succeeded` 的 `project_settings`
-5. `alice` 删除 A（输入标题确认）→ 列表消失；`GET /views/project` 404；`GET /views/costs|egress|approvals` 全 404
+5. `alice` 归档 A（输入标题确认）→ 列表消失（默认视图）；`GET /views/project|costs|egress|approvals` 全 404；打开"显示已归档"→ A 出现 → 点恢复 → 列表与各读接口恢复 200
 6. `alice` 登出 → 所有写面 401；重新登录 → 恢复
 7. 连续错密码 10 次 → 第 11 次提示"已锁定"，15 分钟内即使密码正确也拒绝
 
@@ -279,7 +278,7 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 | **M0** | 平台探针：`Set-Cookie`/`Cookie`/WS 带 Cookie 三项实测 | 结论写进本文 §4.3；若失败启用降级路径 |
 | **M1** | migration 0007 + `/auth/*` 四个接口 + 会话解析（`resolveViewer` 切到 Cookie） | `auth.test.ts` 全绿；线上 curl 注册→登录→`/auth/me` 200 |
 | **M2** | 权限收口：`canRead`/`readLevel`/`projectIndex`/写面 owner 校验 + `canDrive` 收紧 | 6 条 ACL 测试转绿；验收用例 1-3 通过 |
-| **M3** | CRUD：`PATCH` + `DELETE`（含级联顺序与幂等）+ 审计行 | `crud.test.ts` 全绿；验收用例 4-5 通过 |
+| **M3** | CRUD：`PATCH` + `DELETE`（归档）+ `restore` + 读侧 `byExternalId` 收口 + 审计行 | `crud.test.ts` 全绿；验收用例 4-5 通过 |
 | **M4** | 前端：登录/注册页、路由守卫、顶栏用户态、列表行操作、设置页改 PATCH、删除确认弹窗 | 本地预览走通 7 条验收用例 |
 | **M5** | 文档同步（REQUIREMENTS A1/可见性/NFR-05、PROGRESS 记录）+ 线上全量验收 | 本文 §5.6 七条逐条打勾 |
 
@@ -302,19 +301,19 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 | --- | --- | --- |
 | 网关剥 `Set-Cookie` | 会话方案地基塌 | M0 先探；降级路径 §4.3 已写明（短 TTL + query 传输） |
 | 既有数据无主 | 改造后老项目谁也登不进去（平台身份/匿名 Owner 没有账号） | 迁移脚本：把 `account_id IS NULL` 的 `cloud_owner` 名下项目，一次性挂到**首个注册账号**（显式执行的 SQL，不自动跑）；或按 D4 归档残留 QA 项目 |
-| 演示项目被访客驱动烧 token | 成本不可控 | `canDrive` 收紧为仅 owner（M2） |
-| 硬删中途失败 | 半删状态 | 步骤幂等 + 可重入重试；`WHERE` 严格带 id；上线前在 QA 项目上先演练 |
+| 演示项目被访客驱动烧 token | 成本不可控 | `canDrive` 收紧为仅 owner（M2，D2 已定） |
+| 归档后子表数据仍在 | 不满足 NFR-05 的"彻底清除" | 已如实写进 §5.3 偏离说明；读侧全 404 判据满足；需要时再补显式 PURGE |
 | 开放注册被刷 | 库里垃圾账号 | 用户名唯一 + 注册限流 10/min/IP + 密码上限 128；后续要邮箱验证再议 |
 | 12 条过时测试删除被误读 | "为了绿灯删测试" | commit message 逐条列出断言对象已删除的证据（`local-agent/` 目录不存在） |
 
 ---
 
-## 10. 决策点（需拍板，不回不动 M2 之后）
+## 10. 决策点（2026-11-24 已全部拍板）
 
-| # | 问题 | 我的建议 |
+| # | 问题 | 结论 |
 | --- | --- | --- |
-| **D1** | 列表要不要显示别人的 `listed` 项目？ | **不显示**。直链仍可读（保留 REQUIREMENTS 的 listed 语义），但列表只放自己的 + 官方演示——同时解决"太乱" |
-| **D2** | 演示项目允许访客点"继续运行"吗？ | **不允许**（只读）。跑给评委看时用 Owner 账号，避免陌生人烧 LLM token |
-| **D3** | 留不留 Qoder 平台身份当运维后门？ | **不留**。留了就等于没做权限隔离；真需要运维通道再单独加带审计的管理员账号 |
-| **D4** | 删除是硬删还是归档软删？ | **硬删**（NFR-05 要求 404 + 被遗忘路径）；残留 QA 项目先归档不删，避免误伤 |
-| **D5** | 顺带清理 `run_*`/`git_*` 等 local-agent 死命令类型吗？ | **本次不动**，只清 `project_settings`/`project_archive`（D5 之外的范围控制），死类型单独一个 PR |
+| **D1** | 列表要不要显示别人的 `listed` 项目？ | ✅ **不显示**。直链仍可读（保留 REQUIREMENTS 的 listed 语义），列表只放自己的 + 官方演示 |
+| **D2** | 演示项目允许访客点"继续运行"吗？ | ✅ **不允许**（只读）。跑给评委看时用 Owner 账号 |
+| **D3** | 留不留 Qoder 平台身份当运维后门？ | ✅ **不留**（按建议默认）。留了就等于没做权限隔离 |
+| **D4** | 删除是硬删还是归档软删？ | ✅ **归档软删**（用户选择，与原建议不同）：`archived_at` 标记 + 读侧全 404 + 可恢复；彻底清除留待显式 PURGE，见 §5.3 偏离说明 |
+| **D5** | 顺带清理 `run_*`/`git_*` 等 local-agent 死命令类型吗？ | ✅ **本次不动**（按建议默认），只清 `project_settings`/`project_archive` 入队路径，死类型单独一个 PR |

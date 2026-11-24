@@ -12,6 +12,7 @@
 import type { BackendErrorLike, Db } from './deps.ts';
 import { rows } from './deps.ts';
 import { ContractError } from './contract.ts';
+import { sessionIdentity } from './accounts.ts';
 
 export interface Viewer {
   ownerId: string | null;
@@ -45,9 +46,12 @@ export interface ProjectRow {
 export async function resolveViewer(
   request: Request,
   db: Db,
-  user: { id: string } | null,
   BackendError: BackendErrorLike,
 ): Promise<Viewer> {
+  // 身份唯一来源是自有会话 Cookie（D3：平台网关身份不再参与业务鉴权）。
+  // 无会话 / 会话失效 → 匿名，只能读 listed 与演示项目的 L2 投影。
+  const identity = await sessionIdentity(request, db, BackendError);
+
   // 查找系统匿名 Owner ID（用于匿名用户创建的项目）
   const ANONYMOUS_EMAIL = '__anonymous__@system';
   const anonymousOwner = rows<{ id: string }>(
@@ -56,9 +60,10 @@ export async function resolveViewer(
   )[0];
   const anonymousOwnerId = anonymousOwner?.id ?? null;
 
-  if (!user) {
-    const share = new URL(request.url).searchParams.get('share');
-    if (!share) return { ownerId: null, anonymousOwnerId, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: null };
+  // 未记名分享链接：匿名与登录者都可携带，只给该一个项目的读权。
+  let shareProjectId: string | null = null;
+  const share = new URL(request.url).searchParams.get('share');
+  if (share) {
     // share token 只存哈希；撤销即失效（revoked_at 非空就当不存在）。
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(share));
     const hash = Array.from(new Uint8Array(digest))
@@ -68,42 +73,30 @@ export async function resolveViewer(
       await db.from<{ project_id: string; revoked_at: string | null }>('cloud_share_token').select('project_id,revoked_at').eq('token_hash', hash).limit(1),
       BackendError,
     );
-    const active = found.find((row) => !row.revoked_at);
-    return { ownerId: null, anonymousOwnerId, grantedProjectIds: [], limitedProjectIds: [], shareProjectId: active ? active.project_id : null };
+    shareProjectId = found.find((row) => !row.revoked_at)?.project_id ?? null;
   }
 
-  // 网关注入的 user_id 映射到 cloud_owner：Owner 首次登录时按需建行。
-  const owner = rows<{ id: string }>(
-    await db.from<{ id: string }>('cloud_owner').select('id').eq('email', user.id).limit(1),
-    BackendError,
-  );
-  let ownerId = owner[0]?.id;
-  if (!ownerId) {
-    const created = rows<{ id: string }>(
-      await db.from<{ id: string }>('cloud_owner').insert({ email: user.id, display_name: null }).select('id'),
-      BackendError,
-    );
-    ownerId = created[0]?.id;
+  if (!identity) {
+    return { ownerId: null, anonymousOwnerId, grantedProjectIds: [], limitedProjectIds: [], shareProjectId };
   }
-  if (!ownerId) throw new BackendError('write_failed', 500);
 
   // 撤销过的 grant 不再给读权限：SDK 的 null 谓词没在本地验证过，所以在这里过滤，
   // 不靠 `.eq(col, null)` 的平台语义（share token 同一处理方式）。
   //
-  // 两条匹配路径（Phase 9.2）：`owner_id` 是对方已经登录过、行已建好的情形；
-  // `email` 覆盖"先邀请、后来才第一次登录"的情形——登录时才按需建行，只按
-  // owner_id 查会让那条邀请永远不生效，界面却显示"已邀请"。
+  // 两条匹配路径（Phase 9.2）：`owner_id` 是对方已经注册、行已建好的情形；
+  // `email`（自有账号下存用户名）覆盖"先邀请、后来才注册"的情形——
+  // 只按 owner_id 查会让那条邀请永远不生效，界面却显示"已邀请"。
   const grants = [
-    ...rows<GrantRow>(await db.from<GrantRow>('cloud_grant').select('project_id,role,revoked_at').eq('owner_id', ownerId), BackendError),
-    ...rows<GrantRow>(await db.from<GrantRow>('cloud_grant').select('project_id,role,revoked_at').eq('email', user.id), BackendError),
+    ...rows<GrantRow>(await db.from<GrantRow>('cloud_grant').select('project_id,role,revoked_at').eq('owner_id', identity.ownerId), BackendError),
+    ...rows<GrantRow>(await db.from<GrantRow>('cloud_grant').select('project_id,role,revoked_at').eq('email', identity.username), BackendError),
   ];
   const active = grants.filter((grant) => !grant.revoked_at);
   return {
-    ownerId,
+    ownerId: identity.ownerId,
     anonymousOwnerId,
     grantedProjectIds: active.filter((grant) => grant.role !== 'viewer').map((grant) => grant.project_id),
     limitedProjectIds: active.filter((grant) => grant.role === 'viewer').map((grant) => grant.project_id),
-    shareProjectId: null,
+    shareProjectId,
   };
 }
 

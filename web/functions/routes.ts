@@ -16,10 +16,12 @@ import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.
 import { agentCommandHeartbeat, agentHeartbeat, agentView, cancelCommand, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
 import { accessView, grantCreate, grantRevoke, shareCreate, shareRevoke } from './access.ts';
 import { stepView } from './engine/step-driver.ts';
+import { registerAccount, loginAccount, logoutAccount, authMe } from './accounts.ts';
 
 export interface Deps {
   db: Db;
   BackendError: BackendErrorLike;
+  /** 平台网关注入的身份。D3 起不再参与业务鉴权（身份只认自有会话 Cookie），保留是平台契约。 */
   getUser(ctx: SiteContext): { id: string } | null;
   upgradeWebSocket(request: Request): { socket: WebSocket; response: Response };
 }
@@ -99,7 +101,7 @@ function envProbe(): { readable: boolean; getter: boolean; names: string[] } {
 }
 
 export function application(deps: Deps) {
-  const { db, BackendError, getUser } = deps;
+  const { db, BackendError } = deps;
 
   const route = async (ctx: SiteContext): Promise<Response> => {
     const request = ctx.request;
@@ -308,27 +310,27 @@ export function application(deps: Deps) {
     }
 
     if (path === '/views/index' && request.method === 'GET') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return projectIndex(db, viewer, BackendError);
     }
 
     if (path === '/views/project' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return projectView(db, viewer, externalId, BackendError);
     }
 
     // M6: 审批信箱（F11）
     if (path === '/views/approvals' && request.method === 'GET') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return approvalIndex(db, viewer, BackendError);
     }
 
     // M6: 提交审批意向（F11.3）
     const intentMatch = path.match(/^\/approvals\/([^/]+)\/intent$/);
     if (intentMatch && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       }) as { choice?: string; note?: string };
@@ -340,7 +342,7 @@ export function application(deps: Deps) {
     if (path === '/views/costs' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return costView(db, viewer, externalId, BackendError);
     }
 
@@ -348,18 +350,18 @@ export function application(deps: Deps) {
     if (path === '/views/egress' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return egressView(db, viewer, externalId, BackendError);
     }
 
     // M6: Token 管理（F16）
     if (path === '/views/tokens' && request.method === 'GET') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return tokenList(db, viewer, BackendError);
     }
 
     if (path === '/views/tokens' && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       }) as { label?: string; scopes?: string[]; project_scope?: string[] };
@@ -369,7 +371,7 @@ export function application(deps: Deps) {
 
     const tokenRevokeMatch = path.match(/^\/views\/tokens\/([^/]+)$/);
     if (tokenRevokeMatch && request.method === 'DELETE') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return tokenRevoke(db, viewer, tokenRevokeMatch[1]!, BackendError);
     }
 
@@ -377,14 +379,14 @@ export function application(deps: Deps) {
     if (path === '/views/health' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return syncHealth(db, viewer, externalId, BackendError);
     }
 
     if (path === '/live') {
       const externalId = url.searchParams.get('project') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const project = await authorizeLive(db, viewer, externalId, BackendError);
       const since = Number(url.searchParams.get('since') ?? '0');
 
@@ -462,7 +464,7 @@ export function application(deps: Deps) {
     // 撤回必须排在通用的 /commands/{type} 之前：否则 `cancel` 会被当成一种命令类型，
     // 在 validatePayload 之前就被 404 掉——那是一条界面说不清、日志里也像拼错路径的错路。
     if (path === '/commands/cancel' && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       });
@@ -471,17 +473,40 @@ export function application(deps: Deps) {
 
     const commandMatch = path.match(/^\/commands\/([a-z_]+)$/);
     if (commandMatch && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       });
       return enqueueCommand(db, viewer, commandMatch[1]!, body as Record<string, unknown>, BackendError);
     }
 
-    // 创建项目同样是排队：云端不建项目行，只把 `ideaseek start` 交给本机 Agent，
-    // 项目行由本地投影写回来（投影表不由浏览器写）。
+    // 自有账号（AUTH_AND_CRUD_REFACTOR_PLAN.md §4.2）：注册/登录下发会话 Cookie，
+    // 登出吊销；业务鉴权从这里开始只认会话，不认平台网关身份。
+    if (path === '/auth/register' && request.method === 'POST') {
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return registerAccount(db, request, body as Record<string, unknown>, BackendError);
+    }
+
+    if (path === '/auth/login' && request.method === 'POST') {
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return loginAccount(db, request, body as Record<string, unknown>, BackendError);
+    }
+
+    if (path === '/auth/logout' && request.method === 'POST') {
+      return logoutAccount(db, request, BackendError);
+    }
+
+    if (path === '/auth/me' && request.method === 'GET') {
+      return authMe(db, request, BackendError);
+    }
+
+    // 创建项目：云端直接执行（projectCreateView → executeInCloud 白名单只有 project_create）。
     if (path === '/projects' && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       });
@@ -492,20 +517,20 @@ export function application(deps: Deps) {
     // 待创建队列与本机在线状态），不是缺参数。/views/repo 仍然必须带项目。
     if (path === '/views/commands' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return commandView(db, viewer, externalId, BackendError);
     }
 
     if (path === '/views/agent' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return agentView(db, viewer, externalId, BackendError);
     }
 
     if (path === '/views/repo' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return repoView(db, viewer, externalId, BackendError);
     }
 
@@ -514,12 +539,12 @@ export function application(deps: Deps) {
     if (path === '/views/access' && request.method === 'GET') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return accessView(db, viewer, externalId, BackendError);
     }
 
     if (path === '/access/grants' && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       }) as Record<string, unknown>;
@@ -534,12 +559,12 @@ export function application(deps: Deps) {
       // 丢了就变成"external_id 缺失"这种在界面上说不清的 400。
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input:external_id', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return grantRevoke(db, viewer, externalId, grantRevokeMatch[1]!, BackendError);
     }
 
     if (path === '/access/share' && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => {
         throw new BackendError('invalid_input', 400);
       }) as Record<string, unknown>;
@@ -552,13 +577,13 @@ export function application(deps: Deps) {
     if (shareRevokeMatch && request.method === 'DELETE') {
       const externalId = url.searchParams.get('external_id') ?? '';
       if (!externalId) throw new BackendError('invalid_input:external_id', 400);
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       return shareRevoke(db, viewer, externalId, shareRevokeMatch[1]!, BackendError);
     }
 
     // 步进驱动器：浏览器泵每 2s 调一次，认领并执行一个任务单元。
     if (path === '/app/step' && request.method === 'POST') {
-      const viewer = await resolveViewer(request, db, getUser(ctx), BackendError);
+      const viewer = await resolveViewer(request, db, BackendError);
       const body = await request.json().catch(() => ({})) as Record<string, unknown>;
       // 匿名项目的 owner_id 是系统匿名 Owner 的 UUID，不是字符串 'anonymous'；
       // 配额必须按同一个主体对齐，否则匿名限额永远查不到项目、永远放行。
