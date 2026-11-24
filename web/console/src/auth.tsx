@@ -46,31 +46,52 @@ async function authFetch(path: string, body?: unknown): Promise<Me> {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new Error('无法连接云端，请检查网络后重试。');
+    throw new ApiError('network', '无法连接云端，请检查网络后重试。');
   }
   const text = await response.text();
   let payload: Record<string, unknown> = {};
   try {
     payload = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch {
-    throw new Error('云端返回了无法解析的响应。');
+    throw new ApiError('invalid_response', '云端返回了无法解析的响应。', response.status);
   }
   // 登出无论如何都清本地 token：服务端已吊销，本地留着只会让下一次请求带一张死票。
   if (path.endsWith('/logout')) setSessionToken(null);
   if (!response.ok || payload.ok !== true) {
     const code = String(payload.error ?? '');
-    throw new Error(AUTH_ERRORS[code] ?? (response.status === 401 ? '请先登录。' : '操作失败，请稍后重试。'));
+    const message =
+      AUTH_ERRORS[code] ?? (response.status === 401 ? '请先登录。' : '操作失败，请稍后重试。');
+    // 必须把 401 标成 login_required：守卫靠它区分"没登录（进游客模式）"和"真的坏了"。
+    // 上一版这里抛的是普通 Error，守卫只能当网络故障处理，于是登录页变成一句报错。
+    if (response.status === 401 || code === 'login_required') {
+      throw new ApiError('login_required', message, 401);
+    }
+    if (response.status === 400) throw new ApiError('invalid_input', message, 400);
+    if (response.status === 409) throw new ApiError('conflict', message, 409);
+    if (response.status === 429) throw new ApiError('rate_limited', message, 429);
+    throw new ApiError('service_unavailable', message, response.status);
   }
   // 登录/注册把会话 token 放在 JSON 里（网关剥 Cookie，只能这么带回来）。
   if (typeof payload.session_token === 'string') setSessionToken(payload.session_token);
   return payload as unknown as Me;
 }
 
-/** 当前登录账号；未登录 = ApiError('login_required')。 */
+/** 当前登录账号；未登录 = `data: null`（正常态，不是错误），读取失败才是 error。 */
 export function useMe() {
-  return useQuery({
+  return useQuery<Me | null>({
     queryKey: ['auth', 'me'],
-    queryFn: () => authFetch(`${AUTH}/me`) as Promise<Me>,
+    queryFn: async () => {
+      try {
+        return await authFetch(`${AUTH}/me`);
+      } catch (err) {
+        // 未登录是**正常状态**：返回 null 让查询成功落地。
+        // 若把它当 error，查询会处于"error 且无 data"——子树里每个 useMe 观察者
+        // 挂载都会触发 refetchOnMount 重新拉一次，而守卫又因 pending 卸载子树，
+        // 子树再挂载再拉……线上实测 140+ 次 /auth/me 的死循环就是这么来的。
+        if (err instanceof ApiError && err.code === 'login_required') return null;
+        throw err;
+      }
+    },
     retry: false,
     staleTime: 30_000,
   });
@@ -81,8 +102,13 @@ export async function logout(): Promise<void> {
 }
 
 /** 登录 / 注册同一张表单，按 mode 切换。 */
-export function AuthPanel() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+export function AuthPanel({ initialMode = 'login' }: { initialMode?: 'login' | 'register' }) {
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  useEffect(() => {
+    setMode(initialMode);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMode]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +127,15 @@ export function AuthPanel() {
   });
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+      }}
+    >
       <div className="panel" style={{ width: '100%', maxWidth: 380 }}>
         <h1 style={{ fontSize: 24, margin: '0 0 4px' }}>IdeaSeek</h1>
         <p className="muted" style={{ margin: '0 0 16px', fontSize: 13 }}>
@@ -134,7 +168,11 @@ export function AuthPanel() {
               {error}
             </p>
           ) : null}
-          <button className="btn-primary" type="submit" disabled={submit.isPending || username.trim().length === 0 || password.length === 0}>
+          <button
+            className="btn-primary"
+            type="submit"
+            disabled={submit.isPending || username.trim().length === 0 || password.length === 0}
+          >
             {submit.isPending ? '请稍候…' : mode === 'login' ? '登录' : '注册并登录'}
           </button>
         </form>
@@ -159,19 +197,15 @@ export function AuthPanel() {
   );
 }
 
-/** 控制台守卫：没登录就送去登录页，登录态由 /auth/me 说了算。 */
-export function RequireAuth({ children }: { children: ReactElement }) {
+/**
+ * 控制台入口：校验登录态，但**没登录不是错误**——那是游客模式。
+ * 只有真的读不到账号状态（网络/服务故障）才报错；未登录一律放行进游客视图，
+ * 由 GuestBanner 说明"能看什么、要什么权限、去哪注册登录"。
+ */
+export function AuthGate({ children }: { children: ReactElement }) {
   const me = useMe();
 
-  if (me.isError) {
-    const code = me.error instanceof ApiError ? me.error.code : 'network';
-    if (code === 'login_required') return <RedirectToLogin />;
-    return (
-      <p className="status-chip" data-state="fail" style={{ margin: 24 }}>
-        读取账号状态失败：{(me.error as Error).message}
-      </p>
-    );
-  }
+  // 还没查过：先等一次，避免闪一帧无权限的内容。
   if (me.isPending) {
     return (
       <p className="muted" style={{ padding: 24 }}>
@@ -179,17 +213,49 @@ export function RequireAuth({ children }: { children: ReactElement }) {
       </p>
     );
   }
+  // 只有真故障（网络/服务）才拦；未登录是 data === null，放行进游客视图。
+  if (me.isError) {
+    return (
+      <p className="status-chip" data-state="fail" style={{ margin: 24 }}>
+        读取账号状态失败：{(me.error as Error).message}
+      </p>
+    );
+  }
   return children;
 }
 
-function RedirectToLogin() {
-  const [, navigate] = useLocation();
-  useEffect(() => {
-    navigate('/login');
-  }, [navigate]);
+/**
+ * 游客横幅：登录了就不出现。文案只说三件事——现在是什么状态、缺什么权限、去哪补。
+ */
+export function GuestBanner() {
+  const me = useMe();
+  if (me.data || me.isPending) return null;
   return (
-    <p className="muted" style={{ padding: 24 }}>
-      未登录，正在前往登录页…
-    </p>
+    <div
+      className="panel"
+      style={{
+        borderLeftColor: 'var(--active)',
+        display: 'flex',
+        gap: 12,
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        marginBottom: 16,
+      }}
+    >
+      <span className="status-chip" data-state="active">
+        游客模式
+      </span>
+      <span style={{ fontSize: 13 }}>
+        现在只能查看公开的演示项目；创建、编辑、归档需要注册或登录。
+      </span>
+      <span style={{ display: 'inline-flex', gap: 8, marginLeft: 'auto' }}>
+        <a className="btn-primary" href="#/register">
+          注册
+        </a>
+        <a className="btn-secondary" href="#/login">
+          登录
+        </a>
+      </span>
+    </div>
   );
 }

@@ -29,7 +29,7 @@ import {
   SettingsPanel,
   StepPump,
 } from './panels';
-import { AuthPanel, RequireAuth, logout, useMe } from './auth';
+import { AuthGate, AuthPanel, GuestBanner, logout, useMe } from './auth';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -711,25 +711,46 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
         <div className="sidebar-section">
           <div className="sidebar-section-title">账号</div>
           <ul className="sidebar-nav">
-            <li>
-              <span style={{ padding: '8px 16px', fontSize: 13, display: 'block' }}>
-                {me.data?.username ?? '—'}
-              </span>
-            </li>
-            <li>
-              <a
-                href="#/login"
-                onClick={(event) => {
-                  event.preventDefault();
-                  void logout().then(() => {
-                    window.location.hash = '#/login';
-                    window.location.reload();
-                  });
-                }}
-              >
-                退出登录
-              </a>
-            </li>
+            {me.data ? (
+              <>
+                <li>
+                  <span style={{ padding: '8px 16px', fontSize: 13, display: 'block' }}>
+                    {me.data.username}
+                  </span>
+                </li>
+                <li>
+                  <a
+                    href="#/login"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void logout().then(() => {
+                        window.location.hash = '#/login';
+                        window.location.reload();
+                      });
+                    }}
+                  >
+                    退出登录
+                  </a>
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  <span
+                    className="muted"
+                    style={{ padding: '8px 16px', fontSize: 13, display: 'block' }}
+                  >
+                    未登录 · 游客
+                  </span>
+                </li>
+                <li>
+                  <a href="#/register">注册</a>
+                </li>
+                <li>
+                  <a href="#/login">登录</a>
+                </li>
+              </>
+            )}
           </ul>
         </div>
         <div className="sidebar-section">
@@ -758,7 +779,10 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
           </ul>
         </div>
       </aside>
-      <div className="main-content">{children}</div>
+      <div className="main-content">
+        <GuestBanner />
+        {children}
+      </div>
     </div>
   );
 }
@@ -792,7 +816,12 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!project.owned) return <span className="muted" style={{ fontSize: 11 }}>—</span>;
+  if (!project.owned)
+    return (
+      <span className="muted" style={{ fontSize: 11 }}>
+        —
+      </span>
+    );
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -838,7 +867,10 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
 
   if (renaming) {
     return (
-      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={(event) => event.stopPropagation()}>
+      <span
+        style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}
+        onClick={(event) => event.stopPropagation()}
+      >
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -848,10 +880,20 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
         <button className="btn-primary" disabled={busy} onClick={rename}>
           保存
         </button>
-        <button className="btn-secondary" onClick={() => { setDraft(project.title); setRenaming(false); }}>
+        <button
+          className="btn-secondary"
+          onClick={() => {
+            setDraft(project.title);
+            setRenaming(false);
+          }}
+        >
           取消
         </button>
-        {error ? <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>{error}</span> : null}
+        {error ? (
+          <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>
+            {error}
+          </span>
+        ) : null}
       </span>
     );
   }
@@ -872,12 +914,18 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
           </button>
         </>
       )}
-      {error ? <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>{error}</span> : null}
+      {error ? (
+        <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>
+          {error}
+        </span>
+      ) : null}
     </span>
   );
 }
 
 function ConsoleHome() {
+  const me = useMe();
+  const loggedIn = Boolean(me.data);
   const [showArchived, setShowArchived] = useState(false);
   const query = useQuery({
     queryKey: ['index', showArchived],
@@ -951,10 +999,15 @@ function ConsoleHome() {
         >
           {layout === '列表' ? '卡片视图' : '列表视图'}
         </button>
-        <button className="btn-primary" onClick={() => setCreating(!creating)}>
-          {creating ? '收起' : '新建项目'}
-        </button>
-        <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
+        {loggedIn ? (
+          <button className="btn-primary" onClick={() => setCreating(!creating)}>
+            {creating ? '收起' : '新建项目'}
+          </button>
+        ) : null}
+        <label
+          className="muted"
+          style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}
+        >
           <input
             type="checkbox"
             checked={showArchived}
@@ -989,7 +1042,9 @@ function ConsoleHome() {
           </p>
           <p className="muted" style={{ margin: 0, fontSize: 12 }}>
             {query.data.projects.length === 0
-              ? '点上方"新建项目"，云端会立即创建并开始研究流程。'
+              ? loggedIn
+                ? '点上方"新建项目"，云端会立即创建并开始研究流程。'
+                : '注册或登录后就能创建你自己的研究项目。'
               : '清空搜索或换一个筛选条件即可看到全部。'}
           </p>
         </div>
@@ -1024,7 +1079,11 @@ function ConsoleHome() {
                     </span>
                   ) : null}
                   {project.archived ? (
-                    <span className="status-chip" data-state="idle" style={{ marginLeft: 8, fontSize: 10 }}>
+                    <span
+                      className="status-chip"
+                      data-state="idle"
+                      style={{ marginLeft: 8, fontSize: 10 }}
+                    >
                       已归档
                     </span>
                   ) : null}
@@ -1154,8 +1213,9 @@ function Project({ id }: { id: string }) {
   const l2 = view.projection_level === 'l2';
   const canWrite = view.writable === true;
   // 设置与协作只有 Owner 可写；审计面板全是 L1 字段，L2 降级下整面隐藏。
+  // 审计/设置/协作都是 Owner 的工具：游客与被邀读者看不到（审计里有成本与审批入口）。
   const tabs = (['概览', '运行', '审计', '设置', '协作'] as const).filter((name) =>
-    name === '审计' ? !l2 : (name !== '设置' && name !== '协作') || canWrite,
+    name === '概览' || name === '运行' ? true : canWrite,
   );
   const active = tabs.includes(tab as (typeof tabs)[number]) ? tab : tabs[0];
   const allEvents = [...view.events, ...liveEvents];
@@ -2493,13 +2553,14 @@ function TokenManager({ projectId }: { projectId: string }) {
 
 export function App() {
   const [location] = useLocation();
-  const isLogin = location === '/login' || location.startsWith('/login');
+  const isLogin = location === '/login' || location.startsWith('/login?');
+  const isRegister = location === '/register' || location.startsWith('/register?');
   const isConsole =
     location === '/console' || location === '/console/' || location.startsWith('/p/');
 
-  if (isLogin) {
-    return <AuthPanel />;
-  }
+  // 登录与注册各一个入口，游客横幅上的两个按钮各走一条，省一次"去注册"的点击。
+  if (isLogin) return <AuthPanel initialMode="login" />;
+  if (isRegister) return <AuthPanel initialMode="register" />;
 
   if (!isConsole) {
     return (
@@ -2511,8 +2572,9 @@ export function App() {
     );
   }
 
+  // 没登录也放行：游客能看公开的演示项目，横幅负责把注册/登录的门指清楚。
   return (
-    <RequireAuth>
+    <AuthGate>
       <ConsoleLayout>
         <Switch>
           <Route path="/p/:id">{(params: { id: string }) => <Project id={params.id} />}</Route>
@@ -2524,6 +2586,6 @@ export function App() {
           </Route>
         </Switch>
       </ConsoleLayout>
-    </RequireAuth>
+    </AuthGate>
   );
 }
