@@ -287,7 +287,7 @@ export async function projectIndex(
       last_sync_at: project.last_sync_at,
       archived: Boolean(project.archived_at),
       // 前端据此决定显示不显示改/归档按钮：平台演示不是你的，别在它上面摆操作。
-      owned: viewer.ownerId !== null && viewer.owner_id === project.owner_id,
+      owned: viewer.ownerId !== null && viewer.ownerId === project.owner_id,
       projection_level: full ? 'full' : 'l2',
       latest_run: latest
         ? full
