@@ -2,7 +2,7 @@
  * Function 侧 LLM 适配器：直接 HTTP 调用 DeepSeek API（OpenAI 兼容端点）。
  *
  * 与 DshAdapter 的区别：不起子进程，不依赖 node_modules，单次 fetch ≤45s。
- * 凭据：显式注入 / Deno.env 优先，均未设置时落回 moyu.cn 渠道的写死 Key（演示用）。
+ * 凭据：显式注入 / Deno.env 优先，均未设置时落回写死的官方渠道 Key（演示用）。
  *
  * 提示词组装沿用 dsh-adapter.ts 的 composeInput 契约：
  *   instruction + ## Inputs + ## Output contract → 要求纯 JSON 返回
@@ -26,15 +26,14 @@ export interface LlmCallResult {
   finishReason: string | null;
 }
 
-// moyu.cn 渠道：Key 与模型名都只在该渠道有效，官方 api.deepseek.com 会 401。
-// 模型名区分大小写，渠道 /v1/models 列出的就是这一种写法。
-const DEFAULT_MODEL = 'DeepSeek-V4.1-Flash-1017';
+// DeepSeek 官方渠道（api.deepseek.com 与 /v1 等价），模型名即 /v1/models 列出的 id。
+const DEFAULT_MODEL = 'deepseek-flash';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TIMEOUT_MS = 45_000;
-const DEEPSEEK_API_URL = 'https://moyu.cn/v1/chat/completions';
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 
-// 写死的 API Key（来自 moyu.cn 渠道）
-const HARDCODED_API_KEY = 'sk-PBqt9sFeTGaXCaiSUk0RLVwdxONtRzL3ymfVefVw2i1YAzXw';
+// 写死的 API Key（DeepSeek 官方渠道）
+const HARDCODED_API_KEY = 'sk-58db45c345854831a2fb31ac8859080e';
 
 function composePrompt(input: LlmCallInput): string {
   const parts: string[] = [input.instruction];
