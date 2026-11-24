@@ -311,7 +311,9 @@ export function application(deps: Deps) {
 
     if (path === '/views/index' && request.method === 'GET') {
       const viewer = await resolveViewer(request, db, BackendError);
-      return projectIndex(db, viewer, BackendError);
+      return projectIndex(db, viewer, BackendError, {
+        includeArchived: url.searchParams.get('include_archived') === '1',
+      });
     }
 
     if (path === '/views/project' && request.method === 'GET') {

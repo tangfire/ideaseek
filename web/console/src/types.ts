@@ -52,6 +52,10 @@ export interface ProjectIndexEntry {
   title: string;
   visibility: 'private' | 'link' | 'listed';
   last_sync_at: string | null;
+  /** 已归档（D4 软删）：只有打开"显示已归档"时才会出现。 */
+  archived?: boolean;
+  /** 是不是我自己的项目——平台演示不是，行上就不该摆改/归档按钮。 */
+  owned?: boolean;
   latest_run: RunSummary | null;
 }
 

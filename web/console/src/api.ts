@@ -13,6 +13,7 @@ export type ApiCode =
   | 'no_access'
   | 'not_found'
   | 'invalid_input'
+  | 'conflict'
   | 'rate_limited'
   | 'service_unavailable'
   | 'invalid_response'
@@ -31,10 +32,11 @@ export class ApiError extends Error {
 }
 
 const MESSAGES: Record<ApiCode, string> = {
-  login_required: '需要登录 Qoder 后才能读取这份投影。',
+  login_required: '请先登录后再访问。',
   no_access: '当前账号没有这个项目的读取权限。',
   not_found: '云端没有这个对象——可能是投影尚未同步，或已被删除。',
   invalid_input: '填写的内容不符合要求，请检查后重试。',
+  conflict: '该操作与当前状态冲突，请刷新后重试。',
   rate_limited: '请求过于频繁，稍后自动重试。',
   service_unavailable: '云端服务暂时不可用，请稍后重试。',
   invalid_response: '云端返回了无法解析的响应。',
@@ -47,6 +49,7 @@ function codeFor(status: number, body?: string): ApiCode {
   if (status === 404) return 'not_found';
   // 400 是输入问题，不是网络问题：映射成 network 会把"没填对"说成"连不上云端"。
   if (status === 400) return 'invalid_input';
+  if (status === 409) return 'conflict';
   if (status === 429) return 'rate_limited';
   if (status >= 500) return 'service_unavailable';
   return body === 'invalid_json' ? 'invalid_response' : 'network';

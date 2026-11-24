@@ -12,6 +12,7 @@ import type {
   ClaimRow,
   ExperimentResult,
   ProtocolSummary,
+  ProjectIndexEntry,
   ProjectView,
   RunSummary,
   ApprovalRequest,
@@ -28,6 +29,7 @@ import {
   SettingsPanel,
   StepPump,
 } from './panels';
+import { AuthPanel, RequireAuth, logout, useMe } from './auth';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -679,6 +681,7 @@ function HomePage() {
 
 function ConsoleLayout({ children }: { children: ReactElement }) {
   const [location] = useLocation();
+  const me = useMe();
   const currentPath =
     location === '/console' || location === '/console/'
       ? '/console'
@@ -705,6 +708,30 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
             </a>
           </li>
         </ul>
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">账号</div>
+          <ul className="sidebar-nav">
+            <li>
+              <span style={{ padding: '8px 16px', fontSize: 13, display: 'block' }}>
+                {me.data?.username ?? '—'}
+              </span>
+            </li>
+            <li>
+              <a
+                href="#/login"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void logout().then(() => {
+                    window.location.hash = '#/login';
+                    window.location.reload();
+                  });
+                }}
+              >
+                退出登录
+              </a>
+            </li>
+          </ul>
+        </div>
         <div className="sidebar-section">
           <div className="sidebar-section-title">文档</div>
           <ul className="sidebar-nav">
@@ -754,10 +781,110 @@ function runFilter(run: RunSummary | null): (typeof LIST_FILTERS)[number] {
   return '需人工';
 }
 
+/**
+ * 行内改名 / 归档 / 恢复（§5.2-5.3）。只有自己的项目才渲染操作——
+ * 平台演示不是你的，在它上面摆"归档"只会让人误伤入口。
+ * 归档必须把标题原样打一遍（服务端也这么校验），防手滑。
+ */
+function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChanged: () => void }) {
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(project.title);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!project.owned) return <span className="muted" style={{ fontSize: 11 }}>—</span>;
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      setRenaming(false);
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rename = () =>
+    run(async () => {
+      const title = draft.trim();
+      if (!title || title === project.title) return;
+      await mutateJson(`/functions/v1/app/projects/${encodeURIComponent(project.external_id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      });
+    });
+
+  const archive = () =>
+    run(async () => {
+      const confirm = window.prompt(`归档「${project.title}」？请输入项目标题确认：`);
+      if (confirm === null) return;
+      await mutateJson(
+        `/functions/v1/app/projects/${encodeURIComponent(project.external_id)}?confirm=${encodeURIComponent(confirm)}`,
+        { method: 'DELETE' },
+      );
+    });
+
+  const restore = () =>
+    run(() =>
+      mutateJson(`/functions/v1/app/projects/${encodeURIComponent(project.external_id)}/restore`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    );
+
+  if (renaming) {
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={(event) => event.stopPropagation()}>
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          style={{ width: 140 }}
+          aria-label="新标题"
+        />
+        <button className="btn-primary" disabled={busy} onClick={rename}>
+          保存
+        </button>
+        <button className="btn-secondary" onClick={() => { setDraft(project.title); setRenaming(false); }}>
+          取消
+        </button>
+        {error ? <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>{error}</span> : null}
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 6 }} onClick={(event) => event.stopPropagation()}>
+      {project.archived ? (
+        <button className="btn-secondary" disabled={busy} onClick={restore}>
+          恢复
+        </button>
+      ) : (
+        <>
+          <button className="btn-secondary" disabled={busy} onClick={() => setRenaming(true)}>
+            改名
+          </button>
+          <button className="btn-danger" disabled={busy} onClick={archive}>
+            归档
+          </button>
+        </>
+      )}
+      {error ? <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>{error}</span> : null}
+    </span>
+  );
+}
+
 function ConsoleHome() {
+  const [showArchived, setShowArchived] = useState(false);
   const query = useQuery({
-    queryKey: ['index'],
-    queryFn: () => requestJson<IndexView>('/functions/v1/app/views/index'),
+    queryKey: ['index', showArchived],
+    queryFn: () =>
+      requestJson<IndexView>(
+        `/functions/v1/app/views/index${showArchived ? '?include_archived=1' : ''}`,
+      ),
   });
   const [, navigate] = useLocation();
   const [creating, setCreating] = useState(false);
@@ -765,6 +892,9 @@ function ConsoleHome() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('最近同步');
   const [layout, setLayout] = useState<'列表' | '卡片'>('列表');
+  const invalidateIndex = () => {
+    void query.refetch();
+  };
 
   const projects = (query.data?.projects ?? [])
     .filter((project) => (filter === '全部' ? true : runFilter(project.latest_run) === filter))
@@ -824,6 +954,14 @@ function ConsoleHome() {
         <button className="btn-primary" onClick={() => setCreating(!creating)}>
           {creating ? '收起' : '新建项目'}
         </button>
+        <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          显示已归档
+        </label>
       </div>
 
       <ProvisioningList />
@@ -864,13 +1002,14 @@ function ConsoleHome() {
               <th>同步时间</th>
               <th>状态</th>
               <th>可见性</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {projects.map((project) => (
               <tr
                 key={project.external_id}
-                style={{ cursor: 'pointer' }}
+                style={{ cursor: 'pointer', opacity: project.archived ? 0.55 : 1 }}
                 onClick={() => navigate(`/p/${project.external_id}`)}
               >
                 <td>
@@ -882,6 +1021,11 @@ function ConsoleHome() {
                       style={{ marginLeft: 8, fontSize: 10 }}
                     >
                       演示
+                    </span>
+                  ) : null}
+                  {project.archived ? (
+                    <span className="status-chip" data-state="idle" style={{ marginLeft: 8, fontSize: 10 }}>
+                      已归档
                     </span>
                   ) : null}
                   <div className="muted mono" style={{ fontSize: 11 }}>
@@ -898,6 +1042,9 @@ function ConsoleHome() {
                 </td>
                 <td>
                   <VisibilityBadge visibility={project.visibility} />
+                </td>
+                <td>
+                  <RowActions project={project} onChanged={invalidateIndex} />
                 </td>
               </tr>
             ))}
@@ -934,6 +1081,9 @@ function ConsoleHome() {
                 <span className="muted" style={{ fontSize: 11 }}>
                   {ago(project.last_sync_at)}同步
                 </span>
+              </div>
+              <div style={{ marginTop: 8 }} onClick={(event) => event.stopPropagation()}>
+                <RowActions project={project} onChanged={invalidateIndex} />
               </div>
             </div>
           ))}
@@ -2343,8 +2493,13 @@ function TokenManager({ projectId }: { projectId: string }) {
 
 export function App() {
   const [location] = useLocation();
+  const isLogin = location === '/login' || location.startsWith('/login');
   const isConsole =
     location === '/console' || location === '/console/' || location.startsWith('/p/');
+
+  if (isLogin) {
+    return <AuthPanel />;
+  }
 
   if (!isConsole) {
     return (
@@ -2357,16 +2512,18 @@ export function App() {
   }
 
   return (
-    <ConsoleLayout>
-      <Switch>
-        <Route path="/p/:id">{(params: { id: string }) => <Project id={params.id} />}</Route>
-        <Route path="/console">
-          <ConsoleHome />
-        </Route>
-        <Route path="/">
-          <ConsoleHome />
-        </Route>
-      </Switch>
-    </ConsoleLayout>
+    <RequireAuth>
+      <ConsoleLayout>
+        <Switch>
+          <Route path="/p/:id">{(params: { id: string }) => <Project id={params.id} />}</Route>
+          <Route path="/console">
+            <ConsoleHome />
+          </Route>
+          <Route path="/">
+            <ConsoleHome />
+          </Route>
+        </Switch>
+      </ConsoleLayout>
+    </RequireAuth>
   );
 }

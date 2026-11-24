@@ -238,7 +238,12 @@ function gapBefore(ordered: { seq: number }[]): number[] {
   return ordered.map((row, index) => (index === 0 ? 0 : Math.max(0, row.seq - ordered[index - 1]!.seq - 1)));
 }
 
-export async function projectIndex(db: Db, viewer: Viewer, BackendError: BackendErrorLike): Promise<Response> {
+export async function projectIndex(
+  db: Db,
+  viewer: Viewer,
+  BackendError: BackendErrorLike,
+  opts?: { includeArchived?: boolean },
+): Promise<Response> {
   const visible = rows<ProjectRow>(
     await db
       .from<ProjectRow>('cloud_project')
@@ -247,7 +252,8 @@ export async function projectIndex(db: Db, viewer: Viewer, BackendError: Backend
       .limit(200),
     BackendError,
   ).filter((project) => {
-    if (project.archived_at) return false;
+    // 归档默认不进任何人的列表；Owner 打开"显示已归档"才带出来（否则没有恢复入口）。
+    if (project.archived_at && !opts?.includeArchived) return false;
     // D1：列表只放自己的 + 平台演示。别人的 listed 项目仍可直链读（L2），
     // 但不混进个人列表——"登录了只能看到自己的内容"，列表也不再被别人的项目塞满。
     return (
@@ -279,6 +285,9 @@ export async function projectIndex(db: Db, viewer: Viewer, BackendError: Backend
       title: project.title,
       visibility: project.visibility,
       last_sync_at: project.last_sync_at,
+      archived: Boolean(project.archived_at),
+      // 前端据此决定显示不显示改/归档按钮：平台演示不是你的，别在它上面摆操作。
+      owned: viewer.ownerId !== null && viewer.owner_id === project.owner_id,
       projection_level: full ? 'full' : 'l2',
       latest_run: latest
         ? full

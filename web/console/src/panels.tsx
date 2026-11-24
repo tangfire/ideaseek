@@ -70,54 +70,6 @@ function ago(iso: string | null): string {
   return `${Math.round(hours / 24)} 天前`;
 }
 
-/**
- * 排一条命令。
- *
- * `command_id` 在**调用时**生成并随变量传进 mutationFn，不在 mutationFn 里生成：
- * QueryClient 对失败请求会重试一次，如果在里面生成，重试就变成两条不同幂等键的
- * 命令，`run_start` 那种带真实花费的动作重放一次就是双倍成本（NFR-06）。
- */
-function useEnqueue(projectId: string) {
-  const client = useQueryClient();
-  const mutation = useMutation({
-    mutationFn: (input: { type: string; commandId: string; payload: Record<string, unknown> }) =>
-      mutateJson<{ ok: boolean; message?: string; replayed?: boolean; payload_mismatch?: boolean }>(
-        `${APP}/commands/${input.type}`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            external_id: projectId,
-            command_id: input.commandId,
-            ...input.payload,
-          }),
-        },
-      ),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ['commands', projectId] });
-      void client.invalidateQueries({ queryKey: ['agent', projectId] });
-    },
-  });
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const submit = (type: string, payload: Record<string, unknown> = {}) => {
-    const commandId = crypto.randomUUID();
-    setNotice(null);
-    mutation.mutate({ type, commandId, payload });
-  };
-
-  useEffect(() => {
-    if (mutation.isSuccess) {
-      setNotice(
-        mutation.data?.payload_mismatch
-          ? '同一个 command_id 已经排过一条不同载荷的命令：返回原记录，没有排第二条'
-          : (mutation.data?.message ?? '命令已提交，云端执行中'),
-      );
-    }
-  }, [mutation.isSuccess, mutation.data]);
-
-  return { submit, notice, pending: mutation.isPending, error: mutation.error as Error | null };
-}
-
 function ErrorLine({ error }: { error: Error | null }) {
   if (!error) return null;
   const code = error instanceof ApiError ? error.code : 'network';
@@ -264,12 +216,13 @@ export function ProvisioningList() {
 // --------------------------------------------------------------------------- 设置
 
 export function SettingsPanel({ projectId, view }: { projectId: string; view: ProjectView }) {
-  const { submit, notice, pending, error } = useEnqueue(projectId);
+  const client = useQueryClient();
   const [title, setTitle] = useState(view.project.title);
   const [question, setQuestion] = useState(view.project.question ?? '');
   const [strategy, setStrategy] = useState(view.project.strategy ?? 'standard');
   const [autonomy, setAutonomy] = useState(view.project.autonomy ?? 'guided');
   const [visibility, setVisibility] = useState(view.visibility);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const patch = () => {
     const body: Record<string, unknown> = {};
@@ -281,8 +234,37 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
     return body;
   };
 
+  // 保存 = PATCH /projects/{id}，云端直接改投影（不再入队——队列没有执行者）。
+  const save = useMutation({
+    mutationFn: () =>
+      mutateJson<{ ok: boolean }>(`${APP}/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch()),
+      }),
+    onSuccess: async () => {
+      setNotice('已保存');
+      await client.invalidateQueries({ queryKey: ['project', projectId] });
+      await client.invalidateQueries({ queryKey: ['index'] });
+    },
+    onError: (err: Error) => setNotice(`保存失败：${err.message}`),
+  });
+
+  const archive = useMutation({
+    mutationFn: (confirm: string) =>
+      mutateJson<{ ok: boolean }>(
+        `${APP}/projects/${encodeURIComponent(projectId)}?confirm=${encodeURIComponent(confirm)}`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: async () => {
+      setNotice('已归档，可在项目列表"显示已归档"里恢复');
+      await client.invalidateQueries({ queryKey: ['index'] });
+    },
+    onError: (err: Error) => setNotice(`归档失败：${err.message}`),
+  });
+
   const dirty = Object.keys(patch()).length > 0;
   const downgraded = visibility === 'listed' && view.visibility !== 'listed';
+  const pending = save.isPending || archive.isPending;
 
   if (view.writable !== true) {
     return (
@@ -368,14 +350,19 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
         <button
           className="btn-primary"
           disabled={pending || !dirty}
-          onClick={() => submit('project_settings', patch())}
+          onClick={() => save.mutate()}
         >
-          {pending ? '保存中…' : '保存修改'}
+          {save.isPending ? '保存中…' : '保存修改'}
         </button>
         <button
           className="btn-danger"
           disabled={pending}
-          onClick={() => submit('project_archive', {})}
+          onClick={() => {
+            const confirm = window.prompt(
+              `归档「${view.project.title}」后列表与读接口都会 404（可恢复）。请输入项目标题确认：`,
+            );
+            if (confirm !== null) archive.mutate(confirm);
+          }}
         >
           归档项目
         </button>
@@ -385,7 +372,7 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
           </span>
         ) : null}
       </div>
-      <ErrorLine error={error} />
+      <ErrorLine error={save.error instanceof Error ? save.error : null} />
     </div>
   );
 }
