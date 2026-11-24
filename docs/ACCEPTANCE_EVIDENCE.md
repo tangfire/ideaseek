@@ -442,3 +442,5 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 结果: PARTIAL（I26 修复且回归绿；quick v10/smoke v11 带同跑对照注册；消融 v2 真实值；analyze/verdict/full-run/kill-continue 移交）
 证据: docs/ACCEPTANCE_EVIDENCE.md L412-L444
 摘要: smoke 入口不解析 --ablate 致六消融全等主体（I26），改 argparse+回显+同跑对照输出并 checkpoint；quick 23.0485、smoke 23.7179 均对 22.5314 为正差，necessary 消融 22.5314 drop>0；下一步 analyze→（supported 则）full plan/fairness/approve/run→kill-continue→paper results。
+
+**推送 BLOCKED（2026-11-24，如实记录）**：本节与 I26 修复已本地提交 `941aaf7`（docs: STAGE 15 handoff），但 `git push origin main` 被 gitee 拒绝 `remote: [session-664a4c8b] Unauthorized`。根因：本实例为新实例，`~/.git-credentials` 仅含 modelscope 条目、无 gitee 凭据，环境亦无 gitee 凭据变量（仅查变量名，值零接触）。已尝试 2 次（后台 + 前台 60s 超时）均失败，按 3 次上限记 **BLOCKED**，停手。恢复：用户补 gitee 凭据（`git config --global credential.helper store` 已设；用户自行 push 一次或把凭据写入 `~/.git-credentials`，key 零接触照旧）后执行 `git pull --rebase origin main && git push origin main`；或由本地 agent 从 gitee 拉取后经上游同步。远端 `refs/heads/main` 当前为 `0d4d5b1`，本地领先 1（`941aaf7`）。
