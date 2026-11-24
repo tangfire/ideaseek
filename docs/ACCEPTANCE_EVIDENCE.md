@@ -408,3 +408,37 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 结果: PARTIAL（机制原型两 scale 均为正差、6 消融可执行；注册/verdict/full-run/kill-continue 移交下一会话）
 证据: docs/ACCEPTANCE_EVIDENCE.md L396-L410
 摘要: 卡片机制（Fisher 基+全局子空间聚合+投影原型、残差不对齐）已实现于 fedg.py；入口预跑 quick +0.52pp、smoke +1.19pp 胜同跑对照，necessary 消融方向正确；下一步 revise→check→双 scale 注册→analyze→full plan/fairness/approve/run→kill-continue 验证。
+
+## STAGE 15（续）— 主线 B 存档交接（2026-11-24，实例销毁前 · 交接节）
+
+**状态：双 scale 注册 + 消融矩阵已绑定修复后的入口（v2 真实分化值）；analyze → full-run 链移交下一会话。本节是冷启动交接。**
+
+前置恢复（本会话执行）：`git pull --rebase origin main`（0d4d5b1 顶）→ node 符号链接重放（`ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`，`node --version`=v24.19.0）→ `bash setup.sh` exit 0 → `ideaseek models test` → **GET /models → 200**（ref=env:DEEPSEEK_API_KEY presence，值零接触）。journey-a 现场全数在位：PACS 快照 data-4fc041ee92ee、协议 proto-3be3fbd2b749-v1、12 切片、fairness data-split aligned 已 confirm、comparison v2、fedg.py 机制版。
+
+**本轮修复 I26（工作区文件，journey-a 非 git 仓库、不入仓库 commit）**：
+
+| # | 现象 | 根因 | 处置 | 回归 | commit |
+|---|---|---|---|---|---|
+| I26 | `idea ablate --scale smoke` 六条消融**全部等于主体 23.7179**（与入口预跑 22.5314/23.2005/22.8999 不符）——mechanism ladder 会看到 drop=0，机制证据假阴性 | 平台给 smoke 命令追加 `--ablate <id>`（`src/idea/ablation.ts:170` commandSuffix），但该工作区 `src/smoke.py` **不解析 argv**，标志被静默忽略，每次消融都跑完整机制；且 smoke 主记录不带 baselines，smoke 规模拿不到同 scale 对照 | `smoke.py` 改 argparse（`--scale`/`--ablate`，未知标志容忍），ablate 路径转发 `compute_metrics` 并**回显 ablate id**；主路径改走 `compute_with_controls` 输出同跑对照（与 train.py 同源） | `src/tests/test_ablate_flag.py`（2 例：标志转发+回显、resolve_ablation 映射），工作区 unittest **6/6 绿**；手跑验证 raw=22.5314 / comm=22.8999 / main=23.7179+baselines 2 条 | 工作区修复；checkpoint v4 `sha256:6ee0a7cbfd9f25dece062fe82d97bd602b22d06bee4ceeba8749b4537001de51` |
+
+**注册（均在 codeHash 6ee0a7cb 下，check 五相三次全绿）**：`idea revise`（engineering，v4 机制摘要入版本链）→ NEEDS_REVISION→IMPLEMENTING→check → `experiment --scale quick` **v10 = 23.0485%**（in-run control 22.5314，Δ=+0.5171）→ 回走 → `experiment --scale smoke` **v11 = 23.7179%**（in-run control 22.5314，Δ=+1.1865）——**双 scale 同跑对照齐**（v10/v11 镜像均含 baselines，22.5314 亲验）。
+
+**消融矩阵重录（smoke，全部 succeeded v2，值已分化）**：两个 necessary 移除 = **22.5314**（vs 主体 23.7179，drop=+1.1865 ✓ 方向正确）；random-basis = 23.2005；comm-matched = 22.8999；full-feature = 22.5314；no-residual-alt = 22.5314。v1 旧记录（全等主体、I26 所致）保留在镜像中作为缺陷历史，分析按 ablationId 取最高版本（v2）。线性原型下两种必要移除数值重合的注记维持上一节所述（‖x−μ‖² 正交分解恒等，此实现层面可合并性留给 claim-audit/复核判断）。
+
+**现场快照（存档时点）**：idea `gen-fed-domain-shaft-prototype` = **ANALYZING v4** gate=CANDIDATE；check-report 五相 passed、codeHash 6ee0a7cb；registry main row = `idea-…-prototype` **v11**（smoke）。**`analysis.json` 仍是 v3 的陈旧 rejected（effect-insufficient）——analyze 会按新证据重算覆写，勿被误导。**
+
+**未完成（下一会话按序）**：
+1. `ideaseek idea analyze gen-fed-domain-shaft-prototype`——**阶梯静态预核（本会话推演、未实跑）**：main=最新成功 v11 smoke 23.7179、同 scale in-run 对照 22.5314 → Δ=+1.1865>0；coverage scales=[quick,smoke]、seeds=[42,43]、dataset=inputs:be2b0477dfd4c287f2；两个 necessary 消融同 scale 且 drop>0 → supports=true；对照无同值嫌疑（22.5314 同 methodId 多记录不构成 duplicate、且 ≠ 主体值）。**残差风险如实记**：dsh agent comparability review 可能判 NOT comparable——不过就如实记录再有界迭代（≤3 次记 BLOCKED），**不降门槛**。
+2. `full plan --idea gen-fed-domain-shaft-prototype` → **fairness 重建 + confirm**（新实验后 inputHash 已变，旧 confirm 失效）→ `full approve --confirm` → `full run`。
+3. **checkpoint/resume 验证**：run 中途 kill → `ideaseek continue` → 已完成任务不重做。
+4. `paper results` 导出复核。
+5. 按本文件格式补 STAGE 15 结果行，小 commit，push（只推 gitee；先 pull --rebase）。
+
+环境备注（新实例）：node 符号链接重放（命令见上）→ `bash setup.sh` → `ideaseek models test`（凭据在实例盘，丢则请用户 `ideaseek models setup`，200 后再进模型步骤）。journey-a 与仓库同在 /mnt/workspace 持久卷（journey-a **非** git 仓库，文件直接留存；11-20→11-24 跨实例一直在）。铁律照旧：key 零接触、证据 append-only、失败 3 次记 BLOCKED、只推 gitee。
+
+推送状态：本节随小 commit 推送；`git ls-remote origin main` 提交为准。
+
+=== STAGE 15（续）: 双 scale 注册 + 消融重录 ===
+结果: PARTIAL（I26 修复且回归绿；quick v10/smoke v11 带同跑对照注册；消融 v2 真实值；analyze/verdict/full-run/kill-continue 移交）
+证据: docs/ACCEPTANCE_EVIDENCE.md L412-L444
+摘要: smoke 入口不解析 --ablate 致六消融全等主体（I26），改 argparse+回显+同跑对照输出并 checkpoint；quick 23.0485、smoke 23.7179 均对 22.5314 为正差，necessary 消融 22.5314 drop>0；下一步 analyze→（supported 则）full plan/fairness/approve/run→kill-continue→paper results。
