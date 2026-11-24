@@ -517,6 +517,32 @@ test('云端 project_create 缺 name 返回 400', async () => {
   assert.ok(res.code.includes('invalid_input'), `错误码包含 invalid_input: ${res.code}`);
 });
 
+test('云端 project_create：研究问题留空（空串）等于没填，不是 400', async () => {
+  const { fake, as } = await build();
+  const res = await call(as(null), '/projects', web({
+    command_id: crypto.randomUUID(),
+    name: '没写研究问题的项目',
+    question: '',
+    strategy: 'standard',
+    autonomy: 'guided',
+  }));
+  // 前端始终带 question 字段，空串必须与省略同义，否则"不写研究问题"建不了项目。
+  assert.equal(res.status, 200, `空串应等价于省略字段，实际 ${res.status}: ${res.raw}`);
+  assert.equal(res.json.cloud_executed, true);
+
+  const created = fake.rowsOf('cloud_project').find((p) => p.title === '没写研究问题的项目');
+  assert.ok(created, '项目行已写入');
+  assert.equal(created.question, null, '没填就是 null，不落空串');
+  assert.equal(fake.rowsOf('cloud_run')[0]!.question, null, '运行同样不带研究问题');
+});
+
+test('云端 project_settings：清空研究问题（空串）不是 400', async () => {
+  const { fake, as } = await build();
+  const res = await call(as('owner-1'), '/commands/project_settings', web({ external_id: 'prj-listed', question: '' }));
+  assert.equal(res.status, 200, `清空应被接受，实际 ${res.status}: ${res.raw}`);
+  assert.deepEqual(fake.rowsOf('cloud_command')[0]!.payload, { question: null });
+});
+
 test('云端 project_create 的 command CAS 更新：并发重入只有一个成功', async () => {
   const { fake, as } = await build();
   const commandId = crypto.randomUUID();

@@ -147,6 +147,19 @@ function integer(value: unknown): number | null {
 }
 
 /**
+ * 可选文本字段的两态语义：**没填**（undefined / null / 纯空白）→ `null`；
+ * **填了** → 走 `text()` 清洗，清洗不过（凭据形状、超长、非字符串）才算非法。
+ *
+ * 界面上"研究问题可以留空"，而前端始终把 `question` 字段带上，空串必须等价于
+ * 没填——按非法输入拒掉的话，不写问题就建不了项目。
+ */
+function optionalText(value: unknown, cap: number, field: string, fail: (field: string) => never): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string' && value.trim().length === 0) return null;
+  return text(value, cap) ?? fail(field);
+}
+
+/**
  * 每种命令一张最小形状表。返回的是**清洗过的**载荷——未列出的字段一律丢弃，
  * 不做透传：透传等于把任意 JSON 交给 Agent 的解释器。
  */
@@ -162,8 +175,7 @@ export function validatePayload(
   switch (type) {
     case 'project_create': {
       const name = text(body.name, 80) ?? fail('name');
-      const question = body.question === undefined ? null : text(body.question, TEXT_CAP);
-      if (body.question !== undefined && question === null) fail('question');
+      const question = optionalText(body.question, TEXT_CAP, 'question', fail);
       const strategy = body.strategy ?? 'standard';
       if (strategy !== 'starter' && strategy !== 'standard' && strategy !== 'research') fail('strategy');
       const autonomy = body.autonomy ?? 'guided';
@@ -173,7 +185,8 @@ export function validatePayload(
     case 'project_settings': {
       const patch: Record<string, unknown> = {};
       if (body.title !== undefined) patch.title = text(body.title, 200) ?? fail('title');
-      if (body.question !== undefined) patch.question = text(body.question, TEXT_CAP) ?? fail('question');
+      // 空串 = 清空研究问题，与 project_create 同一条语义。
+      if (body.question !== undefined) patch.question = optionalText(body.question, TEXT_CAP, 'question', fail);
       if (body.strategy !== undefined) {
         if (!['starter', 'standard', 'research'].includes(String(body.strategy))) fail('strategy');
         patch.strategy = body.strategy;
