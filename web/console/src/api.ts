@@ -83,12 +83,43 @@ function withShare(path: string): string {
   return `${path}${path.includes('?') ? '&' : '?'}share=${encodeURIComponent(shareToken)}`;
 }
 
+/**
+ * 会话 token 的前端存放。
+ *
+ * 网关剥 `cookie` 头（线上 `/probe/ingress` 实测），所以会话只能走自定义头
+ * `x-ideaseek-session`；token 由 /auth/login|register 的 JSON 返回，存在
+ * localStorage 里跨刷新存活。Cookie 照发，某天网关不剥了就自动多一条通路。
+ */
+const SESSION_KEY = 'ideaseek_session';
+
+export function setSessionToken(token: string | null): void {
+  try {
+    if (token) window.localStorage.setItem(SESSION_KEY, token);
+    else window.localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* 隐私模式下 localStorage 不可用：退化成内存态，刷新后需重新登录 */
+  }
+}
+
+export function getSessionToken(): string | null {
+  try {
+    return window.localStorage.getItem(SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function sessionHeaders(): Record<string, string> {
+  const token = getSessionToken();
+  return token ? { 'x-ideaseek-session': token } : {};
+}
+
 export async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(withShare(path), {
       credentials: 'same-origin',
-      headers: { accept: 'application/json' },
+      headers: { accept: 'application/json', ...sessionHeaders() },
       signal,
     });
   } catch {
@@ -128,7 +159,12 @@ export async function mutateJson<T>(
     response = await fetch(path, {
       method: init.method,
       credentials: 'same-origin',
-      headers: { accept: 'application/json', 'content-type': 'application/json', ...init.headers },
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        ...sessionHeaders(),
+        ...init.headers,
+      },
       body: init.body,
     });
   } catch {
@@ -148,10 +184,4 @@ export async function mutateJson<T>(
     throw new ApiError('invalid_response', MESSAGES.invalid_response, response.status);
   }
   return payload as T;
-}
-
-/** 401 时给用户的出口：网关登录入口只接受本站相对回跳路径。 */
-export function loginHref(returnPath: string): string {
-  const local = returnPath.startsWith('/') && !returnPath.startsWith('//') ? returnPath : '/';
-  return `/__qoder_auth/start?return_path=${encodeURIComponent(local)}`;
 }

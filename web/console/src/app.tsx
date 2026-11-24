@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Route, Switch, useLocation } from 'wouter';
-import { ApiError, loginHref, requestJson, mutateJson } from './api';
+import { ApiError, requestJson, mutateJson } from './api';
 import { openLive, type Transport } from './live';
 import type {
   EventRow,
@@ -970,7 +970,7 @@ function ConsoleHome() {
       {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
       {query.error instanceof ApiError && query.error.code === 'login_required' ? (
         <p>
-          <a href={loginHref('/#/console')}>登录 Qoder</a> 后继续。
+          <a href="#/login">登录</a> 后继续。
         </p>
       ) : null}
       {query.error &&

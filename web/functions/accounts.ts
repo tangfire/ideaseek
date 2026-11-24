@@ -15,6 +15,15 @@ import type { BackendErrorLike, Db } from './deps.ts';
 import { rows } from './deps.ts';
 
 export const SESSION_COOKIE = 'is_session';
+/**
+ * 会话的主传输通道。
+ *
+ * M0 探针（`/probe/ingress`，2026-11-24 线上实测）：网关**剥掉 `cookie` 头**，
+ * Function 里 `request.headers.keys()` 根本没有它——和 SPIKE §10 实测剥
+ * `Authorization` 是同一类行为。所以会话 token 必须走自定义头；Cookie 仍照发
+ * （无害，某些路径能带上就当白捡），URL query 只留给将来 WS 握手用。
+ */
+export const SESSION_HEADER = 'x-ideaseek-session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 天
 const PBKDF2_ITERATIONS = 310_000; // OWASP 2023 对 PBKDF2-SHA256 的下限
 const MAX_FAILED_ATTEMPTS = 10;
@@ -154,8 +163,19 @@ async function issueSession(db: Db, request: Request, accountId: string): Promis
 // 会话解析（resolveViewer 的身份来源）
 // ---------------------------------------------------------------------------
 
+/** 会话 token 的三个来源：自定义头（主）、Cookie（白捡）、URL query（留给 WS）。 */
+export function tokenFromRequest(request: Request): string | null {
+  const header = request.headers.get(SESSION_HEADER);
+  if (header && header.length <= 512) return header.trim();
+  const cookie = parseCookies(request.headers.get('cookie'))[SESSION_COOKIE];
+  if (cookie) return cookie;
+  const query = new URL(request.url).searchParams.get('session');
+  if (query && query.length <= 512) return query;
+  return null;
+}
+
 /**
- * 有效会话 → `{ownerId, username}`；无 Cookie / 过期 / 已吊销 → null（= 匿名访客）。
+ * 有效会话 → `{ownerId, username}`；无 token / 过期 / 已吊销 → null（= 匿名访客）。
  * `username` 取自 `cloud_owner.email`（注册时把用户名写进这一列，作为邀请标识，
  * 见 views.ts resolveViewer 的 grant 匹配）。
  */
@@ -164,7 +184,7 @@ export async function sessionIdentity(
   db: Db,
   BackendError: BackendErrorLike,
 ): Promise<{ ownerId: string; username: string } | null> {
-  const token = parseCookies(request.headers.get('cookie'))[SESSION_COOKIE];
+  const token = tokenFromRequest(request);
   if (!token) return null;
 
   const session = rows<SessionRow>(
@@ -247,7 +267,9 @@ export async function registerAccount(
 
   const token = await issueSession(db, request, created.id);
   return Response.json(
-    { ok: true, username: created.username, owner_id: owner.id },
+    // session_token 走 JSON：网关剥 cookie 头（见 SESSION_HEADER 的实测注释），
+    // 前端拿到后放进 x-ideaseek-session 头。Cookie 照发，能带上算白捡。
+    { ok: true, username: created.username, owner_id: owner.id, session_token: token },
     { status: 201, headers: { 'set-cookie': sessionSetCookie(request, token) } },
   );
 }
@@ -300,7 +322,7 @@ export async function loginAccount(
 
   const token = await issueSession(db, request, account.id);
   return Response.json(
-    { ok: true, username: account.username, owner_id: owner.id },
+    { ok: true, username: account.username, owner_id: owner.id, session_token: token },
     { headers: { 'set-cookie': sessionSetCookie(request, token) } },
   );
 }
@@ -310,7 +332,7 @@ export async function logoutAccount(
   request: Request,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
-  const token = parseCookies(request.headers.get('cookie'))[SESSION_COOKIE];
+  const token = tokenFromRequest(request);
   if (token) {
     // 吊销而不是删行：留痕可审计，且同 token 再来一律失效。
     await db.from('cloud_session').update({ revoked_at: new Date().toISOString() }).eq('token_hash', await sha256Hex(token));
@@ -323,7 +345,7 @@ export async function authMe(
   request: Request,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
-  const token = parseCookies(request.headers.get('cookie'))[SESSION_COOKIE];
+  const token = tokenFromRequest(request);
   if (!token) fail(BackendError, 'login_required', 401);
 
   const session = rows<SessionRow>(

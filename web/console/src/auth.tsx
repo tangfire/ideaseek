@@ -10,7 +10,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type ReactElement } from 'react';
 import { useLocation } from 'wouter';
-import { ApiError } from './api';
+import { ApiError, getSessionToken, setSessionToken } from './api';
 
 const AUTH = '/functions/v1/app/auth';
 
@@ -31,12 +31,18 @@ const AUTH_ERRORS: Record<string, string> = {
 };
 
 async function authFetch(path: string, body?: unknown): Promise<Me> {
+  const token = getSessionToken();
   let response: Response;
   try {
     response = await fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
       credentials: 'same-origin',
-      headers: body === undefined ? { accept: 'application/json' } : { accept: 'application/json', 'content-type': 'application/json' },
+      headers: {
+        accept: 'application/json',
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        // 网关剥 cookie 头，会话只能走自定义头（见 api.ts 的注释）。
+        ...(token ? { 'x-ideaseek-session': token } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -49,10 +55,14 @@ async function authFetch(path: string, body?: unknown): Promise<Me> {
   } catch {
     throw new Error('云端返回了无法解析的响应。');
   }
+  // 登出无论如何都清本地 token：服务端已吊销，本地留着只会让下一次请求带一张死票。
+  if (path.endsWith('/logout')) setSessionToken(null);
   if (!response.ok || payload.ok !== true) {
     const code = String(payload.error ?? '');
     throw new Error(AUTH_ERRORS[code] ?? (response.status === 401 ? '请先登录。' : '操作失败，请稍后重试。'));
   }
+  // 登录/注册把会话 token 放在 JSON 里（网关剥 Cookie，只能这么带回来）。
+  if (typeof payload.session_token === 'string') setSessionToken(payload.session_token);
   return payload as unknown as Me;
 }
 
