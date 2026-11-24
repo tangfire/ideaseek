@@ -229,15 +229,39 @@ test('未知路径是 404，不是静默成功', async () => {
   assert.equal(miss.code, 'not_found');
 });
 
-test('匿名列表只出现 listed，且给的是 L2 投影', async () => {
-  const handle = (await build()).as(null);
-  const out = await call(handle, '/views/index');
-  assert.equal(out.status, 200);
-  const projects = out.json.projects as { external_id: string; projection_level: string; latest_run: Record<string, unknown> }[];
-  assert.deepEqual(projects.map((p) => p.external_id), ['prj-listed'], 'link 与 private 都不该进公开列表');
-  assert.equal(projects[0]!.projection_level, 'l2');
-  assert.equal('status' in (projects[0]!.latest_run ?? {}), false, 'run 状态是 L1');
-  assert.equal(out.raw.includes(String(SENTINEL_SPENT)), false);
+test('列表只放自己的 + 平台演示：别人的 listed 不进列表，直链仍可读', async () => {
+  const { fake, as } = await build();
+  // 平台演示 = 系统匿名 Owner 的 listed 项目（D1：它是入口，得在列表里，且置顶）
+  const anonOwner = fake.seed('cloud_owner', { email: '__anonymous__@system', display_name: 'Anonymous User' });
+  fake.seed('cloud_project', {
+    owner_id: anonOwner.id,
+    external_id: 'prj-demo',
+    title: '平台演示',
+    question: '演示问题',
+    strategy: 'standard',
+    autonomy: 'guided',
+    visibility: 'listed',
+    archived_at: null,
+    last_sync_at: '2026-11-23T00:00:00.000Z',
+  });
+
+  // 匿名访客：只看得到演示；owner-1 的 listed 项目不混进他的列表。
+  const anonOut = await call(as(null), '/views/index');
+  assert.equal(anonOut.status, 200);
+  const anonProjects = anonOut.json.projects as { external_id: string }[];
+  assert.deepEqual(anonProjects.map((p) => p.external_id), ['prj-demo'], 'D1：别人的 listed 不进别人的列表');
+  assert.equal(anonOut.raw.includes(String(SENTINEL_SPENT)), false, '列表里的 L1 成本不外泄');
+
+  // 登录的 owner-1：自己的三个项目 + 置顶的演示；stranger 的私有项目一个都不出现。
+  const ownerOut = await call(as('owner-1'), '/views/index');
+  const ownerProjects = ownerOut.json.projects as { external_id: string; projection_level: string }[];
+  assert.equal(ownerProjects[0]!.external_id, 'prj-demo', '演示置顶');
+  assert.deepEqual(
+    ownerProjects.map((p) => p.external_id).sort(),
+    ['prj-demo', 'prj-link', 'prj-private', 'prj-listed'].sort(),
+    '自己的全在，别人的不在',
+  );
+  assert.equal(ownerProjects.find((p) => p.external_id === 'prj-listed')!.projection_level, 'full', '自己读自己是 full');
 });
 
 test('匿名读私有项目 = 不存在；读 listed 时 L1 哨兵不得出现在响应里', async () => {

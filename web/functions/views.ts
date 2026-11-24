@@ -120,18 +120,41 @@ interface GrantRow {
  */
 export type ReadLevel = 'full' | 'l2';
 
+/**
+ * 平台演示项目：系统匿名 Owner 名下的 `listed` 项目。
+ *
+ * 匿名创建已在 M1 关闭（commands.ts 不再落到系统匿名 Owner），所以这个集合里
+ * 只剩演示项目本身——这不是一张会长的白名单，而是一条由数据形状定义的判定。
+ * 它决定两件事：演示对所有人完整可见（评委看到的演示不是降级投影），
+ * 以及**登录用户**可以驱动它（D2：访客只读，避免陌生人烧 token）。
+ */
+export function isPlatformDemo(viewer: Viewer, project: ProjectRow): boolean {
+  return project.visibility === 'listed' && project.owner_id === viewer.anonymousOwnerId;
+}
+
+/**
+ * 谁能打开这个项目。判定只有五条，按"越具体越优先"排列：
+ *   1. Owner 自己；2. 被邀读者（full 或降级两档都能打开）；3. 持未记名 share token；
+ *   4. `listed` 公开项目；其余一律拒绝。
+ *
+ * 拒绝后的语义由 `deniesAsAbsent` 决定（匿名 404、登录者 403）。
+ * 这里曾是一句 `return true`（"临时放开所有权限"）——那是"随便注册就能看别人东西"的根因。
+ */
 export function canRead(viewer: Viewer, project: ProjectRow): boolean {
-  // 临时放开所有权限，允许任何用户访问任何项目
-  return true;
+  if (viewer.ownerId && viewer.ownerId === project.owner_id) return true;
+  if (viewer.grantedProjectIds.includes(project.id) || viewer.limitedProjectIds.includes(project.id)) return true;
+  if (viewer.shareProjectId === project.id) return true;
+  if (project.visibility === 'listed') return true;
+  return false;
 }
 
 export function readLevel(viewer: Viewer, project: ProjectRow): ReadLevel {
   if (viewer.ownerId && viewer.ownerId === project.owner_id) return 'full';
-  // 匿名用户对自己创建的项目有 full 权限
-  if (!viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return 'full';
-  // 登录用户访问匿名 owner 的项目也有 full 权限
-  if (viewer.ownerId && viewer.anonymousOwnerId && viewer.anonymousOwnerId === project.owner_id) return 'full';
-  return viewer.grantedProjectIds.includes(project.id) ? 'full' : 'l2';
+  if (viewer.grantedProjectIds.includes(project.id)) return 'full';
+  // 演示项目对所有人完整可见：评委看到的演示要是真投影，不是残缺的 L2。
+  if (isPlatformDemo(viewer, project)) return 'full';
+  // share token、viewer 级授权、listed 直链都只到 L2——转发一条链接不该把 L1 交出去。
+  return 'l2';
 }
 
 /** 降级说明写进响应，让前端能诚实标注"这是 L2 投影"而不是"数据就是空的"。 */
@@ -216,13 +239,17 @@ export async function projectIndex(db: Db, viewer: Viewer, BackendError: Backend
     BackendError,
   ).filter((project) => {
     if (project.archived_at) return false;
-    // 列表页只列 Owner 自己的、被邀的、公开 listed 的，以及匿名用户自己创建的。
-    return viewer.ownerId === project.owner_id 
-      || (!viewer.ownerId && viewer.anonymousOwnerId === project.owner_id)  // 匿名用户看自己创建的
-      || viewer.grantedProjectIds.includes(project.id) 
-      || viewer.limitedProjectIds.includes(project.id) 
-      || project.visibility === 'listed';
+    // D1：列表只放自己的 + 平台演示。别人的 listed 项目仍可直链读（L2），
+    // 但不混进个人列表——"登录了只能看到自己的内容"，列表也不再被别人的项目塞满。
+    return (
+      (viewer.ownerId !== null && viewer.ownerId === project.owner_id) ||
+      viewer.grantedProjectIds.includes(project.id) ||
+      viewer.limitedProjectIds.includes(project.id) ||
+      isPlatformDemo(viewer, project)
+    );
   });
+  // 演示置顶：它是入口，不该被自己的项目或同步时间挤到第二屏。
+  visible.sort((a, b) => Number(isPlatformDemo(viewer, b)) - Number(isPlatformDemo(viewer, a)));
 
   const projects = [];
   for (const project of visible) {

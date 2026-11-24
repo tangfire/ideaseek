@@ -602,7 +602,7 @@ export function application(deps: Deps) {
         });
       }
 
-      return stepView(db, body, BackendError, ownerId, viewer.anonymousOwnerId);
+      return stepView(db, body, BackendError, ownerId, viewer.anonymousOwnerId, viewer.ownerId);
     }
 
     throw new BackendError('not_found', 404);

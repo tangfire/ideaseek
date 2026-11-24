@@ -13,6 +13,7 @@ import { getUser } from '../auth.mjs';
 import { gatewayUser } from '../identity.ts';
 import { application } from '../routes.ts';
 import { createFakeDb } from '../dev/fake-db.ts';
+import { ensureSession } from '../dev/test-session.ts';
 
 interface ContextPayload {
   user_id: string;
@@ -91,7 +92,7 @@ test('伪造的头一律 403', () => {
   }
 });
 
-test('映射接到读路径：同一个项目，Owner 读到私有、别人 404', async () => {
+test('映射接到读路径：会话 Cookie 让 Owner 读到私有；平台身份头不再算数', async () => {
   const fake = createFakeDb();
   const owner = fake.seed('cloud_owner', { email: 'u-8842', display_name: null });
   fake.seed('cloud_project', {
@@ -108,18 +109,19 @@ test('映射接到读路径：同一个项目，Owner 读到私有、别人 404'
     getUser: gatewayUser,
     upgradeWebSocket: () => assert.fail('不该升级'),
   });
+  const url = 'https://site.test/functions/v1/app/views/project?external_id=prj-private';
+  const cookie = (await ensureSession(fake.db, 'u-8842')).cookie;
 
-  const asOwner = await run(
-    handle,
-    new Request('https://site.test/functions/v1/app/views/project?external_id=prj-private', {
-      headers: { 'x-qoder-user-context': contextHeader() },
-    }),
-  );
+  const asOwner = await run(handle, new Request(url, { headers: { cookie } }));
   assert.equal(asOwner.status, 200);
   assert.equal(asOwner.json.projection_level, 'full');
 
+  // D3：平台网关身份退出业务鉴权——只带头、没有会话，等于匿名。
+  const headerOnly = await run(handle, new Request(url, { headers: { 'x-qoder-user-context': contextHeader() } }));
+  assert.equal(headerOnly.status, 404, '平台身份头不再是万能钥匙');
+
   // 匿名被拒 = 当作不存在：私有项目的存在性本身就是信息。
-  const asAnonymous = await run(handle, new Request('https://site.test/functions/v1/app/views/project?external_id=prj-private'));
+  const asAnonymous = await run(handle, new Request(url));
   assert.equal(asAnonymous.status, 404);
   assert.equal(asAnonymous.code, 'not_found');
 });

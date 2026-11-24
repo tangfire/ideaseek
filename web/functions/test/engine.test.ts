@@ -470,8 +470,8 @@ test('handleStep 失败阻断：重试耗尽的任务不允许推进阶段', asy
   assert.ok(events.some((e) => e.type === 'run_blocked'));
 });
 
-test('handleStep 归属：别人的 run 不能步进；无定位参数不动任何 run', async () => {
-  const { fake, owner, run } = setup();
+test('handleStep 归属：别人的 run 不能步进；演示只对登录用户开放', async () => {
+  const { fake, owner, project, run } = setup();
 
   const stranger = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'not-the-owner');
   assert.equal(stranger.action, 'idle');
@@ -479,7 +479,12 @@ test('handleStep 归属：别人的 run 不能步进；无定位参数不动任�
   const noTarget = await handleStep(fake.db, fake.BackendError, {}, 'not-the-owner');
   assert.equal(noTarget.action, 'idle', '兜底"任意活跃 run"会让访客步进别人的项目');
 
-  // 系统匿名 Owner 的演示项目对登录用户放开（与读侧 readLevel 的演示放开一致）。
+  // D2：演示项目（系统匿名 Owner 的 listed 项目）只读给访客——sessionOwnerId=null 就是没有会话。
+  project.visibility = 'listed';
+  const visitor = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id, owner.id, null);
+  assert.equal(visitor.action, 'idle', '访客点"继续运行"必须无效，否则陌生人也能烧 token');
+
+  // 登录用户可以驱动平台演示：评委看演示时由账号来跑。
   const shared = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'logged-in-visitor', owner.id);
   assert.equal(shared.action, 'advanced');
 });

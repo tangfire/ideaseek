@@ -56,10 +56,17 @@ export async function handleStep(
   body: StepRequest,
   ownerId: string,
   anonymousOwnerId?: string | null,
+  /**
+   * 会话里的 Owner（null = 访客）。驱动权只认它，不认配额主体 ownerId——
+   * 匿名请求的 ownerId 会被折算成系统匿名 Owner，拿它判驱动权等于又开一次演示放开。
+   * 未传时沿用 ownerId（老用例把驱动者当 ownerId 传）。
+   */
+  sessionOwnerId?: string | null,
 ): Promise<StepResult> {
   const engine = new CloudEngine(db, BackendError);
+  const driverId = sessionOwnerId === undefined ? ownerId : sessionOwnerId;
 
-  const run = await resolveRun(engine, body, ownerId, anonymousOwnerId);
+  const run = await resolveRun(engine, body, driverId, anonymousOwnerId);
   if (!run) return { action: 'idle', message: '没有活跃的运行' };
   if (run.status === 'succeeded' || run.phase_tag === 'COMPLETED') {
     return { action: 'completed', run, message: '运行已完成' };
@@ -112,15 +119,30 @@ export async function handleStep(
   return { action: 'idle', run, message: `阶段 ${run.phase_tag} 无待执行任务` };
 }
 
-/** 归属判定与读侧的演示放开一致：自己的项目，或系统匿名 Owner 的共享演示项目。 */
-function canDrive(projectOwnerId: string, ownerId: string, anonymousOwnerId?: string | null): boolean {
-  return projectOwnerId === ownerId || (anonymousOwnerId != null && projectOwnerId === anonymousOwnerId);
+/**
+ * 谁能驱动一个 run。D2（已拍板）：只有 Owner 能驱动；
+ * 平台演示项目（系统匿名 Owner 的 listed 项目）额外对**登录用户**开放——
+ * 访客只读，避免陌生人点一下"继续运行"就烧一次 LLM。
+ *
+ * 判定输入是项目行本身，不是 ownerId 字符串：匿名请求的 ownerId 会被折算成
+ * 系统匿名 Owner（配额要按它计账），拿它当驱动者就等于人人可驱动演示。
+ */
+function canDrive(
+  project: { owner_id: string; visibility?: string },
+  driverId: string | null,
+  anonymousOwnerId?: string | null,
+): boolean {
+  if (!driverId) return false;
+  if (project.owner_id === driverId) return true;
+  return Boolean(
+    anonymousOwnerId && project.owner_id === anonymousOwnerId && project.visibility === 'listed',
+  );
 }
 
 async function resolveRun(
   engine: CloudEngine,
   body: StepRequest,
-  ownerId: string,
+  driverId: string | null,
   anonymousOwnerId?: string | null,
 ): Promise<CloudRun | null> {
   // 优先用 internal run_id
@@ -128,20 +150,20 @@ async function resolveRun(
     const run = await engine.getRun(body.run_id);
     if (!run) return null;
     const project = await engine.getProjectById(run.project_id);
-    return project && canDrive(project.owner_id, ownerId, anonymousOwnerId) ? run : null;
+    return project && canDrive(project, driverId, anonymousOwnerId) ? run : null;
   }
 
   // 支持 external_run_id（前端传递的）
   if (body.external_run_id && body.project_id) {
     const project = await engine.getProjectByExternal(body.project_id);
-    if (!project || !canDrive(project.owner_id, ownerId, anonymousOwnerId)) return null;
+    if (!project || !canDrive(project, driverId, anonymousOwnerId)) return null;
     return engine.getRunByExternal(project.id, body.external_run_id);
   }
 
   // 用 project_id 找活跃 run（project_id 是 external_id）
   if (body.project_id) {
     const project = await engine.getProjectByExternal(body.project_id);
-    if (!project || !canDrive(project.owner_id, ownerId, anonymousOwnerId)) return null;
+    if (!project || !canDrive(project, driverId, anonymousOwnerId)) return null;
     const runs = await engine.listActiveRuns(project.id);
     return runs[0] ?? null;
   }
@@ -338,6 +360,7 @@ export async function stepView(
   BackendError: BackendErrorLike,
   ownerId: string,
   anonymousOwnerId?: string | null,
+  sessionOwnerId?: string | null,
 ): Promise<Response> {
   const req: StepRequest = {
     project_id: typeof body.project_id === 'string' ? body.project_id : undefined,
@@ -345,6 +368,6 @@ export async function stepView(
     external_run_id: typeof body.external_run_id === 'string' ? body.external_run_id : undefined,
   };
 
-  const result = await handleStep(db, BackendError, req, ownerId, anonymousOwnerId);
+  const result = await handleStep(db, BackendError, req, ownerId, anonymousOwnerId, sessionOwnerId);
   return Response.json(result);
 }
