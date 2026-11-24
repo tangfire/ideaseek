@@ -128,10 +128,12 @@ export async function handleStep(
  * 系统匿名 Owner（配额要按它计账），拿它当驱动者就等于人人可驱动演示。
  */
 function canDrive(
-  project: { owner_id: string; visibility?: string },
+  project: { owner_id: string; visibility?: string; archived_at?: string | null },
   driverId: string | null,
   anonymousOwnerId?: string | null,
 ): boolean {
+  // 归档项目对外不存在（D4），自然也不能再驱动。
+  if (project.archived_at) return false;
   if (!driverId) return false;
   if (project.owner_id === driverId) return true;
   return Boolean(

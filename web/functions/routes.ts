@@ -13,7 +13,7 @@ import { authenticateSyncToken, assertProjectAllowed, SYNC_TOKEN_HEADER } from '
 import { ingestBatch } from './ingest.ts';
 import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
-import { agentCommandHeartbeat, agentHeartbeat, agentView, cancelCommand, commandView, enqueueCommand, projectCreateView, repoView } from './commands.ts';
+import { agentCommandHeartbeat, agentHeartbeat, agentView, cancelCommand, commandView, enqueueCommand, projectCreateView, projectPatchView, projectArchiveView, projectRestoreView, repoView } from './commands.ts';
 import { accessView, grantCreate, grantRevoke, shareCreate, shareRevoke } from './access.ts';
 import { stepView } from './engine/step-driver.ts';
 import { registerAccount, loginAccount, logoutAccount, authMe } from './accounts.ts';
@@ -511,6 +511,26 @@ export function application(deps: Deps) {
         throw new BackendError('invalid_input', 400);
       });
       return projectCreateView(db, viewer, body as Record<string, unknown>, BackendError);
+    }
+
+    // 项目改 / 归档 / 恢复：直接在 Function 执行，不走命令队列（§5.2-5.3）。
+    const restoreMatch = path.match(/^\/projects\/([^/]+)\/restore$/);
+    if (restoreMatch && request.method === 'POST') {
+      const viewer = await resolveViewer(request, db, BackendError);
+      return projectRestoreView(db, viewer, decodeURIComponent(restoreMatch[1]!), BackendError);
+    }
+
+    const projectMatch = path.match(/^\/projects\/([^/]+)$/);
+    if (projectMatch && request.method === 'PATCH') {
+      const viewer = await resolveViewer(request, db, BackendError);
+      const body = await request.json().catch(() => {
+        throw new BackendError('invalid_input', 400);
+      });
+      return projectPatchView(db, viewer, decodeURIComponent(projectMatch[1]!), body as Record<string, unknown>, BackendError);
+    }
+    if (projectMatch && request.method === 'DELETE') {
+      const viewer = await resolveViewer(request, db, BackendError);
+      return projectArchiveView(db, viewer, decodeURIComponent(projectMatch[1]!), url.searchParams.get('confirm'), BackendError);
     }
 
     // 这两个视图允许 `external_id` 为空：空值代表"Owner 自己的全局读数"（首页的

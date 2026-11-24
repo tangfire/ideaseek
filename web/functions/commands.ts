@@ -18,10 +18,11 @@
  */
 import type { BackendErrorLike, Db } from './deps.ts';
 import { rows } from './deps.ts';
-import type { Viewer } from './views.ts';
+import type { Viewer, ProjectRow } from './views.ts';
 import { byExternalId, canRead, deniesAsAbsent, readLevel } from './views.ts';
 import type { SyncPrincipal } from './token.ts';
 import { assertProjectAllowed } from './token.ts';
+import { CloudEngine } from './engine/cloud-engine.ts';
 
 /** 云端支持的命令类型；不在表里的一律 400。 */
 export const COMMAND_TYPES = [
@@ -497,15 +498,148 @@ export async function commandView(
   });
 }
 
-/** 项目设置/可见性/归档只能排成命令，所以这里不提供任何直接写投影的入口。 */
+/** 创建项目在云端直接执行（M0.3）；设置/归档/恢复见下方 projectPatch/Archive/Restore。 */
 export async function projectCreateView(
   db: Db,
   viewer: Viewer,
   body: Record<string, unknown>,
   BackendError: BackendErrorLike,
 ): Promise<Response> {
-  // 云原生模式：直接在 Function 内执行，不排队（M0 起 local-agent 已删除）
   return executeInCloud(db, viewer, 'project_create', body, BackendError);
+}
+
+// ---------------------------------------------------------------------------
+// 项目改 / 归档 / 恢复（AUTH_AND_CRUD_REFACTOR_PLAN.md §5.2-5.3）
+//
+// 直接在 Function 里执行，**不走命令队列**：队列的唯一执行者是已删除的 local-agent，
+// 排进去就永远 queued——界面提示"已提交"而投影纹丝不动，就是这么来的（D4：归档软删）。
+// ---------------------------------------------------------------------------
+
+/** 写面第一步：必须有会话，且必须是这个项目的 Owner，否则按不存在处理（不泄露存在性）。 */
+async function ownedProject(db: Db, viewer: Viewer, externalId: string, BackendError: BackendErrorLike): Promise<ProjectRow> {
+  if (!viewer.ownerId) throw new BackendError('login_required', 401);
+  const project = rows<ProjectRow>(
+    await db.from<ProjectRow>('cloud_project').select('*').eq('external_id', externalId).limit(1),
+    BackendError,
+  )[0];
+  if (!project || project.owner_id !== viewer.ownerId) throw new BackendError('not_found', 404);
+  return project;
+}
+
+/** 改动/归档/恢复都留痕：台账那行就是 cloud_command 本身，直接标 succeeded。 */
+async function auditWrite(
+  db: Db,
+  ownerId: string,
+  projectId: string,
+  type: string,
+  payload: Record<string, unknown>,
+  BackendError: BackendErrorLike,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.from('cloud_command').insert({
+    project_id: projectId,
+    external_command_id: `cmd-${crypto.randomUUID().slice(0, 12)}`,
+    type,
+    payload,
+    status: 'succeeded',
+    created_by: ownerId,
+    created_at: now,
+    claimed_at: now,
+    finished_at: now,
+  });
+}
+
+function projectSummary(project: ProjectRow): Record<string, unknown> {
+  return {
+    external_id: project.external_id,
+    title: project.title,
+    question: project.question,
+    strategy: project.strategy,
+    autonomy: project.autonomy,
+    visibility: project.visibility,
+    archived_at: project.archived_at,
+  };
+}
+
+/** PATCH /projects/{external_id}：字段级更新，校验复用 project_settings 的形状表。 */
+export async function projectPatchView(
+  db: Db,
+  viewer: Viewer,
+  externalId: string,
+  body: Record<string, unknown>,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  const project = await ownedProject(db, viewer, externalId, BackendError);
+  // 归档 = 对外不存在：既不能改，也不该让人从 409 里读出"它存在但归档了"。
+  if (project.archived_at) throw new BackendError('not_found', 404);
+
+  // 形状校验与旧的 /commands/project_settings 同一份（validatePayload），空 patch 也是它拒。
+  const patch = validatePayload('project_settings', body, BackendError);
+
+  const updated = rows<ProjectRow>(
+    await db
+      .from<ProjectRow>('cloud_project')
+      .update(patch)
+      .eq('id', project.id)
+      .eq('owner_id', viewer.ownerId!)
+      .select('*'),
+    BackendError,
+  )[0];
+  // CAS 带 owner_id：并发被别人改了归属时影响行数为 0，按不存在处理。
+  if (!updated) throw new BackendError('not_found', 404);
+
+  await auditWrite(db, viewer.ownerId!, project.id, 'project_settings', patch, BackendError);
+  return Response.json({ ok: true, project: projectSummary(updated) });
+}
+
+/**
+ * DELETE /projects/{external_id}?confirm=<标题>：归档（D4 软删）。
+ * 归档后所有读路径 404（byExternalId 收口），数据保留、可 restore。
+ */
+export async function projectArchiveView(
+  db: Db,
+  viewer: Viewer,
+  externalId: string,
+  confirm: string | null,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  const project = await ownedProject(db, viewer, externalId, BackendError);
+  if (project.archived_at) return Response.json({ ok: true, archived: false, project: projectSummary(project) });
+
+  // 归档是不可逆感很强的动作：必须把标题原样打一遍，防手滑也防脚本误伤。
+  if (confirm !== project.title) throw new BackendError('invalid_input:project.confirm', 400);
+
+  const now = new Date().toISOString();
+  const updated = rows<ProjectRow>(
+    await db.from<ProjectRow>('cloud_project').update({ archived_at: now }).eq('id', project.id).select('*'),
+    BackendError,
+  )[0];
+  if (!updated) throw new BackendError('write_failed', 500);
+
+  await auditWrite(db, viewer.ownerId!, project.id, 'project_archive', { title: project.title }, BackendError);
+  // 已经打开这个项目的浏览器立刻切占位态，不用等下一次轮询发现 404。
+  await new CloudEngine(db, BackendError).publishOutboxFrame(project.id, 'revoked', { reason: 'archived' });
+  return Response.json({ ok: true, archived: true, project: projectSummary(updated) });
+}
+
+/** POST /projects/{external_id}/restore：把归档标记清掉，投影与读权限原样回来。 */
+export async function projectRestoreView(
+  db: Db,
+  viewer: Viewer,
+  externalId: string,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  const project = await ownedProject(db, viewer, externalId, BackendError);
+  if (!project.archived_at) return Response.json({ ok: true, restored: false, project: projectSummary(project) });
+
+  const updated = rows<ProjectRow>(
+    await db.from<ProjectRow>('cloud_project').update({ archived_at: null }).eq('id', project.id).select('*'),
+    BackendError,
+  )[0];
+  if (!updated) throw new BackendError('write_failed', 500);
+
+  await auditWrite(db, viewer.ownerId!, project.id, 'project_restore', { title: project.title }, BackendError);
+  return Response.json({ ok: true, restored: true, project: projectSummary(updated) });
 }
 
 /**

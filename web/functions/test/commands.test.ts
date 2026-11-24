@@ -331,7 +331,8 @@ test('命令与仓库读数按可见性降级：L2 拿不到载荷，匿名拿�
 test('未知路径仍然 404，命令面没有兜底成功', async () => {
   const { as } = await build();
   assert.equal((await call(as('owner-1'), '/commands/')).code, 'not_found');
-  assert.equal((await call(as('owner-1'), '/projects/prj-listed', { method: 'DELETE' })).code, 'not_found');
+  // DELETE 已经是归档的正经入口（crud.test.ts 覆盖），这里换一个没有的动词。
+  assert.equal((await call(as('owner-1'), '/projects/prj-listed', { method: 'PUT' })).code, 'not_found');
   assert.equal((await call(as('owner-1'), '/files/papers/a.pdf')).code, 'not_found');
 });
 

@@ -120,13 +120,13 @@ export class CloudEngine {
     return rows(result, this.BackendError)[0] ?? null;
   }
 
-  async getProjectByExternal(externalId: string): Promise<{ id: string; owner_id: string; visibility: string } | null> {
-    const result = await this.db.from<{ id: string; owner_id: string; visibility: string }>('cloud_project').select('id,owner_id,visibility').eq('external_id', externalId).limit(1);
+  async getProjectByExternal(externalId: string): Promise<{ id: string; owner_id: string; visibility: string; archived_at: string | null } | null> {
+    const result = await this.db.from<{ id: string; owner_id: string; visibility: string; archived_at: string | null }>('cloud_project').select('id,owner_id,visibility,archived_at').eq('external_id', externalId).limit(1);
     return rows(result, this.BackendError)[0] ?? null;
   }
 
-  async getProjectById(projectId: string): Promise<{ id: string; owner_id: string; visibility: string } | null> {
-    const result = await this.db.from<{ id: string; owner_id: string; visibility: string }>('cloud_project').select('id,owner_id,visibility').eq('id', projectId).limit(1);
+  async getProjectById(projectId: string): Promise<{ id: string; owner_id: string; visibility: string; archived_at: string | null } | null> {
+    const result = await this.db.from<{ id: string; owner_id: string; visibility: string; archived_at: string | null }>('cloud_project').select('id,owner_id,visibility,archived_at').eq('id', projectId).limit(1);
     return rows(result, this.BackendError)[0] ?? null;
   }
 

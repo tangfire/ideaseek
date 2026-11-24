@@ -184,11 +184,20 @@ export function deniesAsAbsent(viewer: Viewer): boolean {
   return viewer.ownerId === null && viewer.shareProjectId === null && viewer.grantedProjectIds.length === 0 && viewer.limitedProjectIds.length === 0;
 }
 
+/**
+ * 读路径取项目的唯一入口：**归档（D4 软删）在这里被当成不存在**。
+ *
+ * 十处读面（项目视图、成本、外发、审批、token、仓库、命令、ACL、分享）都经它取行，
+ * 一处收口就能让"删除后所有读接口 404"成立，而不是每处各写一遍 archived 判断。
+ * 写面（归档/恢复）要能看到归档行，走 commands.ts 的 ownedProject，不经这里。
+ */
 export async function byExternalId(db: Db, externalId: string, BackendError: BackendErrorLike): Promise<ProjectRow | undefined> {
-  return rows<ProjectRow>(
+  const found = rows<ProjectRow>(
     await db.from<ProjectRow>('cloud_project').select('*').eq('external_id', externalId).limit(1),
     BackendError,
   )[0];
+  if (!found || found.archived_at) return undefined;
+  return found;
 }
 
 interface RunRow {
@@ -506,11 +515,12 @@ export async function approvalIndex(db: Db, viewer: Viewer, BackendError: Backen
     return Response.json({ ok: true, approvals: [] });
   }
 
-  // 先拿 Owner 自己的项目 ID 列表
-  const projects = rows<{ id: string }>(
-    await db.from<{ id: string }>('cloud_project').select('id').eq('owner_id', viewer.ownerId),
+  // 先拿 Owner 自己的项目 ID 列表；归档（D4 软删）的项目不再贡献审批，
+  // 否则"删除"之后它的审批还一直挂在聚合视图里。
+  const projects = rows<{ id: string; archived_at: string | null }>(
+    await db.from<{ id: string; archived_at: string | null }>('cloud_project').select('id,archived_at').eq('owner_id', viewer.ownerId),
     BackendError,
-  );
+  ).filter((p) => !p.archived_at);
   const projectIds = projects.map((p) => p.id);
   if (projectIds.length === 0) return Response.json({ ok: true, approvals: [] });
 
