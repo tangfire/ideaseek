@@ -1,6 +1,6 @@
 # 账号体系与项目 CRUD 改造方案
 
-状态：**已批准，实施中**（2026-11-24 用户拍板 D1/D2/D4；D3/D5 按建议默认）
+状态：**已实施并上线**（2026-11-24；M0-M5 全部完成，线上验收 35/35 通过）
 诉求来源：2026-11-24 用户提出两条——① "随便可以注册然后登录就行了，账号密码注册登录，弄一个简单的，记得权限隔离，登录了只能看到自己的内容"；② "这些项目要弄一下增删改查，就是基础的 CRUD"
 本文只解决这两件事，不碰工作流引擎、不碰 LLM 渠道、不碰可见性以外的投影语义。
 
@@ -10,14 +10,16 @@
 
 当前站点的权限是**形同虚设**的：读面完全不设防，写面靠平台账号，等于"注册个平台账号就能看别人的东西、改不了也删不掉"。项目 CRUD 里 **C 和 R 能用，U 和 D 是死的**。
 
-判定这次改造完成的四条硬标准：
+判定这次改造完成的四条硬标准（右侧为 2026-11-24 线上验收结果）：
 
-| # | 判据 | 当前 |
+| # | 判据 | 实测 |
 | --- | --- | --- |
-| G1 | 未登录只能读到 `listed` 项目的 L2 投影；登录后列表**只有自己的项目**（+ 官方演示） | 不通过（`canRead` 恒 `true`，列表列全部项目） |
-| G2 | 用户 A 登录后读不到、改不了、删不了用户 B 的项目（非 owner 一律 404，不泄露存在性） | 不通过（读面无判定；写面只验"登录了没"，验不了"是不是 owner"以外的隔离） |
-| G3 | 改标题 / 改研究问题 / 改可见性：保存即生效（≤1 s），不再出现"已提交但没变化" | 不通过（`project_settings` 只入队，云端无执行者） |
-| G4 | 归档项目后，该项目**所有读接口 404**、从列表消失；Owner 可恢复（D4：归档软删，数据保留） | 不通过（`DELETE /projects/{id}` 路由不存在，404） |
+| G1 | 未登录只能读到 `listed` 项目的投影；登录后列表**只有自己的项目**（+ 官方演示） | ✅ 通过 |
+| G2 | 用户 A 登录后读不到、改不了、删不了用户 B 的项目（**匿名被拒 404、登录者被拒 403**——沿用全仓既有约定，见下注） | ✅ 通过 |
+| G3 | 改标题 / 改研究问题 / 改可见性：保存即生效（≤1 s），不再出现"已提交但没变化" | ✅ 通过 |
+| G4 | 归档项目后，该项目**所有读接口 404**、从列表消失；Owner 可恢复（D4：归档软删，数据保留） | ✅ 通过 |
+
+> **G2 的 403 注**：方案初稿写的是"非 owner 一律 404"，实施时按 `access.test.ts` 既有约定执行——**登录者被拒 = 403**（他本来就知道项目存在，报 404 反而指不清方向），**匿名被拒 = 404**（存在性本身是信息）。要收紧成"登录者也 404"得同时改所有视图，那是独立一轮，不在本次偷偷改一个面造成两种语义。
 
 ---
 
@@ -130,15 +132,17 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 - 轮换：登录时新建会话（不复用），登出置 `revoked_at`；`expires_at` 到期即失效
 - 请求侧：`resolveViewer` 读 `Cookie` → 查 `cloud_session`（`revoked_at IS NULL AND expires_at > now()`）→ 得到 `ownerId`
 
-**M0 必做的平台探针（决定方案成败，半天）**：
+**M0 平台探针结果（2026-11-24 线上实测，已按降级路径实施）**：
 
-| 探针 | 为什么关键 | 通过标准 |
+| 探针 | 实测结果 | 结论 |
 | --- | --- | --- |
-| Function 返回 `Set-Cookie` 是否穿透网关到浏览器 | 整套会话方案的地基 | 浏览器 `document.cookie`（非 HttpOnly 侧）与后续请求 `Cookie` 头都能看到 |
-| 浏览器请求自动带 `Cookie` 到 `/functions/v1/app/*` | 同源自动携带，理论必然，但网关可能剥 | `GET /auth/me` 返回 200 |
-| WS 握手带 Cookie | `live.ts` 的实时帧；WS **不能带自定义头**（SPIKE §10 实测 `authorization` 被网关剥掉） | `openLive` 连上后能收到 `state` 帧 |
+| `Set-Cookie` 穿透网关 | ✅ 浏览器能收到 | 网关不拦响应侧 |
+| `Cookie` 请求头到 Function | ❌ **被剥**：`/probe/ingress` 列出的头名里没有 `cookie`（与 SPIKE §10 实测剥 `Authorization` 同类） | **会话主通道改为自定义头 `x-ideaseek-session`** |
+| WS 握手带会话 | 未启用 | 见下方"WS 现状" |
 
-若 **Set-Cookie 被剥**（唯一可能的失败），降级路径：登录响应把 token 放 JSON，前端存内存 + `localStorage`，REST 走 `x-ideaseek-session` 头，WS 走 query 参数 `?session=`。代价是 token 会出现在 URL 与访问日志里，必须配 **10 分钟短 TTL + 每次握手轮换**。文档先写明，避免到现场再吵。
+**已实施的传输方案**：`/auth/login|register` 在 JSON 里返回 `session_token`，前端存 `localStorage`，每个请求带 `x-ideaseek-session` 头；`Set-Cookie` 照发（网关哪天不剥了就白捡一条通路）；`?session=` 的读取逻辑保留在 `tokenFromRequest` 里，**留给将来的 WS 短票**——长生命期 token 绝不进 URL。
+
+**WS 现状（如实）**：`WebSocket` 设不了自定义头，所以**私有项目的实时帧目前握手会被拒，前端自动降级为 15 s 轮询**（`live.ts` 的 `onError` 路径），同时步进泵每步都会 refetch，链路视图不会滞后超过一步。演示项目是 `listed`，匿名可读，实时帧照常。要恢复私有项目的 WS，下一步做 §4.3 的"短票"：`POST /auth/ws-ticket` 发一张 10 分钟的短会话，握手时走 `?session=`。
 
 ### 4.4 鉴权收口（`resolveViewer` 重写 + 三处判定恢复）
 
@@ -317,3 +321,37 @@ CREATE UNIQUE INDEX idx_owner_account ON app.cloud_owner (account_id) WHERE acco
 | **D3** | 留不留 Qoder 平台身份当运维后门？ | ✅ **不留**（按建议默认）。留了就等于没做权限隔离 |
 | **D4** | 删除是硬删还是归档软删？ | ✅ **归档软删**（用户选择，与原建议不同）：`archived_at` 标记 + 读侧全 404 + 可恢复；彻底清除留待显式 PURGE，见 §5.3 偏离说明 |
 | **D5** | 顺带清理 `run_*`/`git_*` 等 local-agent 死命令类型吗？ | ✅ **本次不动**（按建议默认），只清 `project_settings`/`project_archive` 入队路径，死类型单独一个 PR |
+
+---
+
+## 11. 交付记录（2026-11-24）
+
+| 期 | commit | 内容 |
+| --- | --- | --- |
+| M1 | `512a7f8` | 账号表 + 会话 + /auth/* + resolveViewer 切会话 + 测试夹具迁移 |
+| M2 | `42792c4` | canRead/readLevel/projectIndex/canDrive 收口，9 条 ACL 测试转绿 |
+| M3 | `968178c` | PATCH / DELETE(归档) / restore + 读侧 archived 收口 + crud.test.ts |
+| M4 | `ade6dff` | 登录注册页、路由守卫、列表行操作、设置页真 PATCH |
+| 修复 | `deb1157` | 网关剥 cookie → 会话改走 x-ideaseek-session 头 |
+| 修复 | `dd7cf97` | owned 判定字段写错（viewer.owner_id → ownerId） |
+
+**线上验收：35 / 35 通过**（`.tmp-acceptance.mjs`，已跑完删除），覆盖 §5.6 全部七条加两条隔离用例：
+
+1. 注册 201 + session_token；`/auth/me` 认得；匿名 401 ✅
+2. 匿名创建 401 ✅
+3. bob 读 alice 私有 = 403（登录者约定）、匿名读 = 404；bob PATCH/DELETE = 404；bob 列表里没有 alice 的项目 ✅
+4. PATCH 200 且标题立即生效；审计台账有 succeeded 的 `project_settings` ✅
+5. 无 confirm 400 → 归档 200 → 项目/成本视图 404、默认列表消失、include_archived 能看到 → 恢复 200 → 读路径回来 ✅
+6. 登出 200 → /auth/me 与创建 401 → 重新登录恢复 ✅
+7. 连续 10 次错密码 400，第 11 次（密码正确）429 ✅
+8. 访客驱动演示 = idle；登录用户驱动演示 = completed（D2）✅
+
+**UI 实测（浏览器）**：注册 → 跳控制台 → 侧栏显示用户名与退出 → 列表演示置顶且无操作按钮、自己的项目有「改名/归档」 → 行内改名保存即生效 → 「显示已归档」开关存在。
+
+**实施中发现并修掉的两处线上缺陷**：
+
+- 网关剥 `cookie` 头（`/probe/ingress` 证实），首版会话全部 401 —— 改走自定义头（`deb1157`）。
+- 演示项目原本是 `private`（创建时写死），M2 收口后访客读不到、登录者也驱动不了 —— 已改为 `listed`（数据修正，`update_database_row`），现在访客可读（full 演示投影）、只有登录用户可驱动。
+- `owned` 判定写成 `viewer.owner_id`（Viewer 字段叫 `ownerId`），自己的项目也不显示操作按钮（`dd7cf97`）。
+
+**门禁**：108 项测试 97 过，11 个失败全为存量（local-agent 时代断言 9 + Node20 WebSocket 环境 2）；`web/console` tsc 0 错；根 tsc 27 个错误全在 tests/cloud 存量文件。
