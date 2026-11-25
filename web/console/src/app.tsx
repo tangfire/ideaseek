@@ -83,6 +83,7 @@ const STATUS_STATE: Record<string, 'ok' | 'active' | 'blocked' | 'fail' | 'quota
   pending: 'idle',
   completed: 'ok',
   parsed: 'ok',
+  simulated: 'blocked',
   supported: 'ok',
   uncertain: 'blocked',
   unsupported: 'idle',
@@ -134,6 +135,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending: '未开始',
   completed: '已完成',
   parsed: '已解析',
+  simulated: '模拟演示 · 未执行实验',
   supported: '有证据支持',
   uncertain: '不确定',
   unsupported: '无证据',
@@ -1527,7 +1529,7 @@ function ClaimList({ claims }: { claims: ClaimRow[] }) {
  * F10.4: 协议详情——锁定的 ExperimentalProtocol 与规则来源。
  * F10.5: 失败分类——failure-diagnosis 的层级与证据摘录。
  */
-function ExperimentResults({ experiments }: { experiments: ExperimentResult[] }) {
+export function ExperimentResults({ experiments }: { experiments: ExperimentResult[] }) {
   if (experiments.length === 0) return <p className="muted">还没有实验结果。</p>;
   return (
     <div style={{ marginTop: 12 }}>
@@ -1555,7 +1557,7 @@ function ExperimentResults({ experiments }: { experiments: ExperimentResult[] })
               <strong className="mono" style={{ fontSize: 13 }}>
                 {exp.external_spec_id.slice(0, 12)}…
               </strong>
-              <span
+              {exp.scale && exp.status !== 'simulated' ? <span
                 className="status-chip"
                 data-state={scaleState}
                 style={{ fontSize: 11 }}
@@ -1563,7 +1565,7 @@ function ExperimentResults({ experiments }: { experiments: ExperimentResult[] })
               >
                 {SCALE_LABEL[exp.scale] ?? exp.scale}
                 {exp.scale === 'handoff_manifest' ? ' · 未执行' : ''}
-              </span>
+              </span> : null}
               <span
                 className="status-chip"
                 data-state={stateOf(exp.status)}
@@ -1574,7 +1576,10 @@ function ExperimentResults({ experiments }: { experiments: ExperimentResult[] })
               </span>
             </div>
             {/* F10.1: 指标表 */}
-            {exp.metrics && Object.keys(exp.metrics).length > 0 ? (
+            {exp.status === 'simulated' ? (
+              <p className="muted">此步骤仅演示流程，尚未执行实验，不提供科研指标或有效性结论。</p>
+            ) : null}
+            {exp.status !== 'simulated' && exp.metrics && Object.keys(exp.metrics).length > 0 ? (
               <div style={{ marginTop: 8 }}>
                 <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
                   指标
@@ -1588,7 +1593,7 @@ function ExperimentResults({ experiments }: { experiments: ExperimentResult[] })
                 </div>
               </div>
             ) : null}
-            {exp.verdict ? (
+            {exp.status !== 'simulated' && exp.verdict ? (
               <div style={{ marginTop: 8 }}>
                 <span
                   className="status-chip"

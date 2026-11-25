@@ -162,7 +162,7 @@ export interface PaperCard {
 export interface ExperimentResult {
   external_spec_id: string;
   idea_id: string;
-  scale: 'smoke' | 'quick' | 'standard' | 'handoff_manifest';
+  scale: 'smoke' | 'quick' | 'standard' | 'handoff_manifest' | null;
   status: string;
   metrics?: Record<string, number> | null;
   verdict?: string | null;

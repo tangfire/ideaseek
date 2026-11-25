@@ -421,9 +421,9 @@ export async function projectView(
     .map((n) => ({
       external_spec_id: n.node_id,
       idea_id: (n.detail as Record<string, unknown> | null)?.idea_id as string | null ?? null,
-      scale: 'standard' as const,
-      status: n.status,
-      metrics: (n.detail as Record<string, unknown> | null)?.metrics as Record<string, number> | null ?? null,
+      scale: n.detail?.scale ?? null,
+      status: n.detail?.status === 'simulated' ? 'simulated' : n.status,
+      metrics: n.detail?.status === 'simulated' ? null : n.detail?.metrics ?? null,
       verdict: null,
     }));
 
