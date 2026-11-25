@@ -34,6 +34,7 @@ export interface CloudRun {
   status: RunStatus;
   phase_tag: string;
   question: string | null;
+  block_reason: string | null;
   summary: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -420,7 +421,7 @@ export class CloudEngine {
 
   // ---- 阶段进度 ----
 
-  async setStageProgress(runId: string, stage: string, state: string, opts?: { gateNote?: string; blockerCode?: string }): Promise<void> {
+  async setStageProgress(runId: string, stage: string, state: string, opts?: { gateNote?: string; blockerCode?: string | null }): Promise<void> {
     const now = new Date().toISOString();
     const existing = await this.db.from<{ id: string; state: string }>('cloud_stage_progress')
       .select('*')

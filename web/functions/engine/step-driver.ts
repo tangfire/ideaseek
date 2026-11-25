@@ -13,7 +13,7 @@
  */
 import type { BackendErrorLike, Db } from '../deps.ts';
 import { CloudEngine, type CloudRun, type CloudTask, type RunPhase } from './cloud-engine.ts';
-import { executeTask as executeRealTask } from './task-executors.ts';
+import { executeTask as executeRealTask, paperInput, PaperInputRequiredError } from './task-executors.ts';
 
 export interface StepRequest {
   project_id?: string;
@@ -66,21 +66,42 @@ export async function handleStep(
   const engine = new CloudEngine(db, BackendError);
   const driverId = sessionOwnerId === undefined ? ownerId : sessionOwnerId;
 
-  const run = await resolveRun(engine, body, driverId, anonymousOwnerId);
+  let run = await resolveRun(engine, body, driverId, anonymousOwnerId);
   if (!run) return { action: 'idle', message: '没有活跃的运行' };
   if (run.status === 'succeeded' || run.phase_tag === 'COMPLETED') {
     return { action: 'completed', run, message: '运行已完成' };
+  }
+
+  if (run.phase_tag === 'PAPER_ANALYSIS') {
+    const analysisTasks = (await engine.listTasks(run.id)).filter((task) => task.kind === 'analyze_paper');
+    const paperTasks = analysisTasks.filter((task) => task.status === 'queued');
+    if (analysisTasks.length === 0 || paperTasks.some((task) => paperInput(task.payload) === null)) {
+      const message = new PaperInputRequiredError().message;
+      const blocked = await engine.setRunPhase(run.id, 'PAPER_ANALYSIS', { status: 'blocked', blockReason: 'paper_input_required' });
+      await engine.setStageProgress(run.id, 'PAPER_ANALYSIS', 'blocked', { gateNote: message, blockerCode: 'paper_input_required' });
+      if (run.block_reason !== 'paper_input_required') {
+        await engine.appendEvent({ runId: run.id, type: 'run_blocked', summary: message, phaseTag: 'PAPER_ANALYSIS', level: 'warn' });
+      }
+      return { action: 'blocked', run: blocked, message };
+    }
+    if (analysisTasks.some((task) => task.status === 'claimed' || task.status === 'running')) {
+      return { action: 'idle', run, message: '论文仍在分析中，等待当前任务完成。' };
+    }
+    if (paperTasks.length > 0 && run.block_reason === 'paper_input_required') {
+      run = await engine.setRunPhase(run.id, 'PAPER_ANALYSIS', { status: 'running', blockReason: null });
+      await engine.setStageProgress(run.id, 'PAPER_ANALYSIS', 'active', { gateNote: '论文材料已补充，等待分析。', blockerCode: null });
+    }
   }
 
   const claim = await engine.claimNextTask(run.id, 'step-driver');
   if (claim) {
     const result = await executeTaskUnit(engine, run, claim.task, claim.leaseEpoch);
     return {
-      action: 'claimed',
+      action: result.run.status === 'blocked' ? 'blocked' : 'claimed',
       task: result.task,
       run: result.run,
       events: result.events,
-      message: `执行了 ${claim.task.kind} 任务`,
+      message: result.run.block_reason === 'paper_input_required' ? new PaperInputRequiredError().message : `执行了 ${claim.task.kind} 任务`,
     };
   }
 
@@ -242,6 +263,11 @@ async function executeTaskUnit(
     });
     events.push({ seq: failEvent.seq, type: failEvent.type, summary: failEvent.summary });
 
+    if (err instanceof PaperInputRequiredError) {
+      const blocked = await engine.setRunPhase(run.id, run.phase_tag as RunPhase, { status: 'blocked', blockReason: 'paper_input_required' });
+      await engine.setStageProgress(run.id, run.phase_tag, 'blocked', { gateNote: err.message, blockerCode: 'paper_input_required' });
+      return { task: failed, run: blocked, events };
+    }
     return { task: failed, run, events };
   }
 }

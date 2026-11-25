@@ -34,10 +34,10 @@ export class ApiError extends Error {
 const MESSAGES: Record<ApiCode, string> = {
   login_required: '请先登录后再访问。',
   no_access: '当前账号没有这个项目的读取权限。',
-  not_found: '云端没有这个对象——可能是投影尚未同步，或已被删除。',
+  not_found: '未找到这条记录，可能尚未同步、已归档或已删除。',
   invalid_input: '填写的内容不符合要求，请检查后重试。',
   conflict: '该操作与当前状态冲突，请刷新后重试。',
-  rate_limited: '请求过于频繁，稍后自动重试。',
+  rate_limited: '请求过于频繁，请稍后重试。',
   service_unavailable: '云端服务暂时不可用，请稍后重试。',
   invalid_response: '云端返回了无法解析的响应。',
   network: '无法连接云端，请检查网络后重试。',

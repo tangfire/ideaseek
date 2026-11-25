@@ -11,12 +11,13 @@ import { rows } from './deps.ts';
 import { ContractError, parseEnvelope } from './contract.ts';
 import { authenticateSyncToken, assertProjectAllowed, SYNC_TOKEN_HEADER } from './token.ts';
 import { ingestBatch } from './ingest.ts';
-import { projectIndex, projectView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
+import { projectIndex, projectView, stageView, resolveViewer, approvalIndex, submitIntent, costView, egressView, tokenList, tokenCreate, tokenRevoke, syncHealth } from './views.ts';
 import { authorizeLive, LIVE_LIMITS, startLivePump, wantsUpgrade } from './live.ts';
 import { agentCommandHeartbeat, agentHeartbeat, agentView, cancelCommand, commandView, enqueueCommand, projectCreateView, projectPatchView, projectArchiveView, projectRestoreView, repoView } from './commands.ts';
 import { accessView, grantCreate, grantRevoke, shareCreate, shareRevoke } from './access.ts';
 import { stepView } from './engine/step-driver.ts';
 import { registerAccount, loginAccount, logoutAccount, authMe } from './accounts.ts';
+import { resourceView } from './resources.ts';
 
 export interface Deps {
   db: Db;
@@ -321,6 +322,23 @@ export function application(deps: Deps) {
       if (!externalId) throw new BackendError('invalid_input', 400);
       const viewer = await resolveViewer(request, db, BackendError);
       return projectView(db, viewer, externalId, BackendError);
+    }
+
+    if (path === '/views/stage' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id');
+      const externalRunId = url.searchParams.get('external_run_id');
+      const stage = url.searchParams.get('stage');
+      if (!externalId || !externalRunId || !stage) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, BackendError);
+      return stageView(db, viewer, externalId, externalRunId, stage, BackendError);
+    }
+
+    if (path === '/views/resources' && request.method === 'GET') {
+      const externalId = url.searchParams.get('external_id');
+      const externalRunId = url.searchParams.get('external_run_id');
+      if (!externalId || !externalRunId) throw new BackendError('invalid_input', 400);
+      const viewer = await resolveViewer(request, db, BackendError);
+      return resourceView(db, viewer, externalId, externalRunId, BackendError);
     }
 
     // M6: 审批信箱（F11）

@@ -36,6 +36,46 @@ export interface StageProgress {
   blocker_code: string | null;
 }
 
+export type TaskDetailValue = string | number | boolean | TaskDetailValue[] | { [label: string]: TaskDetailValue };
+
+export interface StageTask {
+  external_task_id: string;
+  kind: string;
+  status: string;
+  attempt: number;
+  max_attempts: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  simulated: boolean;
+  input: Array<{ label: string; value: TaskDetailValue; truncated: boolean }>;
+  output: Array<{ label: string; value: TaskDetailValue; truncated: boolean }>;
+}
+
+export interface StageTasksView {
+  ok: true;
+  external_run_id: string;
+  stage: string;
+  tasks: StageTask[];
+  truncated: boolean;
+}
+
+export interface ResourcesView {
+  ok: true;
+  external_run_id: string;
+  tasks: Array<StageTask & { stage: string | null }>;
+  artifacts: Array<{
+    external_artifact_id: string;
+    external_task_id: string | null;
+    kind: string;
+    content_hash: string;
+    size_bytes: number;
+    status: string;
+    committed_at: string | null;
+  }>;
+  tasks_truncated: boolean;
+  artifacts_truncated: boolean;
+}
+
 export interface EventRow {
   seq: number;
   ts: string;
@@ -122,6 +162,12 @@ export interface IdeaSummary {
   version: number;
   parent_idea_id?: string | null;
   ideation_round_id?: string | null;
+  paper_sources?: Array<{
+    reference_id: string;
+    paper_id: string | null;
+    title: string | null;
+    status: 'linked' | 'unverified' | 'missing' | 'ambiguous';
+  }> | null;
 }
 
 export interface IdeationRound {
@@ -161,11 +207,31 @@ export interface PaperCard {
  */
 export interface ExperimentResult {
   external_spec_id: string;
-  idea_id: string;
+  title?: string | null;
+  idea_id: string | null;
   scale: 'smoke' | 'quick' | 'standard' | 'handoff_manifest' | null;
   status: string;
   metrics?: Record<string, number> | null;
   verdict?: string | null;
+  metric_rows?: Array<{
+    name: string;
+    value: number;
+    direction: 'higher' | 'lower' | null;
+    stdev: number | null;
+    n: number | null;
+    controls: Array<{ method_id: string; value: number; stdev: number | null; delta: number | null }>;
+  }>;
+  context?: {
+    workflow_run_id: string;
+    kind: 'run_result' | 'legacy';
+    spec_id: string | null;
+    result_spec_id: string | null;
+    code_commit: string | null;
+    data_snapshot_id: string | null;
+    protocol_id: string | null;
+    slice_ids: string[] | null;
+    seeds: number[] | null;
+  } | null;
 }
 
 export interface ProtocolSummary {

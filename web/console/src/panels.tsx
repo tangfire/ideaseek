@@ -40,7 +40,7 @@ const COMMAND_LABEL: Record<string, string> = {
 const TYPE_LABEL: Record<string, string> = {
   project_create: '创建项目',
   project_settings: '更新设置',
-  project_archive: '归档投影',
+  project_archive: '归档项目',
   run_start: '启动运行',
   run_pause: '暂停运行',
   run_resume: '恢复运行',
@@ -99,68 +99,87 @@ export function CreateProjectPanel({ onCreated }: { onCreated?: () => void }) {
     onSuccess: (data) => {
       if (data.cloud_executed) {
         setNotice('项目已在云端创建。');
+        // 只有云端确认建成才收起，待处理的请求保留面板说明。
+        onCreated?.();
       } else {
         setNotice('项目创建中…');
       }
       void client.invalidateQueries({ queryKey: ['index'] });
       void client.invalidateQueries({ queryKey: ['commands', ''] });
-      // 建成即收起：新项目已经出现在列表里，面板继续占着地方只是挡住结果。
-      onCreated?.();
     },
   });
 
   return (
-    <div className="panel" style={{ marginTop: 16 }}>
+    <form
+      className="panel"
+      style={{ marginTop: 16, marginBottom: 16 }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!mutation.isPending && name.trim().length > 0) mutation.mutate(crypto.randomUUID());
+      }}
+    >
       <h3 style={{ margin: '0 0 8px' }}>创建项目</h3>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <input
-          style={{ flex: '1 1 180px' }}
-          placeholder="项目名称"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <select
-          value={strategy}
-          onChange={(event) => setStrategy(event.target.value)}
-          aria-label="运行策略"
-        >
-          <option value="starter">入门</option>
-          <option value="standard">标准</option>
-          <option value="research">深度研究</option>
-        </select>
-        <select
-          value={autonomy}
-          onChange={(event) => setAutonomy(event.target.value)}
-          aria-label="人工门槛"
-        >
-          <option value="guided">引导（科学门槛暂停）</option>
-          <option value="autonomous">自主（自动通过并记录）</option>
-          <option value="review-only">只评审（不跑实验）</option>
-        </select>
+      <div className="form-grid">
+        <label className="form-field">
+          项目名称
+          <input
+            placeholder="项目名称"
+            required
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
+        <label className="form-field">
+          运行策略
+          <select
+            value={strategy}
+            onChange={(event) => setStrategy(event.target.value)}
+            aria-label="运行策略"
+          >
+            <option value="starter">入门</option>
+            <option value="standard">标准</option>
+            <option value="research">深度研究</option>
+          </select>
+        </label>
+        <label className="form-field">
+          人工确认方式
+          <select
+            value={autonomy}
+            onChange={(event) => setAutonomy(event.target.value)}
+            aria-label="人工门槛"
+          >
+            <option value="guided">引导（科学门槛暂停）</option>
+            <option value="autonomous">自主（自动通过并记录）</option>
+            <option value="review-only">只评审（不跑实验）</option>
+          </select>
+        </label>
       </div>
-      <textarea
-        style={{ width: '100%', marginTop: 8, minHeight: 60 }}
-        placeholder="研究问题（可留空，之后在设置里改）"
-        value={question}
-        onChange={(event) => setQuestion(event.target.value)}
-      />
+      <label className="form-field" style={{ marginTop: 12 }}>
+        研究问题（可选）
+        <textarea
+          style={{ width: '100%', marginTop: 8, minHeight: 60 }}
+          placeholder="研究问题（可留空，之后在设置里改）"
+          value={question}
+          onChange={(event) => setQuestion(event.target.value)}
+        />
+      </label>
       <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
         <button
           className="btn-primary"
+          type="submit"
           disabled={mutation.isPending || name.trim().length === 0}
-          onClick={() => mutation.mutate(crypto.randomUUID())}
         >
           {mutation.isPending ? '创建中…' : '立即创建'}
         </button>
         {notice ? (
-          <span className="muted mono" style={{ fontSize: 12 }}>
+          <span className="muted mono" style={{ fontSize: 14 }}>
             {notice}
           </span>
         ) : null}
       </div>
       <ErrorLine error={mutation.error as Error | null} />
-    </div>
+    </form>
   );
 }
 
@@ -208,7 +227,7 @@ export function ProvisioningList() {
           ))}
         </tbody>
       </table>
-      <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
+      <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>
         创建成功后项目会立即出现在下方列表；失败或超时的请求留在这里，不会自动重排。
       </p>
     </div>
@@ -273,7 +292,7 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
       <div className="panel">
         <h3 style={{ margin: '0 0 8px' }}>项目设置</h3>
         <p className="muted" style={{ margin: 0 }}>
-          这个项目不是你的，设置只读。可见性与共享由 Owner 决定。
+          当前为只读访问。项目设置与分享方式由项目所有者管理。
         </p>
       </div>
     );
@@ -282,16 +301,18 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
   return (
     <div className="panel">
       <h3 style={{ margin: '0 0 8px' }}>项目设置</h3>
-      <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
+      <p className="muted" style={{ margin: '0 0 12px', fontSize: 14 }}>
         修改保存后立即在云端生效。
       </p>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div className="form-grid">
+        <label className="form-field">项目标题
         <input
-          style={{ flex: '1 1 220px' }}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           placeholder="项目标题"
         />
+        </label>
+        <label className="form-field">运行策略
         <select
           value={strategy}
           onChange={(event) => setStrategy(event.target.value)}
@@ -307,6 +328,8 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
             </option>
           ))}
         </select>
+        </label>
+        <label className="form-field">人工确认方式
         <select
           value={autonomy}
           onChange={(event) => setAutonomy(event.target.value)}
@@ -322,6 +345,8 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
             </option>
           ))}
         </select>
+        </label>
+        <label className="form-field">可见性
         <select
           value={visibility}
           onChange={(event) => setVisibility(event.target.value as 'private' | 'link' | 'listed')}
@@ -331,21 +356,24 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
           <option value="link">链接可见 · 持链可读</option>
           <option value="listed">公开 · 进公开列表</option>
         </select>
+        </label>
       </div>
+      <label className="form-field" style={{ marginTop: 12 }}>研究问题
       <textarea
         style={{ width: '100%', marginTop: 8, minHeight: 60 }}
         value={question}
         onChange={(event) => setQuestion(event.target.value)}
         placeholder="研究问题"
       />
+      </label>
       {view.projection_level === 'l2' ? (
-        <p className="muted" style={{ fontSize: 12 }}>
-          策略与门槛不在这一级：被扣下不等于没记录。
+        <p className="muted" style={{ fontSize: 14 }}>
+          公开摘要不展示运行策略与确认方式，不代表未设置。
         </p>
       ) : null}
       {downgraded ? (
         <p className="status-chip" data-state="blocked" style={{ marginTop: 8 }}>
-          拨成 listed 会进公开列表，匿名访客能读到标题、研究问题与阶段读数。
+          设为公开后，项目将进入公开列表；访客可查看标题、研究问题与阶段摘要。
         </p>
       ) : null}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
@@ -361,7 +389,7 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
           disabled={pending}
           onClick={() => {
             const confirm = window.prompt(
-              `归档「${view.project.title}」后列表与读接口都会 404（可恢复）。请输入项目标题确认：`,
+              `归档「${view.project.title}」后将从默认列表隐藏，暂时无法打开。可在列表的“项目范围”选择“已归档项目”恢复。请输入项目标题确认：`,
             );
             if (confirm !== null) archive.mutate(confirm);
           }}
@@ -369,7 +397,7 @@ export function SettingsPanel({ projectId, view }: { projectId: string; view: Pr
           归档项目
         </button>
         {notice ? (
-          <span className="muted mono" style={{ fontSize: 12 }}>
+          <span className="muted mono" style={{ fontSize: 14 }}>
             {notice}
           </span>
         ) : null}
@@ -474,7 +502,7 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
       <div className="panel">
         <h3 style={{ margin: '0 0 8px' }}>协作与分享</h3>
         <p className="muted" style={{ margin: 0 }}>
-          谁读得到这个项目由 Owner
+          谁可以查看这个项目由项目所有者
           决定。你现在的身份是被邀请的读者：能读，但不能把自己的读权限转发给别人。
         </p>
       </div>
@@ -507,9 +535,8 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
   return (
     <div className="panel">
       <h3 style={{ margin: '0 0 8px' }}>协作与分享</h3>
-      <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
-        这一页改的是云端的读取权限，不是本地投影：邀请与撤销点了就判定，下一次请求生效；项目可见性仍然要排队给本地
-        Agent 改。
+      <p className="muted" style={{ margin: '0 0 12px', fontSize: 14 }}>
+        邀请与撤销在保存后生效。项目是否进入公开列表，请在“设置”中修改可见性。
       </p>
 
       <table>
@@ -526,7 +553,7 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
           {active.length === 0 ? (
             <tr>
               <td colSpan={5} className="muted">
-                还没有邀请过读者。这个项目的 L1 读数目前只有你能看。
+                尚未邀请读者。你可以邀请他人查看完整记录或公开摘要。
               </td>
             </tr>
           ) : (
@@ -537,8 +564,8 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
                 </td>
                 <td data-label="读取范围">
                   {grant.role === 'viewer'
-                    ? '降级读数（L2，看不到运行状态与成本）'
-                    : '完整读数（含 L1）'}
+                    ? '公开摘要（不含运行状态与成本）'
+                    : '完整记录'}
                 </td>
                 <td data-label="对方状态">
                   <span className="status-chip" data-state={grant.joined ? 'ok' : 'idle'}>
@@ -563,22 +590,25 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
         </tbody>
       </table>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+      <div className="form-grid" style={{ marginTop: 12 }}>
+        <label className="form-field">受邀邮箱
         <input
-          style={{ flex: '1 1 220px' }}
           placeholder="对方邮箱"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
           aria-label="受邀邮箱"
         />
+        </label>
+        <label className="form-field">读取范围
         <select
           value={role}
           onChange={(event) => setRole(event.target.value as 'reviewer' | 'viewer')}
           aria-label="读取范围"
         >
-          <option value="reviewer">完整读数（含 L1）</option>
-          <option value="viewer">降级读数（L2）</option>
+          <option value="reviewer">完整记录</option>
+          <option value="viewer">公开摘要</option>
         </select>
+        </label>
         <button
           className="btn-primary"
           disabled={busy || email.trim() === ''}
@@ -587,7 +617,7 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
           {invite.isPending ? '记录中…' : '邀请读者'}
         </button>
       </div>
-      <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
+      <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>
         邀请给的是读权限，不是写权限；对方还没在云端注册也能先邀请，首次登录后自动接上。
       </p>
       <ErrorLine error={(invite.error ?? revoke.error) as Error | null} />
@@ -603,20 +633,21 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
             <button className="btn-primary" disabled={busy} onClick={() => createShare.mutate()}>
               {createShare.isPending ? '生成中…' : '生成分享链接'}
             </button>
-            <span className="muted" style={{ fontSize: 12 }}>
+            <span className="muted" style={{ fontSize: 14 }}>
               token 只在生成这一次显示；云端只存哈希，关掉页面就读不回明文。
             </span>
           </div>
           {link ? (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <label className="form-field" style={{ flex: '1 1 200px' }}>分享链接
               <input
                 className="mono"
                 readOnly
                 value={link}
                 onFocus={(event) => event.target.select()}
                 aria-label="分享链接"
-                style={{ flex: '1 1 320px' }}
               />
+              </label>
               <button onClick={copy}>复制</button>
             </div>
           ) : null}
@@ -660,16 +691,14 @@ export function AccessPanel({ projectId, view }: { projectId: string; view: Proj
               )}
             </tbody>
           </table>
-          <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
-            持链接的人只读到
-            L2：标题、研究问题、阶段与结论标签。运行状态、成本、事件摘要不在链接这一级——那等于把 L1
-            交给转发。
+          <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>
+            分享链接仅提供标题、研究问题、阶段与结论标签。运行状态、成本和事件详情不随链接公开。
           </p>
         </>
       )}
       <ErrorLine error={(createShare.error ?? revokeShare.error) as Error | null} />
       {notice ? (
-        <p className="mono" style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--ok)' }}>
+        <p className="mono" style={{ margin: '8px 0 0', fontSize: 14, color: 'var(--ok)' }}>
           {notice}
         </p>
       ) : null}
@@ -724,14 +753,14 @@ export function AuditLedger() {
                   {COMMAND_LABEL[entry.status] ?? entry.status}
                 </span>
               </td>
-              <td data-label="结果" className="muted mono" style={{ fontSize: 11 }}>
+              <td data-label="结果" className="muted mono" style={{ fontSize: 13 }}>
                 {entry.error ?? (entry.finished_at ? '已完成' : '—')}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="muted" style={{ margin: '8px 0 0', fontSize: 12 }}>
+      <p className="muted" style={{ margin: '8px 0 0', fontSize: 14 }}>
         最近 {shown.length} 条由你发起的操作。云端记录谁做了什么、结果如何。
       </p>
     </div>
@@ -756,17 +785,23 @@ interface StepResult {
 export function StepPump({
   projectId,
   externalRunId,
+  notStarted,
   completed,
   onProgress,
 }: {
   projectId: string;
   externalRunId: string;
+  notStarted: boolean;
   completed?: boolean;
   onProgress?: () => void;
 }) {
   const [running, setRunning] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [pending, setPending] = useState(false);
   const [lastResult, setLastResult] = useState<StepResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pendingRef = useRef(false);
+  const mountedRef = useRef(true);
   // 回调身份每次渲染都变；放 ref 里避免 setInterval 被反复重建。
   const progressRef = useRef(onProgress);
   progressRef.current = onProgress;
@@ -774,13 +809,22 @@ export function StepPump({
   const done = completed || lastResult?.action === 'completed';
 
   useEffect(() => {
-    if (!running) return;
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!running || done) return;
     const interval = setInterval(async () => {
+      if (pendingRef.current) return;
+      pendingRef.current = true;
+      setPending(true);
       try {
         const result = await mutateJson<StepResult>(`${APP}/app/step`, {
           method: 'POST',
           body: JSON.stringify({ project_id: projectId, external_run_id: externalRunId }),
         });
+        if (!mountedRef.current) return;
         setLastResult(result);
         setError(null);
         progressRef.current?.();
@@ -788,11 +832,18 @@ export function StepPump({
           setRunning(false);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (!mountedRef.current) return;
+        setError(err instanceof ApiError && err.code === 'rate_limited'
+          ? '请求过于频繁，请稍后点击继续运行。'
+          : err instanceof Error ? err.message : String(err));
+        setRunning(false);
+      } finally {
+        pendingRef.current = false;
+        if (mountedRef.current) setPending(false);
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [running, projectId, externalRunId]);
+  }, [running, done, projectId, externalRunId]);
 
   if (done) {
     return (
@@ -800,11 +851,11 @@ export function StepPump({
         className="panel"
         style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}
       >
-        <span className="status-chip" data-state="ok">
+        <span className="muted">
           研究流程已完成
         </span>
         {lastResult?.message ? (
-          <span className="muted" style={{ fontSize: 12 }}>
+          <span className="muted" style={{ fontSize: 14 }}>
             {lastResult.message}
           </span>
         ) : null}
@@ -814,35 +865,44 @@ export function StepPump({
 
   const blocked = lastResult?.action === 'blocked';
   return (
-    <div
-      className="panel"
-      style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}
-    >
-      <button className="btn-primary" onClick={() => setRunning(!running)}>
-        {running ? '暂停' : '继续运行'}
-      </button>
-      {running ? (
-        <span className="status-chip" data-state="active">
-          引擎执行中
+    <div className="panel" style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          className="btn-primary"
+          disabled={!running && pending}
+          onClick={() => {
+            if (!running) {
+              setHasStarted(true);
+              setError(null);
+            }
+            setRunning(!running);
+          }}
+        >
+          {running ? '暂停' : pending ? '等待当前步骤完成' : notStarted && !hasStarted ? '开始运行' : '继续运行'}
+        </button>
+        <span className="status-chip" data-state={error ? 'fail' : blocked || pending ? 'blocked' : running ? 'active' : 'idle'} role="status">
+          {running ? '本页正在推进' : pending ? '正在暂停，等待当前步骤返回' : blocked ? '请处理提示后继续' : error ? '请求失败，推进已停止' : hasStarted ? '已暂停推进' : notStarted ? '尚未开始' : '等待继续'}
         </span>
-      ) : null}
-      {error ? (
-        <span className="status-chip" data-state="fail">
-          {error}
-        </span>
-      ) : blocked ? (
-        <span className="status-chip" data-state="quota">
-          {lastResult?.message}
-        </span>
-      ) : lastResult ? (
-        <span className="muted" style={{ fontSize: 12 }}>
-          {lastResult.message}
-        </span>
-      ) : (
-        <span className="muted" style={{ fontSize: 12 }}>
-          驱动云端引擎推进研究流程
-        </span>
-      )}
+        {error ? (
+          <span className="status-chip" data-state="fail" role="alert">
+            {error}
+          </span>
+        ) : blocked ? (
+          <span className="muted">
+            {lastResult?.message}
+          </span>
+        ) : lastResult ? (
+          <span className="muted" style={{ fontSize: 14 }}>
+            {lastResult.message}
+          </span>
+        ) : null}
+      </div>
+      <p className="muted" style={{ fontSize: 14, margin: '8px 0 0' }}>
+        请保持此项目页面打开。切换页签会继续；离开项目、刷新或关闭页面后停止推进，返回后需手动继续。
+      </p>
+      <p className="muted" style={{ fontSize: 14, margin: '4px 0 0' }}>
+        暂停会停止后续步骤；已发出的步骤仍可能在云端完成，并保留结果。
+      </p>
     </div>
   );
 }

@@ -323,7 +323,7 @@ test('handleStep 端到端：从 queued 到 succeeded', async () => {
       kind: 'analyze_paper',
       phaseTag: 'PAPER_ANALYSIS',
       externalTaskId: 'task-step-1',
-      payload: { paper_id: 'paper-1' },
+      payload: { paper_id: 'paper-1', abstract: 'A real abstract used as test input.' },
     });
 
     const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
@@ -340,6 +340,7 @@ test('handleStep 端到端：从 queued 到 succeeded', async () => {
 
 test('handleStep idle：无 queued 任务时尝试推进阶段', async () => {
   const { fake, owner, run } = setup();
+  fake.seed('cloud_task', { run_id: run.id, kind: 'analyze_paper', phase_tag: 'PAPER_ANALYSIS', status: 'succeeded' });
 
   const result = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, owner.id);
 
@@ -472,6 +473,7 @@ test('handleStep 失败阻断：重试耗尽的任务不允许推进阶段', asy
 
 test('handleStep 归属：别人的 run 不能步进；演示只对登录用户开放', async () => {
   const { fake, owner, project, run } = setup();
+  fake.seed('cloud_task', { run_id: run.id, kind: 'analyze_paper', phase_tag: 'PAPER_ANALYSIS', status: 'succeeded' });
 
   const stranger = await handleStep(fake.db, fake.BackendError, { run_id: run.id }, 'not-the-owner');
   assert.equal(stranger.action, 'idle');
@@ -491,6 +493,7 @@ test('handleStep 归属：别人的 run 不能步进；演示只对登录用户�
 
 test('handleStep external_run_id：前端泵的定位参数生效，错配不兜底', async () => {
   const { fake, owner, project, run } = setup();
+  fake.seed('cloud_task', { run_id: run.id, kind: 'analyze_paper', phase_tag: 'PAPER_ANALYSIS', status: 'succeeded' });
 
   const result = await handleStep(
     fake.db,

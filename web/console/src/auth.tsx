@@ -138,7 +138,7 @@ export function AuthPanel({ initialMode = 'login' }: { initialMode?: 'login' | '
     >
       <div className="panel" style={{ width: '100%', maxWidth: 380 }}>
         <h1 style={{ fontSize: 24, margin: '0 0 4px' }}>IdeaSeek</h1>
-        <p className="muted" style={{ margin: '0 0 16px', fontSize: 13 }}>
+        <p className="muted" style={{ margin: '0 0 16px', fontSize: 15 }}>
           {mode === 'login' ? '登录后管理你的研究项目' : '注册一个账号，立刻开始'}
         </p>
         <form
@@ -148,21 +148,27 @@ export function AuthPanel({ initialMode = 'login' }: { initialMode?: 'login' | '
           }}
           style={{ display: 'grid', gap: 10 }}
         >
-          <input
-            placeholder="用户名"
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            aria-label="用户名"
-          />
-          <input
-            placeholder="密码（至少 8 位）"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            aria-label="密码"
-          />
+          <label className="form-field">
+            用户名
+            <input
+              placeholder="用户名"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              aria-label="用户名"
+            />
+          </label>
+          <label className="form-field">
+            密码
+            <input
+              placeholder="密码（至少 8 位）"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              aria-label="密码"
+            />
+          </label>
           {error ? (
             <p className="status-chip" data-state="fail" style={{ margin: 0 }}>
               {error}
@@ -176,7 +182,7 @@ export function AuthPanel({ initialMode = 'login' }: { initialMode?: 'login' | '
             {submit.isPending ? '请稍候…' : mode === 'login' ? '登录' : '注册并登录'}
           </button>
         </form>
-        <p className="muted" style={{ margin: '14px 0 0', fontSize: 13 }}>
+        <p className="muted" style={{ margin: '14px 0 0', fontSize: 15 }}>
           {mode === 'login' ? '还没有账号？' : '已经有账号了？'}{' '}
           <a
             href="#/login"
@@ -189,7 +195,7 @@ export function AuthPanel({ initialMode = 'login' }: { initialMode?: 'login' | '
             {mode === 'login' ? '去注册' : '去登录'}
           </a>
         </p>
-        <p className="muted" style={{ margin: '10px 0 0', fontSize: 12 }}>
+        <p className="muted" style={{ margin: '10px 0 0', fontSize: 14 }}>
           <a href="#/">返回首页</a>
         </p>
       </div>
@@ -242,10 +248,10 @@ export function GuestBanner() {
         marginBottom: 16,
       }}
     >
-      <span className="status-chip" data-state="active">
+      <span className="status-chip" data-state="idle">
         游客模式
       </span>
-      <span style={{ fontSize: 13 }}>
+      <span style={{ fontSize: 15 }}>
         现在只能查看公开的演示项目；创建、编辑、归档需要注册或登录。
       </span>
       <span style={{ display: 'inline-flex', gap: 8, marginLeft: 'auto' }}>

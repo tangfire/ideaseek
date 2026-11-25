@@ -13,6 +13,10 @@ import type { BackendErrorLike, Db } from './deps.ts';
 import { rows } from './deps.ts';
 import { ContractError } from './contract.ts';
 import { sessionIdentity } from './accounts.ts';
+import type { CloudTask } from './engine/cloud-engine.ts';
+import { presentTask } from './task-presentation.ts';
+import { paperSources } from './provenance.ts';
+import { experimentEvidence } from './experiment-presentation.ts';
 
 export interface Viewer {
   ownerId: string | null;
@@ -404,6 +408,7 @@ export async function projectView(
       verdict: null,
       version: 1,
       parent_idea_id: null,
+      paper_sources: paperSources(n.detail?.references_paper_ids, researchNodes.filter((node) => node.kind === 'paper_analysis')),
     }));
 
   const papers = researchNodes
@@ -413,17 +418,18 @@ export async function projectView(
       title: n.title ?? 'Untitled paper',
       question: (n.detail as Record<string, unknown> | null)?.problem as string | null ?? null,
       method_summary: (n.detail as Record<string, unknown> | null)?.method_summary as string | null ?? null,
-      parse_status: n.status,
+      parse_status: (n.status === 'succeeded' || n.status === 'parsed') &&
+        n.detail?.input_source !== 'text' && n.detail?.input_source !== 'abstract' ? 'input_unverified' : n.status,
     }));
 
   const experiments = researchNodes
     .filter((n) => n.kind === 'experiment')
     .map((n) => ({
       external_spec_id: n.node_id,
-      idea_id: (n.detail as Record<string, unknown> | null)?.idea_id as string | null ?? null,
+      title: n.title,
+      idea_id: typeof n.detail?.idea_id === 'string' && n.detail.idea_id.trim() ? n.detail.idea_id : null,
       scale: n.detail?.scale ?? null,
-      status: n.detail?.status === 'simulated' ? 'simulated' : n.status,
-      metrics: n.detail?.status === 'simulated' ? null : n.detail?.metrics ?? null,
+      ...experimentEvidence(n.detail, latest!.external_run_id, n.status),
       verdict: null,
     }));
 
@@ -431,7 +437,17 @@ export async function projectView(
   // 不会顺手漏进公开投影里。
   const shaped =
     level === 'full'
-      ? runs.map((run) => ({ ...run, stage_known: STAGE_KNOWN.has(run.phase_tag) }))
+      ? runs.map((run) => ({
+          ...run,
+          stage_known: STAGE_KNOWN.has(run.phase_tag),
+          ...(run.block_reason === 'paper_input_required' ? {
+            block_detail: {
+              kind: 'USER_INPUT_REQUIRED',
+              message: '请先提供论文正文或摘要，再进行论文分析。',
+              next: '补充论文材料后继续运行。',
+            },
+          } : {}),
+        }))
       : runs.map((run) => ({
           external_run_id: run.external_run_id,
           phase_tag: run.phase_tag,
@@ -439,8 +455,13 @@ export async function projectView(
           finished_at: run.finished_at,
           stage_known: STAGE_KNOWN.has(run.phase_tag),
         }));
-  const shapedStages =
-    level === 'full' ? stages : stages.map((stage) => ({ stage: stage.stage, state: stage.state, stage_known: stage.stage_known }));
+  const shapedStages = stages.map((stage) => {
+    if (level === 'full' && stage.stage === 'PAPER_ANALYSIS' && stage.state === 'passed' &&
+        (papers.length === 0 || papers.some((paper) => paper.parse_status === 'input_unverified'))) {
+      return { ...stage, state: 'blocked', gate_note: '论文材料缺失或来源未核验，不能认定分析已完成。' };
+    }
+    return level === 'full' ? stage : { stage: stage.stage, state: stage.state, stage_known: stage.stage_known };
+  });
 
   return Response.json({
     ok: true,
@@ -473,6 +494,32 @@ export async function projectView(
           protocols: [], // 暂未实现 protocol 管理
         }
       : {}),
+  });
+}
+
+export async function stageView(
+  db: Db,
+  viewer: Viewer,
+  externalId: string,
+  externalRunId: string,
+  stage: string,
+  BackendError: BackendErrorLike,
+): Promise<Response> {
+  if (!STAGE_KNOWN.has(stage)) throw new BackendError('invalid_input', 400);
+  const project = await byExternalId(db, externalId, BackendError);
+  if (!project) throw new BackendError('not_found', 404);
+  if (!canRead(viewer, project)) {
+    throw new BackendError(deniesAsAbsent(viewer) ? 'not_found' : 'no_access', deniesAsAbsent(viewer) ? 404 : 403);
+  }
+  if (readLevel(viewer, project) !== 'full') throw new BackendError('no_access', 403);
+  const id = await runId(db, project.id, externalRunId, BackendError);
+  const tasks = rows<CloudTask>(await db.from<CloudTask>('cloud_task')
+    .select('external_task_id,kind,status,attempt,max_attempts,started_at,ended_at,payload,result')
+    .eq('run_id', id).eq('phase_tag', stage)
+    .order('created_at', { ascending: false }).limit(101), BackendError);
+  return Response.json({
+    ok: true, generated_at: new Date().toISOString(), external_run_id: externalRunId, stage,
+    tasks: tasks.slice(0, 100).map(presentTask), truncated: tasks.length > 100,
   });
 }
 

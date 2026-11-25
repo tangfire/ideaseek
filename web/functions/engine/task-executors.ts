@@ -52,23 +52,37 @@ const PAPER_ANALYSIS_SCHEMA = `papercard-v1:
   "keywords": ["string"]
 }`;
 
+export class PaperInputRequiredError extends Error {
+  constructor() {
+    super('请先提供论文正文或摘要，再进行论文分析。');
+    this.name = 'PaperInputRequiredError';
+  }
+}
+
+export function paperInput(payload: Record<string, unknown> | null): { text: string; source: 'text' | 'abstract' } | null {
+  if (typeof payload?.paper_text === 'string' && payload.paper_text.trim()) {
+    return { text: payload.paper_text, source: 'text' };
+  }
+  if (typeof payload?.abstract === 'string' && payload.abstract.trim()) {
+    return { text: payload.abstract, source: 'abstract' };
+  }
+  return null;
+}
+
 export async function executeAnalyzePaper(ctx: TaskExecutionContext): Promise<Record<string, unknown>> {
-  const paperPayload = (ctx.task.payload as Record<string, unknown> | null) ?? {};
-  const paperText = typeof paperPayload.paper_text === 'string'
-    ? paperPayload.paper_text
-    : typeof paperPayload.abstract === 'string'
-      ? paperPayload.abstract
-      : `Paper ID: ${paperPayload.paper_id ?? ctx.task.external_task_id}\nResearch question: ${ctx.run.question ?? 'Not specified'}`;
+  const paperPayload = ctx.task.payload;
+  const input = paperInput(paperPayload);
+  if (input === null) throw new PaperInputRequiredError();
 
   const result = await callLlm({
     instruction: 'Analyze this research paper and extract its core structure: the problem it addresses, the method it proposes, the key claims it makes with confidence levels, and any unresolved questions or limitations.',
-    inputs: [{ name: 'Paper content', content: paperText.slice(0, 12_000) }],
+    inputs: [{ name: 'Paper content', content: input.text.slice(0, 12_000) }],
     outputSchema: PAPER_ANALYSIS_SCHEMA,
     maxTokens: 2048,
   });
 
   const parsed = result.parsed ?? {};
-  const paperId = String(paperPayload.paper_id ?? ctx.task.external_task_id);
+  const paperId = String(paperPayload?.paper_id ?? ctx.task.external_task_id);
 
   await ctx.engine.upsertResearchNode({
     runId: ctx.run.id,
@@ -78,6 +92,7 @@ export async function executeAnalyzePaper(ctx: TaskExecutionContext): Promise<Re
     title: String(parsed.title ?? `Paper ${paperId}`),
     detail: {
       paper_id: paperId,
+      input_source: input.source,
       problem: parsed.problem,
       method_summary: parsed.method_summary,
       claims: parsed.claims,
@@ -133,9 +148,13 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
   const analyzedPapers = papers.filter((t) => t.kind === 'analyze_paper' && t.status === 'succeeded');
 
   const paperContexts: string[] = [];
+  const contextPaperIds = new Set<string>();
   for (const p of analyzedPapers.slice(0, 5)) {
     const pResult = (p.result as Record<string, unknown> | null) ?? {};
+    const paperId = pResult.paper_id;
+    if (typeof paperId === 'string' && paperId.trim()) contextPaperIds.add(paperId);
     paperContexts.push([
+      typeof paperId === 'string' && paperId.trim() ? `Paper ID: ${paperId}` : 'Paper ID unavailable: do not cite this paper by ID.',
       `Paper: ${pResult.title ?? p.external_task_id}`,
       `Problem: ${pResult.problem ?? 'N/A'}`,
       `Method: ${pResult.method_summary ?? 'N/A'}`,
@@ -151,7 +170,8 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
 1. Address at least one "unknown" or gap identified in the papers
 2. Be feasible to validate with computational experiments
 3. Have a clear, testable hypothesis
-4. Build on (not repeat) existing methods`,
+4. Build on (not repeat) existing methods
+5. references_paper_ids must contain only the exact Paper IDs shown below that support this idea. Use [] if none support it; never invent an ID.`,
     inputs: [
       { name: 'Research question', content: researchQuestion },
       { name: 'Analyzed papers', content: paperContexts.join('\n---\n') || 'No papers analyzed yet. Generate an idea based on the research question alone.' },
@@ -161,6 +181,12 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
   });
 
   const parsed = result.parsed ?? {};
+  const references = parsed.references_paper_ids;
+  await recordLlmCost(ctx, result, 'generate_idea');
+  if (!Array.isArray(references) || references.some((id) => typeof id !== 'string' || !contextPaperIds.has(id))) {
+    throw new Error('想法来源论文编号缺失或不在本次提供的论文中。');
+  }
+  const referencePaperIds = [...new Set(references as string[])];
   const ideaId = `idea-${ctx.task.external_task_id}`;
 
   await ctx.engine.upsertResearchNode({
@@ -176,7 +202,8 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
       feasibility: parsed.feasibility,
       novelty_claim: parsed.novelty_claim,
       suggested_experiments: parsed.suggested_experiments,
-      references_paper_ids: parsed.references_paper_ids,
+      references_paper_ids: referencePaperIds,
+      context_paper_ids: [...contextPaperIds],
     },
   });
 
@@ -189,8 +216,6 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
     objectId: ideaId,
   });
 
-  await recordLlmCost(ctx, result, 'generate_idea');
-
   return {
     idea_id: ideaId,
     title: parsed.title,
@@ -198,6 +223,8 @@ export async function executeGenerateIdea(ctx: TaskExecutionContext): Promise<Re
     mechanism_summary: parsed.mechanism_summary,
     feasibility: parsed.feasibility,
     suggested_experiments: parsed.suggested_experiments ?? [],
+    references_paper_ids: referencePaperIds,
+    context_paper_ids: [...contextPaperIds],
     llm_usage: result.usage,
     llm_model: result.model,
   };

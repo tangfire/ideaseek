@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useId, useRef, useState, type ReactElement } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Route, Switch, useLocation } from 'wouter';
 import { ApiError, requestJson, mutateJson } from './api';
 import { openLive, type Transport } from './live';
@@ -30,6 +30,18 @@ import {
   StepPump,
 } from './panels';
 import { AuthGate, AuthPanel, GuestBanner, logout, useMe } from './auth';
+import { StageDetails } from './stage-details';
+import { ExperimentEvidence } from './experiment-evidence';
+import { Resources } from './resources';
+import { ExpandableText } from './expandable-text';
+import { ProjectTabs } from './project-tabs';
+import {
+  ExperimentRelations,
+  IdeaRelations,
+  PaperRelations,
+  outputId,
+  type OutputNavigation,
+} from './output-relations';
 
 /**
  * 阶段名逐字取 `docs/WORKFLOW_SPEC.md:5-21`（经 DIAGRAMS.md §2.5 转录）。
@@ -71,12 +83,14 @@ const STATUS_STATE: Record<string, 'ok' | 'active' | 'blocked' | 'fail' | 'quota
   CANCELED: 'idle',
   // 云引擎用小写状态词；阶段进度用 passed/active/pending/failed。
   running: 'active',
-  created: 'active',
+  created: 'idle',
   succeeded: 'ok',
   blocked: 'blocked',
   failed: 'fail',
+  partial: 'blocked',
+  invalid: 'fail',
   canceled: 'idle',
-  queued: 'active',
+  queued: 'idle',
   claimed: 'active',
   passed: 'ok',
   active: 'active',
@@ -125,8 +139,11 @@ const STATUS_LABEL: Record<string, string> = {
   running: '运行中',
   created: '已创建',
   succeeded: '已完成',
-  blocked: '已阻断',
+  blocked: '等待处理',
+  BLOCKED: '等待处理',
   failed: '失败',
+  partial: '部分完成',
+  invalid: '结果无效',
   canceled: '已取消',
   queued: '排队中',
   claimed: '执行中',
@@ -136,6 +153,7 @@ const STATUS_LABEL: Record<string, string> = {
   completed: '已完成',
   parsed: '已解析',
   simulated: '模拟演示 · 未执行实验',
+  input_unverified: '材料来源待核验',
   supported: '有证据支持',
   uncertain: '不确定',
   unsupported: '无证据',
@@ -143,6 +161,7 @@ const STATUS_LABEL: Record<string, string> = {
   REJECTED: '拒绝',
   NEEDS_REVISION: '需修订',
   INVALID_RUN: '无效运行',
+  rejected: '未获支持',
 };
 
 function labelOf(value: string): string {
@@ -160,10 +179,10 @@ const AUTONOMY_LABEL: Record<string, string> = {
   'review-only': '只评审',
 };
 const SCALE_LABEL: Record<string, string> = {
-  smoke: '冒烟',
-  quick: '快速',
-  standard: '标准',
-  handoff_manifest: '交接清单',
+  smoke: '最小验证',
+  quick: '小规模验证',
+  standard: '标准规模',
+  handoff_manifest: '实验交付清单',
 };
 
 /** 云端已完整跑通 15 阶段的演示项目（匿名 Owner，任何登录用户可驱动）。 */
@@ -185,7 +204,12 @@ function ago(iso: string | null): string {
   return `${Math.round(hours / 24)} 天前`;
 }
 
-function Chips({ run }: { run: RunSummary }) {
+export function Chips({ run }: { run: RunSummary }) {
+  const sameStage =
+    run.stage_known &&
+    (run.status === run.phase_tag ||
+      (run.phase_tag === 'COMPLETED' &&
+        ['succeeded', 'completed', 'SUCCEEDED', 'COMPLETED'].includes(run.status ?? '')));
   return (
     <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
       {run.status ? (
@@ -194,19 +218,15 @@ function Chips({ run }: { run: RunSummary }) {
           {labelOf(run.status)}
         </span>
       ) : null}
-      <span
-        className="status-chip"
-        data-state={run.stage_known ? stateOf(run.phase_tag) : 'idle'}
-        title={run.phase_tag}
-      >
-        {PHASE_LABEL[run.phase_tag] ?? run.phase_tag}
-        {run.stage_known ? '' : '（未上报）'}
-      </span>
+      {!sameStage ? (
+        <span className="status-chip" data-state="idle" title={run.phase_tag}>
+          阶段：{PHASE_LABEL[run.phase_tag] ?? run.phase_tag}
+          {run.stage_known ? '' : '（未上报）'}
+        </span>
+      ) : null}
       {run.status === 'QUOTA_EXHAUSTED' ? (
         // 额度耗尽不是失败：文案与配色都要分开（F2.4）。
-        <span className="status-chip" data-state="quota">
-          额度已用尽 · 不是运行失败
-        </span>
+        <span className="muted">额度耗尽会保留已有结果，不代表实验失败。</span>
       ) : null}
     </span>
   );
@@ -223,16 +243,13 @@ function BlockReasonCard({ run }: { run: RunSummary }) {
   const detail = run.block_detail;
   const kind = detail?.kind ?? run.status ?? 'BLOCKED';
   // 额度耗尽、需要认证、网络阻断是基础设施问题，不是科学失败（WORKFLOW_SPEC.md:27）。
-  const isInfra = ['QUOTA_EXHAUSTED', 'AUTH_REQUIRED', 'NETWORK_BLOCKED'].includes(kind);
+  const isQuota = kind === 'QUOTA_EXHAUSTED';
   // 从 block_reason 推导 next 建议（如果 detail 没有提供）。
   const next = detail?.next ?? deriveNextFromReason(kind, run.block_reason);
   return (
-    <div className="panel" style={{ borderLeftColor: isInfra ? 'var(--quota)' : 'var(--blocked)' }}>
+    <div className="panel" style={{ borderLeftColor: isQuota ? 'var(--quota)' : 'var(--blocked)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span className="status-chip" data-state={isInfra ? 'quota' : 'blocked'}>
-          {isInfra ? '基础设施阻塞' : '等待确认'}
-        </span>
-        <strong>{kind}</strong>
+        <strong title={kind}>{labelOf(kind)}</strong>
       </div>
       {detail?.message ? (
         <p style={{ margin: '0 0 8px' }}>{detail.message}</p>
@@ -240,7 +257,7 @@ function BlockReasonCard({ run }: { run: RunSummary }) {
         <p style={{ margin: '0 0 8px' }}>{run.block_reason}</p>
       ) : null}
       {next ? (
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        <p className="muted" style={{ margin: 0, fontSize: 15 }}>
           下一步：<code className="mono">{next}</code>
         </p>
       ) : null}
@@ -300,7 +317,7 @@ function RunHistory({ runs }: { runs: RunSummary[] }) {
               <td>
                 <span
                   className="status-chip"
-                  data-state={run.stage_known ? stateOf(run.phase_tag) : 'idle'}
+                  data-state="idle"
                   title={run.phase_tag}
                 >
                   {PHASE_LABEL[run.phase_tag] ?? run.phase_tag}
@@ -339,16 +356,21 @@ function formatDuration(ms: number): string {
 }
 
 /** 15 阶段的连通步进器：节点按状态着色，连线表示已通过的前序阶段。 */
-function Pipeline({ stages }: { stages: ProjectView['stages'] }) {
+function Pipeline({ stages, projectId, externalRunId, inspectable }: {
+  stages: ProjectView['stages']; projectId: string; externalRunId?: string; inspectable: boolean;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
   const byName = new Map(stages.map((s) => [s.stage, s]));
   const stateAt = (stage: string) => {
     const row = byName.get(stage);
     return row ? stateOf(row.state) : 'idle';
   };
   return (
-    <div style={{ margin: '16px 0' }}>
+    <div className="flow-layout" style={{ margin: '16px 0' }}>
       <h3 style={{ fontSize: 15, margin: '0 0 12px' }}>研究链路</h3>
-      <ol className="flow">
+      {inspectable ? <p className="muted">选择阶段，查看任务、输入与产出。</p> : null}
+      <p className="flow-hint muted">按序从左向右查看，可横向滚动。</p>
+      <ol className="flow" aria-label="研究阶段" tabIndex={0}>
         {STAGES.map((stage, i) => {
           const row = byName.get(stage);
           const state = stateAt(stage);
@@ -361,30 +383,52 @@ function Pipeline({ stages }: { stages: ProjectView['stages'] }) {
                   ? '✕'
                   : state === 'blocked'
                     ? '!'
-                    : '';
-          const prevDone = i > 0 && stateAt(STAGES[i - 1]!) === 'ok';
+                    : state === 'quota' ? '◇' : '';
           return (
             <li
               key={stage}
               className="flow-node"
               data-state={state}
-              title={row?.gate_note ?? row?.blocker_code ?? stage}
+              title={`${PHASE_LABEL[stage]}：${row ? labelOf(row.state) : '未上报'}${row?.gate_note ? ` · ${row.gate_note}` : ''}`}
             >
-              {i > 0 ? (
-                <span className="flow-link" data-done={prevDone ? '1' : '0'} aria-hidden />
+              {i < STAGES.length - 1 ? (
+                <span className="flow-link" data-done={state === 'ok' ? '1' : '0'} aria-hidden />
               ) : null}
-              <span className="flow-col">
-                <span className="flow-dot">{mark}</span>
-                <span className="flow-label">{PHASE_LABEL[stage]}</span>
-              </span>
+              {inspectable && externalRunId ? (
+                <button
+                  className="flow-col flow-step"
+                  aria-expanded={selected === stage}
+                  aria-controls={selected === stage ? 'stage-detail' : undefined}
+                  onClick={() => setSelected(selected === stage ? null : stage)}
+                >
+                  <span className="flow-dot" aria-hidden>{mark}</span>
+                  <span className="flow-label">{i + 1}. {PHASE_LABEL[stage]}</span>
+                </button>
+              ) : (
+                <span className="flow-col">
+                  <span className="flow-dot">{mark}</span>
+                  <span className="flow-label">{i + 1}. {PHASE_LABEL[stage]}</span>
+                </span>
+              )}
             </li>
           );
         })}
       </ol>
+      <p className="muted">阶段标记：✓ 已通过 · ● 进行中 · ! 等待处理 · ✕ 失败 · ◇ 额度耗尽；空心为未开始或未上报。</p>
+      {inspectable && selected && externalRunId ? (
+        <StageDetails
+          key={selected}
+          projectId={projectId}
+          externalRunId={externalRunId}
+          stage={selected}
+          title={PHASE_LABEL[selected]!}
+          progress={byName.get(selected)}
+        />
+      ) : null}
       {/* F3.3: 门槛达成说明——每个阶段的进入条件与当前证据 */}
       {stages.some((s) => s.gate_note || s.blocker_code) ? (
         <details style={{ marginTop: 8 }}>
-          <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>
+          <summary className="muted" style={{ cursor: 'pointer', fontSize: 15 }}>
             查看门槛说明
           </summary>
           <div style={{ marginTop: 8, paddingLeft: 16 }}>
@@ -395,7 +439,7 @@ function Pipeline({ stages }: { stages: ProjectView['stages'] }) {
                   <strong>{PHASE_LABEL[s.stage] ?? s.stage}</strong>
                   {s.gate_note ? <p style={{ margin: '2px 0' }}>{s.gate_note}</p> : null}
                   {s.blocker_code ? (
-                    <p className="muted" style={{ margin: '2px 0', fontSize: 12 }}>
+                    <p className="muted" style={{ margin: '2px 0', fontSize: 14 }}>
                       阻塞码：<code className="mono">{s.blocker_code}</code>
                     </p>
                   ) : null}
@@ -406,8 +450,8 @@ function Pipeline({ stages }: { stages: ProjectView['stages'] }) {
       ) : null}
       {/* F3.4: unknown 阶段兜底——映射不到 15 阶段的显式标出 */}
       {stages.some((s) => !s.stage_known) ? (
-        <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-          注：标记为"未上报"的阶段是引擎尚未投影到阶段模型的中间状态。
+        <p className="muted" style={{ marginTop: 8, fontSize: 14 }}>
+          “未上报”表示尚未收到阶段记录，不能据此判断已经完成或尚未开始。
         </p>
       ) : null}
     </div>
@@ -457,21 +501,22 @@ function EventList({
   if (events.length === 0)
     return (
       <p className="muted">
-        {redacted ? '事件摘要不在公开降级投影（L2）这一级。' : '云端还没有这条运行的事件。'}
+        {redacted ? '公开摘要不展示事件详情。' : '尚无这次运行的事件记录。'}
       </p>
     );
 
   return (
     <div>
       {/* F4.4: 批更新标注——明确说明数据来源时间，禁用"实时"字样 */}
-      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+      <p className="muted" style={{ fontSize: 14, margin: '0 0 8px' }}>
         数据来自 {ago(lastSyncAt)}的一批同步 · 共 {filtered.length} 条事件
         {filtered.length !== events.length
           ? `（已过滤 ${events.length - filtered.length} 条）`
           : ''}
       </p>
       {/* F4.2: 过滤器 */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+      <div className="form-grid" style={{ marginBottom: 12 }}>
+        <label className="form-field">阶段
         <select
           value={stageFilter}
           onChange={(e) => {
@@ -481,7 +526,7 @@ function EventList({
           style={{
             background: 'var(--panel)',
             color: 'var(--text)',
-            border: '1px solid var(--line)',
+            border: '1px solid var(--control-line)',
             borderRadius: 4,
             padding: '4px 8px',
           }}
@@ -493,6 +538,8 @@ function EventList({
             </option>
           ))}
         </select>
+        </label>
+        <label className="form-field">事件类型
         <select
           value={typeFilter}
           onChange={(e) => {
@@ -502,7 +549,7 @@ function EventList({
           style={{
             background: 'var(--panel)',
             color: 'var(--text)',
-            border: '1px solid var(--line)',
+            border: '1px solid var(--control-line)',
             borderRadius: 4,
             padding: '4px 8px',
           }}
@@ -514,6 +561,8 @@ function EventList({
             </option>
           ))}
         </select>
+        </label>
+        <label className="form-field">事件级别
         <select
           value={levelFilter}
           onChange={(e) => {
@@ -523,7 +572,7 @@ function EventList({
           style={{
             background: 'var(--panel)',
             color: 'var(--text)',
-            border: '1px solid var(--line)',
+            border: '1px solid var(--control-line)',
             borderRadius: 4,
             padding: '4px 8px',
           }}
@@ -535,6 +584,7 @@ function EventList({
             </option>
           ))}
         </select>
+        </label>
         {stageFilter || typeFilter || levelFilter ? (
           <button
             onClick={() => {
@@ -662,7 +712,7 @@ function HomePage() {
           开始
         </button>
         <div style={{ marginTop: 48, paddingTop: 32, borderTop: '1px solid var(--line)' }}>
-          <p className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+          <p className="muted" style={{ fontSize: 15, marginBottom: 16 }}>
             研究流程在云端执行，全程留下可审计的事件与证据链。
           </p>
           <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -684,39 +734,55 @@ function HomePage() {
 function ConsoleLayout({ children }: { children: ReactElement }) {
   const [location] = useLocation();
   const me = useMe();
-  const currentPath =
-    location === '/console' || location === '/console/'
-      ? '/console'
-      : location.startsWith('/p/')
-        ? '/p/:id'
-        : location;
+  const currentPath = location.replace(/\/$/, '');
+  const demoPath = `/p/${DEMO_PROJECT_ID}`;
+  const currentProject = /^\/p\/[^/]+$/.test(currentPath) && currentPath !== demoPath;
 
   return (
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>IdeaSeek</h1>
-          <div className="subtitle">research console</div>
+          <div className="subtitle">科研工作台</div>
         </div>
         <ul className="sidebar-nav">
           <li>
-            <a href="#/console" className={currentPath === '/console' ? 'active' : ''}>
+            <a
+              href="#/console"
+              className={currentPath === '/console' ? 'active' : ''}
+              aria-current={currentPath === '/console' ? 'page' : undefined}
+            >
               项目列表
             </a>
           </li>
           <li>
-            <a href={`#/p/${DEMO_PROJECT_ID}`} className={currentPath === '/p/:id' ? 'active' : ''}>
+            <a
+              href={`#${demoPath}`}
+              className={currentPath === demoPath ? 'active' : ''}
+              aria-current={currentPath === demoPath ? 'page' : undefined}
+            >
               演示项目
             </a>
           </li>
+          {currentProject ? (
+            <li>
+              <a href={`#${currentPath}`} className="active" aria-current="page">
+                当前项目
+              </a>
+            </li>
+          ) : null}
         </ul>
-        <div className="sidebar-section">
+        <div className="sidebar-section sidebar-account">
           <div className="sidebar-section-title">账号</div>
           <ul className="sidebar-nav">
             {me.data ? (
               <>
                 <li>
-                  <span style={{ padding: '8px 16px', fontSize: 13, display: 'block' }}>
+                  <span
+                    className="account-name"
+                    title={me.data.username}
+                    style={{ padding: '8px 16px', fontSize: 15, display: 'block' }}
+                  >
                     {me.data.username}
                   </span>
                 </li>
@@ -740,7 +806,7 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
                 <li>
                   <span
                     className="muted"
-                    style={{ padding: '8px 16px', fontSize: 13, display: 'block' }}
+                    style={{ padding: '8px 16px', fontSize: 15, display: 'block' }}
                   >
                     未登录 · 游客
                   </span>
@@ -769,13 +835,13 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
           <div className="sidebar-section-title">运行位置</div>
           <ul className="sidebar-nav">
             <li>
-              <span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>
-                引擎：云端 Function
+              <span className="muted" style={{ padding: '8px 16px', fontSize: 13 }}>
+                任务在云端执行
               </span>
             </li>
             <li>
-              <span className="muted" style={{ padding: '8px 16px', fontSize: 11 }}>
-                浏览器驱动 · 全程可审计
+              <span className="muted" style={{ padding: '8px 16px', fontSize: 13 }}>
+                保持项目页面打开以继续推进
               </span>
             </li>
           </ul>
@@ -790,21 +856,16 @@ function ConsoleLayout({ children }: { children: ReactElement }) {
 }
 
 /** 列表页的过滤条件全部在客户端算：投影一次就发全量（M7 的读数上限），没必要为排序再打一次云端。 */
-const LIST_FILTERS = ['全部', '运行中', '需人工', '已结束', '无运行'] as const;
+const LIST_FILTERS = ['全部', '运行中', '需处理', '已结束', '尚未开始', '无运行', '状态未公开'] as const;
 
 function runFilter(run: RunSummary | null): (typeof LIST_FILTERS)[number] {
   if (!run) return '无运行';
-  const status = run.status ?? '';
-  if (status === 'RUNNING' || status === 'INIT') return '运行中';
-  if (
-    status === 'SUCCEEDED' ||
-    status === 'COMPLETED' ||
-    status === 'FAILED' ||
-    status === 'CANCELED' ||
-    status === 'FAILED_RECOVERABLE'
-  )
-    return '已结束';
-  return '需人工';
+  if (run.status === undefined) return '状态未公开';
+  const status = run.status.toUpperCase();
+  if (['RUNNING', 'ACTIVE', 'CLAIMED'].includes(status)) return '运行中';
+  if (['INIT', 'CREATED', 'QUEUED', 'PENDING'].includes(status)) return '尚未开始';
+  if (['SUCCEEDED', 'COMPLETED', 'FAILED', 'CANCELED', 'INVALID'].includes(status)) return '已结束';
+  return '需处理';
 }
 
 /**
@@ -814,13 +875,15 @@ function runFilter(run: RunSummary | null): (typeof LIST_FILTERS)[number] {
  */
 function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChanged: () => void }) {
   const [renaming, setRenaming] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [confirmation, setConfirmation] = useState('');
   const [draft, setDraft] = useState(project.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!project.owned)
     return (
-      <span className="muted" style={{ fontSize: 11 }}>
+      <span className="muted" style={{ fontSize: 13 }}>
         —
       </span>
     );
@@ -831,6 +894,8 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
     try {
       await action();
       setRenaming(false);
+      setArchiving(false);
+      setConfirmation('');
       onChanged();
     } catch (err) {
       setError((err as Error).message);
@@ -851,10 +916,8 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
 
   const archive = () =>
     run(async () => {
-      const confirm = window.prompt(`归档「${project.title}」？请输入项目标题确认：`);
-      if (confirm === null) return;
       await mutateJson(
-        `/functions/v1/app/projects/${encodeURIComponent(project.external_id)}?confirm=${encodeURIComponent(confirm)}`,
+        `/functions/v1/app/projects/${encodeURIComponent(project.external_id)}?confirm=${encodeURIComponent(confirmation)}`,
         { method: 'DELETE' },
       );
     });
@@ -867,65 +930,115 @@ function RowActions({ project, onChanged }: { project: ProjectIndexEntry; onChan
       }),
     );
 
-  if (renaming) {
+  if (renaming || archiving) {
     return (
-      <span
-        style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}
-        onClick={(event) => event.stopPropagation()}
+      <form
+        className="project-edit"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (busy) return;
+          if (archiving) {
+            if (confirmation === project.title) void archive();
+          } else if (draft.trim() && draft.trim() !== project.title) void rename();
+        }}
       >
-        <input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          style={{ width: 140 }}
-          aria-label="新标题"
-        />
-        <button className="btn-primary" disabled={busy} onClick={rename}>
-          保存
-        </button>
-        <button
-          className="btn-secondary"
-          onClick={() => {
-            setDraft(project.title);
-            setRenaming(false);
-          }}
-        >
-          取消
-        </button>
+        {archiving ? (
+          <p>归档后从默认列表隐藏，暂时无法打开；可在“已归档项目”中恢复，不删除研究记录。</p>
+        ) : null}
+        <label className="form-field">
+          {archiving ? '输入项目标题确认归档' : '新标题'}
+          <input
+            autoFocus
+            value={archiving ? confirmation : draft}
+            onChange={(event) =>
+              archiving ? setConfirmation(event.target.value) : setDraft(event.target.value)
+            }
+            disabled={busy}
+          />
+        </label>
+        {archiving ? <p className="muted">项目标题：{project.title}</p> : null}
+        <div className="project-action-buttons">
+          <button
+            type="submit"
+            className={archiving ? 'btn-danger' : 'btn-primary'}
+            disabled={
+              busy ||
+              (archiving
+                ? confirmation !== project.title
+                : !draft.trim() || draft.trim() === project.title)
+            }
+          >
+            {busy ? '处理中…' : archiving ? '确认归档' : '保存'}
+          </button>
+          <button
+            className="btn-secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setDraft(project.title);
+              setRenaming(false);
+              setArchiving(false);
+              setConfirmation('');
+              setError(null);
+            }}
+          >
+            取消
+          </button>
+        </div>
         {error ? (
-          <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>
+          <span role="alert" style={{ fontSize: 13, color: 'var(--fail)' }}>
             {error}
           </span>
         ) : null}
-      </span>
+      </form>
     );
   }
 
   return (
-    <span style={{ display: 'inline-flex', gap: 6 }} onClick={(event) => event.stopPropagation()}>
+    <div>
       {project.archived ? (
         <button className="btn-secondary" disabled={busy} onClick={restore}>
           恢复
         </button>
       ) : (
-        <>
-          <button className="btn-secondary" disabled={busy} onClick={() => setRenaming(true)}>
-            改名
-          </button>
-          <button className="btn-danger" disabled={busy} onClick={archive}>
-            归档
-          </button>
-        </>
+        <details className="project-actions">
+          <summary>更多操作</summary>
+          <div className="project-action-buttons">
+            <button
+              className="btn-secondary"
+              disabled={busy}
+              onClick={() => {
+                setDraft(project.title);
+                setError(null);
+                setRenaming(true);
+              }}
+            >
+              改名
+            </button>
+            <button
+              className="btn-danger"
+              disabled={busy}
+              onClick={() => {
+                setError(null);
+                setArchiving(true);
+              }}
+            >
+              归档
+            </button>
+          </div>
+        </details>
       )}
       {error ? (
-        <span className="muted" style={{ fontSize: 11, color: 'var(--fail)' }}>
+        <span role="alert" style={{ fontSize: 13, color: 'var(--fail)' }}>
           {error}
         </span>
       ) : null}
-    </span>
+    </div>
   );
 }
 
 function ConsoleHome() {
+  const client = useQueryClient();
   const me = useMe();
   const loggedIn = Boolean(me.data);
   const [showArchived, setShowArchived] = useState(false);
@@ -936,17 +1049,19 @@ function ConsoleHome() {
         `/functions/v1/app/views/index${showArchived ? '?include_archived=1' : ''}`,
       ),
   });
-  const [, navigate] = useLocation();
   const [creating, setCreating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const createButton = useRef<HTMLButtonElement>(null);
   const [filter, setFilter] = useState<(typeof LIST_FILTERS)[number]>('全部');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('最近同步');
   const [layout, setLayout] = useState<'列表' | '卡片'>('列表');
   const invalidateIndex = () => {
-    void query.refetch();
+    void client.invalidateQueries({ queryKey: ['index'] });
   };
 
   const projects = (query.data?.projects ?? [])
+    .filter((project) => Boolean(project.archived) === showArchived)
     .filter((project) => (filter === '全部' ? true : runFilter(project.latest_run) === filter))
     .filter((project) => {
       const needle = search.trim().toLowerCase();
@@ -963,66 +1078,105 @@ function ConsoleHome() {
 
   return (
     <>
-      <h2 style={{ marginTop: 0 }}>项目列表</h2>
+      <div className="project-list-header">
+        <h2 style={{ margin: 0 }}>项目列表</h2>
+        {loggedIn ? (
+          <button
+            ref={createButton}
+            className="btn-primary"
+            aria-expanded={creating}
+            aria-controls="create-project-panel"
+            onClick={() => {
+              setCreating(!creating);
+              setNotice(null);
+            }}
+          >
+            {creating ? '收起创建' : '新建项目'}
+          </button>
+        ) : null}
+      </div>
+      {notice ? <p role="status">{notice}</p> : null}
+      {creating ? (
+        <section id="create-project-panel" aria-label="创建项目">
+          <CreateProjectPanel
+            onCreated={() => {
+              setCreating(false);
+              setShowArchived(false);
+              setFilter('全部');
+              setSearch('');
+              setNotice('项目已创建。请从列表打开项目，检查材料后开始运行。');
+              createButton.current?.focus();
+            }}
+          />
+        </section>
+      ) : null}
       <div
+        className="project-toolbar"
         style={{
           display: 'flex',
           gap: 8,
-          alignItems: 'center',
+          alignItems: 'end',
           flexWrap: 'wrap',
           marginBottom: 12,
         }}
       >
-        <input
-          style={{ flex: '1 1 220px', maxWidth: 320 }}
-          placeholder="搜索标题、目录名或研究问题"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          aria-label="搜索项目"
-        />
-        <select
-          value={filter}
-          onChange={(event) => setFilter(event.target.value as (typeof LIST_FILTERS)[number])}
-          aria-label="状态筛选"
-        >
-          {LIST_FILTERS.map((entry) => (
-            <option key={entry} value={entry}>
-              {entry}
-            </option>
-          ))}
-        </select>
-        <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序">
-          <option value="最近同步">最近同步</option>
-          <option value="标题">标题</option>
-        </select>
+        <label className="form-field" style={{ flex: '1 1 220px', maxWidth: 320 }}>
+          搜索项目
+          <input
+            placeholder="搜索标题、目录名或研究问题"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            aria-label="搜索项目"
+          />
+        </label>
+        <label className="form-field">
+          状态筛选
+          <select
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as (typeof LIST_FILTERS)[number])}
+            aria-label="状态筛选"
+          >
+            {LIST_FILTERS.map((entry) => (
+              <option key={entry} value={entry}>
+                {entry}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="form-field">
+          排序
+          <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="排序">
+            <option value="最近同步">最近同步</option>
+            <option value="标题">标题</option>
+          </select>
+        </label>
         <button
           className="btn-secondary"
           onClick={() => setLayout(layout === '列表' ? '卡片' : '列表')}
         >
           {layout === '列表' ? '卡片视图' : '列表视图'}
         </button>
-        {loggedIn ? (
-          <button className="btn-primary" onClick={() => setCreating(!creating)}>
-            {creating ? '收起' : '新建项目'}
-          </button>
-        ) : null}
-        <label
-          className="muted"
-          style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}
-        >
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(event) => setShowArchived(event.target.checked)}
-          />
-          显示已归档
+        <label className="form-field">
+          项目范围
+          <select
+            aria-label="项目范围"
+            value={showArchived ? 'archived' : 'active'}
+            onChange={(event) => setShowArchived(event.target.value === 'archived')}
+          >
+            <option value="active">未归档项目</option>
+            <option value="archived">已归档项目</option>
+          </select>
         </label>
       </div>
 
       <ProvisioningList />
-      {creating ? <CreateProjectPanel onCreated={() => setCreating(false)} /> : null}
+      {query.data && !query.error ? (
+        <p className="muted">
+          {showArchived ? '已归档项目' : '未归档项目'} · 当前显示 {projects.length} 项
+        </p>
+      ) : null}
 
-      {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
+      {query.isPending ? <p className="muted">正在加载项目列表…</p> : null}
       {query.error instanceof ApiError && query.error.code === 'login_required' ? (
         <p>
           <a href="#/login">登录</a> 后继续。
@@ -1031,8 +1185,8 @@ function ConsoleHome() {
       {query.error &&
       !(query.error instanceof ApiError && query.error.code === 'login_required') ? (
         <div className="panel">
-          <p style={{ margin: '0 0 8px' }}>云端投影读不到</p>
-          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          <p style={{ margin: '0 0 8px' }}>暂时无法加载项目列表</p>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>
             {(query.error as Error).message} 稍后重试即可，云端数据不受影响。
           </p>
         </div>
@@ -1042,10 +1196,10 @@ function ConsoleHome() {
           <p style={{ margin: '0 0 8px' }}>
             {query.data.projects.length === 0 ? '还没有可见项目' : '没有符合筛选条件的项目'}
           </p>
-          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>
             {query.data.projects.length === 0
               ? loggedIn
-                ? '点上方"新建项目"，云端会立即创建并开始研究流程。'
+                ? '点击“新建项目”。创建后打开项目，检查材料，再点击“开始运行”。'
                 : '注册或登录后就能创建你自己的研究项目。'
               : '清空搜索或换一个筛选条件即可看到全部。'}
           </p>
@@ -1064,18 +1218,18 @@ function ConsoleHome() {
           </thead>
           <tbody>
             {projects.map((project) => (
-              <tr
-                key={project.external_id}
-                style={{ cursor: 'pointer', opacity: project.archived ? 0.55 : 1 }}
-                onClick={() => navigate(`/p/${project.external_id}`)}
-              >
-                <td>
-                  {project.title}
+              <tr key={project.external_id}>
+                <td data-label="项目">
+                  {project.archived ? (
+                    <strong>{project.title}</strong>
+                  ) : (
+                    <a href={`#/p/${encodeURIComponent(project.external_id)}`}>{project.title}</a>
+                  )}
                   {project.external_id === DEMO_PROJECT_ID ? (
                     <span
                       className="status-chip"
-                      data-state="active"
-                      style={{ marginLeft: 8, fontSize: 10 }}
+                      data-state="idle"
+                      style={{ marginLeft: 8, fontSize: 13 }}
                     >
                       演示
                     </span>
@@ -1084,27 +1238,29 @@ function ConsoleHome() {
                     <span
                       className="status-chip"
                       data-state="idle"
-                      style={{ marginLeft: 8, fontSize: 10 }}
+                      style={{ marginLeft: 8, fontSize: 13 }}
                     >
                       已归档
                     </span>
                   ) : null}
-                  <div className="muted mono" style={{ fontSize: 11 }}>
+                  <div className="muted mono" style={{ fontSize: 13 }}>
                     {project.external_id}
                   </div>
                 </td>
-                <td className="muted">{ago(project.last_sync_at)}</td>
-                <td>
+                <td className="muted" data-label="同步时间">
+                  {ago(project.last_sync_at)}
+                </td>
+                <td data-label="状态">
                   {project.latest_run ? (
                     <Chips run={project.latest_run} />
                   ) : (
                     <span className="muted">无运行</span>
                   )}
                 </td>
-                <td>
+                <td data-label="可见性">
                   <VisibilityBadge visibility={project.visibility} />
                 </td>
-                <td>
+                <td data-label="操作">
                   <RowActions project={project} onChanged={invalidateIndex} />
                 </td>
               </tr>
@@ -1115,22 +1271,34 @@ function ConsoleHome() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',
             gap: 12,
           }}
         >
           {projects.map((project) => (
-            <div
-              key={project.external_id}
-              className="panel"
-              style={{ cursor: 'pointer', marginBottom: 0 }}
-              onClick={() => navigate(`/p/${project.external_id}`)}
-            >
-              <strong>{project.title}</strong>
-              <div className="muted mono" style={{ fontSize: 11, marginBottom: 6 }}>
+            <div key={project.external_id} className="panel" style={{ marginBottom: 0 }}>
+              <h3 style={{ marginTop: 0 }}>
+                {project.archived ? (
+                  project.title
+                ) : (
+                  <a href={`#/p/${encodeURIComponent(project.external_id)}`}>{project.title}</a>
+                )}
+              </h3>
+              <VisibilityBadge visibility={project.visibility} />
+              {project.archived ? (
+                <span className="status-chip" data-state="idle">
+                  已归档
+                </span>
+              ) : null}
+              {project.external_id === DEMO_PROJECT_ID ? (
+                <span className="status-chip" data-state="idle">
+                  演示
+                </span>
+              ) : null}
+              <div className="muted mono" style={{ fontSize: 13, marginBottom: 6 }}>
                 {project.external_id}
               </div>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              <div className="muted" style={{ fontSize: 14, marginBottom: 6 }}>
                 {project.latest_run?.question ?? '没有记录研究问题'}
               </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1139,11 +1307,11 @@ function ConsoleHome() {
                 ) : (
                   <span className="muted">无运行</span>
                 )}
-                <span className="muted" style={{ fontSize: 11 }}>
+                <span className="muted" style={{ fontSize: 13 }}>
                   {ago(project.last_sync_at)}同步
                 </span>
               </div>
-              <div style={{ marginTop: 8 }} onClick={(event) => event.stopPropagation()}>
+              <div style={{ marginTop: 8 }}>
                 <RowActions project={project} onChanged={invalidateIndex} />
               </div>
             </div>
@@ -1156,6 +1324,7 @@ function ConsoleHome() {
 }
 
 function Project({ id }: { id: string }) {
+  const tabsId = useId();
   const query = useQuery({
     queryKey: ['project', id],
     queryFn: () =>
@@ -1164,32 +1333,32 @@ function Project({ id }: { id: string }) {
       ),
   });
   const [transport, setTransport] = useState<Transport>('connecting');
-  const [liveEvents, setLiveEvents] = useState<EventRow[]>([]);
   const [revoked, setRevoked] = useState<string | null>(null);
   // hook 必须在任何提前 return 之前声明：这个项目页有 3 条 loading/error 分支。
   const [tab, setTab] = useState<string>('概览');
   const refetch = query.refetch;
 
   useEffect(() => {
-    setLiveEvents([]);
+    let disposed = false;
     setRevoked(null);
     const handle = openLive({
       projectId: id,
       onFrame(frame: LiveFrame) {
+        if (disposed) return;
         if (frame.type === 'revoked') {
           setRevoked(frame.reason);
           handle.close();
           return;
         }
-        if (frame.type === 'events')
-          setLiveEvents((previous) => [...previous, ...frame.events].slice(-200));
-        else void refetch();
+        // 推送事件没有运行编号，不能与当前运行按序号拼接；重新读取按运行定位的已保存记录。
+        void refetch();
       },
       onTransport: setTransport,
       onError: () => setTransport('polling'),
     });
     const interval = setInterval(() => void refetch(), 60_000);
     return () => {
+      disposed = true;
       handle.close();
       clearInterval(interval);
     };
@@ -1198,11 +1367,11 @@ function Project({ id }: { id: string }) {
   if (revoked) {
     return (
       <p className="status-chip" data-state="fail">
-        投影已被撤销：{revoked}
+        项目访问已被撤销，请返回项目列表或联系项目所有者。
       </p>
     );
   }
-  if (query.isPending) return <p className="muted">正在读取投影…</p>;
+  if (query.isPending) return <p className="muted">正在加载项目…</p>;
   if (query.error) {
     return (
       <p className="status-chip" data-state="fail">
@@ -1216,17 +1385,24 @@ function Project({ id }: { id: string }) {
   const canWrite = view.writable === true;
   // 设置与协作只有 Owner 可写；审计面板全是 L1 字段，L2 降级下整面隐藏。
   // 审计/设置/协作都是 Owner 的工具：游客与被邀读者看不到（审计里有成本与审批入口）。
-  const tabs = (['概览', '运行', '审计', '设置', '协作'] as const).filter((name) =>
-    name === '概览' || name === '运行' ? true : canWrite,
+  const tabs = (['概览', '材料与成果', '运行', '审计', '设置', '协作'] as const).filter((name) =>
+    name === '概览' || name === '运行' ? true : name === '材料与成果' ? !l2 : canWrite,
   );
-  const active = tabs.includes(tab as (typeof tabs)[number]) ? tab : tabs[0];
-  const allEvents = [...view.events, ...liveEvents];
+  const active = tabs.includes(tab as (typeof tabs)[number]) ? tab : '概览';
   return (
     <>
       <p>
         <a href="#/console">← 项目列表</a>
       </p>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+          marginBottom: 8,
+        }}
+      >
         {' '}
         <h1 style={{ margin: 0 }}>{view.project.title}</h1>
         {/* F5.1: 可见性徽标 */}
@@ -1235,105 +1411,117 @@ function Project({ id }: { id: string }) {
       {view.projection_level === 'l2' ? (
         // 降级要说明降了什么，否则空区块会被读成"没有数据"（缺口⑨ 的同一类错误）。
         <p className="banner">
-          你看到的是公开降级投影（L2）。运行状态与原因、事件摘要、门槛说明、成本与假设全文不在这一级。
+          当前为公开摘要。运行状态与原因、事件详情、阶段要求、成本和假设全文不对外展示。
         </p>
       ) : null}
       <p className="muted">
         {ago(view.project.last_sync_at)}更新 · 策略：
         {l2
-          ? '不在这一级'
+          ? '公开摘要不展示'
           : (STRATEGY_LABEL[view.project.strategy ?? ''] ?? view.project.strategy ?? '未记录')}{' '}
-        · 门槛：
+        · 确认方式：
         {l2
-          ? '不在这一级'
+          ? '公开摘要不展示'
           : (AUTONOMY_LABEL[view.project.autonomy ?? ''] ?? view.project.autonomy ?? '未记录')}{' '}
         ·{' '}
-        <span
-          className="status-chip"
-          data-state={
-            transport === 'websocket' ? 'active' : transport === 'polling' ? 'blocked' : 'idle'
-          }
-        >
+        <span className="status-chip" data-state={'idle'}>
           {transport === 'websocket'
-            ? '服务端推送'
+            ? '自动接收更新'
             : transport === 'polling'
-              ? '降级：15 s 轮询'
+              ? '每 15 秒检查更新'
               : '连接中'}
         </span>
       </p>
-      <div className="tabs" role="tablist">
-        {tabs.map((name) => (
-          <button
-            key={name}
-            role="tab"
-            aria-selected={active === name}
-            onClick={() => setTab(name)}
-          >
-            {name}
-          </button>
-        ))}
-      </div>
-      {active === '概览' ? (
-        <>
-          {view.project.question ? <p className="panel">{view.project.question}</p> : null}
-          {latest ? (
-            <>
-              <Chips run={latest} />
-              <BlockReasonCard run={latest} />
-              <StepPump
-                projectId={id}
-                externalRunId={latest.external_run_id}
-                completed={latest.phase_tag === 'COMPLETED'}
-                onProgress={() => void refetch()}
-              />
-            </>
-          ) : (
-            <p className="muted">云端还没有这个项目的运行。</p>
-          )}
-          <Pipeline stages={view.stages} />
-          {!l2 ? <OutputChain view={view} /> : null}
-          {view.unsynced && view.unsynced.pending_batches > 0 ? (
-            <p className="status-chip" data-state="blocked">
-              还有 {view.unsynced.pending_batches} 批未投递 · {view.unsynced.dropped_events}{' '}
-              条事件被丢弃
-            </p>
-          ) : null}
-          <RecentEvents events={allEvents} lastSyncAt={view.project.last_sync_at} />
-        </>
+      <ProjectTabs tabs={tabs} active={active} onSelect={setTab} idPrefix={tabsId} />
+      {latest && canWrite ? (
+        <StepPump
+          key={`${id}:${latest.external_run_id}`}
+          projectId={id}
+          externalRunId={latest.external_run_id}
+          notStarted={latest.status === 'created' && latest.phase_tag === 'INIT'}
+          completed={latest.phase_tag === 'COMPLETED'}
+          onProgress={() => void refetch()}
+        />
       ) : null}
+      {latest && !canWrite ? (
+        <p className="muted">当前为只读访问，运行操作由项目所有者执行。</p>
+      ) : null}
+      <section
+        role="tabpanel"
+        id={`${tabsId}-panel-${active}`}
+        aria-labelledby={`${tabsId}-tab-${active}`}
+        tabIndex={0}
+      >
+        {active === '概览' ? (
+          <>
+            {view.project.question ? (
+              <div className="panel">
+                <ExpandableText text={view.project.question} label="研究问题" />
+              </div>
+            ) : null}
+            {latest ? (
+              <>
+                <Chips run={latest} />
+                <BlockReasonCard run={latest} />
+              </>
+            ) : (
+              <p className="muted">云端还没有这个项目的运行。</p>
+            )}
+            <Pipeline
+              key={latest ? `${id}:${latest.external_run_id}` : id}
+              stages={view.stages}
+              projectId={id}
+              externalRunId={latest?.external_run_id}
+              inspectable={!l2 && latest !== undefined}
+            />
+            {!l2 ? <OutputChain view={view} /> : null}
+            {view.unsynced && view.unsynced.pending_batches > 0 ? (
+              <p className="status-chip" data-state="blocked">
+                还有 {view.unsynced.pending_batches} 批未投递 · {view.unsynced.dropped_events}{' '}
+                条事件被丢弃
+              </p>
+            ) : null}
+            <RecentEvents events={view.events} lastSyncAt={view.project.last_sync_at} />
+          </>
+        ) : null}
 
-      {active === '运行' ? (
-        <>
-          {latest ? (
-            <StepPump
+        {active === '运行' ? (
+          <>
+            <h2>运行历史</h2>
+            <RunHistory runs={view.runs} />
+            <h2>事件</h2>
+            <EventList
+              events={view.events.slice(-200)}
+              redacted={l2}
+              lastSyncAt={view.project.last_sync_at}
+            />
+          </>
+        ) : null}
+
+        {active === '材料与成果' ? (
+          latest ? (
+            <Resources
+              key={`resources:${id}:${latest.external_run_id}`}
               projectId={id}
               externalRunId={latest.external_run_id}
-              completed={latest.phase_tag === 'COMPLETED'}
-              onProgress={() => void refetch()}
             />
-          ) : null}
-          <h2>运行历史</h2>
-          <RunHistory runs={view.runs} />
-          <h2>事件</h2>
-          <EventList
-            events={allEvents.slice(-200)}
-            redacted={l2}
-            lastSyncAt={view.project.last_sync_at}
-          />
-        </>
-      ) : null}
+          ) : (
+            <p className="muted">项目尚无运行，暂无可查看的材料与成果记录。</p>
+          )
+        ) : null}
 
-      {active === '审计' ? (
-        <>
-          <ApprovalInbox projectId={id} />
-          <CostDashboard projectId={id} />
-          <EgressLedger projectId={id} />
-          <TokenManager projectId={id} />
-        </>
-      ) : null}
+        {active === '审计' ? (
+          <>
+            <ApprovalInbox projectId={id} />
+            <CostDashboard projectId={id} />
+            <EgressLedger projectId={id} />
+            <TokenManager projectId={id} />
+          </>
+        ) : null}
 
-      {active === '设置' ? <SettingsPanel projectId={id} view={view} /> : null}
-      {active === '协作' ? <AccessPanel projectId={id} view={view} /> : null}
+        {active === '设置' ? <SettingsPanel projectId={id} view={view} /> : null}
+        {active === '协作' ? <AccessPanel projectId={id} view={view} /> : null}
+      </section>
     </>
   );
 }
@@ -1349,8 +1537,8 @@ function Project({ id }: { id: string }) {
 function VisibilityBadge({ visibility }: { visibility: 'private' | 'link' | 'listed' }) {
   const labels = {
     private: { text: '私有', state: 'idle' as const },
-    link: { text: '链接可见', state: 'active' as const },
-    listed: { text: '公开', state: 'ok' as const },
+    link: { text: '链接可见', state: 'idle' as const },
+    listed: { text: '公开', state: 'idle' as const },
   };
   const { text, state } = labels[visibility];
   return (
@@ -1367,7 +1555,7 @@ function getVisibilityDescription(visibility: 'private' | 'link' | 'listed'): st
     case 'link':
       return '持有分享链接的人可以查看，但不会出现在公开列表中';
     case 'listed':
-      return '出现在公开项目列表中，任何人都可以查看（L2 降级投影）';
+      return '出现在公开项目列表中，访客只能查看公开摘要';
   }
 }
 
@@ -1378,7 +1566,9 @@ function getVisibilityDescription(visibility: 'private' | 'link' | 'listed'): st
  * F8.5: 假设全文按 hypothesis_disclosure 分级显示。
  * F8.6: 结论徽章——SUPPORTED/NEEDS_REVISION/REJECTED/INVALID_RUN。
  */
-function IdeaCard({ idea }: { idea: IdeaSummary }) {
+function IdeaCard({ idea, papers, experiments, onNavigate }: {
+  idea: IdeaSummary; papers: PaperCard[]; experiments: ExperimentResult[]; onNavigate: OutputNavigation;
+}) {
   const isDraft = idea.status === 'DRAFT_COMPOSITION';
   const verdictState =
     idea.verdict === 'SUPPORTED'
@@ -1389,35 +1579,40 @@ function IdeaCard({ idea }: { idea: IdeaSummary }) {
           ? 'blocked'
           : 'idle';
   return (
-    <div className="panel" style={{ opacity: isDraft ? 0.6 : 1, marginBottom: 12 }}>
+    <div
+      id={outputId('idea', idea.external_idea_id)}
+      tabIndex={-1}
+      className="panel output-record"
+      style={{ marginBottom: 12 }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <strong style={{ fontSize: 15 }}>{idea.title}</strong>
         {isDraft ? (
-          <span className="status-chip" data-state="blocked" style={{ fontSize: 11 }}>
+          <span className="status-chip" data-state="blocked" style={{ fontSize: 13 }}>
             草稿拼接
           </span>
         ) : null}
-        <span className="status-chip" data-state="idle" style={{ fontSize: 11 }}>
+        <span className="status-chip" data-state="idle" style={{ fontSize: 13 }}>
           v{idea.version}
         </span>
       </div>
       {idea.mechanism_summary ? (
-        <p style={{ margin: '0 0 8px', fontSize: 13 }}>{idea.mechanism_summary}</p>
+        <div style={{ margin: '0 0 8px', fontSize: 15 }}><ExpandableText text={idea.mechanism_summary} label="机制摘要" /></div>
       ) : null}
       {/* F8.5: 假设全文按 disclosure 分级 */}
       {idea.hypothesis_disclosure === 'full' && idea.hypothesis ? (
         <details style={{ marginBottom: 8 }}>
-          <summary className="muted" style={{ cursor: 'pointer', fontSize: 12 }}>
+          <summary className="muted" style={{ cursor: 'pointer', fontSize: 14 }}>
             查看假设全文
           </summary>
-          <p style={{ margin: '8px 0', fontSize: 13, whiteSpace: 'pre-wrap' }}>{idea.hypothesis}</p>
+          <p style={{ margin: '8px 0', fontSize: 15, whiteSpace: 'pre-wrap' }}>{idea.hypothesis}</p>
         </details>
       ) : idea.hypothesis_disclosure === 'structure' ? (
-        <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
-          假设结构已公开，全文需 Owner 授权
+        <p className="muted" style={{ fontSize: 14, margin: '0 0 8px' }}>
+          假设结构已公开，全文需项目所有者授权
         </p>
       ) : (
-        <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+        <p className="muted" style={{ fontSize: 14, margin: '0 0 8px' }}>
           假设全文未公开
         </p>
       )}
@@ -1431,6 +1626,7 @@ function IdeaCard({ idea }: { idea: IdeaSummary }) {
           无结论
         </span>
       )}
+      <IdeaRelations idea={idea} papers={papers} experiments={experiments} onNavigate={onNavigate} />
     </div>
   );
 }
@@ -1443,12 +1639,20 @@ function IdeaCard({ idea }: { idea: IdeaSummary }) {
  * F9.3: unknown/uncertain 呈现——缺失字段显示"未确认"而非空白或猜测。
  * F9.4: 结论—证据—实验三跳——idea ↔ claim ↔ metric 互链。
  */
-function PaperCardList({ papers }: { papers: PaperCard[] }) {
+export function PaperCardList({ papers, ideas, onNavigate }: {
+  papers: PaperCard[]; ideas?: IdeaSummary[]; onNavigate?: OutputNavigation;
+}) {
   if (papers.length === 0) return <p className="muted">还没有论文卡片。</p>;
   return (
     <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
       {papers.map((paper) => (
-        <div key={paper.external_paper_id} className="panel" style={{ marginBottom: 0 }}>
+        <div
+          key={paper.external_paper_id}
+          id={outputId('paper', paper.external_paper_id)}
+          tabIndex={-1}
+          className="panel output-record"
+          style={{ marginBottom: 0 }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <strong style={{ fontSize: 14 }}>{paper.title}</strong>
             <span
@@ -1458,20 +1662,21 @@ function PaperCardList({ papers }: { papers: PaperCard[] }) {
                   ? 'ok'
                   : 'blocked'
               }
-              style={{ fontSize: 11 }}
+              style={{ fontSize: 13 }}
               title={paper.parse_status}
             >
               {paper.parse_status === 'succeeded' ? '已解析' : labelOf(paper.parse_status)}
             </span>
           </div>
           {paper.question ? (
-            <p style={{ margin: '0 0 8px', fontSize: 13 }}>{paper.question}</p>
+            <div style={{ margin: '0 0 8px', fontSize: 15 }}><ExpandableText text={paper.question} label="论文研究问题" /></div>
           ) : null}
           {paper.method_summary ? (
-            <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-              {paper.method_summary}
-            </p>
+            <div className="muted" style={{ margin: 0, fontSize: 14 }}>
+              <ExpandableText text={paper.method_summary} label="方法摘要" />
+            </div>
           ) : null}
+          {ideas && onNavigate ? <PaperRelations paper={paper} ideas={ideas} onNavigate={onNavigate} /> : null}
         </div>
       ))}
     </div>
@@ -1484,7 +1689,7 @@ function ClaimList({ claims }: { claims: ClaimRow[] }) {
     <div style={{ marginTop: 12 }}>
       {claims.map((claim) => (
         <div key={claim.external_claim_id} className="panel" style={{ marginBottom: 8 }}>
-          <p style={{ margin: '0 0 8px' }}>{claim.text}</p>
+          <div style={{ margin: '0 0 8px' }}><ExpandableText text={claim.text} label="结论记录" /></div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span
               className="status-chip"
@@ -1495,21 +1700,21 @@ function ClaimList({ claims }: { claims: ClaimRow[] }) {
                     ? 'blocked'
                     : 'idle'
               }
-              style={{ fontSize: 11 }}
+              style={{ fontSize: 13 }}
               title={claim.support_level}
             >
               {labelOf(claim.support_level)}
             </span>
             {/* F9.2: claim → 页码定位 */}
             {claim.evidence_ref?.paper_external_id ? (
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted" style={{ fontSize: 14 }}>
                 出处：{claim.evidence_ref.paper_external_id}
                 {claim.evidence_ref.page ? ` 第 ${claim.evidence_ref.page} 页` : ''}
                 {claim.evidence_ref.section ? ` §${claim.evidence_ref.section}` : ''}
               </span>
             ) : (
               // F9.3: unknown/uncertain 呈现
-              <span className="muted" style={{ fontSize: 12 }}>
+              <span className="muted" style={{ fontSize: 14 }}>
                 出处：未确认
               </span>
             )}
@@ -1529,22 +1734,21 @@ function ClaimList({ claims }: { claims: ClaimRow[] }) {
  * F10.4: 协议详情——锁定的 ExperimentalProtocol 与规则来源。
  * F10.5: 失败分类——failure-diagnosis 的层级与证据摘录。
  */
-export function ExperimentResults({ experiments }: { experiments: ExperimentResult[] }) {
+export function ExperimentResults({ experiments, ideas, onNavigate }: {
+  experiments: ExperimentResult[]; ideas?: IdeaSummary[]; onNavigate?: OutputNavigation;
+}) {
   if (experiments.length === 0) return <p className="muted">还没有实验结果。</p>;
   return (
     <div style={{ marginTop: 12 }}>
       {experiments.map((exp) => {
-        // F10.3: 数据规模标签
-        const scaleState =
-          exp.scale === 'standard'
-            ? 'ok'
-            : exp.scale === 'quick'
-              ? 'active'
-              : exp.scale === 'smoke'
-                ? 'blocked'
-                : 'idle'; // handoff_manifest
         return (
-          <div key={exp.external_spec_id} className="panel" style={{ marginBottom: 8 }}>
+          <div
+            key={exp.external_spec_id}
+            id={outputId('experiment', exp.external_spec_id)}
+            tabIndex={-1}
+            className="panel output-record"
+            style={{ marginBottom: 8 }}
+          >
             <div
               style={{
                 display: 'flex',
@@ -1554,13 +1758,13 @@ export function ExperimentResults({ experiments }: { experiments: ExperimentResu
                 flexWrap: 'wrap',
               }}
             >
-              <strong className="mono" style={{ fontSize: 13 }}>
-                {exp.external_spec_id.slice(0, 12)}…
+              <strong className="mono" style={{ fontSize: 15 }}>
+                {exp.title ?? exp.external_spec_id}
               </strong>
               {exp.scale && exp.status !== 'simulated' ? <span
                 className="status-chip"
-                data-state={scaleState}
-                style={{ fontSize: 11 }}
+                data-state="idle"
+                style={{ fontSize: 13 }}
                 title={exp.scale}
               >
                 {SCALE_LABEL[exp.scale] ?? exp.scale}
@@ -1569,7 +1773,7 @@ export function ExperimentResults({ experiments }: { experiments: ExperimentResu
               <span
                 className="status-chip"
                 data-state={stateOf(exp.status)}
-                style={{ fontSize: 11 }}
+                style={{ fontSize: 13 }}
                 title={exp.status}
               >
                 {labelOf(exp.status)}
@@ -1579,21 +1783,8 @@ export function ExperimentResults({ experiments }: { experiments: ExperimentResu
             {exp.status === 'simulated' ? (
               <p className="muted">此步骤仅演示流程，尚未执行实验，不提供科研指标或有效性结论。</p>
             ) : null}
-            {exp.status !== 'simulated' && exp.metrics && Object.keys(exp.metrics).length > 0 ? (
-              <div style={{ marginTop: 8 }}>
-                <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-                  指标
-                </div>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {Object.entries(exp.metrics).map(([key, value]) => (
-                    <span key={key} className="mono" style={{ fontSize: 12 }}>
-                      {key}={typeof value === 'number' ? value.toFixed(4) : String(value)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            {exp.status !== 'simulated' && exp.verdict ? (
+            <ExperimentEvidence experiment={exp} />
+            {exp.status !== 'simulated' && exp.scale !== 'handoff_manifest' && exp.verdict ? (
               <div style={{ marginTop: 8 }}>
                 <span
                   className="status-chip"
@@ -1604,13 +1795,14 @@ export function ExperimentResults({ experiments }: { experiments: ExperimentResu
                         ? 'fail'
                         : 'blocked'
                   }
-                  style={{ fontSize: 11 }}
+                  style={{ fontSize: 13 }}
                   title={exp.verdict}
                 >
                   {labelOf(exp.verdict)}
                 </span>
               </div>
             ) : null}
+            {ideas && onNavigate ? <ExperimentRelations experiment={exp} ideas={ideas} onNavigate={onNavigate} /> : null}
           </div>
         );
       })}
@@ -1625,24 +1817,24 @@ function ProtocolList({ protocols }: { protocols: ProtocolSummary[] }) {
       {protocols.map((proto) => (
         <div key={proto.external_protocol_id} className="panel" style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <strong className="mono" style={{ fontSize: 13 }}>
+            <strong className="mono" style={{ fontSize: 15 }}>
               {proto.external_protocol_id.slice(0, 12)}…
             </strong>
             {proto.locked_at ? (
-              <span className="muted" style={{ fontSize: 11 }}>
+              <span className="muted" style={{ fontSize: 13 }}>
                 锁定于 {new Date(proto.locked_at).toLocaleDateString()}
               </span>
             ) : (
-              <span className="status-chip" data-state="blocked" style={{ fontSize: 11 }}>
+              <span className="status-chip" data-state="blocked" style={{ fontSize: 13 }}>
                 未锁定
               </span>
             )}
           </div>
           {/* F10.4: 协议详情——规则来源 */}
           {proto.provenance ? (
-            <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-              来源：{proto.provenance}
-            </p>
+            <div className="muted" style={{ margin: 0, fontSize: 14 }}>
+              <ExpandableText text={`来源：${proto.provenance}`} label="协议来源" />
+            </div>
           ) : null}
         </div>
       ))}
@@ -1651,10 +1843,17 @@ function ProtocolList({ protocols }: { protocols: ProtocolSummary[] }) {
 }
 
 /**
- * 产出链：论文分析 → 研究想法 → 实验验证，三列连通。
- * 每一列复用原有的卡片组件；证据与协议收进折叠区，主链路保持一眼可读。
+ * 论文与想法并列，实验对照独占一行，只展示记录中的明确关联。
+ * 各区域复用原有的卡片组件；证据与协议收进折叠区。
  */
-function OutputChain({ view }: { view: ProjectView }) {
+export function OutputChain({ view }: { view: ProjectView }) {
+  const root = useRef<HTMLDivElement>(null);
+  const navigate: OutputNavigation = (kind, id) => {
+    const target = document.getElementById(outputId(kind, id));
+    if (!target || !root.current?.contains(target)) throw new Error('关联记录不在当前产出中。');
+    target.scrollIntoView({ block: 'center' });
+    target.focus({ preventScroll: true });
+  };
   const papers = view.papers ?? [];
   const claims = view.claims ?? [];
   const ideas = view.ideas ?? [];
@@ -1662,24 +1861,22 @@ function OutputChain({ view }: { view: ProjectView }) {
   const protocols = view.protocols ?? [];
   if (papers.length === 0 && ideas.length === 0 && experiments.length === 0) return null;
   return (
-    <div style={{ marginTop: 24 }}>
+    <div ref={root} style={{ marginTop: 24 }}>
       <h2>产出链</h2>
+      <p className="muted">关联仅表示记录的论文引用或实验对象，不代表证据已经核实或实验结论成立。选择关联记录可跳转查看。</p>
       <div className="chain">
         <section className="chain-col">
           <h3 className="chain-title">论文分析</h3>
-          <PaperCardList papers={papers} />
+          <PaperCardList papers={papers} ideas={ideas} onNavigate={navigate} />
           {claims.length > 0 ? (
             <details style={{ marginTop: 8 }}>
-              <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>
+              <summary className="muted" style={{ cursor: 'pointer', fontSize: 15 }}>
                 结论陈述（{claims.length}）
               </summary>
               <ClaimList claims={claims} />
             </details>
           ) : null}
         </section>
-        <span className="chain-arrow" aria-hidden>
-          →
-        </span>
         <section className="chain-col">
           <h3 className="chain-title">研究想法</h3>
           {ideas.length === 0 ? (
@@ -1689,20 +1886,17 @@ function OutputChain({ view }: { view: ProjectView }) {
           ) : (
             <div style={{ marginTop: 12 }}>
               {ideas.map((idea) => (
-                <IdeaCard key={idea.external_idea_id} idea={idea} />
+                <IdeaCard key={idea.external_idea_id} idea={idea} papers={papers} experiments={experiments} onNavigate={navigate} />
               ))}
             </div>
           )}
         </section>
-        <span className="chain-arrow" aria-hidden>
-          →
-        </span>
-        <section className="chain-col">
+        <section className="chain-col chain-experiments">
           <h3 className="chain-title">实验验证</h3>
-          <ExperimentResults experiments={experiments} />
+          <ExperimentResults experiments={experiments} ideas={ideas} onNavigate={navigate} />
           {protocols.length > 0 ? (
             <details style={{ marginTop: 8 }}>
-              <summary className="muted" style={{ cursor: 'pointer', fontSize: 13 }}>
+              <summary className="muted" style={{ cursor: 'pointer', fontSize: 15 }}>
                 实验协议（{protocols.length}）
               </summary>
               <ProtocolList protocols={protocols} />
@@ -1721,7 +1915,7 @@ function RecentEvents({ events, lastSyncAt }: { events: EventRow[]; lastSyncAt: 
   return (
     <div style={{ marginTop: 24 }}>
       <h2>最近事件</h2>
-      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+      <p className="muted" style={{ fontSize: 14, margin: '0 0 8px' }}>
         数据来自 {ago(lastSyncAt)}的一批同步 · 完整事件在"运行"面
       </p>
       <table>
@@ -1828,18 +2022,18 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                 onClick={() => setSelectedId(approval.id)}
               >
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
-                  <span className="status-chip" data-state="blocked" style={{ fontSize: 11 }}>
+                  <span className="status-chip" data-state="blocked" style={{ fontSize: 13 }}>
                     {approval.kind}
                   </span>
-                  <strong style={{ fontSize: 13 }}>
+                  <strong style={{ fontSize: 15 }}>
                     {approval.external_approval_id.slice(0, 12)}…
                   </strong>
                 </div>
-                <p style={{ margin: 0, fontSize: 12 }} className="muted">
+                <p style={{ margin: 0, fontSize: 14 }} className="muted">
                   {approval.summary.slice(0, 80)}
                   {approval.summary.length > 80 ? '…' : ''}
                 </p>
-                <p style={{ margin: '4px 0 0', fontSize: 11 }} className="muted">
+                <p style={{ margin: '4px 0 0', fontSize: 13 }} className="muted">
                   {ago(approval.created_at)}
                 </p>
               </div>
@@ -1854,20 +2048,20 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                   <span className="status-chip" data-state="blocked">
                     {selected.kind}
                   </span>
-                  <span className="mono" style={{ fontSize: 12 }}>
+                  <span className="mono" style={{ fontSize: 14 }}>
                     {selected.external_approval_id}
                   </span>
                 </div>
                 <p style={{ margin: '0 0 8px' }}>{selected.summary}</p>
                 {selected.payload_hash ? (
-                  <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                  <p className="muted" style={{ fontSize: 14, margin: '0 0 8px' }}>
                     载荷哈希：<code className="mono">{selected.payload_hash.slice(0, 16)}…</code>
                   </p>
                 ) : null}
                 {/* F11.2: 选项列表 */}
                 {selected.options && selected.options.length > 0 ? (
                   <div style={{ marginBottom: 12 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                    <div className="muted" style={{ fontSize: 14, marginBottom: 4 }}>
                       可选方案
                     </div>
                     {selected.options.map((opt) => (
@@ -1878,7 +2072,7 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                           background: 'var(--bg)',
                           borderRadius: 4,
                           marginBottom: 4,
-                          fontSize: 13,
+                          fontSize: 15,
                         }}
                       >
                         {opt}
@@ -1889,7 +2083,7 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                 {/* F11.4: 冲突意向并列 */}
                 {selected.intents && selected.intents.length > 0 ? (
                   <div style={{ marginBottom: 12 }}>
-                    <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                    <div className="muted" style={{ fontSize: 14, marginBottom: 4 }}>
                       已提交的意向（{selected.intents.length}）
                     </div>
                     {selected.intents.map((intent) => (
@@ -1900,7 +2094,7 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                           background: 'var(--bg)',
                           borderRadius: 4,
                           marginBottom: 4,
-                          fontSize: 12,
+                          fontSize: 14,
                         }}
                       >
                         <span
@@ -1908,7 +2102,7 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                           data-state={
                             intent.consumed_at ? 'ok' : intent.delivered_at ? 'active' : 'blocked'
                           }
-                          style={{ fontSize: 10 }}
+                          style={{ fontSize: 13 }}
                         >
                           {intent.consumed_at
                             ? '已生效'
@@ -1929,7 +2123,7 @@ function ApprovalInbox({ projectId }: { projectId: string }) {
                   options={selected.options ?? []}
                 />
                 {submitResult ? (
-                  <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                  <p className="muted" style={{ fontSize: 14, marginTop: 8 }}>
                     {submitResult}
                   </p>
                 ) : null}
@@ -1957,61 +2151,67 @@ function IntentForm({
   const [note, setNote] = useState('');
   return (
     <div style={{ marginTop: 12 }}>
-      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+      <div className="muted" style={{ fontSize: 14, marginBottom: 4 }}>
         提交意向
       </div>
-      {options.length > 0 ? (
-        <select
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
+      <label className="form-field">
+        处理选择
+        {options.length > 0 ? (
+          <select
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            style={{
+              width: '100%',
+              marginBottom: 8,
+              background: 'var(--panel)',
+              color: 'var(--text)',
+              border: '1px solid var(--control-line)',
+              borderRadius: 4,
+              padding: '6px 8px',
+            }}
+          >
+            {options.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            placeholder="选择"
+            style={{
+              width: '100%',
+              marginBottom: 8,
+              background: 'var(--panel)',
+              color: 'var(--text)',
+              border: '1px solid var(--control-line)',
+              borderRadius: 4,
+              padding: '6px 8px',
+            }}
+          />
+        )}
+      </label>
+      <label className="form-field">
+        备注（可选）
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="备注（可选）"
+          rows={2}
           style={{
             width: '100%',
             marginBottom: 8,
             background: 'var(--panel)',
             color: 'var(--text)',
-            border: '1px solid var(--line)',
+            border: '1px solid var(--control-line)',
             borderRadius: 4,
             padding: '6px 8px',
-          }}
-        >
-          {options.map((opt) => (
-            <option key={opt} value={opt}>
-              {opt}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
-          placeholder="选择"
-          style={{
-            width: '100%',
-            marginBottom: 8,
-            background: 'var(--panel)',
-            color: 'var(--text)',
-            border: '1px solid var(--line)',
-            borderRadius: 4,
-            padding: '6px 8px',
+            resize: 'vertical',
           }}
         />
-      )}
-      <textarea
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder="备注（可选）"
-        rows={2}
-        style={{
-          width: '100%',
-          marginBottom: 8,
-          background: 'var(--panel)',
-          color: 'var(--text)',
-          border: '1px solid var(--line)',
-          borderRadius: 4,
-          padding: '6px 8px',
-          resize: 'vertical',
-        }}
-      />
+      </label>
       <button
         onClick={() => {
           if (choice) {
@@ -2028,7 +2228,7 @@ function IntentForm({
       >
         提交意向
       </button>
-      <p className="muted" style={{ fontSize: 11, margin: '8px 0 0' }}>
+      <p className="muted" style={{ fontSize: 13, margin: '8px 0 0' }}>
         提交后状态为"待确认"——意向需引擎拉取并确认后才会生效。
       </p>
     </div>
@@ -2069,7 +2269,7 @@ function CostDashboard({ projectId }: { projectId: string }) {
     );
   const data = query.data;
   if (!data || !data.summary)
-    return <p className="muted">成本数据不在公开降级投影（L2）这一级。</p>;
+    return <p className="muted">公开摘要不展示成本数据。</p>;
 
   const { summary, runs } = data;
   const totalUsd = summary.total_usd_micro / 1_000_000;
@@ -2092,13 +2292,13 @@ function CostDashboard({ projectId }: { projectId: string }) {
         }}
       >
         <div className="panel" style={{ marginBottom: 0 }}>
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted" style={{ fontSize: 14 }}>
             总花费
           </div>
           <div style={{ fontSize: 20, fontWeight: 600 }}>${totalUsd.toFixed(4)}</div>
         </div>
         <div className="panel" style={{ marginBottom: 0 }}>
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted" style={{ fontSize: 14 }}>
             Token 输入
           </div>
           <div style={{ fontSize: 20, fontWeight: 600 }}>
@@ -2106,7 +2306,7 @@ function CostDashboard({ projectId }: { projectId: string }) {
           </div>
         </div>
         <div className="panel" style={{ marginBottom: 0 }}>
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted" style={{ fontSize: 14 }}>
             Token 输出
           </div>
           <div style={{ fontSize: 20, fontWeight: 600 }}>
@@ -2117,10 +2317,10 @@ function CostDashboard({ projectId }: { projectId: string }) {
       {/* F12.2: 预算进度 */}
       <div className="panel" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-          <span className="muted" style={{ fontSize: 12 }}>
+          <span className="muted" style={{ fontSize: 14 }}>
             预算进度
           </span>
-          <span className="mono" style={{ fontSize: 12 }}>
+          <span className="mono" style={{ fontSize: 14 }}>
             ${totalSpent.toFixed(4)} / ${totalBudget.toFixed(4)}
           </span>
         </div>
@@ -2135,7 +2335,7 @@ function CostDashboard({ projectId }: { projectId: string }) {
           />
         </div>
         {nearCap ? (
-          <p className="muted" style={{ fontSize: 12, margin: '8px 0 0', color: 'var(--fail)' }}>
+          <p className="muted" style={{ fontSize: 14, margin: '8px 0 0', color: 'var(--fail)' }}>
             预算已使用 {Math.round(budgetRatio * 100)}%，接近上限。
           </p>
         ) : null}
@@ -2143,7 +2343,7 @@ function CostDashboard({ projectId }: { projectId: string }) {
       {/* F12.4: 按模型路由分布 */}
       {Object.keys(summary.by_route).length > 0 ? (
         <div className="panel" style={{ marginBottom: 16 }}>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          <div className="muted" style={{ fontSize: 14, marginBottom: 8 }}>
             按模型路由分布
           </div>
           {Object.entries(summary.by_route).map(([route, micro]) => {
@@ -2153,7 +2353,7 @@ function CostDashboard({ projectId }: { projectId: string }) {
                 key={route}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}
               >
-                <span className="mono" style={{ fontSize: 12, minWidth: 100 }}>
+                <span className="mono" style={{ fontSize: 14, minWidth: 100 }}>
                   {route}
                 </span>
                 <div
@@ -2167,7 +2367,7 @@ function CostDashboard({ projectId }: { projectId: string }) {
                 >
                   <div style={{ width: `${pct}%`, height: '100%', background: 'var(--active)' }} />
                 </div>
-                <span className="mono" style={{ fontSize: 11 }}>
+                <span className="mono" style={{ fontSize: 13 }}>
                   ${(micro / 1_000_000).toFixed(4)} ({pct.toFixed(0)}%)
                 </span>
               </div>
@@ -2178,15 +2378,15 @@ function CostDashboard({ projectId }: { projectId: string }) {
       {/* F12.3: 重复成本标记 */}
       {runs.some((r) => r.duplicate_candidates > 0) ? (
         <div className="panel" style={{ marginBottom: 16, borderLeftColor: 'var(--quota)' }}>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+          <div className="muted" style={{ fontSize: 14, marginBottom: 4 }}>
             重复成本标记
           </div>
           {runs
             .filter((r) => r.duplicate_candidates > 0)
             .map((r) => (
-              <div key={r.run_external_id} style={{ fontSize: 12, marginBottom: 4 }}>
+              <div key={r.run_external_id} style={{ fontSize: 14, marginBottom: 4 }}>
                 <span className="mono">{r.run_external_id.slice(0, 8)}…</span> 有{' '}
-                <span className="status-chip" data-state="quota" style={{ fontSize: 10 }}>
+                <span className="status-chip" data-state="quota" style={{ fontSize: 13 }}>
                   {r.duplicate_candidates}
                 </span>{' '}
                 条可能的重复成本（同一 model_route + kind 多次出现，可能是重试导致）
@@ -2197,10 +2397,10 @@ function CostDashboard({ projectId }: { projectId: string }) {
       {/* F12.5: 额度耗尽引导 */}
       {runs.some((r) => r.spent_usd_micro >= r.budget_usd_micro && r.budget_usd_micro > 0) ? (
         <div className="panel" style={{ borderLeftColor: 'var(--fail)' }}>
-          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+          <div className="muted" style={{ fontSize: 14, marginBottom: 4 }}>
             额度耗尽引导
           </div>
-          <p style={{ margin: 0, fontSize: 13 }}>
+          <p style={{ margin: 0, fontSize: 15 }}>
             部分运行已触及预算上限。额度耗尽不是科学失败，调整预算后在概览页继续运行即可。
           </p>
         </div>
@@ -2257,7 +2457,7 @@ function EgressLedger({ projectId }: { projectId: string }) {
   return (
     <div style={{ marginTop: 24 }}>
       <h2>外发透明度台账</h2>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+      <p className="muted" style={{ fontSize: 14, marginBottom: 12 }}>
         只有类别与计数，不含 prompt 正文（缺口⑫）。
       </p>
       {runs.map((run) => (
@@ -2270,15 +2470,15 @@ function EgressLedger({ projectId }: { projectId: string }) {
               marginBottom: 8,
             }}
           >
-            <strong className="mono" style={{ fontSize: 13 }}>
+            <strong className="mono" style={{ fontSize: 15 }}>
               {run.run_external_id.slice(0, 12)}…
             </strong>
-            <span className="muted" style={{ fontSize: 12 }}>
+            <span className="muted" style={{ fontSize: 14 }}>
               {run.total_event_count} 次外发 · {(run.total_bytes / 1024).toFixed(1)} KB
             </span>
           </div>
           {run.entries.length > 0 ? (
-            <table style={{ width: '100%', fontSize: 12 }}>
+            <table style={{ width: '100%', fontSize: 14 }}>
               <thead>
                 <tr>
                   <th style={{ textAlign: 'left' }}>目标类别</th>
@@ -2301,7 +2501,7 @@ function EgressLedger({ projectId }: { projectId: string }) {
               </tbody>
             </table>
           ) : (
-            <p className="muted" style={{ fontSize: 12 }}>
+            <p className="muted" style={{ fontSize: 14 }}>
               该运行无外发记录。
             </p>
           )}
@@ -2325,19 +2525,39 @@ function TokenManager({ projectId }: { projectId: string }) {
   });
   const healthQuery = useQuery({
     queryKey: ['health', projectId],
-    queryFn: () =>
-      requestJson<{ ok: boolean; health: SyncHealth | null }>(
-        `/functions/v1/app/views/health?external_id=${encodeURIComponent(projectId)}`,
-      ),
+    queryFn: async () => {
+      const result = await requestJson<{
+        ok: boolean;
+        projection_level: 'full' | 'l2';
+        health: SyncHealth | null;
+      }>(`/functions/v1/app/views/health?external_id=${encodeURIComponent(projectId)}`);
+      if (!(
+        (result.projection_level === 'l2' && result.health === null) ||
+        (result.projection_level === 'full' &&
+          typeof result.health === 'object' &&
+          result.health !== null)
+      )) {
+        throw new ApiError('invalid_response', '服务未返回有效的同步健康数据。');
+      }
+      return result;
+    },
   });
   const [creating, setCreating] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const operationPending = useRef(false);
   const [label, setLabel] = useState('');
   const [scopes, setScopes] = useState('sync');
 
   const handleCreate = async () => {
+    if (operationPending.current) return;
+    operationPending.current = true;
     setCreating(true);
     setNewToken(null);
+    setOperationError(null);
+    setNotice(null);
     try {
       const res = await mutateJson<{ ok: boolean; plain_token: string; message: string }>(
         '/functions/v1/app/views/tokens',
@@ -2353,22 +2573,39 @@ function TokenManager({ projectId }: { projectId: string }) {
           }),
         },
       );
-      if (res.ok) setNewToken(res.plain_token);
+      if (typeof res.plain_token !== 'string' || res.plain_token.trim().length === 0) {
+        throw new ApiError('invalid_response', '服务未返回可保存的同步凭据。');
+      }
+      setNewToken(res.plain_token);
       void tokenQuery.refetch();
-    } catch {
-      // ignore
+    } catch (error) {
+      setOperationError(
+        `签发未确认：${error instanceof ApiError ? error.message : '请求未能完成。'} 请先刷新凭据列表核对，再决定是否重试。`,
+      );
     } finally {
+      operationPending.current = false;
       setCreating(false);
     }
   };
 
   const handleRevoke = async (tokenId: string) => {
+    if (operationPending.current) return;
     if (!confirm('确定要吊销此 token 吗？吊销后不可恢复。')) return;
+    operationPending.current = true;
+    setRevoking(tokenId);
+    setOperationError(null);
+    setNotice(null);
     try {
       await mutateJson(`/functions/v1/app/views/tokens/${tokenId}`, { method: 'DELETE' });
+      setNotice('同步凭据已吊销。');
       void tokenQuery.refetch();
-    } catch {
-      // ignore
+    } catch (error) {
+      setOperationError(
+        `吊销未确认：${error instanceof ApiError ? error.message : '请求未能完成。'} 请刷新凭据列表核对状态。`,
+      );
+    } finally {
+      operationPending.current = false;
+      setRevoking(null);
     }
   };
 
@@ -2379,7 +2616,25 @@ function TokenManager({ projectId }: { projectId: string }) {
       <div className="panel" style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 14, marginTop: 0 }}>同步 Token</h3>
         {tokenQuery.isPending ? <p className="muted">加载中…</p> : null}
-        {tokenQuery.data?.tokens.length === 0 ? (
+        {tokenQuery.error ? (
+          <p role="alert" style={{ color: 'var(--fail)' }}>
+            凭据列表读取失败，请刷新后核对；已有显示可能不是最新状态。
+          </p>
+        ) : null}
+        <button
+          className="btn-secondary"
+          disabled={tokenQuery.isFetching || creating || revoking !== null}
+          onClick={() => void tokenQuery.refetch()}
+        >
+          {tokenQuery.isFetching ? '正在刷新凭据列表…' : '刷新凭据列表'}
+        </button>
+        {operationError ? (
+          <p role="alert" style={{ color: 'var(--fail)' }}>
+            {operationError}
+          </p>
+        ) : null}
+        {notice ? <p role="status">{notice}</p> : null}
+        {!tokenQuery.error && tokenQuery.data?.tokens.length === 0 ? (
           <p className="muted">还没有签发过 token。</p>
         ) : null}
         {tokenQuery.data?.tokens.map((token) => (
@@ -2394,20 +2649,24 @@ function TokenManager({ projectId }: { projectId: string }) {
             }}
           >
             <div>
-              <strong style={{ fontSize: 13 }}>{token.label ?? '(未命名)'}</strong>
-              <div className="muted" style={{ fontSize: 11 }}>
+              <strong style={{ fontSize: 15 }}>{token.label ?? '(未命名)'}</strong>
+              <div className="muted" style={{ fontSize: 13 }}>
                 范围：{token.scopes.join(', ')} · 创建于 {ago(token.created_at)}
                 {token.last_used_at ? ` · 最后使用 ${ago(token.last_used_at)}` : ''}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {token.revoked_at ? (
-                <span className="status-chip" data-state="fail" style={{ fontSize: 10 }}>
+                <span className="status-chip" data-state="fail" style={{ fontSize: 13 }}>
                   已吊销
                 </span>
               ) : (
-                <button onClick={() => handleRevoke(token.id)} className="btn-danger">
-                  吊销
+                <button
+                  disabled={creating || revoking !== null || tokenQuery.isError}
+                  onClick={() => handleRevoke(token.id)}
+                  className="btn-danger"
+                >
+                  {revoking === token.id ? '吊销中…' : '吊销'}
                 </button>
               )}
             </div>
@@ -2415,40 +2674,46 @@ function TokenManager({ projectId }: { projectId: string }) {
         ))}
         {/* 创建新 Token */}
         <div style={{ marginTop: 12, padding: '12px 0', borderTop: '1px solid var(--line)' }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="名称（可选）"
-              style={{
-                flex: 1,
-                minWidth: 120,
-                background: 'var(--panel)',
-                color: 'var(--text)',
-                border: '1px solid var(--line)',
-                borderRadius: 4,
-                padding: '4px 8px',
-                fontSize: 12,
-              }}
-            />
-            <input
-              value={scopes}
-              onChange={(e) => setScopes(e.target.value)}
-              placeholder="范围（逗号分隔）"
-              style={{
-                flex: 1,
-                minWidth: 120,
-                background: 'var(--panel)',
-                color: 'var(--text)',
-                border: '1px solid var(--line)',
-                borderRadius: 4,
-                padding: '4px 8px',
-                fontSize: 12,
-              }}
-            />
+          <div className="form-grid">
+            <label className="form-field">
+              同步凭据名称（可选）
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="名称（可选）"
+                style={{
+                  flex: 1,
+                  minWidth: 120,
+                  background: 'var(--panel)',
+                  color: 'var(--text)',
+                  border: '1px solid var(--control-line)',
+                  borderRadius: 4,
+                  padding: '4px 8px',
+                  fontSize: 16,
+                }}
+              />
+            </label>
+            <label className="form-field">
+              权限范围（逗号分隔）
+              <input
+                value={scopes}
+                onChange={(e) => setScopes(e.target.value)}
+                placeholder="范围（逗号分隔）"
+                style={{
+                  flex: 1,
+                  minWidth: 120,
+                  background: 'var(--panel)',
+                  color: 'var(--text)',
+                  border: '1px solid var(--control-line)',
+                  borderRadius: 4,
+                  padding: '4px 8px',
+                  fontSize: 16,
+                }}
+              />
+            </label>
             <button
               onClick={handleCreate}
-              disabled={creating}
+              disabled={creating || revoking !== null || tokenQuery.isPending || tokenQuery.isError}
               className="btn-primary"
               style={{ opacity: creating ? 0.5 : 1, cursor: creating ? 'not-allowed' : 'pointer' }}
             >
@@ -2461,10 +2726,10 @@ function TokenManager({ projectId }: { projectId: string }) {
               className="panel"
               style={{ marginTop: 8, borderLeftColor: 'var(--ok)', background: 'var(--bg)' }}
             >
-              <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 600 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600 }}>
                 请立即保存此 token，关闭页面后将无法再次查看：
               </p>
-              <code className="mono" style={{ fontSize: 13, wordBreak: 'break-all' }}>
+              <code className="mono" style={{ fontSize: 15, wordBreak: 'break-all' }}>
                 {newToken}
               </code>
             </div>
@@ -2472,18 +2737,43 @@ function TokenManager({ projectId }: { projectId: string }) {
         </div>
       </div>
       {/* F16.2: 同步健康自检 */}
-      <div className="panel">
+      <div className="panel" aria-busy={healthQuery.isFetching}>
         <h3 style={{ fontSize: 14, marginTop: 0 }}>同步健康</h3>
-        {healthQuery.isPending ? <p className="muted">加载中…</p> : null}
-        {healthQuery.data?.health ? (
+        <button
+          className="btn-secondary"
+          disabled={healthQuery.isFetching}
+          onClick={() => void healthQuery.refetch()}
+        >
+          {healthQuery.isFetching ? '正在刷新同步健康…' : '刷新同步健康'}
+        </button>
+        {healthQuery.isPending ? (
+          <p className="muted" role="status">
+            正在加载同步健康…
+          </p>
+        ) : null}
+        {!healthQuery.isPending && healthQuery.isFetching ? (
+          <p className="muted" role="status">
+            {healthQuery.isError
+              ? '正在重新读取同步健康…'
+              : '正在刷新同步健康，当前显示上次读取的结果。'}
+          </p>
+        ) : null}
+        {healthQuery.isError ? (
+          <p role="alert" style={{ color: 'var(--fail)' }}>
+            同步健康读取失败：
+            {healthQuery.error instanceof ApiError ? healthQuery.error.message : '请求未能完成。'}
+            {healthQuery.data ? '上次读取的结果已隐藏，请刷新后核对。' : '请刷新后重试。'}
+          </p>
+        ) : null}
+        {!healthQuery.isError && healthQuery.data?.health ? (
           <>
             {healthQuery.data.health.latest_batch ? (
               <div style={{ marginBottom: 8 }}>
-                <div className="muted" style={{ fontSize: 12 }}>
+                <div className="muted" style={{ fontSize: 14 }}>
                   最近批次
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span className="mono" style={{ fontSize: 12 }}>
+                  <span className="mono" style={{ fontSize: 14 }}>
                     {healthQuery.data.health.latest_batch.external_batch_id}
                   </span>
                   <span
@@ -2491,29 +2781,29 @@ function TokenManager({ projectId }: { projectId: string }) {
                     data-state={
                       healthQuery.data.health.latest_batch.status === 'accepted' ? 'ok' : 'fail'
                     }
-                    style={{ fontSize: 10 }}
+                    style={{ fontSize: 13 }}
                   >
                     {healthQuery.data.health.latest_batch.status}
                   </span>
-                  <span className="muted" style={{ fontSize: 11 }}>
+                  <span className="muted" style={{ fontSize: 13 }}>
                     {ago(healthQuery.data.health.latest_batch.requested_at)}
                   </span>
                 </div>
                 {healthQuery.data.health.latest_batch.rejected_reasons &&
                 healthQuery.data.health.latest_batch.rejected_reasons.length > 0 ? (
-                  <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                  <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
                     拒绝原因：{healthQuery.data.health.latest_batch.rejected_reasons.join(', ')}
                   </div>
                 ) : null}
               </div>
             ) : (
-              <p className="muted" style={{ fontSize: 12 }}>
+              <p className="muted" style={{ fontSize: 14 }}>
                 还没有同步批次。
               </p>
             )}
             <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
               <div>
-                <div className="muted" style={{ fontSize: 12 }}>
+                <div className="muted" style={{ fontSize: 14 }}>
                   待处理批次
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>
@@ -2524,7 +2814,7 @@ function TokenManager({ projectId }: { projectId: string }) {
             {/* 拒绝原因分布 */}
             {Object.keys(healthQuery.data.health.rejected_reason_distribution).length > 0 ? (
               <div style={{ marginTop: 12 }}>
-                <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+                <div className="muted" style={{ fontSize: 14, marginBottom: 4 }}>
                   拒绝原因分布
                 </div>
                 {Object.entries(healthQuery.data.health.rejected_reason_distribution).map(
@@ -2534,7 +2824,7 @@ function TokenManager({ projectId }: { projectId: string }) {
                       style={{
                         display: 'flex',
                         justifyContent: 'space-between',
-                        fontSize: 12,
+                        fontSize: 14,
                         padding: '2px 0',
                       }}
                     >
@@ -2546,11 +2836,12 @@ function TokenManager({ projectId }: { projectId: string }) {
               </div>
             ) : null}
           </>
-        ) : (
-          <p className="muted" style={{ fontSize: 12 }}>
-            健康数据不在公开降级投影（L2）这一级。
+        ) : null}
+        {!healthQuery.isError && healthQuery.data?.projection_level === 'l2' ? (
+          <p className="muted" style={{ fontSize: 14 }}>
+            公开摘要不展示同步详情。
           </p>
-        )}
+        ) : null}
       </div>
     </div>
   );
