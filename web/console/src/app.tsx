@@ -1018,7 +1018,7 @@ function ConsoleHome() {
       </div>
 
       <ProvisioningList />
-      {creating ? <CreateProjectPanel /> : null}
+      {creating ? <CreateProjectPanel onCreated={() => setCreating(false)} /> : null}
 
       {query.isPending ? <p className="muted">正在读取云端投影…</p> : null}
       {query.error instanceof ApiError && query.error.code === 'login_required' ? (

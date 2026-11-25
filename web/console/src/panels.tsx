@@ -82,7 +82,7 @@ function ErrorLine({ error }: { error: Error | null }) {
 
 // --------------------------------------------------------------------------- 创建项目
 
-export function CreateProjectPanel() {
+export function CreateProjectPanel({ onCreated }: { onCreated?: () => void }) {
   const client = useQueryClient();
   const [name, setName] = useState('');
   const [question, setQuestion] = useState('');
@@ -104,6 +104,8 @@ export function CreateProjectPanel() {
       }
       void client.invalidateQueries({ queryKey: ['index'] });
       void client.invalidateQueries({ queryKey: ['commands', ''] });
+      // 建成即收起：新项目已经出现在列表里，面板继续占着地方只是挡住结果。
+      onCreated?.();
     },
   });
 
