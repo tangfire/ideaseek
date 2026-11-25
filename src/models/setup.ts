@@ -112,15 +112,44 @@ export interface DshProviderView {
   exists: boolean;
 }
 
+/**
+ * The provider document as IdeaSeek last wrote it: `settings.yaml`, or the
+ * `settings.yaml.imported` rename DSH leaves behind. DSH's settings loader
+ * imports the file once and renames it (importLegacyDocument in
+ * @deepseek-ai/dsh-settings), so without reading the twin every DSH boot
+ * made `models providers` report "not configured" and pushed the researcher
+ * to re-run a setup that had already succeeded.
+ */
+async function readDshSettings(): Promise<{ text: string; path: string } | null> {
+  const { readFile } = await import('node:fs/promises');
+  const primary = dshSettingsPath();
+  try {
+    const text = await readFile(primary, 'utf8');
+    if (text.trim()) return { text, path: primary };
+  } catch {
+    // missing — fall through to the imported twin
+  }
+  const imported = `${primary}.imported`;
+  try {
+    const text = await readFile(imported, 'utf8');
+    if (text.trim()) return { text, path: imported };
+  } catch {
+    // neither exists yet
+  }
+  return null;
+}
+
 /** Reads one provider's credential wiring from DSH settings (names only). */
 export async function readDshProvider(provider: string): Promise<DshProviderView> {
-  const { readFile } = await import('node:fs/promises');
   const { parse } = await import('yaml');
+  const settings = await readDshSettings();
   let doc: unknown = null;
-  try {
-    doc = parse(await readFile(dshSettingsPath(), 'utf8'));
-  } catch {
-    doc = null;
+  if (settings) {
+    try {
+      doc = parse(settings.text);
+    } catch {
+      doc = null;
+    }
   }
   const root = (doc ?? {}) as Record<string, unknown>;
   const llm = root['llm-pi-ai'] as Record<string, unknown> | undefined;
@@ -172,14 +201,20 @@ export interface ProviderListing {
  * Reads names and endpoints only — credential values are never loaded here.
  */
 export async function listProviders(): Promise<ProviderListing[]> {
-  const { readFile } = await import('node:fs/promises');
   const { parseDocument } = await import('yaml');
   const known = new Map(KNOWN_PROVIDERS.map((entry) => [entry.id, entry]));
   const found = new Map<string, { apiKeyEnv: string | null; baseURL: string | null }>();
-  try {
-    const doc = parseDocument(await readFile(dshSettingsPath(), 'utf8'));
+  const settings = await readDshSettings();
+  if (settings) {
+    const doc = parseDocument(settings.text);
     if (doc.errors.length === 0) {
-      const providers = doc.getIn(['llm-pi-ai', 'providers']) as
+      // toJS(), not getIn(): getIn returns the YAMLMap AST node, whose
+      // Object.entries are the node's own fields (items/range) — every
+      // provider id was silently lost and the catalog showed phantom
+      // "items"/"range" entries instead.
+      const root = doc.toJS() as Record<string, unknown>;
+      const llm = root['llm-pi-ai'] as Record<string, unknown> | undefined;
+      const providers = llm?.providers as
         Record<string, { apiKeyEnv?: unknown; baseURL?: unknown }> | undefined;
       for (const [id, entry] of Object.entries(providers ?? {})) {
         found.set(id, {
@@ -188,8 +223,6 @@ export async function listProviders(): Promise<ProviderListing[]> {
         });
       }
     }
-  } catch {
-    // No settings file yet: the catalog is still the known defaults.
   }
   const ids = [...new Set([...known.keys(), ...found.keys()])];
   return ids.map((id) => {
@@ -217,22 +250,19 @@ export async function writeDshApiKeyEnv(
 ): Promise<DshSettingsWrite> {
   assertProviderId(provider);
   assertEnvName(envName);
-  const { readFile } = await import('node:fs/promises');
   const { writeFileAtomic, ensureDir } = await import('../core/atomic.js');
   const { dirname } = await import('node:path');
   const { parseDocument } = await import('yaml');
   const path = dshSettingsPath();
-  let text = '';
-  try {
-    text = await readFile(path, 'utf8');
-  } catch {
-    text = '';
-  }
-  const doc = parseDocument(text || 'llm-pi-ai:\n  providers: {}\n');
+  // Seed from whatever IdeaSeek last wrote (settings.yaml or the .imported
+  // rename) so a re-run after DSH consumed the file updates in place instead
+  // of rebuilding a one-provider document that drops the rest of the catalog.
+  const base = await readDshSettings();
+  const doc = parseDocument(base?.text ?? 'llm-pi-ai:\n  providers: {}\n');
   if (doc.errors.length > 0) {
     throw new IdeaseekError(
       'INVALID_ARGUMENT',
-      `DSH settings ${path} is not valid YAML — fix it first (${doc.errors[0]?.message ?? 'parse error'})`,
+      `DSH settings ${base?.path ?? path} is not valid YAML — fix it first (${doc.errors[0]?.message ?? 'parse error'})`,
     );
   }
   let created = false;
