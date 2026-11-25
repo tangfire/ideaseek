@@ -516,7 +516,10 @@ export async function stageView(
   const tasks = rows<CloudTask>(await db.from<CloudTask>('cloud_task')
     .select('external_task_id,kind,status,attempt,max_attempts,started_at,ended_at,payload,result')
     .eq('run_id', id).eq('phase_tag', stage)
-    .order('created_at', { ascending: false }).limit(101), BackendError);
+    // cloud_task 没有 created_at 列（0001 建表就没有），按它排序在真库直接
+    // database_request_failed——fake-db 不校验列名，所以测试抓不到。started_at 是
+    // 这张表上唯一的时间列；未开始的任务为 null，排在最前，正好是"当前待办"。
+    .order('started_at', { ascending: false }).limit(101), BackendError);
   return Response.json({
     ok: true, generated_at: new Date().toISOString(), external_run_id: externalRunId, stage,
     tasks: tasks.slice(0, 100).map(presentTask), truncated: tasks.length > 100,

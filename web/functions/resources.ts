@@ -47,7 +47,9 @@ export async function resourceView(
         'external_task_id,kind,phase_tag,status,attempt,max_attempts,started_at,ended_at,payload,result',
       )
       .eq('run_id', run.id)
-      .order('created_at', { ascending: false })
+      // cloud_task 没有 created_at 列：按它排序在真库报 database_request_failed
+      // （fake-db 不校验列名，测试抓不到）。started_at 是这张表唯一的时间列。
+      .order('started_at', { ascending: false })
       .limit(101),
     BackendError,
   );
