@@ -479,7 +479,10 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
         await repl.write('\r');
         await repl.waitFor(/API key \(input hidden\)/, 60_000);
 
-        const secret = 'sk-paste-with-newline-42';
+        // Under the scanner's 24-char threshold (same convention as
+        // sk-test-super-secret-42) — the non-echo assertion does not
+        // depend on length.
+        const secret = 'sk-paste-with-cr-42';
         // ONE write: the text and the CR travel together — no separate
         // Enter keypress follows, so the line break itself must submit.
         await repl.write(`${secret}\r`);
