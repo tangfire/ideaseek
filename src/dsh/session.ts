@@ -4,6 +4,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DeepSeekHarness, HarnessSession } from '@deepseek-ai/dsh-sdk-client';
 import { IdeaseekError } from '../core/errors.js';
+import { loadUserCredentials } from '../core/env.js';
 import {
   DSH_SDK_VERSION,
   dshHandshakeFailureMessage,
@@ -707,6 +708,17 @@ export class WarmAgentHost {
   async runTurn(
     opts: AgentTurnOptions & { interactiveSurface?: boolean },
   ): Promise<AgentTurnResult> {
+    // Just-in-time credential reload: /models setup writes the file from a
+    // child process, so this TUI's env can be keyless until something
+    // re-reads it. Without this, configure-then-use in one session spawned
+    // the harness with no key and only a restart picked it up — the same
+    // contract DshHarnessAdapter.initialize already honours. A name in the
+    // result means the value actually changed: a warm child's env was fixed
+    // at spawn, so the cached runtime is dropped and the next spawn sees it.
+    const changedCredentials = loadUserCredentials();
+    if (changedCredentials.length > 0 && this.harness) {
+      await this.close();
+    }
     const { DeepSeekHarness } = await import('@deepseek-ai/dsh-sdk-client');
     const policy = opts.policy ?? 'interactive';
     const approvals: ApprovalDecision[] = [];
