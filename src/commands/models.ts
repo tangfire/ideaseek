@@ -534,26 +534,38 @@ export function registerModelsCommand(program: Command): void {
     );
 }
 
-/** Hidden input: the prompt is shown, typed characters are never echoed. */
-async function promptHidden(question: string): Promise<string> {
+/**
+ * Hidden input: the question is shown, typed characters are never echoed.
+ *
+ * The question is written by US and EVERYTHING readline emits is swallowed
+ * — keystroke echo, cursor moves, the full-line redraws that carry the
+ * typed text, the trailing newline (we write our own). Two prior shapes
+ * were both wrong: passing the question to `rl.question` made redraw
+ * chunks `question + text` match an `includes(question)` filter and echo
+ * the secret; passing `''` (what shipped) displayed nothing at all.
+ * `streams` exists so tests can drive it without a TTY.
+ */
+export async function promptHidden(
+  question: string,
+  streams: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream } = {},
+): Promise<string> {
   const readline = await import('node:readline');
+  const input = streams.input ?? process.stdin;
+  const out: NodeJS.WritableStream = streams.output ?? process.stdout;
+  const originalWrite = out.write.bind(out);
+  out.write = (() => true) as typeof out.write;
   const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+    input,
+    output: out,
     terminal: true,
   });
-  const out = process.stdout;
-  const originalWrite = out.write.bind(out);
-  out.write = ((chunk: unknown, ...rest: unknown[]) => {
-    const text = String(chunk);
-    // Echo the prompt itself; swallow everything else (the secret).
-    if (text.includes(question)) return originalWrite(chunk as never, ...(rest as never[]));
-    return true;
-  }) as typeof out.write;
   try {
-    return await new Promise<string>((resolve) => {
-      rl.question('', (answer) => resolve(answer));
+    originalWrite(question);
+    const answer = await new Promise<string>((resolve) => {
+      rl.question('', (value) => resolve(value));
     });
+    originalWrite('\r\n');
+    return answer;
   } finally {
     out.write = originalWrite;
     rl.close();

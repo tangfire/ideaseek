@@ -796,9 +796,12 @@ export class InteractiveSession {
   private async runModelsSetup(flags: string[]): Promise<void> {
     if (!this.secretCapture) {
       // Classic line mode cannot mask a secret (readline echoes it) —
-      // point at the real terminal instead of leaking the key.
+      // point at the real terminal instead of leaking the key. The hint
+      // must name --prompt-key: plain `models setup` never prompts (it
+      // only wires provider/baseURL), so the old text sent researchers
+      // to a command that silently asked for nothing.
       this.println(
-        'hidden key capture needs the TUI — run `ideaseek models setup` in a terminal (or pipe via --api-key-stdin)',
+        'hidden key capture needs the TUI — run `ideaseek models setup --prompt-key` in a terminal (or pipe via --api-key-stdin)',
       );
       return;
     }

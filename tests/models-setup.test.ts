@@ -319,10 +319,7 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
       'utf8',
     );
     const { rename } = await import('node:fs/promises');
-    await rename(
-      join(h.dshHome, 'settings.yaml'),
-      join(h.dshHome, 'settings.yaml.imported'),
-    );
+    await rename(join(h.dshHome, 'settings.yaml'), join(h.dshHome, 'settings.yaml.imported'));
 
     // The catalog is still configured — read through the rename…
     const providers = await runCli(['models', 'providers', '--json'], h.env);
@@ -432,6 +429,32 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(result.stderr).toContain('TTY');
     expect(result.stderr).toContain('--api-key-stdin');
   }, 60_000);
+
+  it('promptHidden shows its question and never echoes the typed key', async () => {
+    // Owner-reported: `--prompt-key` displayed nothing at all — the old
+    // code passed '' to rl.question, so the question was never written,
+    // and the write filter (text.includes(question)) matched nothing.
+    // The question must reach the terminal; the key must not, on any
+    // chunk readline emits (echo, redraw, cursor moves).
+    const { PassThrough } = await import('node:stream');
+    const { promptHidden } = await import('../src/commands/models.js');
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let seen = '';
+    output.on('data', (chunk) => {
+      seen += String(chunk);
+    });
+
+    const pending = promptHidden('API key (input hidden): ', { input, output });
+    input.write('sk-hidden-probe-77');
+    input.write('\r');
+    const answer = await pending;
+
+    expect(answer).toBe('sk-hidden-probe-77');
+    expect(seen).toContain('API key (input hidden): '); // the question IS shown
+    expect(seen).not.toContain('sk-hidden-probe-77'); // the key never is
+    expect(seen).not.toContain('sk-hidden'); // not even a prefix
+  }, 10_000);
 });
 
 describe('ideaseek models test (minimal connectivity, presence only)', () => {
