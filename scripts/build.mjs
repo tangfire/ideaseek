@@ -16,11 +16,32 @@
  * children read half-written modules). IDEASEEK_BUILD_OUT redirects the
  * emit into a throwaway directory — tsc still type-checks the whole
  * project, the shared dist is left alone.
+ *
+ * Freshness (scripts/build-fingerprint.mjs): dist/.build-fingerprint holds
+ * digests of the compile inputs and of the emitted products. When both
+ * still match, this script skips tsc entirely (~0.2s instead of ~25s) —
+ * the path setup.sh and every vitest run take when nothing changed. The
+ * record is deleted before tsc and written only after exit 0, so a killed
+ * or failed build can never leave a skip behind; `--force` bypasses the
+ * check and drops .tsbuildinfo for a clean full rebuild (vitest's
+ * boot-failure retry uses it: a torn dist is exactly what a fingerprint
+ * would otherwise wave through). IDEASEEK_BUILD_OUT never reads or writes
+ * the dist fingerprint and keeps its own .tsbuildinfo inside the
+ * throwaway dir — a shared one would let an out-of-tree emit mark dist
+ * files "emitted" and hollow out the next real build.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  inputDigest,
+  outputDigest,
+  fingerprintPath,
+  readFingerprint,
+  writeFingerprint,
+  planBuild,
+} from './build-fingerprint.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const lockDir = join(root, '.build-lock');
@@ -82,19 +103,51 @@ function release() {
   }
 }
 
+const force = process.argv.slice(2).includes('--force');
+const outDir = process.env.IDEASEEK_BUILD_OUT;
+
 await acquire();
 process.on('exit', release);
 try {
   const tscArgs = ['-p', 'tsconfig.build.json'];
-  const outDir = process.env.IDEASEEK_BUILD_OUT;
-  if (outDir) tscArgs.push('--outDir', outDir);
-  const result = spawnSync(
-    process.execPath,
-    [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), ...tscArgs],
-    { cwd: root, stdio: 'inherit' },
-  );
-  if (result.error) throw result.error;
-  process.exitCode = result.status ?? 1;
+  let skip = false;
+  let inputs = null;
+
+  if (outDir) {
+    // Throwaway emit: always a real build, never touches the dist
+    // fingerprint, and keeps its .tsbuildinfo inside the throwaway dir.
+    tscArgs.push('--outDir', outDir, '--tsBuildInfoFile', join(outDir, '.tsbuildinfo'));
+  } else {
+    inputs = inputDigest(root);
+    const plan = planBuild({
+      force,
+      fingerprint: readFingerprint(root),
+      inputs,
+      outputs: outputDigest(root),
+    });
+    if (plan.mode === 'skip') {
+      skip = true;
+      console.log('build: up to date — skipped tsc (fingerprint match)');
+    } else {
+      // Journal: only a finished build leaves a fingerprint behind.
+      rmSync(fingerprintPath(root), { force: true });
+      if (plan.mode === 'full') rmSync(join(root, 'dist', '.tsbuildinfo'), { force: true });
+      console.log(`build: ${plan.reason} — ${plan.mode} tsc`);
+    }
+  }
+
+  if (!skip) {
+    const result = spawnSync(
+      process.execPath,
+      [join(root, 'node_modules', 'typescript', 'bin', 'tsc'), ...tscArgs],
+      { cwd: root, stdio: 'inherit' },
+    );
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 1;
+    if (!outDir && process.exitCode === 0) {
+      writeFingerprint(root, { inputs, outputs: outputDigest(root) });
+    }
+  }
 } finally {
   release();
 }
