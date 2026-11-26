@@ -351,12 +351,29 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
   const [liveStatus, setLiveStatus] = useState<LiveStatusSnapshot | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStatusRefreshRef = useRef(0);
+  // The hidden-key buffer: the ref is the truth the Enter branch reads.
+  // React state is only the render mirror for the bullets — reading state
+  // on Enter raced a fast paste (paste commits, Enter handled by the still
+  // subscribed pre-reveal closure → empty/stale key submitted → setup
+  // "sometimes only works after retrying").
+  const secretBufRef = useRef('');
   const [secretBuf, setSecretBuf] = useState('');
+  const writeSecretBuf = (value: string) => {
+    secretBufRef.current = value;
+    setSecretBuf(value);
+  };
   // Prompt changes re-render via setState alone — the tick value is never
   // read (hence the underscore), the setter below is the mechanism.
   const [_secretPromptTick, setSecretPromptVersion] = useState(0);
   useEffect(() => {
-    session.setOnSecretPromptChange(() => setSecretPromptVersion((v) => v + 1));
+    session.setOnSecretPromptChange(() => {
+      // Begin AND end both fire here: start every prompt from an empty
+      // buffer so a cancel (interrupt answers null without going through
+      // the key handlers) can never leak its value into the next prompt.
+      secretBufRef.current = '';
+      setSecretBuf('');
+      setSecretPromptVersion((v) => v + 1);
+    });
     return () => session.setOnSecretPromptChange(null);
   }, [session]);
   useSyncExternalStore(bus.subscribe, () => bus.version);
@@ -632,23 +649,40 @@ function ShellApp({ session, bus, plain }: ShellAppProps): React.ReactElement {
     const pointer = classifyPointer(input);
     if (session.secretPrompt) {
       if (key.return) {
-        const answer = secretBuf;
-        setSecretBuf('');
+        // Read the ref, not state: paste + Enter can land before React
+        // re-renders, and the still-subscribed closure holds the old value.
+        const answer = secretBufRef.current;
+        writeSecretBuf('');
         session.answerSecret(answer);
         return;
       }
       if (key.escape || (key.ctrl && input === 'c') || input === '\x03') {
-        setSecretBuf('');
+        writeSecretBuf('');
         session.answerSecret(null);
         return;
       }
       if (key.backspace || key.delete || input === '\x7f' || input === '\b') {
-        setSecretBuf((value) => value.slice(0, -1));
+        writeSecretBuf(secretBufRef.current.slice(0, -1));
         return;
       }
       if (pointer) return; // clicks/wheel during a hidden prompt: swallow
-      if (input && !key.ctrl && !key.meta && input !== '\t' && input !== '\r') {
-        setSecretBuf((value) => value + input);
+      if (input && !key.ctrl && !key.meta && input !== '\t') {
+        if (!/[\r\n]/.test(input)) {
+          writeSecretBuf(secretBufRef.current + input);
+        } else {
+          // A paste can carry its own line ending (key copied with a
+          // trailing newline) or arrive coalesced with the Enter key in
+          // one chunk — ink parses "sk-…\r" as text, not as return, so
+          // without this the Enter is swallowed and the key sits
+          // unsubmitted until the researcher presses Enter again. Submit
+          // the first non-empty line: a key is single-line, a leading
+          // newline must not turn a good paste into "empty API key", and
+          // anything past the first line is not part of the key.
+          const firstLine = input.split(/[\r\n]+/).find((line) => line.trim().length > 0) ?? '';
+          const answer = secretBufRef.current + firstLine;
+          writeSecretBuf('');
+          session.answerSecret(answer);
+        }
       }
       return;
     }
