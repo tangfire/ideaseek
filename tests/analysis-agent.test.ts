@@ -158,3 +158,53 @@ it('coverage text carries the ablation spread the verdict contract asks the agen
     }),
   ).toContain('ablations: (none recorded)');
 });
+
+it('binds the review to the shown facts: the instruction bans reasoning from other files', async () => {
+  // Observed: with file tools available the agent went reading old
+  // workspace records (scaffold-era runs) and declared the current
+  // comparison NOT comparable because history disagreed — a verdict about
+  // the wrong records. The contract must say the shown facts are all there
+  // is to reason from.
+  const answer = {
+    comparable: true,
+    verdict: 'supported',
+    failureClass: 'none',
+    unitAssessment: 'both values are the protocol primary metric in percent at the same scale',
+    reasoning: 'same metric, same unit, same scale; the idea value exceeds the baseline',
+    citedValues: [
+      {
+        source: 'idea-main',
+        metric: 'target_unseen_domain_top1_accuracy',
+        value: 0.16858931604511102,
+      },
+      { source: 'fedavg', metric: 'target_unseen_domain_top1_accuracy', value: 18.75 },
+    ],
+    evidence: ['held-out domain value, all samples, %'],
+    recommendedNext: 'record the verdict',
+    confidence: 0.8,
+  };
+  let instruction = '';
+  const capturing = {
+    kind: 'fake',
+    async runTask(request: { instruction: string }) {
+      instruction = request.instruction;
+      return { output: JSON.stringify(answer), usage: {}, model: 'm', toolCalls: [], finishedAt: 0 };
+    },
+    async health() {
+      return { reachable: true, models: [], blocked: false, blockReason: null };
+    },
+    async initialize() {},
+    async shutdown() {},
+  } as never;
+  await compareWithAgent({
+    harness: capturing,
+    ideaId: 'gen-x',
+    runId: 'r-2',
+    protocolText: 'primary metric: target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',
+    coverageText: 'scales=[quick, smoke] datasets=1 seeds=1',
+    facts: FACTS,
+  });
+  expect(instruction).toContain('Use ONLY what is shown above');
+  expect(instruction).toContain('Workspace files, older experiment records');
+  expect(instruction).toContain('Recorded values');
+});

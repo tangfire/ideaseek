@@ -88,7 +88,11 @@ Rules:
 - Percent versus fraction shows up as a value above 1 next to a value at or below 1 for something
   both sides call an accuracy; state it as such, or state why both are already in the same system.
 - Do not treat a small difference as insignificant, or a large one as decisive, without saying what
-  spread the platform recorded (seeds, scales, ablations) — "insufficient evidence" is a verdict.`;
+  spread the platform recorded (seeds, scales, ablations) — "insufficient evidence" is a verdict.
+- Use ONLY what is shown above. Workspace files, older experiment records, and anything you could
+  look up are out of scope: if a number is not in "Recorded values" or the coverage line, do not
+  reason from it — the platform already selected the records that count, and citing anything else
+  makes this review about history instead of the comparison in front of you.`;
 
 /**
  * What the review is told about the recorded spread.
