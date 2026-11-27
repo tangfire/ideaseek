@@ -238,6 +238,28 @@ describe('declared save targets', () => {
     ).toEqual(['figures/Fig 1.pdf', 'figures/Fig 1.png']);
     expect(parseSaveTargets('plt.plot([1, 2])')).toEqual([]);
   });
+
+  it('resolves plain string constants that savefig names', async () => {
+    // Observed: every real plan writes OUT_PDF = 'fig.pdf' + savefig(OUT_PDF).
+    // The literal-only scan found no declared targets, so the verdict fell
+    // back to "new files since start" and a deterministic re-render of
+    // unchanged scripts reported "script exited 0 without saving any figure
+    // file" for each of them — the idempotency failure the declared-target
+    // path was built to prevent.
+    const { parseSaveTargets } = await import('../src/paper/render-figures.js');
+    const script = [
+      "OUT_PDF = 'fig2_gap_cost_vs_accuracy.pdf'",
+      "OUT_PNG = 'fig2_gap_cost_vs_accuracy.png'",
+      'RESULTS = ../reports/paper/results.json', // not a string literal — ignored
+      'fig.savefig(OUT_PDF)',
+      'fig.savefig(OUT_PNG, dpi=300)',
+      'savefig(UNKNOWN_CONST)', // no declaration — stays unresolved
+    ].join('\n');
+    expect(parseSaveTargets(script)).toEqual([
+      'fig2_gap_cost_vs_accuracy.pdf',
+      'fig2_gap_cost_vs_accuracy.png',
+    ]);
+  });
 });
 
 /**

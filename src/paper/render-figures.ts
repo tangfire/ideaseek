@@ -135,6 +135,22 @@ export function parseSaveTargets(script: string): string[] {
     const raw = (match[1] ?? '').trim();
     if (raw && !raw.includes('\n')) targets.add(raw);
   }
+  // Models write `OUT_PDF = 'fig.pdf'` then `savefig(OUT_PDF)` — the literal
+  // regex above sees nothing, declared targets come back empty, and the
+  // verdict falls back to "new files since the command started": a re-render
+  // of unchanged (deterministic) scripts then reports "script exited 0 without
+  // saving any figure file" for every figure, which is the idempotency bug
+  // this declared-target path exists to prevent, resurfacing for the constant
+  // style every real plan has used. One level of plain string constant is all
+  // that is resolved; computed expressions stay unmatchable on purpose.
+  const constants = new Map<string, string>();
+  for (const match of script.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*['"]([^'"\n]+)['"]/gm)) {
+    constants.set(match[1]!, match[2]!);
+  }
+  for (const match of script.matchAll(/(?:savefig|write_image)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*[,)]/g)) {
+    const literal = constants.get(match[1]!);
+    if (literal && !literal.includes('\n')) targets.add(literal);
+  }
   return [...targets];
 }
 
