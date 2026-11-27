@@ -246,67 +246,92 @@ describe('DSH SDK version pin', () => {
 });
 
 describe('DshHarnessAdapter real runtime (keyless)', () => {
+  /**
+   * The (keyless) contract must hold on every machine, not only ones whose
+   * host shell happens to export the key. `initialize()` loads
+   * `~/.ideaseek/credentials.env` into process.env by design ("save once with
+   * /models setup, works in every later shell"), so comparing a pre-init env
+   * snapshot against post-init health failed on any machine where the key
+   * lives in the credentials file: available came back true while the test's
+   * keySet was false. Isolate BOTH credential sources (env var + the
+   * user-config-relative credentials file) for the duration of the test.
+   */
+  async function withKeylessCredentials<T>(fn: () => Promise<T>): Promise<T> {
+    const prevKey = process.env.DEEPSEEK_API_KEY;
+    const prevUserConfig = process.env.IDEASEEK_USER_CONFIG;
+    const isolated = await mkdtemp(join(tmpdir(), 'ideaseek-user-config-'));
+    process.env.IDEASEEK_USER_CONFIG = join(isolated, 'config.yaml');
+    delete process.env.DEEPSEEK_API_KEY;
+    try {
+      return await fn();
+    } finally {
+      if (prevKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+      else process.env.DEEPSEEK_API_KEY = prevKey;
+      if (prevUserConfig === undefined) delete process.env.IDEASEEK_USER_CONFIG;
+      else process.env.IDEASEEK_USER_CONFIG = prevUserConfig;
+    }
+  }
+
   it('spawns the pinned DSH runtime, reports credential state without reading secrets, and shuts down', async () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'ideaseek-dsh-home-'));
     const adapter = new DshHarnessAdapter({ dshHome, initializeTimeoutMs: 30_000 });
 
-    const keySet = Boolean(process.env.DEEPSEEK_API_KEY);
-    try {
-      await adapter.initialize();
-      const health = await adapter.health();
-      expect(health.reachable).toBe(true);
-      expect(health.models).toHaveLength(1);
-      expect(health.models[0]!.available).toBe(keySet);
-      expect(health.blocked).toBe(!keySet);
-      if (!keySet) {
+    await withKeylessCredentials(async () => {
+      try {
+        await adapter.initialize();
+        const health = await adapter.health();
+        expect(health.reachable).toBe(true);
+        expect(health.models).toHaveLength(1);
+        // With both credential sources isolated, health must report the
+        // keyless truth — never a value loaded from a stored credentials file.
+        expect(health.models[0]!.available).toBe(false);
+        expect(health.blocked).toBe(true);
         expect(health.blockReason).toContain('DEEPSEEK_API_KEY');
         // The reason must never contain an actual secret value.
         expect(health.blockReason ?? '').not.toMatch(/[A-Za-z0-9_-]{20,}/);
+        // Re-initialize is idempotent while alive.
+        await adapter.initialize();
+        expect(adapter.version).toBe(`dsh-sdk@${DSH_SDK_VERSION}`);
+      } finally {
+        await adapter.shutdown();
       }
-      // Re-initialize is idempotent while alive.
-      await adapter.initialize();
-      expect(adapter.version).toBe(`dsh-sdk@${DSH_SDK_VERSION}`);
-    } finally {
+      // Shutdown is idempotent.
       await adapter.shutdown();
-    }
-    // Shutdown is idempotent.
-    await adapter.shutdown();
+    });
   }, 90_000);
 
   it('surfaces a typed AUTH block when the model call has no credentials', async () => {
-    if (process.env.DEEPSEEK_API_KEY) {
-      // With a real key present this negative test is not applicable.
-      return;
-    }
     const dshHome = await mkdtemp(join(tmpdir(), 'ideaseek-dsh-home-'));
     const adapter = new DshHarnessAdapter({ dshHome, initializeTimeoutMs: 30_000 });
-    try {
-      await expect(
-        adapter.runTask({
-          runId: 'run-test',
-          taskId: 'task-test',
-          profile: 'paper-extractor',
-          instruction: 'Extract a JSON card.',
-          inputs: [{ kind: 'text', name: 'paper', content: 'Some paper text.' }],
-          outputSchema: 'papercard-lite-v1',
-          budget: { timeoutMs: 60_000 },
-          idempotencyKey: 'dsh-no-key-test',
-        }),
-      ).rejects.toSatisfy((error: unknown) => {
-        // Either a typed AUTH/QUOTA block or a clearly-marked retryable DSH
-        // error is acceptable keyless behavior — never a silent success and
-        // never an unmapped crash.
-        const name = (error as Error).name;
-        const message = (error as Error).message ?? '';
-        return (
-          name === 'HarnessBlockError' ||
-          message.includes('dsh ') ||
-          message.includes('failed to start DSH')
-        );
-      });
-    } finally {
-      await adapter.shutdown();
-    }
+    await withKeylessCredentials(async () => {
+      try {
+        await expect(
+          adapter.runTask({
+            runId: 'run-test',
+            taskId: 'task-test',
+            profile: 'paper-extractor',
+            instruction: 'Extract a JSON card.',
+            inputs: [{ kind: 'text', name: 'paper', content: 'Some paper text.' }],
+            outputSchema: 'papercard-lite-v1',
+            budget: { timeoutMs: 60_000 },
+            idempotencyKey: 'dsh-no-key-test',
+          }),
+        ).rejects.toSatisfy((error: unknown) => {
+          // Either a typed AUTH/QUOTA block or a clearly-marked retryable DSH
+          // error is acceptable keyless behavior — never a silent success and
+          // never an unmapped crash.
+          const name = (error as Error).name;
+          const message = (error as Error).message ?? '';
+          return (
+            name === 'HarnessBlockError' ||
+            message.includes('dsh ') ||
+            message.includes('failed to start DSH')
+          );
+        });
+      } finally {
+        await adapter.shutdown();
+      }
+    });
   }, 120_000);
 });
 
