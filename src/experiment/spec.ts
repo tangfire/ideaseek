@@ -23,6 +23,20 @@ export type RunFailureCategory =
 export interface MetricTarget {
   name: string;
   direction: 'higher' | 'lower';
+  /**
+   * Coverage metric: recorded when the entry produces it, absent when it
+   * does not — only metrics without this flag must appear in the result.
+   *
+   * Full-run comparison specs carry the locked protocol's secondaries here.
+   * Fairness already treats them as information ("the compared quantity is
+   * matched" — src/full/fairness.ts), upstream method code is not ours to
+   * extend, and a protocol secondary can even be non-scalar ("per-domain
+   * accuracy for each holdout value (sketch, …)"), so hard-requiring them
+   * made every full run against a real baseline impossible by construction.
+   * Absent means required: idea specs and every existing fixture keep the
+   * strict contract.
+   */
+  optional?: boolean;
 }
 
 export interface ExperimentEnvironment {
@@ -205,6 +219,9 @@ export function validateExperimentSpec(value: unknown): SpecValidation {
       }
       if (metric.direction !== 'higher' && metric.direction !== 'lower') {
         errors.push(`metrics[${i}].direction must be higher | lower`);
+      }
+      if (metric.optional !== undefined && typeof metric.optional !== 'boolean') {
+        errors.push(`metrics[${i}].optional must be a boolean when present`);
       }
     }
   }

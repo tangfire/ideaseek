@@ -167,7 +167,16 @@ export async function buildFullComparisonSpec(
         : [];
     const metrics = [
       ...metricNames(protocolRecord?.primaryMetrics),
-      ...metricNames(protocolRecord?.secondaryMetrics),
+      // Protocol secondaries are coverage, not a gate: fairness records them
+      // as information ("the compared quantity is matched"), upstream method
+      // code is not ours to extend, and one can even be non-scalar. Recorded
+      // when the entry produces them, absent when it does not — see
+      // MetricTarget.optional. Primaries stay required: no primary, no
+      // comparison.
+      ...metricNames(protocolRecord?.secondaryMetrics).map((metric) => ({
+        ...metric,
+        optional: true as const,
+      })),
     ];
     if (metrics.length === 0) {
       throw new IdeaseekError(

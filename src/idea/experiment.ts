@@ -7,7 +7,7 @@ import { parseProgressLine } from '../experiment/checkpoint.js';
 import { mergeRunEnv } from '../experiment/run-env.js';
 import { ensureDir, writeFileAtomic } from '../core/atomic.js';
 import { classifyRepairFailure, runRepairCommand, writeRepairLog } from '../comparison/repair.js';
-import { metricIdentifier } from '../core/metric-id.js';
+import { metricIdentifier, metricKey } from '../core/metric-id.js';
 import {
   stableJson,
   type ExperimentSpec,
@@ -727,6 +727,33 @@ export type ParsedMetricsOutput = {
   baselines?: unknown;
 };
 
+/**
+ * The value a declared metric has in a program's result dict.
+ *
+ * Exact key first; then metricKey — the comparison-side identity rule for
+ * keys a program writes by ear (src/core/metric-id.ts). Protocol metric names
+ * carry their definition as prose ("unseen-domain mean accuracy (%) averaged
+ * over the 4 leave-one-domain-out folds (PACS)") while the entry prints the
+ * bare identifier, and exact-string matching here made every full-run
+ * comparison item fail with "metrics missing or non-finite" for numbers the
+ * entry had just printed — the same #15 vocabulary gap fairness.ts and
+ * autonomy.ts already closed, reported in the full-run-machinery fixture.
+ */
+function lookupMetricValue(
+  metricMap: Record<string, unknown>,
+  expectedName: string,
+): number | undefined {
+  const direct = metricMap[expectedName];
+  if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
+  const wanted = metricKey(expectedName);
+  for (const [key, value] of Object.entries(metricMap)) {
+    if (metricKey(key) === wanted && typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 export function parseMetricsOutput(
   out: string,
   exitCode: number,
@@ -797,8 +824,11 @@ export function parseMetricsOutput(
   }
   const missing: string[] = [];
   for (const expected of spec.metrics) {
-    const value = metricMap[expected.name];
-    if (typeof value !== 'number' || !Number.isFinite(value)) {
+    const value = lookupMetricValue(metricMap, expected.name);
+    if (value === undefined) {
+      // Optional metrics are coverage, not a gate (MetricTarget.optional):
+      // recorded when the entry produces them, absent when it does not.
+      if (expected.optional) continue;
       missing.push(expected.name);
       continue;
     }
