@@ -541,3 +541,26 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 - **GPU 实验面（如实移交 GPU 阶段）**：journey-a 的 idea 实现是 stdlib 纯 Python 机制原型（fedg.py 设计即无 CUDA）；平台上 GPU 相关可测面 = 容量探测/准入（上表 + full run 日志 `admission request gpus=0`、plan 探针 `resources: 1 GPU`），均已实测。**真 GPU 训练**需要 GPU 工作负载——不为烧卡而造实验；**多 GPU（>1 device）本机不存在**，仅单测覆盖。维持 STAGE 12 既定口径："多 GPU/长任务挪至 GPU 阶段"。
 - **长任务（如实部分）**：进程级恢复已实测——真 kill → `continue` → `task_commit_resumed`、成功项零重做（见 STAGE 15 续 2）；lease/heartbeat/hard-pause 恢复有 machinery 单测（"interrupts a running full run on hard pause and does not redo the completed work item"）。**数小时级真实负载在本 corpus 上不存在**（full 规模实跑 ~60s，平台执行的就是科学所需工作量）——不伪造长任务时长。
 - **entry 级 checkpoint**：config `checkpoint: None`（平台 opt-in，默认 none，策略 none 时不下发 flag——executeSpecRun 注释明示的既定语义）；`train.py` 接受 `--checkpoint-every/--resume-from` 但未实现真断点（工作区入口的工程选择，非平台门禁；平台侧 checkpoint 政策/progress 文件/resumeHint 实现与测试在位）。真断点续跑（状态序列化+续算）记为 idea 侧可选工程项。
+
+## 最终汇总（2026-11-27 刷新版；取代 2026-11-20 版作当前权威口径，旧表保留为历史）
+
+| Journey/阶段 | 结果 | 证据行 | 备注 |
+|---|---|---|---|
+| STAGE 0–11（11-19→11-24 各轮） | PASS | L47-L285 | 沿用原表结论（11-20 旧汇总见 L316 起，保留作历史） |
+| STAGE 12 全量运行 | **PASS**（原 PARTIAL 已补完） | L298-L302 · 补完 L479-L482 | verdict 门禁当时如实拦截（假设与对照打平）；STAGE 15 以 SUPPORTED 假设完成独立 full-run |
+| STAGE 13 模式与指令面 | PASS（**TUI SKIP 已解除**） | L311-L314 · 解除 L519-L537 | slash relay 由步骤④ 真 PTY 实证六指令 |
+| STAGE 14 真数据集接入 | PASS | L391-L394 | 修复 I23/I24/I25 |
+| STAGE 15（含两轮续） | PASS | L407-L482 | I27/I28；analyze SUPPORTED；full-run 首绿；真 kill→continue 恢复零重做；paper results 12 行 |
+| 步骤① 全量门禁刷新 | PASS | L484-L489 | poppler 恢复（腾讯镜像）+ keyless 凭据隔离修复；三 lane 1957/27/23 全绿 |
+| 步骤② paper 写作链 | PASS | L490-L509 | 修复 I29–I32；plan→figure→render 4/4→write 13 bib→**main.pdf 10 页 ICLR** |
+| 步骤③ 双审计接入 | PASS（claim-audit 如实 FAIL 拦截） | L510-L518 | experiment-audit PASS（5 检查）；claim-audit 的 full-run-result 2 项 PASS（report↔registry 一致）；卡片存量引用拦截 + 根因修复 I33 |
+| 步骤④ TUI slash relay + Journey E | PASS | L519-L537 | /help /status /next /papers /ideas /quit 全实证；告警→cleanup→复验闭环 |
+| 步骤⑤ GPU/长任务可行性 | PASS（可行性口径） | L538-L542 | A10 单卡探测 + capacity 实跑；真 GPU 实验/数小时负载移交 GPU 阶段 |
+
+**≤10 行总结（2026-11-27）**
+
+1. **计数**：STAGE 0–15 全部 PASS（STAGE 12 的 PARTIAL 已由 STAGE 15 补完），本轮 5 个扩展步骤全 PASS；阶段内剩余 SKIP 仅 3 处（上传真实备份 no upload、SSH 断线模拟 detach 等价、coding 真实 turn 计划允许）——11-20 版的 TUI slash relay SKIP 已解除。
+2. **本轮修复 8 个平台缺陷**（均"改→回归绿→小 commit→推送"）：I27 pretty-JSON 行解析、I28 metricKey 匹配+secondary=optional（129 测试）、dsh-adapter keyless 凭据隔离、I29 figure 契约明示硬规则+cwd、I30 savefig 常量解析（幂等复渲染）、I31 write 上下文携带可引论文、I32 placement label 判定、I33 round 携带 paperIds（根治 4 卡 round-context 伪引用）；另 2 处工作区补丁（train.py --scale full、Fig1 nan 防护）与 2 项机器本地安装（poppler、TeX Live）如实入账。
+3. **最值得修（top3）**：① 4 张存量 idea 卡片的 round-context/显示名引用需按 `idea revise` 版本链流程修复（当前 shaft handoff 被 claim-audit 如实拦，恢复路径在工具提示里）；② paper 链模型采样方差——figure/write 各需多轮收敛，write 的 300s/32k-token 预算不匹配记账待上游；③ `check.ts`/`reproduce.ts` 的逐行 JSON 解析对 pretty 输出仍是潜伏同类缺口（当前入口输出单行未触发）。
+4. **机器侧上线意见（如实）**：主研究链与论文链端到端真实可跑——材料→协议→idea→数据→切片→对比→并行实验→独立 full-run→中断恢复→analyze SUPPORTED→plan/figure/render/write/**compile 10 页 PDF**→双审计接入 full-run 结果；全部门禁（协议锁/对比门/fairness/verdict/审批/claim-audit/figure 契约/unplaced-figures/编译依赖预检）在反面场景真实拦截、无假绿。主要剩余风险：存量卡片引用、模型采样方差下的收敛轮数、外部索引源质量与网络重负载。
+5. **推送状态**：本轮 14 个 commit 全部实推 gitee（d5a2a90、46d21d5、48efff9、102f950、0c2bf86、ce1069f、1b19e19、b588761、5efc149、57f8aa7、7068a33、34157c0、627f12e、9c33971；`git ls-remote origin main` 为准，含本节 commit）。
