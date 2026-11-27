@@ -445,3 +445,38 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 
 **推送 BLOCKED（2026-11-24，如实记录）**：本节与 I26 修复已本地提交 `941aaf7`（docs: STAGE 15 handoff），但 `git push origin main` 被 gitee 拒绝 `remote: [session-664a4c8b] Unauthorized`。根因：本实例为新实例，`~/.git-credentials` 仅含 modelscope 条目、无 gitee 凭据，环境亦无 gitee 凭据变量（仅查变量名，值零接触）。已尝试 2 次（后台 + 前台 60s 超时）均失败，按 3 次上限记 **BLOCKED**，停手。恢复：用户补 gitee 凭据（`git config --global credential.helper store` 已设；用户自行 push 一次或把凭据写入 `~/.git-credentials`，key 零接触照旧）后执行 `git pull --rebase origin main && git push origin main`；或由本地 agent 从 gitee 拉取后经上游同步。远端 `refs/heads/main` 当前为 `0d4d5b1`，本地领先 1（`941aaf7`）。
 **补充（同日，第 3 次尝试）**：`GIT_TERMINAL_PROMPT=0 timeout 30 git push origin main` 仍失败（exit 124 超时，无凭据不提示直接挂起）——3 次上限已到，维持 **BLOCKED**，本地领先 2（`941aaf7`、`4d47051`），远端仍 `0d4d5b1`。
+**BLOCKED 解除（2026-11-27，如实记录）**：本实例 gitee 凭据可用（fetch/push 均无需用户补），会话启动时 `941aaf7`/`4d47051` 已在远端（本地领先 0），上一条 BLOCKED 的恢复条件自然满足；本轮修复均已实推（见下）。
+
+## STAGE 15（续 2）— analyze → full-run → kill-continue → paper results（2026-11-27）
+
+**环境恢复**：`git pull --rebase origin main` 已最新 → node 符号链接重放（`ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`，`node --version`=v24.19.0）→ `bash setup.sh` exit 0 → `ideaseek models test` → **GET /models → 200**（ref=env:DEEPSEEK_API_KEY presence，值零接触）。journey-a 现场与交接节一致：idea ANALYZING v4、quick v10/smoke v11 带对照 22.5314、消融 6 条 v2 真实值、check 五相绿、analysis.json 为 v3 陈旧 rejected（后被 analyze 覆写）。
+
+**本轮平台修复（仓库内；回归绿 → 小 commit → 推送 gitee）**：
+
+| # | 现象 | 根因 | 处置 | 回归 | commit |
+|---|---|---|---|---|---|
+| I27 | `full run` 的 comparison 项 3 次尝试全 DEPENDENCY_NOT_MET："entry produced no {\"metrics\": {...}} JSON line"——entry exit 0 且日志里明明打印了 metrics JSON | `parseMetricsOutput`（src/idea/experiment.ts）只逐行 `JSON.parse`，而 worktree `smoke.py` 输出 pretty-printed 多行 JSON，单行全是片段，整块解析不到 | 行扫描保持优先（多对象流仍取最后一个含 metrics 的行）；扫不到时回退整体 `JSON.parse(out.trim())`，再回退首 `{`…末 `}` 切片（噪声包裹的块）；三步均须解析出带 metrics 的对象 | `tests/idea-scale.test.ts` 新增 3 例（pretty 块、噪声包裹块、行扫描优先序），该文件 5/5 绿 | d5a2a90 |
+| I28 | 解析过闸后仍 DEPENDENCY_NOT_MET："metrics missing or non-finite: unseen-domain mean accuracy (%) averaged over…, per-domain accuracy…, worst-domain holdout…, class imbalance gap"——主指标 entry 同样打印了 | ① 协议名带定义 prose、entry 打 bare 键，exact-string 查找失配——#15 词汇缺口，`full-run-machinery.test.ts` 夹具早已如实注记 "closed everywhere else … except here"；② full-run 把协议 **全部** secondary 也当必产，与已 confirm 的 fairness 契约（secondary=information only、"upstream method code is not ours to extend"、per-domain 本质非标量）直接矛盾——按旧语义任何真实基线的 full run 永不可能通过 | ① 查找改 exact key 优先、`metricKey` 回退（comparison 侧既定身份规则，metric-id.ts）；② `MetricTarget` 加 `optional?: boolean`（缺省=必需），`buildFullComparisonSpec` 给 secondary 标 optional，`parseMetricsOutput` 缺 optional 跳过（产出仍记录）、primary 缺失照旧失败；experiment-spec-v1 schema 与 TS 校验同步 | idea-scale 8/8、experiment-spec+schema 5 文件 95/95、full-run+machinery 7/7（"F1+primary 均记录" 断言未动）、fairness/plan/idea-experiment 19/19——**合计 129 绿** | 46d21d5 |
+
+**工作区入口修复（journey-a 非 git 仓库，不入仓库 commit，同 I26 口径）**：`train.py --scale full` 被 argparse 拒绝（choices 仅 smoke/quick）→ full run idea 项 exit 2 "invalid choice: 'full'"。处置：choices 加 `full`、docstring 改为反映 in-platform full 路径；`fedg.py` `POWER_ITERS` 加 `full: 160`（quick 的 2 倍，真更大计算），未知 scale 从**静默回落 smoke** 改为 raise（防 #21 类"记录了程序没跑的 scale"）。手跑 `python3 train.py --scale full`：20.3s exit 0、scale=full、seeds [42,43]、primary 23.0485 + 对照 22.5314；未知 scale `compute_metrics(scale='standard')` 如实抛 ValueError。src 变更后 `idea check` 五相绿（SUPPORTED 不回退），check→plan 循环共跑 3 次均 PASSED。
+
+**analyze → SUPPORTED（阶梯一次通过）**：`idea analyze` → **SUPPORTED**——Δ=+1.1865（最新成功 v11 smoke 23.7179 vs 同 run 对照 22.5314）、coverage scales=[quick,smoke] datasets=2 seeds=[42,43]、两个 necessary 消融 supports=true（drop>0）、comparability review = **comparable**（ARIS analyze-results，confidence 0.62，引用两侧数值回读命中记录）、direction audit 4/4 一致；`idea set-status` 落 **SUPPORTED v4**。交接节预判的残差风险（agent 可能判 NOT comparable）未兑现——未降门槛、一次通过。`analysis.json` 被覆写为 supported（记于 codeHash 6ee0a7cb，其后仅入口 scale 支持与注释变更，机制与实验证据未变，见"遗留"）。
+
+**full 链**：fairness 重建 → **0 deviation** confirm（sha256:ef034…；seeds 偏差因 covering spec 换成带 [42,43] 的 full-feddg 记录而消失）→ `full plan` READY → `full approve --confirm`（终版 plan sha256:c54f0…；中途 0cc03/a6483 两轮为 partial 进度改变状态后的正常重批）→ `full run --confirm --detach`：
+
+- **首绿 run-350ee41f5c10413b COMPLETED**：comparison 项 succeeded `full-feddg-prototype-alignment = 20.7451`（按协议 prose 名记录 primary）+ idea 项 `python src/train.py --scale full` succeeded 23.0485（6 指标 + 2 条同跑对照 22.5314）。
+- **跨 run 幂等**：run-23477c5448584426 与 run-9c69b5a28bd24227 均 `skip full-feddg-prototype-alignment (already succeeded, spec unchanged)`——成功项不重做。
+- **stale-guard 两次如实拦截（行为正确，非缺陷）**：comparison 成功改变了 fairness covering spec → 已批 plan 失效 → attempt 报 INVALID_ARGUMENT "full plan is stale (project state changed since the plan)"；恢复路径 = fairness 重 confirm → plan → approve。附带观察（记账不修）：`full plan` 命令重写计划文件时不保留 approval（"read-only over state" 仅指项目状态）——方向是 fails-closed，重批成本一次命令。
+
+**kill-continue 验证（真 kill，非模拟）**：run-9c69b5a28bd24227 中途 `kill -9` supervisor(pid 66430) + train.py(pid 66507)（落在 task committing 阶段）→ 现场：run RUNNING、task committing:1、daemon="process gone (recovery takes over after lease expiry)" → 执行 `ideaseek continue --run …` 触发恢复：event **`task_commit_resumed: "interrupted commit completed during recovery"`** → **run COMPLETED（all 1 task(s) succeeded）**；**未重做**：full-feddg 记录仍 version 2 单次成功、idea 记录仍 v15（无 v16）——continue 报 "already finished (COMPLETED)" 即恢复已由其 recovery-on-open 完成。过程如实记：首次 kill 尝试因 `pgrep -f` 模式串出现在自身 cmdline 而自匹配误杀自己的 shell（exit 137），run 实际未被打断且已正常完成——改用 `train[.]py` 正则防自匹配后重做成功；两轮现场均有事件流为证。
+
+**paper results**：`ideaseek paper results` exit 0 → `reports/paper/results.json` **12 行**：`full-feddg-prototype-alignment` 20.7451、`idea-gen-fed-domain-shaft-prototype`（scale full）23.0485、6 条消融真实值（22.5314×4 / 22.8999 / 23.2005）、`cmp-feddg-prototype-alignment-quick` 20.7451 等。导出器诚实警告"两组消融 6 指标逐位相同"——即证据 L402/L426 已记录的线性原型实现数学等价（‖x−μ‖² 正交分解恒等，两种 necessary 移除 ≡ 全空间原型 ≡ 对照 22.5314），**非**开关未生效（I26 回归 test_ablate_flag 已证 --ablate 转发+回显），维持既有注记留给 claim-audit/复核。
+
+**STAGE 12 断言核对**：required comparison 全部执行 ✓（full-feddg 真实执行一次，其后均为幂等 skip）、失败不被静默跳过 ✓（3 次 DEPENDENCY_NOT_MET 全部 loud + 恢复指引，修复后重跑）、`paper results` 可导出复核 ✓（12 行 + 诚实警告）。
+
+**推送**：d5a2a90、46d21d5 已推 gitee（fd50646..46d21d5 实推成功）；本节与 PROGRESS 随下一 commit 推送（先 pull --rebase）。
+
+=== STAGE 15（续 2）: analyze → full-run → kill-continue → paper results ===
+结果: PASS
+证据: docs/ACCEPTANCE_EVIDENCE.md L450-L482
+摘要: analyze 一次过 SUPPORTED（Δ=+1.1865、双 scale、seeds 2、necessary 消融方向正确、comparability comparable）；修 I27（pretty JSON 行解析）与 I28（metricKey 匹配+secondary=optional，129 测试绿）后 full run 首绿（comparison 20.7451 + idea full 23.0485），真 kill 后 continue 经 task_commit_resumed 恢复 COMPLETED 且成功项零重做，paper results 12 行导出。
