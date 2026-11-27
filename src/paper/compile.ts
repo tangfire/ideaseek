@@ -5,8 +5,43 @@ import { IdeaseekError } from '../core/errors.js';
 import { redactSecrets } from '../core/redact.js';
 import { ensureDir } from '../core/atomic.js';
 import { runProcess } from '../core/proc.js';
-import type { PlacementResult } from './place-figures.js';
+import { slugOf, type PlacementResult } from './place-figures.js';
 import type { Manuscript } from './write.js';
+
+/**
+ * Plan figure ids with no trace in the assembled main.tex.
+ *
+ * Two honest routes into the document count as placed: a manual include that
+ * names the plan id (`figures/Fig 1`), and the placement pass — which writes
+ * the rendered OUTPUT file name (`figures/fig1_accuracy_comparison.pdf`, never
+ * the id) plus `\label{fig:<slug(id)>}`. The id-substring check alone
+ * therefore reported every figure `--place-figures` had just inserted as
+ * missing, and blocked the compile it was meant to clear.
+ */
+export function findUnplacedFigures(
+  mainTexText: string,
+  plan: {
+    figures?: { figures?: { id?: unknown }[] };
+    preservedExisting?: unknown;
+    manualRemaining?: unknown;
+  },
+): string[] {
+  const excused = new Set(
+    [
+      ...(Array.isArray(plan.preservedExisting) ? plan.preservedExisting : []),
+      ...(Array.isArray(plan.manualRemaining) ? plan.manualRemaining : []),
+    ].map(String),
+  );
+  const unplaced: string[] = [];
+  for (const figure of plan.figures?.figures ?? []) {
+    const id = String(figure?.id ?? '').trim();
+    if (!id || excused.has(id)) continue;
+    if (mainTexText.includes(`figures/${id}`)) continue;
+    if (mainTexText.includes(`fig:${slugOf(id)}`)) continue;
+    unplaced.push(id);
+  }
+  return unplaced;
+}
 
 /**
  * paper-compile capability (Phase 4.5C, skill integration): implements the
@@ -684,17 +719,7 @@ export async function compileManuscript(
       preservedExisting?: unknown;
       manualRemaining?: unknown;
     };
-    const excused = new Set(
-      [
-        ...(Array.isArray(plan.preservedExisting) ? plan.preservedExisting : []),
-        ...(Array.isArray(plan.manualRemaining) ? plan.manualRemaining : []),
-      ].map(String),
-    );
-    for (const figure of plan.figures?.figures ?? []) {
-      const id = String(figure?.id ?? '').trim();
-      if (!id || excused.has(id)) continue;
-      if (!mainTexText.includes(`figures/${id}`)) unplacedFigures.push(id);
-    }
+    unplacedFigures.push(...findUnplacedFigures(mainTexText, plan));
   } catch {
     // No stored plan: nothing to cross-check, and inventing a requirement would
     // block manuscripts that never planned figures.

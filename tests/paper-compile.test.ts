@@ -7,6 +7,7 @@ import {
   assembleLaTeXProject,
   classifyCompileFailure,
   extractPageCount,
+  findUnplacedFigures,
   readManuscriptDoc,
   unapprovedFigureBlockers,
   unapprovedFigureIncludes,
@@ -102,6 +103,34 @@ describe('compile helpers', () => {
     expect(blockers[0]).toContain('ideaseek paper compile');
     expect(classifyCompileFailure('some unrelated log')).toEqual([]);
     expect(classifyCompileFailure('Emergency stop.').length).toBeGreaterThan(0);
+  });
+
+  it('counts a placed figure by its include path or its placement label', () => {
+    // Observed: --place-figures inserted all four figures using their
+    // rendered OUTPUT file names (figures/fig1_accuracy_comparison.pdf) plus
+    // \label{fig:fig-1}; the check only looked for the plan id inside the
+    // include path (figures/Fig 1), so every freshly placed figure read as
+    // missing and the blocker refused the compile it had just satisfied.
+    const plan = {
+      figures: { figures: [{ id: 'Fig 1' }, { id: 'Fig 2' }, { id: 'Table 1' }] },
+      preservedExisting: [],
+      manualRemaining: ['Architecture diagram'],
+    };
+    const placedByLabel = [
+      '\\includegraphics{../figures/fig1_accuracy_comparison.pdf}',
+      '\\label{fig:fig-1}',
+      '\\includegraphics{../figures/fig2_gap_cost_vs_accuracy.pdf}',
+      '\\label{fig:fig-2}',
+    ].join('\n');
+    expect(findUnplacedFigures(placedByLabel, plan)).toEqual(['Table 1']);
+    expect(findUnplacedFigures(`${placedByLabel}\n\\includegraphics{figures/Table 1.pdf}`, plan)).toEqual(
+      [],
+    );
+    // manualRemaining is excused; the still-absent ids remain blockers.
+    expect(
+      findUnplacedFigures('', { ...plan, manualRemaining: ['Architecture diagram', 'Table 1'] }),
+    ).toEqual(['Fig 1', 'Fig 2']);
+    expect(findUnplacedFigures('', { figures: { figures: [{ id: 'Fig 9' }] } })).toEqual(['Fig 9']);
   });
 
   it('readManuscriptDoc fails with actionable codes', async () => {

@@ -96,7 +96,7 @@ export function escapeCaption(text: string): string {
   return text.replace(/([&#%_])/g, '\\$1');
 }
 
-function slugOf(id: string): string {
+export function slugOf(id: string): string {
   const slug = id
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
