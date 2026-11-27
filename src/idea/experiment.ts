@@ -721,6 +721,12 @@ export async function executeSpecRun(
  * the evidence for those entries); a program that reports a different scale is
  * contradicting the record, which is the one case that must not be written.
  */
+export type ParsedMetricsOutput = {
+  metrics?: Record<string, unknown>;
+  scale?: unknown;
+  baselines?: unknown;
+};
+
 export function parseMetricsOutput(
   out: string,
   exitCode: number,
@@ -736,21 +742,41 @@ export function parseMetricsOutput(
   const baselines: RunBaselineValue[] = [];
   if (exitCode !== 0 || timedOut) return { metrics, baselines, parseFailure: null };
   const lines = out.split(/\r?\n/).filter((line) => line.trim());
-  let parsed: { metrics?: Record<string, unknown>; scale?: unknown; baselines?: unknown } | null =
-    null;
+  const asResult = (value: unknown): ParsedMetricsOutput | null => {
+    const candidate = value as { metrics?: Record<string, unknown>; scale?: unknown; baselines?: unknown } | null;
+    return candidate && typeof candidate.metrics === 'object' && candidate.metrics
+      ? candidate
+      : null;
+  };
+  let parsed: ParsedMetricsOutput | null = null;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     try {
-      const candidate = JSON.parse(lines[i]!) as {
-        metrics?: Record<string, unknown>;
-        scale?: unknown;
-        baselines?: unknown;
-      };
-      if (candidate && typeof candidate.metrics === 'object' && candidate.metrics) {
-        parsed = candidate;
-        break;
-      }
+      parsed = asResult(JSON.parse(lines[i]!));
+      if (parsed) break;
     } catch {
       continue;
+    }
+  }
+  if (!parsed) {
+    // A pretty-printed JSON block is still JSON: the comparison worktree's
+    // smoke.py prints its metrics as an indented object, so no single line
+    // parses and the full run used to record DEPENDENCY_NOT_MET
+    // ("entry produced no metrics JSON line") for a method that had just
+    // printed its numbers. Line scan stays first (it picks the last object
+    // when an entry streams several); whole-output parse, then the balanced
+    // {...} slice when log noise surrounds the block, are the fallbacks.
+    const attempts: string[] = [out.trim()];
+    const start = out.indexOf('{');
+    const end = out.lastIndexOf('}');
+    if (start >= 0 && end > start) attempts.push(out.slice(start, end + 1));
+    for (const attempt of attempts) {
+      if (!attempt) continue;
+      try {
+        parsed = asResult(JSON.parse(attempt));
+      } catch {
+        continue;
+      }
+      if (parsed) break;
     }
   }
   const metricMap = parsed?.metrics ?? {};
