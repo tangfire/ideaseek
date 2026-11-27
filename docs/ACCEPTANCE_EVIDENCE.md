@@ -480,3 +480,9 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 结果: PASS
 证据: docs/ACCEPTANCE_EVIDENCE.md L450-L482
 摘要: analyze 一次过 SUPPORTED（Δ=+1.1865、双 scale、seeds 2、necessary 消融方向正确、comparability comparable）；修 I27（pretty JSON 行解析）与 I28（metricKey 匹配+secondary=optional，129 测试绿）后 full run 首绿（comparison 20.7451 + idea full 23.0485），真 kill 后 continue 经 task_commit_resumed 恢复 COMPLETED 且成功项零重做，paper results 12 行导出。
+
+## 门禁刷新（2026-11-27，STAGE 8 基线重置 · 步骤①）
+
+- **第 1 轮**：主 lane 2 文件 9 例失败——`visual.test.ts` 全部因 `spawn pdftoppm ENOENT`（本实例未装 poppler，交接"若 apt 缓存还在"一步未做）；apt 源 aliyun 签名失效 + 403/404 → 切腾讯镜像（原文件备份 `/etc/apt/sources.list.bak-20261127`）装回 `poppler-utils 22.02.0`（机器本地修复，不入仓库）。
+- **第 2 轮**：visual 全绿，剩 `dsh-adapter.test.ts` keyless 真 runtime 1 例：`available=true` vs `keySet=false`。**根因=测试缺陷（非产品缺陷）**：`initialize()` 按设计调 `loadUserCredentials()`（src/dsh/dsh-adapter.ts:419，"/models setup 存一次处处可用"契约）把 `~/.ideaseek/credentials.env` 注入 env，而测试拿 **init 前**的 env 快照去比 **init 后**的 health——主机 shell 恰好导出过 key 的机器两个真值相等碰巧全绿，key 存在凭据文件的机器必挂（环境依赖测试，此前从未在"仅凭据文件"机器上跑过）。处置：两个 keyless 用例改 hermetic——`IDEASEEK_USER_CONFIG` 指向临时目录（凭据文件解析到空处）+ 临时删除 `DEEPSEEK_API_KEY`（finally 恢复），并去掉第二例 `if (key) return` 的空转；断言语义不变（keyless 必须 available=false、blocked、blockReason 无 secret 形态）。回归：`tests/dsh-adapter.test.ts` 20/20 绿。
+- **第 3 轮：三 lane 全绿 `GATE_EXIT=0`**——主 lane 216 文件 **1957 passed / 2 skipped (1959)**、交互 lane 3 文件 **27 passed**、python **Ran 23, OK**。STAGE 8 基线刷新（gate23=1943 passed → 1957，增量含 idea-scale +3 等本轮新用例）；完整日志 `/tmp/gate-full-2.log`（机器侧）。
