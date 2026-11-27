@@ -534,3 +534,10 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 **Journey E 交互闭环**：`/next` 如实暴露 kill-leave 残留告警 `supervisor-dead`（daemon.json pid 66430 = 步骤⑤真 kill 的 supervisor，进程已亡）→ 按提示 `ideaseek cleanup`（dry-run 如实报 `daemon.json stale=true`、preview only）→ `cleanup --cache` 执行后 **daemon.json 删除、告警解除**，`next` 恢复正常建议链。诊断→处方→执行→复验四步在真实交互面走通。
 
 **如实注记**：STAGE 13 当时的 SKIP 根因是整块管道输入被当粘贴（非"无 TTY"本身）——`script` PTY + 分离文本/回车即可驱动，3 次投喂尝试的差异已记入方法段；`/status` 首轮因启动期时序未提交，定向补测（先 sleep 7）后通过；footer 每帧回绘导致 `❯ /next` 等标记计数虚高（190/130/68），以首个标记与响应块为准。
+
+## GPU/长任务可行性（2026-11-27，步骤⑤）
+
+- **GPU 探测（实测）**：`nvidia-smi` → **NVIDIA A10 · 23028 MiB · driver 570.211.01 · CUDA 12.8**（单卡）。`ideaseek capacity` 实跑：`host: 16 cores · 56.2 GiB free`、`gpu: 1 device(s) #0 free 22598/23028 MiB util 0%`、admission `plan: N=0 (limit 2) · 0 admitted`、`binding: demand: 0 ready idea(s)`，plan 落 `knowledge/capacity-plan.json`——容量探测与准入规划在真实 GPU 面上工作正常（本 idea 声明 CPU（gpus:0），无可入 GPU 队的 ready idea，0 如实）。
+- **GPU 实验面（如实移交 GPU 阶段）**：journey-a 的 idea 实现是 stdlib 纯 Python 机制原型（fedg.py 设计即无 CUDA）；平台上 GPU 相关可测面 = 容量探测/准入（上表 + full run 日志 `admission request gpus=0`、plan 探针 `resources: 1 GPU`），均已实测。**真 GPU 训练**需要 GPU 工作负载——不为烧卡而造实验；**多 GPU（>1 device）本机不存在**，仅单测覆盖。维持 STAGE 12 既定口径："多 GPU/长任务挪至 GPU 阶段"。
+- **长任务（如实部分）**：进程级恢复已实测——真 kill → `continue` → `task_commit_resumed`、成功项零重做（见 STAGE 15 续 2）；lease/heartbeat/hard-pause 恢复有 machinery 单测（"interrupts a running full run on hard pause and does not redo the completed work item"）。**数小时级真实负载在本 corpus 上不存在**（full 规模实跑 ~60s，平台执行的就是科学所需工作量）——不伪造长任务时长。
+- **entry 级 checkpoint**：config `checkpoint: None`（平台 opt-in，默认 none，策略 none 时不下发 flag——executeSpecRun 注释明示的既定语义）；`train.py` 接受 `--checkpoint-every/--resume-from` 但未实现真断点（工作区入口的工程选择，非平台门禁；平台侧 checkpoint 政策/progress 文件/resumeHint 实现与测试在位）。真断点续跑（状态序列化+续算）记为 idea 侧可选工程项。
