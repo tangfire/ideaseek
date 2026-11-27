@@ -71,6 +71,7 @@ export const PAPER_WRITE_OUTPUT_CONTRACT = [
   'Rules:',
   '- venue MUST equal the stored plan venue when one exists (context line `Venue:`).',
   '- Every section.sources entry must cite real context ids (plan sections, specId, comparison id, idea id) — no invented sources.',
+  '- bibliography must be non-empty and cite ONLY papers listed under "Ingested papers" in the context (at least one; the arXiv id is in the filename) — never invent a reference the corpus does not contain.',
   '- No reviewer backend is hosted here: verdict must be REVIEW_UNAVAILABLE unless the context carries reviewer notes.',
   '- Do not claim the paper compiles — assembly/compile is a separate step.',
 ].join('\n');
@@ -168,15 +169,23 @@ export interface WriteContext {
   plan: { venue: string; sections: string[]; claims: string[] } | null;
   snapshot: PaperPlanSnapshot;
   question: string;
+  /**
+   * Ingested paper files (input manifest, role=paper). The contract demands a
+   * non-empty bibliography, but the context used to carry no references at
+   * all — the model could only invent citations or return an empty array,
+   * which the validator rightly rejects. The corpus filenames (arXiv ids) are
+   * the real, hashable sources it may cite.
+   */
+  papers: string[];
 }
 
 export async function collectWriteContext(root: string): Promise<WriteContext> {
   const { collectPaperPlanSnapshot } = await import('./plan.js');
   const snapshot = await collectPaperPlanSnapshot(root);
+  const { readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
   let plan: WriteContext['plan'] = null;
   try {
-    const { readFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
     const stored = JSON.parse(
       await readFile(join(root, 'reports', 'paper', 'plan.json'), 'utf8'),
     ) as {
@@ -201,7 +210,22 @@ export async function collectWriteContext(root: string): Promise<WriteContext> {
   } catch {
     plan = null;
   }
-  return { plan, snapshot, question: snapshot.question };
+  // The citable corpus: the input manifest's paper-role files (arXiv ids live
+  // in the filenames). Missing manifest → no listed papers; the contract still
+  // requires a bibliography, and the model must then stay strictly within
+  // whatever the context does carry.
+  let papers: string[] = [];
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(root, 'knowledge', 'input-manifest.json'), 'utf8'),
+    ) as { files?: { relPath?: unknown; role?: unknown }[] };
+    papers = (manifest.files ?? [])
+      .filter((file) => file.role === 'paper' && typeof file.relPath === 'string')
+      .map((file) => file.relPath as string);
+  } catch {
+    papers = [];
+  }
+  return { plan, snapshot, question: snapshot.question, papers };
 }
 
 function renderWriteContext(context: WriteContext): string {
@@ -240,6 +264,12 @@ function renderWriteContext(context: WriteContext): string {
       ? `Locked protocol: ${context.snapshot.protocol.protocolId} (${context.snapshot.protocol.protocolHash})`
       : 'Locked protocol: none',
   );
+  if (context.papers.length > 0) {
+    lines.push('Ingested papers (the only admissible bibliography sources; arXiv id in the filename):');
+    for (const paper of context.papers) lines.push(`  - ${paper}`);
+  } else {
+    lines.push('Ingested papers: none recorded — do not invent references outside the context.');
+  }
   return lines.join('\n');
 }
 
@@ -256,7 +286,7 @@ export function buildWriteRequest(skill: LoadedArisSkill, context: WriteContext)
     stableJson({
       contract: PAPER_WRITE_SCHEMA,
       skillSha256: skill.sha256,
-      context: { plan: context.plan, snapshot: context.snapshot },
+      context: { plan: context.plan, snapshot: context.snapshot, papers: context.papers },
     }),
   );
   const instruction = [

@@ -59,6 +59,7 @@ function writeContext(planVenue: string | null = null): WriteContext {
       researchMapHash: null,
     },
     question: 'q',
+    papers: ['papers/2111.10487.pdf', 'papers/2306.01334.pdf'],
   };
 }
 
@@ -216,6 +217,17 @@ describe('parseManuscriptOutput (plan venue pin)', () => {
     expect(request.instruction).toContain(PAPER_WRITE_OUTPUT_CONTRACT);
     expect(request.instruction).toContain('Venue: ICLR');
     expect(request.idempotencyKey.startsWith('paper-write:')).toBe(true);
+  });
+
+  it('lists the ingested papers the bibliography may cite', () => {
+    // Observed: the context carried no references while the contract demanded
+    // a non-empty bibliography — the model could only invent citations or
+    // return [] ("bibliography must be a non-empty array"). The corpus must
+    // be on the page, and the rule must say citing outside it is not allowed.
+    const request = buildWriteRequest(fakeSkill, writeContext('ICLR'));
+    expect(request.instruction).toContain('Ingested papers');
+    expect(request.instruction).toContain('papers/2111.10487.pdf');
+    expect(request.instruction).toContain('cite ONLY papers listed');
   });
 });
 
