@@ -515,3 +515,22 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 - **修复 I33 = commit `7068a33`**：`RoundSnapshots` 增 `paperIds`（取 parsed-paper.source，与 claim-audit 的解析同源；可选字段，旧 round 记录向后兼容）；`computeSnapshots` 的 paperCardCount 改以 papercard artifact 活源计数；`buildRoundContext` 列出 `Paper ids (a card's paperRef MUST be exactly one of these)`；提示词明令：paperRef 必须是清单内 id、`round-context:` 标签不是论文、methodId 必须是注册 id 否则 "fails the claim audit"。回归：`idea-generate` + `ideation-rounds` **17/17**（含契约断言）、`tsc` 绿。
 - **存量卡片数据修复（记账未做，如实）**：4 张既有卡片的 round-context 引用需替换为可定位的真实论文引文（`locateQuote` 为归一化子串匹配）或经 `idea revise` 走版本链修订——直接改 idea.json 会与 `versions/v4.json` 快照漂移，故留下一会话按 revise 流程处理；此前 shaft 的 handoff 维持被 claim-audit 拦截（工具自己的 next 提示即恢复路径）。
 - 注：卡片引用里的 `proto-fb889c06d303-v1` 是历史轮次所见的旧协议提案（protocol-proposal 共 3 份），与已锁 `proto-3be3fbd2b749-v1` 不同——步骤② Fig 1 脚本注释里那个写死的错误协议 id 正是从这处卡片引用抄来的（彼时已改用 `PROTOCOL` 常量）。
+
+## TUI slash relay 真 PTY + Journey E（2026-11-27，步骤④）
+
+**方法**：`script -qec "ideaseek interactive"` 提供真 PTY；输入投喂三轮定型——①整块 `printf '/help\n...'` → 全部被当 paste 不执行；②文本+`\r` 同 chunk → 仍不提交；③**文本与回车分开（text → 0.6s → `\r`）且启动后（sleep 7）再发** → 全部提交。会话记录 `/tmp/tui-session3.log`（398KB）+ `/tmp/tui-session4.log`，退出 `EXIT=0`（`/quit` → "bye — background runs keep going"）。
+
+**六指令逐条实证（❯ 提交标记 + 响应块）**：
+
+| 指令 | 证据（从会话记录回读） |
+|---|---|
+| `/help` | 分组完整：`overview /help · /init · /start · /status · /next …`、`approvals /pending…`、`research /papers · /comparisons · /ideas · /experiments · /leaderboard · /repro · /logs`、`ideation /rounds · /ideate · /feedback`、`session /models · /mode · /agent · /open · /report`、`control /pause · /resume · /continue · /cancel · /quit` + "Type / to browse… Tab completes · unique prefix works · Natural language…" |
+| `/status` | `项目：journey-a / Run：run-9c69b5a28bd24227 状态：COMPLETED 阶段：COMPLETED 策略：starter / 任务：1/1 完成 · 排队 0 · 执行中 0 · 失败 0 · 取消 0` + 事件流回放（`[#1] run_created … [#2] task_enqueued full.run queued [#3] decision full-research… plan sha256:c54f0 [guided] [#4] research_sync`）+ 输入时自动补全描述 `run state, tasks, workers, recent events` |
+| `/next` | `当前阶段：RUN_DONE_MATERIAL_PARTIAL`、`阻塞：alert:supervisor-dead…`、`已完成：论文/任务进度 1/1…`、`建议：no research map —…`、`下一条命令：ideaseek synthesize (topic synthesis + research map)` |
+| `/papers` | `papers: 7 indexed · 129 pages (pypdf/7.0.0+rev2:7)` + 7 个来源全列（papers/2111.10487.pdf … 2601.12253.pdf）+ `parse failures: none` |
+| `/ideas` | `4 idea(s):` 全列——`gen-fed-domain-shaft-prototype SUPPORTED v4` + 三个 ANALYZING v1 |
+| `/quit` | `bye — background runs keep going (reconnect with ideaseek)`，进程干净退出 EXIT=0 |
+
+**Journey E 交互闭环**：`/next` 如实暴露 kill-leave 残留告警 `supervisor-dead`（daemon.json pid 66430 = 步骤⑤真 kill 的 supervisor，进程已亡）→ 按提示 `ideaseek cleanup`（dry-run 如实报 `daemon.json stale=true`、preview only）→ `cleanup --cache` 执行后 **daemon.json 删除、告警解除**，`next` 恢复正常建议链。诊断→处方→执行→复验四步在真实交互面走通。
+
+**如实注记**：STAGE 13 当时的 SKIP 根因是整块管道输入被当粘贴（非"无 TTY"本身）——`script` PTY + 分离文本/回车即可驱动，3 次投喂尝试的差异已记入方法段；`/status` 首轮因启动期时序未提交，定向补测（先 sleep 7）后通过；footer 每帧回绘导致 `❯ /next` 等标记计数虚高（190/130/68），以首个标记与响应块为准。
