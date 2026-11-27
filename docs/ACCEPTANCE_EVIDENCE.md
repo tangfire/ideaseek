@@ -564,3 +564,28 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 3. **最值得修（top3）**：① 4 张存量 idea 卡片的 round-context/显示名引用需按 `idea revise` 版本链流程修复（当前 shaft handoff 被 claim-audit 如实拦，恢复路径在工具提示里）；② paper 链模型采样方差——figure/write 各需多轮收敛，write 的 300s/32k-token 预算不匹配记账待上游；③ `check.ts`/`reproduce.ts` 的逐行 JSON 解析对 pretty 输出仍是潜伏同类缺口（当前入口输出单行未触发）。
 4. **机器侧上线意见（如实）**：主研究链与论文链端到端真实可跑——材料→协议→idea→数据→切片→对比→并行实验→独立 full-run→中断恢复→analyze SUPPORTED→plan/figure/render/write/**compile 10 页 PDF**→双审计接入 full-run 结果；全部门禁（协议锁/对比门/fairness/verdict/审批/claim-audit/figure 契约/unplaced-figures/编译依赖预检）在反面场景真实拦截、无假绿。主要剩余风险：存量卡片引用、模型采样方差下的收敛轮数、外部索引源质量与网络重负载。
 5. **推送状态**：本轮 14 个 commit 全部实推 gitee（d5a2a90、46d21d5、48efff9、102f950、0c2bf86、ce1069f、1b19e19、b588761、5efc149、57f8aa7、7068a33、34157c0、627f12e、9c33971；`git ls-remote origin main` 为准，含本节 commit）。
+
+## 上线后优化轮（2026-11-27 晚 · 存量卡片修复 + 分析链加固 + I33 端到端）
+
+**目标**：最终汇总 top1 的"4 张存量卡片引用修复（解开 handoff）"与 I33 端到端验证——全部完成。
+
+**旗舰卡闭环（gen-fed-domain-shaft-prototype）**：
+1. **卡片引用修复（v5）**：paperRef 改引 `papers/2306.01334.pdf` p10 逐字引句（`locateQuote` 预验 located=true；引句同时覆盖 unseen+local 两点半）；纯协议主张移出 paperEvidence（按 I33 规则归 hypothesis 域）；nearestComparisons 改注册 id `feddg-prototype-alignment`、未注册 FedAvg 丢弃（round 记录保留历史）。
+2. **entry 侧词汇对齐（工作区 fedg.py）**：in-run 对照 methodId 由显示名改为注册 id（2 处）→ v16 实验记录以注册 id 落对照 22.5314。根因：卡片 methodId 同时服务两个契约——claim-audit 要注册 id，分析 in-run 配对（analyze.ts 精确等值）要 entry 打印的标签。
+3. **分析链三连拦（如实记录，3 次内收敛）**：
+   - ① v5 INCONCLUSIVE（无同 scale 基线——卡片改名后 in-run 对照失配）；
+   - ② v6 INCONCLUSIVE「suspicious identical control values」——历史记录用显示名、v16 用注册名，同一对照被读成"两个方法 17 位相同"（检查正确触发，铁律不削弱）→ **平台修复 `ba18512`**：`ComparisonMethod.aliases`（改名史是记录在案的事实）+ collectControls/in-run 配对按别名归一（真异方法仍拦，双向回归）；同 commit 补 `buildCoverageText`——verdict 契约要求 agent 评 "seeds, scales, ablations" 却从不给消融数据（谨慎 agent 只能判 insufficient），现注入 main→ablation 与 necessary-holds 标记；
+   - ③ v6 NOT COMPARABLE（0.78）——agent 越界读旧工作区记录（scaffold 时代 v5/v6、旧协议）后拿历史否定当前对比 → **平台修复 `24ad05c`**：契约增闭卷条款（只可依据给定 Recorded values/coverage 推理，工作区与旧记录 out of scope，附回归）。
+   - 期间另有 **`ba9c2d8`**：reviseEngineering 未实现注释承诺的终态重开（SUPPORTED 改卡后仍 inherited verdict），实测 `SUPPORTED → NEEDS_REVISION` 被状态机拒绝而 experiment 恢复提示正指那条非法转移 → revise 终态重开至 PROPOSED（带 history，非终态不变）+ 提示区分终态；回归 13/13（交互 lane）+ 6/6。
+   - 第 3 次 analyze → **SUPPORTED（confidence 0.62，comparable，Δ=+1.1865，2 necessary 消融 as predicted）**。
+4. **收口**：消融矩阵 v6 重跑（6 条 freshForCurrentVersion，值分化 22.5314/22.8999…）→ `set-status SUPPORTED` → `idea claim-audit` **PASS（4 found · 0 missing · 0 unverified，event #40）** → `idea handoff --confirm` → **HANDOFF_READY（10 文件包，Decision event #57）**——旗舰 idea 的"卡片→实验→分析→审计→交付包"全链首次闭合。
+
+**其余 3 张卡（backbone / deferred / consensus）**：同方修复——文献主张改引 `papers/2306.01334.pdf`（p14 prototype 句 / p20 classifier-head 句，均程序化抽取原文 + `locateQuote` 预验，防手抄连字符折叠失配）；协议主张移除；伪引用（`inherited:*`、`round-context:*`）换注册 id。各自 revise v2 → check 五相绿（ANALYZING 不回退）→ `claim-audit` **PASS**（2 found each，events #58/#59/#60）。**四卡 claim-audit 现全 PASS。**
+
+**I33 端到端（新根因 + 验证）**：
+- **根因补全 = `48834e8`**：`computeSnapshots` 的 datasets 读取（`knowledge/dataset-manifest.json`）无守卫，ENOENT 把**整个快照**拖进外层 fallback——`comparisonSet`/`paperIds` 全空，而 `protocolId`/`paperCardCount` 靠外层变量"泄漏"存活，空集看起来像有意为之；这就是 r1/r2 一直 "Comparisons: none"（模型没有 methodId 可引）的另一半根因。datasets 改为非致命后：r4 快照 = **paperIds 7 篇 + comparisonSet 注册方法（含 commit）+ protocolMetrics + novelty 约束**。
+- **验证**：`idea generate --round r4` → `gen-fed-servable-prototype-certificates` [CANDIDATE]——**6 条 paperRef 全为真实语料 id、methodId 全为注册 id、零 `round-context:` 违规**；`idea validate --require-candidate` → valid（mechanism gate CANDIDATE）。r3（污染快照、未消费）如实保留为历史。
+
+**回归合计（本优化轮）**：idea-workspace 13/13（交互 lane）、idea-experiment 6/6、duplicate-gather + duplicate-controls 13/13、analysis-agent 5/5、ideation-rounds 7/7、tsc 全程绿。工作区改动（fedg.py methodId、4 卡引用）均经 revise 版本链或如实记录。
+
+**推送**：`ba9c2d8`、`ba18512`、`24ad05c`、`48834e8` + 本节（先 pull --rebase，只推 gitee）。
