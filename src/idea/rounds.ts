@@ -202,14 +202,28 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
       } catch {
         // keep the directory-derived count
       }
-      const datasets = JSON.parse(
-        await (
-          await import('node:fs/promises')
-        ).readFile(join(knowledge, 'dataset-manifest.json'), 'utf8'),
-      ) as { datasets?: { profile?: { rootHash?: string } }[] };
-      const datasetRootHashes = (datasets.datasets ?? [])
-        .map((d) => d.profile?.rootHash)
-        .filter((hash): hash is string => typeof hash === 'string');
+      // Datasets are optional context: a project that has not produced
+      // knowledge/dataset-manifest.json yet must not lose everything the
+      // snapshot already gathered. This read used to sit unguarded in the
+      // main path, so its ENOENT dragged the whole snapshot into the outer
+      // fallback — comparisonSet and (now) paperIds came back empty on every
+      // round while protocolId survived as a leaked outer variable, and the
+      // generation model was told "Comparisons: none" with a registered
+      // method sitting in the database (the other half of the round-context
+      // citation defect).
+      let datasetRootHashes: string[] = [];
+      try {
+        const datasets = JSON.parse(
+          await (
+            await import('node:fs/promises')
+          ).readFile(join(knowledge, 'dataset-manifest.json'), 'utf8'),
+        ) as { datasets?: { profile?: { rootHash?: string } }[] };
+        datasetRootHashes = (datasets.datasets ?? [])
+          .map((d) => d.profile?.rootHash)
+          .filter((hash): hash is string => typeof hash === 'string');
+      } catch {
+        // no manifest yet — datasets stay empty, the rest of the snapshot stands
+      }
       return {
         inputManifestHash,
         paperCardCount,

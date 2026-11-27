@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { ideaFingerprint } from '../src/idea/rounds.js';
+import { computeSnapshots, ideaFingerprint } from '../src/idea/rounds.js';
 import type { IdeationRound } from '../src/idea/rounds.js';
 import type { IdeaCard } from '../src/idea/card.js';
 import { CLI_BIN } from './helpers.js';
@@ -319,4 +319,33 @@ describe('ideation rounds (CLI)', () => {
     expect(ghost.code).not.toBe(0);
     expect(ghost.stderr).toContain('not found');
   }, 120_000);
+});
+
+describe('snapshot survives a missing dataset manifest', () => {
+  it('keeps comparisonSet (and paper ids) when knowledge/dataset-manifest.json is absent', async () => {
+    // Observed: the datasets read sat unguarded in the main path, so its
+    // ENOENT dragged the WHOLE snapshot into the outer fallback — every round
+    // reported "Comparisons: none" with a registered method in the database,
+    // and the generation model had no methodIds to cite (the other half of
+    // the round-context citation defect). protocolId/paperCardCount survived
+    // only as mutated outer variables, which made the empty set look intentional.
+    const project = await freshProject();
+    const { ProjectRuntime } = await import('../src/workflow/runtime.js');
+    const runtime = await ProjectRuntime.open({ cwd: project, recover: false });
+    try {
+      await runtime.db.upsertComparison({
+        methodId: 'fedavg',
+        status: 'smoke-tested',
+        required: true,
+        record: { methodId: 'fedavg' },
+        updatedAt: 1,
+      });
+    } finally {
+      await runtime.close();
+    }
+    const snapshots = await computeSnapshots(project);
+    expect(snapshots.comparisonSet.map((entry) => entry.methodId)).toEqual(['fedavg']);
+    expect(snapshots.datasetRootHashes).toEqual([]);
+    expect(Array.isArray(snapshots.paperIds ?? [])).toBe(true);
+  });
 });
