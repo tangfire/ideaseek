@@ -2157,14 +2157,17 @@ export function mergeModelIntoDeterministic(
 
 /**
  * Carries user decisions across discovery runs: authorization and `rejected`
- * are sticky; linked local data survives when this run could not re-check the
- * manifest; candidates the new run did not reconfirm are kept with an honest
- * note instead of silently disappearing.
+ * are sticky; a data link is a user decision too — it survives when this run
+ * could not re-check the manifest, and when the re-check confirms the linked
+ * path is still a local input (re-deriving links by file name silently drops
+ * them for hash-named files such as acquire output); candidates the new run
+ * did not reconfirm are kept with an honest note instead of silently
+ * disappearing.
  */
 export function mergeWithPrevious(
   fresh: DatasetCandidate[],
   previous: DatasetCandidate[] | null,
-  opts: { localSourcesChecked: boolean },
+  opts: { localSourcesChecked: boolean; linkedPathsPresent?: ReadonlySet<string> },
 ): DatasetCandidate[] {
   if (!previous || previous.length === 0) return sortCandidates(fresh);
   const prevById = new Map(previous.map((candidate) => [candidate.candidateId, candidate]));
@@ -2176,10 +2179,16 @@ export function mergeWithPrevious(
       prev.authorization.state !== 'none' ? prev.authorization : candidate.authorization;
     let local = candidate.local;
     let status = candidate.status;
-    if (!local && !opts.localSourcesChecked && prev.local) {
-      // The manifest could not be re-checked this run: keep the link as-is.
-      local = prev.local;
-      status = prev.status;
+    let keptLink = false;
+    if (!local && prev.local) {
+      const stillPresent = opts.linkedPathsPresent?.has(prev.local.path) ?? false;
+      if (!opts.localSourcesChecked || stillPresent) {
+        // The manifest could not be re-checked, or the re-check confirms the
+        // linked file is still a local input: keep the link as-is.
+        local = prev.local;
+        status = prev.status;
+        keptLink = opts.localSourcesChecked;
+      }
     }
     if (!local && prev.status === 'rejected') status = 'rejected';
     let downloadStatus = candidate.downloadStatus;
@@ -2187,6 +2196,9 @@ export function mergeWithPrevious(
     else if (authorization.state === 'denied') downloadStatus = 'blocked';
     else if (authorization.state === 'granted') downloadStatus = 'authorized';
     const notes = [...candidate.notes];
+    if (keptLink) {
+      notes.push('linked data re-verified against the local manifest — binding kept');
+    }
     if (prev.authorization.state !== 'none') {
       notes.push(`authorization ${prev.authorization.state} carried from the previous run`);
     }

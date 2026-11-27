@@ -342,3 +342,69 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 **推送确认（2026-11-20）**：用户恢复 gitee 凭据后，`git ls-remote origin main` = `3f5aae4`——本轮全部提交 `867cd5d`、`2502cec`、`aae70e8`、`0ee1e14`、`6543741`、`e77c3d1`、`3f5aae4` 均已在远端，`git push` 返回 Everything up-to-date；STAGE 9 节所记 PUSH PENDING 至此闭合（该历史行按 append-only 规则不改写）。验收全部证据与修复已按第 4 节完成提交与推送。
 
 **修复后全量回归（2026-11-20，a3a1dfa 工作树，验收最后一项验证）**：`pnpm test` **exit 0** 三 lane 全绿——主 lane **205 文件 / 1905 测试 → 1903 passed / 2 skipped / 0 failed**（458.8s；较修复前基线 1891 测试多出 14 个，即 I20–I22 的定向回归用例）；交互 lane 3 文件/24 passed（93.8s）；python lane 23 tests OK（5.9s）。2 skipped 为环境守卫用例（无凭据/无 TTY 类）。至此验收计划全部完成。
+
+## 续接验收：有界研究迭代（2026-11-21，≤3 轮，目标解锁 STAGE 12）
+
+### 迭代 R1 — ① 诊断（本轮只读 + 一次 analyze，无代码改动）
+
+- 现场：journey-a（STAGE 12 验收项目）`gen-fed-domain-shaft-prototype` run status=ANALYZING、idea v2、锁定协议 proto-bbae9031fbbd-v1（primary `mean unseen-domain accuracy (%)`，unit=percent，source=paper-evidence conf 0.85）。
+- `paper results`（确定性导出，5 条运行）：本 idea quick 记录 `Unseen-domain top-1 accuracy=0.5 … mean unseen-domain accuracy=50`；required 对比 `cmp-feddg-prototype-alignment-quick=4.7`（另一量纲体系）；其余 idea 0.02–0.05。
+- `idea analyze`（真模型，本轮新跑）：**INCONCLUSIVE（failure class: metric）、primary delta=0**，basis=`idea-…@v6 (quick)`。agent 审查（ARIS analyze-results, conf 0.60）判 **NOT comparable**：两侧 0.5 若按字面 percent 是 0.5%（近零，不可信），更可能是 fraction；split rules 无记录、无法确认同一评估总体。确定性层同时报 `effect insufficient: 0.5 does not beat 0.5` 与 **suspicious identical controls**（`feddg-prototype-alignment`、`FedDG/…`、主体自身三者同为 0.5——17 位同值=同一计算被报了多次或全员打平的签名）。
+- **打平根因核对（证据点名的"协议指标与可测语料脱节"= 主因，成立）**：
+  1. idea 的可测语料 `data/synthetic.csv` = **10 行、2 特征、二分类、label=行号奇偶**；无 domain 列 → `fedg.py` 按 x0 三分位造"域"（3/3/4 行），held-out 域仅 **4 行、2 类均衡 → chance=0.5 恰为地板**；主体（逻辑回归）与对照（最近质心）均 2/4=0.5，delta=0 是**评估集地板效应**，不是机制测量。
+  2. 协议主指标（percent、多域 unseen accuracy、源自论文基准参照）在本项目**没有任何带域轴的语料可测**：真语料 parquet 3750 行仅 image+label、sample-data.csv 660 行无 group 列（STAGE 10 已证实平台拒绝发明域轴）；玩具语料的"域"是 x0 三分位伪影。
+  3. 次要错位（非打平成因，如实记录）：同一记录内单位混装（`mean unseen-domain accuracy`=50 percent vs 其余键= fraction）；配对用 spec.metrics[0]=`Unseen-domain top-1 accuracy`（fraction 键），协议 percent 名的 declaredPrimary 匹配不上、单位闸对它惰性——v5 曾改挂 `mean unseen-domain accuracy`=50 反而配不上对，v6 又挂回 fraction 键。**两把钥匙数值一致（0.5=50%），故对齐不是阻塞项，数据才是。**
+- 结论 → R2 单变量 = **可测语料（data）**：按卡片自己声明的 minimalExperiment（多域客户端、held-out 域、域位移）重建 idea 工作区语料；代码/指标名/seeds/对照定义/协议一律不动。
+
+## STAGE 14 — 主线 A：真数据集接入实验（2026-11-23，实例到期暂停 · 交接节）
+
+**状态：核心断言达成（fairness data-split aligned），收尾步骤移交下一会话。**本节是冷启动交接。
+
+前置恢复（新实例）：`git pull --rebase origin main` → 机器本地修复重放（I10/I11 node 符号链接，`node --version`=v24.19.0）→ `bash setup.sh` exit 0 → `ideaseek models test` → `GET /models → 200`（凭据在实例盘，本次未丢）。凭据零接触照旧（仅 presence）。
+
+**本轮修复（均改→回归→绿→小 commit→推送，远端已确认）**：
+
+| # | 现象 | 根因 | 处置 | 回归 | commit |
+|---|---|---|---|---|---|
+| I23 | 重跑 `datasets discover` 后已 link 的 ds-imageneta 静默掉回 recommended（local 丢失，文件另立 name-derived 候选） | link 绑定只存 artifact；`mergeWithPrevious` 仅在**无法**复核 manifest 时保链，复核时按**文件名**重推导——hash 命名文件（acquire 产物）永远匹配不上候选名 | 复核改为**验证已 link 路径仍在本地输入中**（在则保链+如实 note，文件真没了才掉）；调用方传 `linkedPathsPresent` | `tests/dataset-discovery.test.ts` 44/44（+re-verifies-linked-path 例） | efd2857 |
+| I24 | 多语料项目 `data slices --from-protocol` 把切片钉在第一个 card profile（sample-data）且 0 行；行数**求和**击败 largest-image 覆盖、groups 各语料 last-writer 混装 | `loadMeasuredCorpus` 快照取 first、samples 取 SUM、结构取并集 | 切片绑定**单一最大图像语料**（结构/样本数/快照同源；card-only 回退取最大行 profile；他语料列不再混入） | `tests/measured-corpus.test.ts` 3/3（新增） | 4f199d9 |
+| I25 | 旧协议/旧快照的陈旧切片永久堵死 `confirm protocol`（mixed-snapshot + 0 行 blocker），`--prune-invalid` 只清哈希损坏者，无任何清理路径 | from-protocol 不能取代自己的上一代 | 重建后按 `generatedBy`+请求 scales 取代陈旧 from-protocol 代际（rule+seed 可重建，打印清单；`--build-from`/联邦切片不动） | `tests/slice-supersede.test.ts` 2/2（含"mixed 拦截→重建→锁定"端到端，新增） | 706c3ff |
+
+**数据集选型（explain 核对在 acquire 前，索引不可信即走本地手动路径）**：
+
+- `ds-officehome` 索引实测 `Content-Type: audio/mpeg`、`Content-Length: 1,139,604,263`（1.06GB MP3，名不副实，二次确认）；全量 3 分片（248,782,886+119,438,711+790,762,518B）超单文件 link 上限，shard0 实测**仅 2/4 域**（Art 2427 / Clipart 2769）；`ds-minidomainnet` 无任何 URL（仅论文提及）。
+- 采用 **PACS**（同族标准 benchmark，2111.10487 实验表点名）：`flwrlabs/pacs` 单文件 parquet 191,395,900B，schema `image/domain/label`，9,991 行 = 4 域（sketch 3929/cartoon 2344/art_painting 2048/photo 1670）×7 类，pyarrow 实测核对。
+- 链路：下载至 datasets/ → `scan`（入 manifest）→ `discover`（**ds-pacs conf=0.85 最高**，事件 #38；I23 现场验证：ds-imageneta 链在同轮重发现中保住）→ `explain`（license=unknown 如实）→ `authorize --grant --reason "…"`（事件 #39，选型依据入档）→ `data describe`（image profile **grouping column=domain** 四值全测出——STAGE 10 缺的域轴）→ `datasets link`（status=validated、snapshot `data-4fc041ee92ee`、profiled、readiness **READY**、事件 #40）。
+
+**协议与切片**：PACS 入 profile 后 `protocol propose`（run-3fda119cf1614fa7）→ 模型如实按实测 domain 轴出 **4 折 leave-one-domain-out**（holdoutColumn=domain，逐值一折，clientColumn=domain，stratifyBy=label，seed42），primary=`unseen-domain mean accuracy (%) averaged over the 4 folds`，基线数字取自 2111.10487 表（FedAvg/FedDG/FedADG）。首次 `confirm` 被门禁如实拦（mixed snapshots + 0 行）——I25 修复后 `data slices --from-protocol` 重建 **12 切片**（4 折 × smoke/quick/standard，全部 `data-4fc041ee92ee`、非空，取代 6 条陈旧）→ `confirm protocol` **锁定 `proto-3be3fbd2b749-v1`**（0 blocker，2 条低置信如实浮出：resourceEstimate conf 0.35、group-time-boundary pending）。`data materialize datasets/pacs.parquet --scale quick` → `datasets-derived/pacs-quick`（1000/9991，按域 205/235/167/393，manifestHash sha256:70577a4f…，源只读保留）。
+
+**真实快照接进 idea 实验（不许 synthetic 兜底）**：
+
+- `data/prepare_real.py`（物化 JPG → 8×8 灰度 64 维，PIL bilinear，无种子；**写前断言 materialization sourceHash==链接快照**，链路 pacs.parquet sha256:4fc041ee… → manifestHash → CSV）→ `data/pacs_quick.csv` sha256:2a953add2b7f176092ae41496d179de93e18aab0948a23bbb12c56f9387eb7cd，1000 行、域映射 art_painting=0…sketch=3、7 类；`data/manifest.json` inputs → **dataSnapshotId `inputs:be2b0477dfd4c287f2`**（可复算：同 inputs 数组 → 同 id）。
+- **删除 `data/synthetic.csv` 与 `data/generate_corpus.py`**（物理上无法再兜底）；config `data_path=data/pacs_quick.csv`、metrics[0]=协议主指标 `unseen-domain mean accuracy`；`check_data.py` 增加 domain 列硬校验（缺列即 fail loud，无三分位伪域回退）。
+- 入口重写为**多类 softmax + 全 4 折 LODO**（7 类语料逼迫的最小兼容改动；机制仍为 plain CE——数据单变量轮）。状态机合法回走（ANALYZING→NEEDS_REVISION→IMPLEMENTING）后 `idea check` **五相全绿（SMOKE_TESTED）**，v3 quick 实验入注册表：主体 16.60795% vs 同跑对照 22.5314%；`idea analyze` → **REJECTED（effect-insufficient，Δ=−5.92）**，且 **comparable: true**（percent/同协议/同 4 折聚合——R1 的量纲与配对问题已随真数据+新协议消失）。
+
+**required 对比同步到同一真实快照**：worktree 放入**字节级相同**的 `data/pacs_quick.csv`（sha256 2a953add… 亲验）+ 同 inputs 的 manifest（复算得同一 `inputs:be2b0477dfd4c287f2`）；`smoke.py` 改为 4 个**实测域 client** + LODO + 协议主指标键（README 溯源改写，历史 sample-data.csv 保留供 v1 记录复核）；`comparison smoke` **PASSED（421ms）** → `experiment spec` v2 + `experiment result` 录制（20.7451%，explanation 带完整快照链）。
+
+**主线 A 验收断言（达成）**：`full fairness --idea gen-fed-domain-shaft-prototype` → **data-split = aligned**（`snapshot inputs:be2b0477dfd4c287f2 with the same slices as the idea spec`——STAGE 12 的"idea 工作区 synthetic"偏差消失）、metrics aligned（双方产出协议主指标）、blockers=[]；唯一残差偏差 `seeds-repeats [42] vs [42,43]` 如实入锁（方法在实测域 client 下确定性，单种子）；`--confirm` 确认（decision 事件）。
+
+=== STAGE 14: 真数据集接入实验 ===
+结果: PASS（fairness data-split aligned 断言达成；3 个修复 I23/I24/I25 均回归绿并推送）
+证据: docs/ACCEPTANCE_EVIDENCE.md L359-L394
+摘要: PACS 真快照 data-4fc041ee92ee 走完 discover→explain→authorize→本地路径 scan/describe/link（索引 MP3/无源坑均实测绕开）；协议按实测域轴重锁 4 折 LODO、12 切片同快照；idea 实验与 required 对比同绑 inputs:be2b0477dfd4c287f2，fairness data-split aligned 已 confirm。
+
+## STAGE 15 — 主线 B：打赢对照 → 独立 full-run（2026-11-23，进行中 · 实例到期暂停）
+
+**状态：机制原型已验证可赢，注册与 full-run 链移交下一会话。**
+
+- 按卡片机制链 step 2–4 实现主体机制（`src/fedg.py` 重写，纯 stdlib）：每个 client（实测域）从**私有充分统计量**算低秩 Fisher 判别基（正则化 within-scatter + 广义特征向量，收缩幂迭代，确定性初值）；server 聚合 **B·Bᵀ 之和的顶部特征向量 = 全局类子空间**；类原型投影进子空间评估，**正交域残差全程不参与**（= 卡片的 residual decoupling，按构造不对其齐）；通信仅 basis+prototypes（23,376B < 全模型交换参照 36,400B）。
+- **入口级预跑（尚未注册，如实标注）**：quick **23.0485%** vs 同跑对照 22.5314%（**+0.52pp**）；smoke **23.7179%**（**+1.19pp**）——两个 scale 同向为正（supported 阶梯的 mixed-scale 要求）。
+- **6 个卡片消融全部可执行**（`train.py --ablate <id>`）：两个 necessary-component 移除 → 22.5314（较主体 drop>0 ✓ 方向正确）；random-basis → 23.2005；no-residual-alt → 22.5314；full-feature → 22.5314；comm-matched → 22.8999。**如实注记**：线性原型实现里两种 necessary 移除数值重合（‖x−μ‖² 正交分解恒等，"并入残差" ≡ "去掉子空间限制" ≡ 全空间原型），二者相对主体均退化、方向与卡片 removeEffect 一致；此实现层面的可合并性已如实记录，留给 claim-audit/复核判断。
+- **未完成（下一会话按序）**：① `idea revise`（engineering，v4）→ NEEDS_REVISION→IMPLEMENTING→`idea check` 五相绿；② `idea experiment --scale quick` **与** `--scale smoke` 双 scale 注册（均带同跑对照）；③ `idea analyze`——阶梯条件：Δ>0、双 scale、seeds≥2（config 已有 42/43）、两个 necessary 消融 supports=true、无可疑对照 → **supported**（若 agent review 或某条件不过，如实记录并继续有界迭代，不降门槛）；④ `full plan --idea …` → 重建 fairness（新实验后 inputHash 变，需重 confirm）→ `full approve --confirm` → `full run`；⑤ **checkpoint/resume 验证**：run 中途 kill → `ideaseek continue` → 已完成任务不重做；⑥ `paper results` 导出复核。
+- 环境备注：新实例需重放 node 符号链接（I10/I11）与 poppler（若 apt 缓存还在）；`/mnt/workspace` 卷按历史会话证据跨实例存续（journey-a 11-20→11-23 一直在），但 `~/.ideaseek` 凭据在实例盘，大概率需用户重配（`ideaseek models setup`，`models test` 200 后再进模型步骤）。
+- 推送状态：本节与 I23/I24/I25、R1 一并推送；`git ls-remote origin main` 提交为准。
+
+=== STAGE 15: 打赢对照 → 独立 full-run ===
+结果: PARTIAL（机制原型两 scale 均为正差、6 消融可执行；注册/verdict/full-run/kill-continue 移交下一会话）
+证据: docs/ACCEPTANCE_EVIDENCE.md L396-L410
+摘要: 卡片机制（Fisher 基+全局子空间聚合+投影原型、残差不对齐）已实现于 fedg.py；入口预跑 quick +0.52pp、smoke +1.19pp 胜同跑对照，necessary 消融方向正确；下一步 revise→check→双 scale 注册→analyze→full plan/fairness/approve/run→kill-continue 验证。

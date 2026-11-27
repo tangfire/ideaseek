@@ -143,58 +143,88 @@ async function acquisitionHashFor(
  * Builds the measured structure a selection spec is validated against: column
  * names and group→value counts from the profiles `data describe` wrote. Purely
  * descriptive — the platform never decides what a column means.
+ *
+ * A slice binds to ONE corpus — the largest measured image corpus, else the
+ * largest card profile. Structure, sample count and snapshot all come from
+ * that corpus: a rule validated against one dataset's columns while claiming
+ * another dataset's snapshot would poison every downstream result.
  */
-async function loadMeasuredCorpus(runtime: ProjectRuntime): Promise<MeasuredCorpus | null> {
+export async function loadMeasuredCorpus(runtime: ProjectRuntime): Promise<MeasuredCorpus | null> {
   const { readFile } = await import('node:fs/promises');
-  const columns = new Set<string>();
-  let samples = 0;
-  let snapshotId: string | null = null;
-  const groups: Record<string, Record<string, number>> = {};
+  let cardProfiles: {
+    source: { path: string };
+    rows: number;
+    columns: { name: string }[];
+    datasetSnapshotId?: string;
+  }[] = [];
   try {
     const card = JSON.parse(
       await readFile(join(runtime.paths.knowledgeDir, 'dataset-card.json'), 'utf8'),
     ) as {
-      profiles?: {
-        source: { path: string };
-        rows: number;
-        columns: { name: string }[];
-        datasetSnapshotId?: string;
-      }[];
+      profiles?: typeof cardProfiles;
     };
-    for (const profile of card.profiles ?? []) {
-      for (const column of profile.columns ?? []) columns.add(column.name);
-      samples += profile.rows;
-      snapshotId ??= profile.datasetSnapshotId ?? null;
-    }
+    cardProfiles = card.profiles ?? [];
   } catch {
-    // No card: corpora alone can still describe the structure.
+    // No card: image profiles alone can still describe the structure.
   }
+  let imageProfiles: ImageProfile[] = [];
   try {
     const raw = JSON.parse(
       await readFile(join(runtime.paths.knowledgeDir, 'image-profiles.json'), 'utf8'),
-    ) as { profiles?: ImageProfile[] };
-    for (const profile of raw.profiles ?? []) {
-      for (const name of profile.source.columns) columns.add(name);
-      if (profile.grouping.column && profile.grouping.values.length > 0) {
-        groups[profile.grouping.column] = Object.fromEntries(
-          profile.grouping.values.map((item) => [item.name, item.count]),
-        );
-      }
-      if (profile.classes.column && profile.classes.values.length > 0) {
-        groups[profile.classes.column] = Object.fromEntries(
-          profile.classes.values.map((item) => [item.name, item.count]),
-        );
-      }
-      if (profile.samples > samples) {
-        samples = profile.samples;
-        snapshotId = `data-${profile.source.sha256.slice(7, 19)}`;
-      }
-    }
+    ) as {
+      profiles?: ImageProfile[];
+    };
+    imageProfiles = raw.profiles ?? [];
   } catch {
     // No image corpus profiled.
   }
-  if (samples === 0 || !snapshotId) return null;
-  return { columns: [...columns], groups, samples, snapshotId };
+
+  const largestImage = imageProfiles.reduce<ImageProfile | null>(
+    (best, profile) => (best === null || profile.samples > best.samples ? profile : best),
+    null,
+  );
+  if (largestImage && largestImage.samples > 0 && largestImage.source.sha256) {
+    const columns = new Set<string>(largestImage.source.columns);
+    const groups: Record<string, Record<string, number>> = {};
+    // The card may hold extra stat columns for the same file (it omits the
+    // image column); match by path suffix — image profiles store absolute
+    // paths, card profiles store project-relative ones.
+    const card = cardProfiles.find(
+      (profile) =>
+        profile.source.path &&
+        (largestImage.source.path === profile.source.path ||
+          largestImage.source.path.endsWith(`/${profile.source.path.replace(/\\/g, '/')}`)),
+    );
+    for (const column of card?.columns ?? []) columns.add(column.name);
+    if (largestImage.grouping.column && largestImage.grouping.values.length > 0) {
+      groups[largestImage.grouping.column] = Object.fromEntries(
+        largestImage.grouping.values.map((item) => [item.name, item.count]),
+      );
+    }
+    if (largestImage.classes.column && largestImage.classes.values.length > 0) {
+      groups[largestImage.classes.column] = Object.fromEntries(
+        largestImage.classes.values.map((item) => [item.name, item.count]),
+      );
+    }
+    return {
+      columns: [...columns],
+      groups,
+      samples: largestImage.samples,
+      snapshotId: `data-${largestImage.source.sha256.slice(7, 19)}`,
+    };
+  }
+
+  const largestCard = cardProfiles.reduce<(typeof cardProfiles)[number] | null>(
+    (best, profile) => (best === null || profile.rows > best.rows ? profile : best),
+    null,
+  );
+  if (!largestCard || largestCard.rows === 0 || !largestCard.datasetSnapshotId) return null;
+  return {
+    columns: largestCard.columns.map((column) => column.name),
+    groups: {},
+    samples: largestCard.rows,
+    snapshotId: largestCard.datasetSnapshotId,
+  };
 }
 
 async function buildSlicesFromProtocol(
@@ -330,8 +360,26 @@ export function registerDataCommand(program: Command): void {
                   createdAt: slice.generatedAt,
                 });
               }
+              // Supersede the previous from-protocol generation: slices from
+              // an older protocol or snapshot are rebuildable by rule + seed,
+              // and leaving them registered blocks the single-snapshot gate at
+              // `confirm protocol` forever. Other slice sources (--build-from,
+              // federated mounts) are never touched, and a partial --scales
+              // rebuild only supersedes the scales it rebuilt.
+              const builtIds = new Set(built.map((slice) => slice.sliceId));
+              const scaleSet = new Set(scales);
+              const superseded: string[] = [];
+              for (const record of await runtime.db.listSlices()) {
+                if (builtIds.has(record.sliceId)) continue;
+                const slice = record.record as { generatedBy?: unknown; scale?: unknown };
+                if (slice.generatedBy !== 'ideaseek data slices --from-protocol') continue;
+                if (typeof slice.scale === 'string' && !scaleSet.has(slice.scale as SliceScale)) {
+                  continue;
+                }
+                if (await runtime.db.deleteSlice(record.sliceId)) superseded.push(record.sliceId);
+              }
               if (opts.json) {
-                process.stdout.write(jsonLine({ built: built.length, slices: built }));
+                process.stdout.write(jsonLine({ built: built.length, superseded, slices: built }));
                 return 0;
               }
               process.stdout.write(
@@ -342,6 +390,12 @@ export function registerDataCommand(program: Command): void {
                   `  ${slice.scale.padEnd(9)} ${slice.sliceId}  ${slice.stats.selectedRows}/${slice.stats.totalRows} rows\n` +
                     `    ${slice.rule}\n`,
                 );
+              }
+              if (superseded.length > 0) {
+                process.stdout.write(
+                  `superseded ${superseded.length} stale from-protocol slice record(s) (rebuildable by rule + seed):\n`,
+                );
+                for (const id of superseded) process.stdout.write(`  - ${id}\n`);
               }
               process.stdout.write('next: ideaseek data slices --scale smoke\n');
               return 0;
@@ -1022,6 +1076,7 @@ export function registerDataCommand(program: Command): void {
               (localReport.status === 'ok' || localReport.status === 'empty');
             const candidates = mergeWithPrevious(enriched, existing?.candidates ?? null, {
               localSourcesChecked,
+              linkedPathsPresent: new Set(ctx.facts.flatMap((fact) => fact.paths)),
             });
             const incompleteSources = ctx.sources.some(
               (source) =>
