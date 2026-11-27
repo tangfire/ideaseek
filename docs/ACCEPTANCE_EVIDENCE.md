@@ -589,3 +589,42 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 **回归合计（本优化轮）**：idea-workspace 13/13（交互 lane）、idea-experiment 6/6、duplicate-gather + duplicate-controls 13/13、analysis-agent 5/5、ideation-rounds 7/7、tsc 全程绿。工作区改动（fedg.py methodId、4 卡引用）均经 revise 版本链或如实记录。
 
 **推送**：`ba9c2d8`、`ba18512`、`24ad05c`、`48834e8` + 本节（先 pull --rebase，只推 gitee）。
+
+## STAGE 15（存档交接 · 2026-11-27 晚 · 实例关闭前 · 冷启动给下一智能体）
+
+**状态：验收清单 STAGE 0–15 全 PASS（最终汇总 2026-11-27 刷新版在 L545 起，为当前权威口径）；上线后优化轮完成（四卡 claim-audit 全 PASS、旗舰 handoff HANDOFF_READY、I33 端到端验证）。本节是冷启动交接。**
+
+### 环境（本实例，机器本地不入仓库）
+
+- `git pull --rebase origin main` 顶 = **`42fddc2`**（工作区干净、与 origin 同步）；gitee 推送**本实例可用**（credential.helper store 已配），只推 gitee、禁 force。
+- node：新实例若报 v22 → `ln -sf /usr/local/lib/node-ideaseek/bin/node /root/.nvm/versions/node/v22.23.2/bin/node`（`node --version` 应为 v24.x）→ `bash setup.sh`。
+- **apt 源已切腾讯镜像**（aliyun 签名失效+403/404；原文件备份 `/etc/apt/sources.list.bak-20261127`）。已装：`poppler-utils`（pdftoppm，测试依赖）、`texlive-latex-base/recommended/extra`、`texlive-fonts-recommended`、`latexmk`、`texlive-science`（algorithm/algorithmic）——paper compile 依赖，新实例需按此重装（kpsewhich 验证）。
+- 模型：`ideaseek models test` → **200**（ref=env:DEEPSEEK_API_KEY presence，值零接触；丢了请用户 `ideaseek models setup`）。
+- 全量门禁最后一次跑绿是 `0c2bf86` 时代（三 lane 1957/27/23，见 L484）；**其后 12 个 commit 只跑过定向测试**——新会话第一件事建议补一次 `pnpm test`（约6-8 分钟）。
+
+### journey-a 现场（`/mnt/workspace/journey-a`，非 git，文件直存）
+
+- **旗舰 `gen-fed-domain-shaft-prototype` = SUPPORTED v6**：claim-audit **PASS（4 found，event #40）** → `idea handoff --confirm` → **HANDOFF_READY**（10 文件包在 `ideas/gen-fed-domain-shaft-prototype/handoff/`，Decision event #57）。in-run 对照 methodId 已对齐注册 id（fedg.py 工作区改动），v16 smoke 实验 23.7179/对照 22.5314，消融矩阵 v6 重跑（6 条 freshForCurrentVersion）。
+- **其余 3 卡（backbone/deferred/consensus）= v2，claim-audit 全 PASS**（events #58/59/60）——引句为 `papers/2306.01334.pdf` p14/p20 逐字原文（locateQuote 验证）。
+- **r4 轮新候选卡待走流程**：`knowledge/ideation-rounds/r4/candidates/gen-fed-servable-prototype-certificates.json` [CANDIDATE]（6 条 paperRef 全真实语料、methodId 注册 id、零违规；validate 已过）。**这是验证修后全链的最佳起点**：`idea create <id> --from-card …` → implement/scaffold（注意 implement 会模型重写 src，对新卡是预期行为）→ check → experiment → analyze。r3（污染快照、未消费）如实保留为历史，勿删。
+- full-run 已完成：`run-350ee41f5c10413b` COMPLETED（comparison full-feddg=20.7451 + idea full=23.0485），kill-continue 证据在 L479 起。
+- 论文链全通：`paper/main.pdf` **10 页 ICLR**（4 图+结果表嵌入）；`reports/paper/` 有 plan/figures-plan/manuscript/figure-render/results.json。
+- A10 单卡在（capacity 实跑见 L538）；无多卡、无数小时负载（如实移交）。
+
+### 下一会话建议顺序
+
+1. **补全量门禁**：`pnpm test`（最新 42fddc2；若红先分类环境 vs 回归，≤3 次修复或记 BLOCKED）。
+2. **（可选）全链复验**：用 r4 候选卡走 create→…→analyze（验证修后的 ideate→experiment→analyze 链；implement 对新卡会重写 src 属预期）。
+3. **coding 档真实 turn 验收**（唯一未测的功能面；成本/审批面，计划允许 SKIP 但一直没真跑）。
+4. 余下计划内 SKIP：上传真实备份（no upload）、SSH 断线模拟（detach 等价）——除非用户提供素材，维持 SKIP。
+
+### 已知账（勿重复踩）
+
+- **write 预算 300s vs 32k tokens 不匹配**（paper write 曾超时，重试过）——记账待上游。
+- **`check.ts`/`reproduce.ts` 逐行 JSON 解析对 pretty 输出是潜伏同类缺口**（当前入口输出单行未触发；I27 已修 idea/experiment 侧）。
+- **模型采样方差真实**：figure 链 4 次收敛、write 2 次、analyze 3 次（有界 ≤3 内达成）；analyze 的 agent review 已加闭卷条款+消融 context（ba18512/24ad05c），仍可能抽风——重跑即是有界手段。
+- `full plan` 重写计划文件**不保留 approval**（fails-closed，重批一次命令即可）；fairness covering spec 变化会使锁失效（重 confirm）。
+- 卡片数据手术一律走 `idea revise` 版本链（终态会自动重开 PROPOSED——ba9c2d8），勿直接改 idea.json 不留版本。
+- 铁律照旧：**key 零接触、证据 append-only、失败 3 次记 BLOCKED、只推 gitee、原始输入只读**。证据权威文件 `docs/ACCEPTANCE_EVIDENCE.md`（本节后即最新），进度 `docs/PROGRESS.md`。
+
+**推送状态：本节随 commit 推送；`git ls-remote origin main` 提交为准。**
