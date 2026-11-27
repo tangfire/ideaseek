@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
  * among files the credentials file (rank 1) outranks a local .env (rank 2);
  * a re-read of the same file refreshes the value (key rotation without
  * restart). An empty/blank existing value is treated as unset so a stray
- * `KEY=` line cannot shadow a real key. Values are never logged or returned
+ * `KEY=` line cannot shadow a real key. Returns only the names whose values
+ * this call actually CHANGED (a no-op re-read returns nothing) — callers use
+ * that to notice a mid-session write. Values are never logged or returned
  * (only names), comments/blank lines skipped, malformed lines ignored.
  */
 const RANK_CREDENTIALS = 1;
@@ -33,9 +35,14 @@ function ingestEnvText(text: string, loaded: string[], rank: number): void {
       const prior = ingestedRank.get(key);
       if (prior === undefined || prior < rank) continue; // host env or higher-ranked file wins
     }
+    const changed = existing !== value;
     process.env[key] = value;
     ingestedRank.set(key, rank);
-    loaded.push(key); // names only — never values
+    // Names only, and only when the value actually moved: a no-op re-read
+    // reports nothing, so callers can tell a fresh save/rotation from
+    // "still the same" (WarmAgentHost drops a live harness child only on
+    // a real change — its env was fixed at spawn).
+    if (changed) loaded.push(key);
   }
 }
 

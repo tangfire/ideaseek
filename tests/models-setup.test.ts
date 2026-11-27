@@ -298,6 +298,51 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(settings).toContain('# user comments must survive');
   }, 60_000);
 
+  it('reads the provider catalog DSH left behind as settings.yaml.imported', async () => {
+    // DSH's settings loader imports settings.yaml once and renames it
+    // (importLegacyDocument in @deepseek-ai/dsh-settings). Before this fix
+    // every DSH boot made `models providers` report "not configured" and
+    // pushed the researcher to re-run a setup that had already succeeded.
+    const h = await makeHarness();
+    await writeFile(
+      join(h.dshHome, 'settings.yaml'),
+      [
+        'llm-pi-ai:',
+        '  providers:',
+        '    zh-gateway:',
+        '      displayName: zh-gateway',
+        '      baseURL: https://relay.example/v1',
+        '      api: openai-completions',
+        '      apiKeyEnv: SAVED_NAME',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const { rename } = await import('node:fs/promises');
+    await rename(join(h.dshHome, 'settings.yaml'), join(h.dshHome, 'settings.yaml.imported'));
+
+    // The catalog is still configured — read through the rename…
+    const providers = await runCli(['models', 'providers', '--json'], h.env);
+    expect(providers.code, providers.stdout + providers.stderr).toBe(0);
+    const catalog = JSON.parse(providers.stdout) as {
+      providers: Array<{ id: string; configured: boolean; apiKeyEnv: string | null }>;
+    };
+    const row = catalog.providers.find((entry) => entry.id === 'zh-gateway');
+    expect(row?.configured).toBe(true);
+    expect(row?.apiKeyEnv).toBe('SAVED_NAME');
+
+    // …and a re-run seeds from the renamed file instead of dropping the
+    // provider back to "create it from scratch".
+    const rerun = await runCli(
+      ['models', 'setup', '--provider', 'zh-gateway', '--api-key-env', 'ROTATED_NAME', '--json'],
+      h.env,
+    );
+    expect(rerun.code, rerun.stdout + rerun.stderr).toBe(0);
+    const rebuilt = await readFile(join(h.dshHome, 'settings.yaml'), 'utf8');
+    expect(rebuilt).toContain('apiKeyEnv: ROTATED_NAME');
+    expect(rebuilt).toContain('baseURL: https://relay.example/v1');
+  }, 60_000);
+
   it('rejects secret-shaped env names and unknown providers without a base URL', async () => {
     const h = await makeHarness();
     const secretish = await runCli(
@@ -384,6 +429,32 @@ describe('ideaseek models setup (credential wiring without secret storage)', () 
     expect(result.stderr).toContain('TTY');
     expect(result.stderr).toContain('--api-key-stdin');
   }, 60_000);
+
+  it('promptHidden shows its question and never echoes the typed key', async () => {
+    // Owner-reported: `--prompt-key` displayed nothing at all — the old
+    // code passed '' to rl.question, so the question was never written,
+    // and the write filter (text.includes(question)) matched nothing.
+    // The question must reach the terminal; the key must not, on any
+    // chunk readline emits (echo, redraw, cursor moves).
+    const { PassThrough } = await import('node:stream');
+    const { promptHidden } = await import('../src/commands/models.js');
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let seen = '';
+    output.on('data', (chunk) => {
+      seen += String(chunk);
+    });
+
+    const pending = promptHidden('API key (input hidden): ', { input, output });
+    input.write('sk-hidden-probe-77');
+    input.write('\r');
+    const answer = await pending;
+
+    expect(answer).toBe('sk-hidden-probe-77');
+    expect(seen).toContain('API key (input hidden): '); // the question IS shown
+    expect(seen).not.toContain('sk-hidden-probe-77'); // the key never is
+    expect(seen).not.toContain('sk-hidden'); // not even a prefix
+  }, 10_000);
 });
 
 describe('ideaseek models test (minimal connectivity, presence only)', () => {

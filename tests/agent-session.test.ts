@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
@@ -14,6 +14,7 @@ import {
   toolIsAllowListed,
   executionTurnIsUnapprovable,
   refusalWhenExecutionCannotBeApproved,
+  WarmAgentHost,
 } from '../src/dsh/session.js';
 import { composeTurnPrompt } from '../src/commands/agent.js';
 
@@ -209,6 +210,46 @@ describe('execution-requiring turns refuse before they are paid for', () => {
     expect(refusal.code).toBe('USER_INPUT_REQUIRED');
     expect(refusal.message).toContain('--allow-tools shell');
     expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+});
+
+describe('configure-then-use without restarting', () => {
+  it('runTurn re-reads the credentials file a child /models setup just wrote', async () => {
+    // The TUI captures the key via a child process (models setup
+    // --api-key-stdin), so this process's env stays keyless until something
+    // re-reads the file. WarmAgentHost.runTurn must reload BEFORE the
+    // approval gate and the harness spawn — otherwise the harness child is
+    // born keyless and only an app restart ever sees the saved key.
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-jit-'));
+    const configPath = join(dir, 'config.yaml');
+    await writeFile(join(dir, 'credentials.env'), 'IDEASEEK_JIT_PROBE=sk-jit-probe\n', 'utf8');
+    const savedUserConfig = process.env.IDEASEEK_USER_CONFIG;
+    const savedProbe = process.env.IDEASEEK_JIT_PROBE;
+    delete process.env.IDEASEEK_JIT_PROBE;
+    process.env.IDEASEEK_USER_CONFIG = configPath;
+    try {
+      const host = new WarmAgentHost();
+      const startedAt = Date.now();
+      // Deny + must-execute is refused by the pure gate, so nothing spawns:
+      // the assertion below isolates the reload itself.
+      await expect(
+        host.runTurn({
+          cwd: dir,
+          prompt: 'hello',
+          needsExecution: true,
+          policy: 'deny',
+          allowTools: [],
+        }),
+      ).rejects.toMatchObject({ code: 'USER_INPUT_REQUIRED' });
+      expect(process.env.IDEASEEK_JIT_PROBE).toBe('sk-jit-probe');
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      if (savedUserConfig === undefined) delete process.env.IDEASEEK_USER_CONFIG;
+      else process.env.IDEASEEK_USER_CONFIG = savedUserConfig;
+      if (savedProbe === undefined) delete process.env.IDEASEEK_JIT_PROBE;
+      else process.env.IDEASEEK_JIT_PROBE = savedProbe;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

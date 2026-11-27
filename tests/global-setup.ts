@@ -36,7 +36,12 @@ export default function globalSetup(): void {
   } catch (error) {
     const detail = (error as { stdout?: Buffer; stderr?: Buffer; message?: string }) ?? {};
     const output = `${detail.stderr?.toString() ?? detail.message ?? ''}`.slice(-600);
-    execSync('node scripts/build.mjs', { cwd: root, stdio: 'inherit' }); // one rebuild attempt
+    // --force: a boot failure with a still-valid fingerprint means the
+    // artifact is wrong in a way the skip check cannot see (truncated file
+    // with matching digests is impossible, but a torn pre-fingerprint dist
+    // or a stale one is not) — bypass the skip and drop .tsbuildinfo so
+    // tsc re-emits everything instead of trusting the incremental cache.
+    execSync('node scripts/build.mjs --force', { cwd: root, stdio: 'inherit' }); // one rebuild attempt
     try {
       execSync('node dist/cli.js --help', { cwd: root, stdio: 'pipe', timeout: 120_000 });
     } catch (retryError) {

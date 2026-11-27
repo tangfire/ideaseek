@@ -12,7 +12,9 @@
     "ideaseek": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/.build-fingerprint",
+    "!dist/.tsbuildinfo"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

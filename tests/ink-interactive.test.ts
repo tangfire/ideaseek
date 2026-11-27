@@ -463,6 +463,44 @@ describe('interactive Ink renderer (built CLI, real dispatch)', () => {
   );
 
   it(
+    'a paste carrying its own Enter submits the key with no second keypress',
+    async () => {
+      // Real terminal behavior: pasting a key copied with a trailing
+      // newline (or a fast paste+Enter) arrives as ONE stdin chunk, and
+      // ink parses "sk-…\r" as text (name:""), not as return. The old
+      // guard only excluded the exact one-char chunk `"\r"`, so the
+      // newline was appended into the buffer and the Enter was swallowed:
+      // the prompt just sat there and setup only worked after retrying.
+      const dir = await makeProjectDir('ink-paste-enter');
+      const repl = startInk(dir);
+      try {
+        await repl.waitFor(/ideaseek ›/, 60_000);
+        await repl.write('/models setup deepseek --base-url http://127.0.0.1:1');
+        await repl.write('\r');
+        await repl.waitFor(/API key \(input hidden\)/, 60_000);
+
+        // Under the scanner's 24-char threshold (same convention as
+        // sk-test-super-secret-42) — the non-echo assertion does not
+        // depend on length.
+        const secret = 'sk-paste-with-cr-42';
+        // ONE write: the text and the CR travel together — no separate
+        // Enter keypress follows, so the line break itself must submit.
+        await repl.write(`${secret}\r`);
+        await repl.waitFor(/connection test FAILED/);
+        expect(repl.output()).not.toContain(secret); // never echoed
+
+        await repl.write('/');
+        await repl.write('quit');
+        await repl.write('\r');
+        expect(await repl.done).toBe(0);
+      } finally {
+        await cleanup(dir, repl.child);
+      }
+    },
+    budget(120_000),
+  );
+
+  it(
     'models setup offers the provider catalog and accepts a number',
     async () => {
       const dir = await makeProjectDir('ink-models-catalog');
