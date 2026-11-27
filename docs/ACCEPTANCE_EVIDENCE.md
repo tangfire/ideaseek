@@ -486,3 +486,22 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 - **第 1 轮**：主 lane 2 文件 9 例失败——`visual.test.ts` 全部因 `spawn pdftoppm ENOENT`（本实例未装 poppler，交接"若 apt 缓存还在"一步未做）；apt 源 aliyun 签名失效 + 403/404 → 切腾讯镜像（原文件备份 `/etc/apt/sources.list.bak-20261127`）装回 `poppler-utils 22.02.0`（机器本地修复，不入仓库）。
 - **第 2 轮**：visual 全绿，剩 `dsh-adapter.test.ts` keyless 真 runtime 1 例：`available=true` vs `keySet=false`。**根因=测试缺陷（非产品缺陷）**：`initialize()` 按设计调 `loadUserCredentials()`（src/dsh/dsh-adapter.ts:419，"/models setup 存一次处处可用"契约）把 `~/.ideaseek/credentials.env` 注入 env，而测试拿 **init 前**的 env 快照去比 **init 后**的 health——主机 shell 恰好导出过 key 的机器两个真值相等碰巧全绿，key 存在凭据文件的机器必挂（环境依赖测试，此前从未在"仅凭据文件"机器上跑过）。处置：两个 keyless 用例改 hermetic——`IDEASEEK_USER_CONFIG` 指向临时目录（凭据文件解析到空处）+ 临时删除 `DEEPSEEK_API_KEY`（finally 恢复），并去掉第二例 `if (key) return` 的空转；断言语义不变（keyless 必须 available=false、blocked、blockReason 无 secret 形态）。回归：`tests/dsh-adapter.test.ts` 20/20 绿。
 - **第 3 轮：三 lane 全绿 `GATE_EXIT=0`**——主 lane 216 文件 **1957 passed / 2 skipped (1959)**、交互 lane 3 文件 **27 passed**、python **Ran 23, OK**。STAGE 8 基线刷新（gate23=1943 passed → 1957，增量含 idea-scale +3 等本轮新用例）；完整日志 `/tmp/gate-full-2.log`（机器侧）。
+
+## paper 写作链实测（2026-11-27，步骤②）
+
+**终态全链绿**：`paper plan`（ICLR、规划 9 页、7 claims、8 sections，dsh 真模型）→ `paper figure`（4 图 + 架构图诚实路由到 `paper diagram` 确定性路线、定性图列 manual）→ `paper render-figures` **4/4**（pdf+png(+tex)，figure-render.json 记 per-output sha256；复渲染幂等通过）→ `paper write`（7 节、**13 条 bib**、REVIEW_UNAVAILABLE 如实、manual fixes 诚实列出）→ `paper compile --place-figures` **`paper/main.pdf` 10 页 ICLR · latexmk exit 0**（4 图+结果表嵌入，pdftotext 图注/表注命中、pdfinfo Pages:10）。
+
+**本轮平台修复（4 个单点，均改→回归绿→小 commit）**：
+
+| # | 现象 | 根因 | 处置 | 回归 | commit |
+|---|---|---|---|---|---|
+| I29 | `paper figure` 3 次内部尝试全被 schema 拒（缺 savefig / 脚本不读声明 ref），回喂后仍在约束间摇摆 | 输出契约没写校验器的两条硬规则——规则只活在 validator 里，模型每发现一条就烧掉一整次尝试 | 契约 Rules 显式两条 + 补执行 cwd 规则（脚本以 figures/ 为 cwd：项目根数据加 `../` 前缀、savefig 用裸文件名以匹配 `\includegraphics{figures/…}`） | `paper-figure` 26/26（含契约文本断言，防再漂移） | ce1069f |
+| I30 | 首渲染 3/4 ok，**复渲染变 3/4 "exit 0 without saving"** | `parseSaveTargets` 只认 `savefig('字面量')`，模型惯写 `OUT_PDF='…'` + `savefig(OUT_PDF)` → declared targets 空 → 回退"命令启动后新文件"语义；确定性脚本重跑同字节 → 无新文件 → 误判（正是该路径声称已修的幂等缺陷，只修了字面量一半） | 解析一层字符串常量赋值（未知标识符/计算表达式故意不解析） | `paper-render` 16/16；journey-a 复渲染 4/4 | 1b19e19 |
+| I31 | `paper write` 模型交空 bibliography（"must be a non-empty array"）；另一次 300s 请求超时（32k token 预算 vs 300s 上限，重试后过，预算不匹配记账未改） | 契约要 ≥1 条 BibTeX 但上下文**零参考文献素材**（papercard title=unknown、snapshot 无 papers）——模型只能编造或交空 | `WriteContext.papers` = manifest role=paper 的 7 篇 arXiv 文件名，上下文渲染 "Ingested papers" 清单，契约限定"只准引用清单内" | `paper-write` 23/23 | b588761 |
+| I32 | `--place-figures` 插入 4 图后仍报 "manuscript never places: Fig 1, Fig 2, Table 1, Table 2" | 检查拿 id 当文件名做子串（`figures/Fig 1`），插入的是输出文件名（`figures/fig1_accuracy_comparison.pdf`）+ `\label{fig:fig-1}` → 永不匹配 | 抽出纯函数 `findUnplacedFigures`：include 含 id **或** placement 的 `fig:<slug(id)>` label 均算已放置；豁免语义不变 | `paper-compile` 22/22 | 5efc149 |
+
+**工作区补丁（journey-a 非 git，如实记录）**：Fig 1 首渲染 `TypeError: int + NoneType`（`metric()` 对缺失指标返回 None——数据缺口真实存在：full-feddg 只录协议主指标、另三个 idea 各有各的指标名）→ 手改**存储的模型产物** `figures-plan.json` 中 Fig 1 脚本：系列值 None→`float('nan')`（matplotlib bar 对 nan 不崩、缺值留空不画，已实测）+ 注释里写死的错误协议 id（`proto-fb889c06d303-v1`）改用 `PROTOCOL` 常量；重渲染 4/4。render 记录的 scriptSha256 即实际所跑脚本，手改痕迹可复核。
+
+**机器本地安装（不入仓库）**：apt 腾讯镜像装 `texlive-latex-base/recommended/extra`、`texlive-fonts-recommended`、`latexmk`（compile 依赖）、`texlive-science`（manuscript 用 `\usepackage{algorithm,algorithmic}`，preflight 报缺后按提示补齐，kpsewhich 验证）。
+
+**如实注记**：模型采样方差真实存在——figure 链 4 次调用收敛（3 次 schema 拒 + 1 次 JSON 不可解析），write 2 次（1 超时 + 1 schema 拒），回喂循环有效但单次约束面大；reviewer 全程 `REVIEW_UNAVAILABLE`（无 reviewer 后端，不假装）；write 的 manual fixes 清单诚实（\fbox 占位图待换、ref id 需 DBLP 核对、隐私声明边界、64 维编码 claim 待验）；I31 的 300s/32k 预算不匹配记账待上游。
