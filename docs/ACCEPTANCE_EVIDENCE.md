@@ -505,3 +505,13 @@ afb9616 后全量基线（补跑，计划第 4 步）：`pnpm test` **exit 0** �
 **机器本地安装（不入仓库）**：apt 腾讯镜像装 `texlive-latex-base/recommended/extra`、`texlive-fonts-recommended`、`latexmk`（compile 依赖）、`texlive-science`（manuscript 用 `\usepackage{algorithm,algorithmic}`，preflight 报缺后按提示补齐，kpsewhich 验证）。
 
 **如实注记**：模型采样方差真实存在——figure 链 4 次调用收敛（3 次 schema 拒 + 1 次 JSON 不可解析），write 2 次（1 超时 + 1 schema 拒），回喂循环有效但单次约束面大；reviewer 全程 `REVIEW_UNAVAILABLE`（无 reviewer 后端，不假装）；write 的 manual fixes 清单诚实（\fbox 占位图待换、ref id 需 DBLP 核对、隐私声明边界、64 维编码 claim 待验）；I31 的 300s/32k 预算不匹配记账待上游。
+
+
+## 审计接入（2026-11-27，步骤③：idea audit + claim-audit）
+
+- **`idea audit gen-fed-domain-shaft-prototype`（ARIS experiment-audit，dsh 跨模型）→ PASS v1**：5 项检查全绿——`gt_provenance` / `score_normalization` / `result_existence` / `dead_code` / `scope`，evidence 逐条回读 experiment.result/spec，事件 #36，文件 `knowledge/reviews/gen-fed-domain-shaft-prototype/experiment-audit-v1.json`。**独立 reviewer 已接入 full-run 结果**（PROGRESS L207 的 reviewer 面首次实测）。
+- **`idea claim-audit`（确定性）→ FAIL (exit 2)，6 项**：**2 项 full-run-result PASS**（`full-feddg-prototype-alignment` specHash f14ab15a…、`idea-gen-fed-domain-shaft-prototype` specHash e688eec0… 均由 succeeded 注册记录背书——**full-run report ↔ registry 一致性核验通过，L207 的 result-to-claim 接入面成立**）；2 项 paper-evidence unverified（`round-context:research-question …`、`round-context:protocol-metrics (proto-fb889c06d303-v1)`——非论文引用，"ingest it first" 提示对它们永远无效）；2 项 nearest-comparison missing（`"FedDG/shared-global-prototype alignment (prototype-class FedDG SOTA)"` 是已注册 `feddg-prototype-alignment` 的显示名；`"FedAvg / FedProx with local DG augmentation"` 从未注册）。exit 2、handoff 被如实拦下（设计如此，工具自带恢复提示）。
+- **根因（4/4 个 idea 同款，系统性）**：生成提示词要求 "cite the paper id from the round context"，而 round context 只给论文**计数**——且计数读自 `knowledge/paper-cards/`（已死遗留目录，恒为 0，当时实际已索引 7 篇 papercard artifact）；模型无 id 可引，只能自造 `round-context:*`。nearestComparisons 同病（"methodIds from the round context when available" → 模型写文献显示名）。
+- **修复 I33 = commit `7068a33`**：`RoundSnapshots` 增 `paperIds`（取 parsed-paper.source，与 claim-audit 的解析同源；可选字段，旧 round 记录向后兼容）；`computeSnapshots` 的 paperCardCount 改以 papercard artifact 活源计数；`buildRoundContext` 列出 `Paper ids (a card's paperRef MUST be exactly one of these)`；提示词明令：paperRef 必须是清单内 id、`round-context:` 标签不是论文、methodId 必须是注册 id 否则 "fails the claim audit"。回归：`idea-generate` + `ideation-rounds` **17/17**（含契约断言）、`tsc` 绿。
+- **存量卡片数据修复（记账未做，如实）**：4 张既有卡片的 round-context 引用需替换为可定位的真实论文引文（`locateQuote` 为归一化子串匹配）或经 `idea revise` 走版本链修订——直接改 idea.json 会与 `versions/v4.json` 快照漂移，故留下一会话按 revise 流程处理；此前 shaft 的 handoff 维持被 claim-audit 拦截（工具自己的 next 提示即恢复路径）。
+- 注：卡片引用里的 `proto-fb889c06d303-v1` 是历史轮次所见的旧协议提案（protocol-proposal 共 3 份），与已锁 `proto-3be3fbd2b749-v1` 不同——步骤② Fig 1 脚本注释里那个写死的错误协议 id 正是从这处卡片引用抄来的（彼时已改用 `PROTOCOL` 常量）。
