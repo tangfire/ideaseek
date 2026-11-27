@@ -214,6 +214,16 @@ export interface ComparisonMethod {
   entry?: string | string[];
   status: ComparisonStatus;
   statusReason?: string;
+  /**
+   * Historical labels this method was recorded under (an old spelling after
+   * a rename). A control printed under an alias is THIS method, not a second
+   * one: the analysis ladder collapses declared aliases to the canonical
+   * methodId before comparing control values, so renaming a label cannot
+   * read as "one computation reported twice under two method ids". Only
+   * labels recorded here collapse — two genuinely different methods never
+   * share an alias, so the duplicate-value check keeps its full reach.
+   */
+  aliases?: string[];
   smoke?: ComparisonSmoke;
   repair?: RepairSummary;
   reproduction?: ReproductionSummary;

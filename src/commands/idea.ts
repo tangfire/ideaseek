@@ -3667,10 +3667,7 @@ export function registerIdeaCommand(program: Command): void {
                           }`,
                           `split rules: ${(protocol?.splitRules ?? []).join('; ') || '(none recorded)'}`,
                         ].join('\n'),
-                        coverageText:
-                          `scales=[${analysis.coverage.scales.join(', ')}] ` +
-                          `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
-                          `missing=${analysis.coverage.missing.join('; ') || '(none)'}`,
+                        coverageText: agent.buildCoverageText(analysis),
                         facts: comparableFacts.flatMap((entry) => [
                           {
                             source: 'idea-main',

@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest';
-import { compareWithAgent, type ComparisonFact } from '../src/idea/analysis-agent.js';
+import {
+  buildCoverageText,
+  compareWithAgent,
+  type ComparisonFact,
+} from '../src/idea/analysis-agent.js';
 
 const FACTS: ComparisonFact[] = [
   {
@@ -119,4 +123,38 @@ it('discards a self-contradicting answer that calls the values incomparable but 
     confidence: 0.8,
   };
   expect(await call(answer)).toBeNull();
+});
+
+it('coverage text carries the ablation spread the verdict contract asks the agent to weigh', () => {
+  // Observed: the contract says "say what spread the platform recorded
+  // (seeds, scales, ablations)" while the context listed only scales/seeds —
+  // a careful agent could not see the green ablations and answered
+  // "insufficient evidence" (inconclusive) on evidence it was never shown.
+  const text = buildCoverageText({
+    coverage: { scales: ['quick', 'smoke'], datasets: ['inputs:x'], seeds: 2, missing: [] },
+    mechanismEvidence: [
+      {
+        ablationId: 'abl-w-o-global-low-rank',
+        mainValue: 23.7179,
+        ablationValue: 22.5314,
+        supports: true,
+      },
+      {
+        ablationId: 'abl-random-basis',
+        mainValue: 23.7179,
+        ablationValue: 23.2005,
+        supports: null,
+      },
+    ],
+  });
+  expect(text).toContain('seeds=2');
+  expect(text).toContain('ablations:');
+  expect(text).toContain('abl-w-o-global-low-rank 23.7179→22.5314 [necessary holds]');
+  expect(text).toContain('abl-random-basis 23.7179→23.2005');
+  expect(
+    buildCoverageText({
+      coverage: { scales: ['smoke'], datasets: [], seeds: 1, missing: ['seeds'] },
+      mechanismEvidence: [],
+    }),
+  ).toContain('ablations: (none recorded)');
 });

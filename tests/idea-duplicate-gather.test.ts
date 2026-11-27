@@ -321,3 +321,68 @@ describe('selection attestation (which run the verdict rests on, and what was re
     expect(input.selection?.considered).toBe(2);
   });
 });
+
+describe('declared rename aliases', () => {
+  it('collapses a method’s old label so a rename is not a second method', async () => {
+    // Observed: the entry used to print its in-run control under a display
+    // name and was repaired to print the registered methodId. The duplicate
+    // check then saw two "methods" agreeing to every digit of 22.5314 and
+    // downgraded the verdict forever — history cannot be rewritten, so the
+    // rename has to be declared on the comparison record instead.
+    const oldLabel = 'FedDG/shared-global-prototype alignment (prototype-class FedDG SOTA)';
+    const registered = 'feddg-prototype-alignment';
+    const dbWithAliases = {
+      getExperiment: async () => null,
+      listExperiments: async () => [],
+      listComparisons: async () => [
+        { methodId: registered, record: { aliases: [oldLabel] } },
+      ],
+    };
+    const root = await workspace(
+      [registered],
+      [
+        {
+          spec: specFor('smoke', 1),
+          result: resultFixture(
+            [{ methodId: oldLabel, metric: DECLARED, value: 22.5314 }],
+            23.7,
+          ),
+        },
+        {
+          spec: specFor('smoke', 2),
+          result: resultFixture(
+            [{ methodId: registered, metric: DECLARED, value: 22.5314 }],
+            23.7179,
+          ),
+        },
+      ],
+    );
+    const input = await collectAnalysisInput(root, ideaId, dbWithAliases, [DECLARED]);
+    // One method under two declared labels: no duplicate finding…
+    expect(input.suspiciousControls ?? []).toEqual([]);
+    // …and the old record's control still pairs against the card's id.
+    const inRun = input.baselines.find((entry) => entry.methodId === registered);
+    expect(inRun).toMatchObject({ value: 22.5314, source: 'in-run' });
+  });
+
+  it('still flags two genuinely distinct methods at one value (no alias declared)', async () => {
+    const root = await workspace(
+      ['fedavg'],
+      [
+        {
+          spec: specFor('smoke'),
+          result: resultFixture(
+            [
+              { methodId: 'fedavg', metric: DECLARED, value: 16.896707907604327 },
+              { methodId: 'dp_noise_matched_no_shrinkage', metric: DECLARED, value: 16.896707907604327 },
+            ],
+            16.715043539185267,
+          ),
+        },
+      ],
+    );
+    const input = await collectAnalysisInput(root, ideaId, dbWithoutRepro, [DECLARED]);
+    expect(input.suspiciousControls ?? []).toHaveLength(1);
+    expect(input.suspiciousControls?.[0]).toContain('fedavg and dp_noise_matched_no_shrinkage');
+  });
+});

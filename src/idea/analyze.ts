@@ -33,6 +33,10 @@ interface RegistryLike {
     spec: Record<string, unknown>;
     result: Record<string, unknown> | null;
   } | null>;
+  /** Optional: comparison records supply declared method aliases (rename history). */
+  listComparisons?(filter?: {
+    required?: boolean;
+  }): Promise<{ methodId: string; record: Record<string, unknown> }[]>;
   listExperiments(filter?: {
     status?: 'planned' | 'succeeded' | 'failed' | 'partial' | 'invalid';
   }): Promise<
@@ -129,6 +133,33 @@ export function isBaselineSubjectRun(
   return Boolean(spec.comparisonIds?.includes(methodId));
 }
 
+/**
+ * label → canonical methodId, from each registered method's declared
+ * `aliases` (its own rename history — a recorded fact, not a guess).
+ *
+ * A control the entry used to print under a display name and now prints
+ * under the registered id is ONE method; without this, the duplicate-value
+ * check saw two methods agreeing to every digit and downgraded the verdict
+ * forever — a rename that can never be undone by evidence. Collapsing only
+ * declared aliases keeps the check's full reach against genuinely distinct
+ * methods.
+ */
+export function buildMethodAliasMap(
+  comparisons: { methodId: string; record: Record<string, unknown> }[],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const comparison of comparisons) {
+    map.set(comparison.methodId, comparison.methodId);
+    const aliases = Array.isArray(comparison.record.aliases)
+      ? comparison.record.aliases
+      : [];
+    for (const alias of aliases) {
+      if (typeof alias === 'string' && alias.trim()) map.set(alias, comparison.methodId);
+    }
+  }
+  return map;
+}
+
 export async function collectAnalysisInput(
   projectRoot: string,
   ideaId: string,
@@ -154,6 +185,7 @@ export async function collectAnalysisInput(
   const card = await loadIdeaCard(projectRoot, ideaId);
   const codeHash = await hashIdeaSource(projectRoot, ideaId);
   const all = await db.listExperiments();
+  const aliasMap = buildMethodAliasMap((await db.listComparisons?.()) ?? []);
 
   // Mirror history (experiments/*-vN.json): the immutable record of EVERY
   // run, successes and failures alike. Registry rows only hold the latest
@@ -393,8 +425,9 @@ export async function collectAnalysisInput(
       ];
       for (const candidate of inRunCandidates) {
         if (candidate.result.status !== 'succeeded') continue;
+        const wanted = aliasMap.get(nearest.methodId) ?? nearest.methodId;
         const recorded = (candidate.result.baselines ?? []).filter(
-          (entry) => entry.methodId === nearest.methodId,
+          (entry) => (aliasMap.get(entry.methodId) ?? entry.methodId) === wanted,
         );
         if (recorded.length === 0) continue;
         const control =
@@ -544,13 +577,16 @@ export async function collectAnalysisInput(
     const from = `${spec.specId}@v${spec.version}`;
     for (const control of result.baselines ?? []) {
       if (metricIdentifier(control.metric) !== metricIdentifier(primary ?? '')) continue;
+      // Declared rename history: a label the method used to print under is
+      // this method, so a rename cannot read as two methods sharing a value.
+      const methodId = aliasMap.get(control.methodId) ?? control.methodId;
       if (
         allControls.some(
-          (entry) => entry.fromSpecId === from && entry.methodId === control.methodId,
+          (entry) => entry.fromSpecId === from && entry.methodId === methodId,
         )
       )
         continue;
-      allControls.push({ methodId: control.methodId, value: control.value, fromSpecId: from });
+      allControls.push({ methodId, value: control.value, fromSpecId: from });
     }
   };
   for (const mirror of succeededMains) collectControls(mirror.spec, mirror.result!);

@@ -91,6 +91,50 @@ Rules:
   spread the platform recorded (seeds, scales, ablations) — "insufficient evidence" is a verdict.`;
 
 /**
+ * What the review is told about the recorded spread.
+ *
+ * The verdict contract requires the agent to weigh "what spread the platform
+ * recorded (seeds, scales, ablations)" — but the context used to list only
+ * scales/seeds, so a careful agent could never see that the necessary-
+ * component ablations had already degraded the metric as predicted, and
+ * "insufficient evidence" became its only safe answer. The ablations join
+ * the coverage line as facts to weigh; citations stay limited to `facts`
+ * (the platform only re-reads those), so quoting them in citedValues would
+ * discard the verdict — context, not citable numbers.
+ */
+export function buildCoverageText(analysis: {
+  coverage: { scales: string[]; datasets: unknown[]; seeds: number; missing: string[] };
+  mechanismEvidence: {
+    ablationId: string;
+    mainValue: number | null;
+    ablationValue: number | null;
+    supports: boolean | null;
+  }[];
+}): string {
+  const spread =
+    analysis.mechanismEvidence.length > 0
+      ? analysis.mechanismEvidence
+          .map((entry) => {
+            const pair = `${entry.mainValue ?? 'n/a'}→${entry.ablationValue ?? 'n/a'}`;
+            const flag =
+              entry.supports === null
+                ? ''
+                : entry.supports
+                  ? ' [necessary holds]'
+                  : ' [NOT as predicted]';
+            return `${entry.ablationId} ${pair}${flag}`;
+          })
+          .join('; ')
+      : '(none recorded)';
+  return (
+    `scales=[${analysis.coverage.scales.join(', ')}] ` +
+    `datasets=${analysis.coverage.datasets.length} seeds=${analysis.coverage.seeds} ` +
+    `missing=${analysis.coverage.missing.join('; ') || '(none)'} · ` +
+    `ablations: ${spread}`
+  );
+}
+
+/**
  * Ask the agent for the comparative verdict.
  *
  * Returns null when the answer cannot be trusted (unreadable skill, unparseable
