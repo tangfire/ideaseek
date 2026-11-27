@@ -614,6 +614,24 @@ export async function reviseEngineering(
     await saveVersionRecord(projectRoot, record);
   }
 
+  // SUPPORTED/REJECTED are terminal — reopening happens through the version
+  // chain, exactly as IDEA_TRANSITIONS documents ("reopening an idea is done
+  // by creating a new version (which starts at PROPOSED)"). The code never
+  // did that: a revised card kept its inherited verdict, so a citation-only
+  // repair at v5 still reported SUPPORTED while the analysis for the new
+  // version was inconclusive — and `idea experiment`'s recovery hint then
+  // told the operator to walk a transition (SUPPORTED → NEEDS_REVISION) that
+  // the table refuses. A changed card must earn its verdict again.
+  if (meta.status === 'SUPPORTED' || meta.status === 'REJECTED') {
+    meta.history.push({
+      at: Date.now(),
+      from: meta.status,
+      to: 'PROPOSED',
+      reason: `reopened by engineering revision v${target}`,
+    });
+    meta.status = 'PROPOSED';
+    meta.statusReason = null;
+  }
   meta.currentVersion = target;
   await saveWorkspaceMeta(projectRoot, meta);
 

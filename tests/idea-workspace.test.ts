@@ -8,8 +8,11 @@ import {
   IDEA_TRANSITIONS,
   assertIdeaTransition,
   assertIdeaWorkspacePath,
+  createWorkspace,
   loadVersionRecords,
   loadWorkspaceMeta,
+  reviseEngineering,
+  setIdeaStatus,
   verifyWorkspace,
 } from '../src/idea/workspace.js';
 import { CLI_BIN } from './helpers.js';
@@ -132,6 +135,34 @@ describe('idea lifecycle state machine (unit)', () => {
     ).not.toThrow();
     expect(IDEA_TRANSITIONS.SUPPORTED).toEqual([]);
     expect(IDEA_TRANSITIONS.REJECTED).toEqual([]);
+  });
+});
+
+describe('terminal reopen via revision', () => {
+  it('a revised version of a SUPPORTED idea restarts at PROPOSED', async () => {
+    // Observed: reviseEngineering bumped the version but kept the terminal
+    // status, so a citation-only card repair at v5 still reported SUPPORTED
+    // while its fresh analysis was inconclusive — the inherited verdict
+    // outranked the evidence. IDEA_TRANSITIONS documents the reopen path
+    // ("a new version … starts at PROPOSED"); the code must implement it.
+    const dir = await mkdtemp(join(tmpdir(), 'idea-reopen-'));
+    await createWorkspace(dir, { ideaId: 'reopen-idea', card: makeCard('reopen-idea') });
+    for (const to of ['IMPLEMENTING', 'SMOKE_TESTED', 'RUNNING', 'ANALYZING', 'SUPPORTED'] as const) {
+      await setIdeaStatus(dir, 'reopen-idea', to);
+    }
+    const before = await loadWorkspaceMeta(dir, 'reopen-idea');
+    expect(before.status).toBe('SUPPORTED');
+
+    const { meta } = await reviseEngineering(dir, 'reopen-idea', 'citation repair');
+    expect(meta.status).toBe('PROPOSED');
+    expect(meta.currentVersion).toBe(before.currentVersion + 1);
+    expect(meta.history.at(-1)).toMatchObject({ from: 'SUPPORTED', to: 'PROPOSED' });
+
+    // A non-terminal status survives a revision unchanged — only an
+    // inherited terminal verdict has to be earned again.
+    await setIdeaStatus(dir, 'reopen-idea', 'IMPLEMENTING');
+    const second = await reviseEngineering(dir, 'reopen-idea', 'mechanism tweak');
+    expect(second.meta.status).toBe('IMPLEMENTING');
   });
 });
 

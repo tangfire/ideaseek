@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -342,4 +342,38 @@ describe('ideaseek idea experiment (CLI)', () => {
     expect(afterReject.code).not.toBe(0);
     expect(afterReject.stderr).toContain('REJECTED');
   }, 120_000);
+});
+
+describe('terminal-state experiment refusal', () => {
+  it('points a SUPPORTED idea at the revise reopen, not an illegal transition', async () => {
+    // Observed: the generic hint told a SUPPORTED idea to walk
+    // set-status NEEDS_REVISION → implement → check — a transition the
+    // lifecycle table refuses (SUPPORTED has no outgoing edges), so the
+    // recovery path in the error could never execute.
+    const { createWorkspace, hashIdeaSource, loadWorkspaceMeta, setIdeaStatus } = await import(
+      '../src/idea/workspace.js'
+    );
+    const { runIdeaExperiment } = await import('../src/idea/experiment.js');
+    const dir = await mkdtemp(join(tmpdir(), 'idea-termhint-'));
+    await createWorkspace(dir, { ideaId: 'hint-idea', card: makeCard('hint-idea') });
+    for (const to of ['IMPLEMENTING', 'SMOKE_TESTED', 'RUNNING', 'ANALYZING', 'SUPPORTED'] as const) {
+      await setIdeaStatus(dir, 'hint-idea', to);
+    }
+    const meta = await loadWorkspaceMeta(dir, 'hint-idea');
+    // The report gate runs before the status gate; a passing report at the
+    // current version/codeHash lets the status refusal speak for itself.
+    await mkdir(join(dir, 'ideas', 'hint-idea', 'experiments'), { recursive: true });
+    await writeFile(
+      join(dir, 'ideas', 'hint-idea', 'experiments', 'check-report.json'),
+      JSON.stringify({
+        outcome: 'passed',
+        version: meta.currentVersion,
+        codeHash: await hashIdeaSource(dir, 'hint-idea'),
+      }),
+      'utf8',
+    );
+    await expect(
+      runIdeaExperiment(dir, 'hint-idea', {} as never, {} as never, {} as never),
+    ).rejects.toThrow(/restarts at PROPOSED/);
+  });
 });

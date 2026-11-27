@@ -937,8 +937,15 @@ export async function runIdeaExperiment(
           `(a passing check is what promotes IMPLEMENTING to SMOKE_TESTED)`
         : meta.status === 'PROPOSED'
           ? `start implementation: ideaseek idea implement ${ideaId}`
-          : `walk back to implementation first: ideaseek idea set-status ${ideaId} NEEDS_REVISION ` +
-            `--reason "..." → ideaseek idea implement ${ideaId} → ideaseek idea check ${ideaId}`;
+          : meta.status === 'SUPPORTED' || meta.status === 'REJECTED'
+            ? // Terminal states have no outgoing transition — the only legal
+              // reopen is a new version (which restarts at PROPOSED).
+              `this idea is terminal: reopen it with ` +
+              `ideaseek idea revise ${ideaId} --kind engineering --summary "..." ` +
+              `(a new version restarts at PROPOSED), then ` +
+              `ideaseek idea set-status ${ideaId} IMPLEMENTING → ideaseek idea check ${ideaId}`
+            : `walk back to implementation first: ideaseek idea set-status ${ideaId} NEEDS_REVISION ` +
+              `--reason "..." → ideaseek idea implement ${ideaId} → ideaseek idea check ${ideaId}`;
     throw new IdeaseekError(
       'INVALID_STATE',
       `idea ${ideaId} is ${meta.status}; experiments start from SMOKE_TESTED. ${nextStep}`,
