@@ -294,6 +294,22 @@ fig.savefig("figures/fig.png")`,
     expect(request.instruction).toContain('fig-1');
     expect(request.idempotencyKey.startsWith('paper-figure:')).toBe(true);
   });
+
+  it('states the rules the validator enforces, so rejection is not a surprise', () => {
+    // Observed: three real model attempts were rejected for conditions the
+    // contract never said out loud — a script that draws without savefig(...),
+    // and a script that omits its declared dataSources[].ref. The validator
+    // fed the error back, but a rule the prompt never states costs one full
+    // attempt per discovery; both must be in the contract the model reads.
+    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('savefig(...)');
+    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('literal substring');
+    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('experiment-spec, result-file or existing-figure');
+    // Observed at render: scripts ran with cwd=figures/ while reading
+    // project-root-relative paths, so every open(...) raised FileNotFoundError
+    // and all four figures failed. The execution cwd must be stated.
+    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('working directory figures/');
+    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('../reports/paper/results.json');
+  });
 });
 
 function runCli(
