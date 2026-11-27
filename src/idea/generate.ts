@@ -48,8 +48,12 @@ Each IdeaCard must satisfy ALL of:
 - "status": "CANDIDATE" only when the mechanism chain below is fully
   supported; otherwise "DRAFT_COMPOSITION" (never lie about readiness).
 - "hypothesis": {"statement", "targetProblem"}.
-- "paperEvidence": ≥1 entry {paperRef, statement, evidence} — evidence must
-  cite the paper id from the round context; never invent papers.
+- "paperEvidence": ≥1 entry {paperRef, statement, evidence} — paperRef must
+  be exactly one of the Paper ids listed in the round context (e.g.
+  papers/2111.10487.pdf); never invent papers, and a label such as
+  "round-context:…" is NOT a paper (the claim audit resolves paperRef
+  against indexed papers only). Claims grounded only in the question or the
+  protocol belong in the hypothesis/rationale, not here.
 - "contradictions": ≥1 string.
 - "novelty": {"claim", "uncertainty", "whyNotRestatement"} — uncertainty is
   mandatory; the claim must differ from every novelty constraint below.
@@ -57,8 +61,13 @@ Each IdeaCard must satisfy ALL of:
   form {"kind": "...", "text": "..."} — both fields are required on every
   step; "kind" in this order: observation → hypothesis → intervention →
   expected-change → baseline-difference → falsifier.
-- "nearestComparisons": ≥1 {methodId, difference, evidence} using methodIds
-  from the round context when available.
+- "nearestComparisons": ≥1 {methodId, difference, evidence} — methodId must
+  be a registered comparison id from the Comparisons line (e.g.
+  feddg-prototype-alignment); a descriptive display name ("FedAvg / FedProx
+  with local DG augmentation", "FedDG/shared-global-prototype alignment")
+  is not an id and fails the claim audit. When the Comparisons line lists
+  none, cite the closest registered id you know will be imported and say so
+  in evidence — never a free-text method name.
 - "componentNecessity": ≥1 {component, role: "necessary-mechanism",
   removeEffect} — ≥2 engineering-only components make the card a
   DRAFT_COMPOSITION.
@@ -138,6 +147,11 @@ function buildRoundContext(round: IdeationRound): string {
     `Research question: ${round.question ?? '(none)'}`,
     `Idea limit: ${round.ideaLimit}`,
     `Paper cards in evidence snapshot: ${round.snapshots.paperCardCount}`,
+    `Paper ids (a card's paperRef MUST be exactly one of these): ${
+      (round.snapshots.paperIds ?? []).length > 0
+        ? (round.snapshots.paperIds ?? []).join(', ')
+        : 'none indexed yet — this round cannot cite a paper in paperEvidence'
+    }`,
     `Input manifest: ${round.snapshots.inputManifestHash ?? 'absent'}`,
     `Research map: ${round.snapshots.researchMapHash ?? 'absent'}`,
     `Protocol: ${round.snapshots.protocolId ?? 'absent'}${round.snapshots.protocolHash ? ` (${round.snapshots.protocolHash})` : ''}`,

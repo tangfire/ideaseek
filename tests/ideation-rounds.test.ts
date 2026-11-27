@@ -142,7 +142,7 @@ describe('ideation rounds (CLI)', () => {
       roundId: string;
       hasNewInformation: boolean;
       ideaLimit: number;
-      snapshots: { paperCardCount: number; comparisonSet: unknown[] };
+      snapshots: { paperCardCount: number; comparisonSet: unknown[]; paperIds?: string[] };
       noveltyConstraints: unknown[];
     };
     expect(payload.mode).toBe('new');
@@ -150,6 +150,9 @@ describe('ideation rounds (CLI)', () => {
     expect(payload.hasNewInformation).toBe(true); // first round is always new
     expect(payload.ideaLimit).toBe(3);
     expect(payload.snapshots.comparisonSet).toEqual([]);
+    // The citable-corpus field exists even when nothing is indexed (old
+    // rounds predate it; consumers read ?? []).
+    expect(payload.snapshots.paperIds ?? []).toEqual([]);
     expect(payload.noveltyConstraints).toEqual([]);
 
     const plain = await runCli(project, ['rounds', 'list']);

@@ -27,6 +27,16 @@ export interface RoundSnapshots {
   /** Content hash of knowledge/input-manifest.json (null when absent). */
   inputManifestHash: ContentHash | null;
   paperCardCount: number;
+  /**
+   * Citable paper ids (parsed-paper sources, e.g. `papers/2111.10487.pdf`).
+   *
+   * The generation prompt told the model to "cite the paper id from the round
+   * context" while the context carried only a count — so every card cited an
+   * invented `round-context:…` label that `idea claim-audit` can never
+   * resolve ("ingest it first" for a ref that is not a paper). Optional only
+   * so rounds stored before this field still load; consumers read `?? []`.
+   */
+  paperIds?: string[];
   /** Content hash of knowledge/research-map.md (null when absent). */
   researchMapHash: ContentHash | null;
   protocolId: string | null;
@@ -165,6 +175,33 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
         status: method.status,
         commit: ((method.record.repo ?? {}) as { commit?: string }).commit ?? null,
       }));
+      // The citable corpus, from the artifacts claim-audit resolves against
+      // (parsed-paper.source). paperCardCount comes from the same live source:
+      // knowledge/paper-cards/ is legacy storage that no longer exists, and a
+      // snapshot claiming "0 cards" while seven cards are indexed told the
+      // generation model there was nothing to cite.
+      let paperIds: string[] = [];
+      try {
+        const paperArtifacts = await runtime.db.listArtifactsByKind('parsed-paper');
+        const ids = new Set<string>();
+        for (const artifact of paperArtifacts) {
+          try {
+            const payload = JSON.parse(
+              await runtime.store.readFinalText(artifact.contentHash),
+            ) as { source?: unknown };
+            if (typeof payload.source === 'string' && payload.source.trim()) {
+              ids.add(payload.source.trim());
+            }
+          } catch {
+            continue; // unreadable artifact → its ref stays out of the list
+          }
+        }
+        paperIds = [...ids].sort();
+        const cards = await runtime.db.listArtifactsByKind('papercard');
+        if (cards.length > 0) paperCardCount = cards.length;
+      } catch {
+        // keep the directory-derived count
+      }
       const datasets = JSON.parse(
         await (
           await import('node:fs/promises')
@@ -176,6 +213,7 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
       return {
         inputManifestHash,
         paperCardCount,
+        paperIds,
         researchMapHash,
         protocolId,
         protocolHash,
@@ -191,6 +229,7 @@ export async function computeSnapshots(projectRoot: string): Promise<RoundSnapsh
     return {
       inputManifestHash,
       paperCardCount,
+      paperIds: [],
       researchMapHash,
       protocolId,
       protocolHash,

@@ -271,7 +271,8 @@ describe('idea generation output contract', () => {
     parentRoundId: null,
     snapshots: {
       inputManifestHash: null,
-      paperCardCount: 0,
+      paperCardCount: 1,
+      paperIds: ['papers/2111.10487.pdf'],
       researchMapHash: null,
       protocolId: null,
       protocolHash: null,
@@ -300,6 +301,19 @@ describe('idea generation output contract', () => {
     const request = buildGenerationRequest(round, skill);
     expect(request.instruction).toContain('{"kind": "...", "text": "..."}');
     expect(request.instruction).toContain('both fields are required');
+  });
+
+  it('lists citable paper ids and bans the round-context labels cards invented', () => {
+    // Observed: the context carried only a count ("Paper cards: 0" from dead
+    // legacy storage) while the prompt demanded "the paper id from the round
+    // context" — every card cited an invented round-context:… ref that idea
+    // claim-audit can never resolve, blocking handoff on all four ideas.
+    const request = buildGenerationRequest(round, skill);
+    expect(request.instruction).toContain(
+      'Paper ids (a card\'s paperRef MUST be exactly one of these): papers/2111.10487.pdf',
+    );
+    expect(request.instruction).toContain('"round-context:…" is NOT a paper');
+    expect(request.instruction).toContain('is not an id and fails the claim audit');
   });
 
   it('keeps the idempotency input stable for identical inputs', () => {
