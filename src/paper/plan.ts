@@ -226,7 +226,13 @@ export function validatePaperPlan(value: unknown): { ok: boolean; errors: string
 export interface PaperPlanSnapshot {
   question: string;
   protocol: { protocolId: string; protocolHash: string; lockedAt: number } | null;
-  comparisons: { methodId: string; status: string; required: boolean }[];
+  comparisons: {
+    methodId: string;
+    status: string;
+    required: boolean;
+    /** User-asserted provenance (user | official-code | paper-reimplementation). */
+    sourceKind?: string | null;
+  }[];
   experiments: {
     specId: string;
     version: number;
@@ -297,6 +303,10 @@ export async function collectPaperPlanSnapshot(root: string): Promise<PaperPlanS
           methodId: doc.methodId,
           status: doc.status,
           required: doc.required,
+          sourceKind:
+            typeof (doc as { sourceKind?: unknown }).sourceKind === 'string'
+              ? String((doc as { sourceKind?: unknown }).sourceKind)
+              : null,
         }))
         .sort((a, b) => a.methodId.localeCompare(b.methodId)),
       experiments: experiments
@@ -339,7 +349,12 @@ function renderSnapshot(snapshot: PaperPlanSnapshot): string {
   lines.push(
     snapshot.comparisons.length > 0
       ? `Comparisons: ${snapshot.comparisons
-          .map((entry) => `${entry.methodId}:${entry.status}${entry.required ? '' : '(ref)'}`)
+          .map(
+            (entry) =>
+              `${entry.methodId}:${entry.status}${entry.required ? '' : '(ref)'}${
+                entry.sourceKind ? `[${entry.sourceKind}]` : ''
+              }`,
+          )
           .join(', ')}`
       : 'Comparisons: none',
   );

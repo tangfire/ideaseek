@@ -32,15 +32,62 @@ export function findUnplacedFigures(
       ...(Array.isArray(plan.manualRemaining) ? plan.manualRemaining : []),
     ].map(String),
   );
+  // Float bodies only: the observed shipped paper carried a "Figure 1" that
+  // was a captioned paragraph — the label existed as raw text (or inside a
+  // figure env with no graphic), so text containment passed while no rendered
+  // artifact was ever included. Placement means: inside a float AND the float
+  // actually includes an artifact (\includegraphics / \input of one).
+  const floatBodies = [
+    ...[...mainTexText.matchAll(/\\begin\{figure\*?\}([\s\S]*?)\\end\{figure\*?\}/g)].map(
+      (m) => m[1]!,
+    ),
+    ...[...mainTexText.matchAll(/\\begin\{table\*?\}([\s\S]*?)\\end\{table\*?\}/g)].map(
+      (m) => m[1]!,
+    ),
+  ];
   const unplaced: string[] = [];
   for (const figure of plan.figures?.figures ?? []) {
     const id = String(figure?.id ?? '').trim();
     if (!id || excused.has(id)) continue;
-    if (mainTexText.includes(`figures/${id}`)) continue;
-    if (mainTexText.includes(`fig:${slugOf(id)}`)) continue;
+    const placed = floatBodies.some(
+      (body) =>
+        (body.includes(`fig:${slugOf(id)}`) || body.includes(`figures/${id}`)) &&
+        (/\\includegraphics/.test(body) || /\\input\{/.test(body)),
+    );
+    if (placed) continue;
     unplaced.push(id);
   }
   return unplaced;
+}
+
+/**
+ * Unresolved \ref/\cite are compile SUCCESS for latexmk but a broken paper:
+ * the observed main.pdf shipped red-boxed (?) markers across five pages
+ * because exit 0 + a PDF was the whole success criterion. Pure and exported
+ * so the scan is testable without a TeX distribution.
+ */
+export function findUnresolvedReferences(log: string): string[] {
+  const names = [
+    ...new Set([
+      ...[...log.matchAll(/LaTeX Warning: Reference `([^']+)' on page \d+ undefined/g)].map(
+        (m) => m[1]!,
+      ),
+      ...[...log.matchAll(/LaTeX Warning: Citation `([^']+)' on page \d+ undefined/g)].map(
+        (m) => m[1]!,
+      ),
+    ]),
+  ].slice(0, 8);
+  if (names.length > 0) {
+    return [
+      `undefined reference(s)/citation(s): ${names.join(', ')} — fix the \\ref/\\cite keys (check the .bib entries and that bibtex ran), then rerun: ideaseek paper compile`,
+    ];
+  }
+  if (/There were undefined references/.test(log)) {
+    return [
+      'the log reports undefined references — fix \\ref/\\cite keys, then rerun: ideaseek paper compile',
+    ];
+  }
+  return [];
 }
 
 /**
@@ -891,8 +938,9 @@ export async function compileManuscript(
   }
 
   if (result.code === 0 && pdfExists) {
+    const unresolved = findUnresolvedReferences(logText);
     const report: CompileReport = {
-      status: 'compiled',
+      status: unresolved.length > 0 ? 'failed' : 'compiled',
       venue: manuscript.venue,
       template: assembled.template,
       engine: 'pdflatex',
@@ -901,8 +949,8 @@ export async function compileManuscript(
       exitCode: 0,
       pdfPath,
       pageCount: extractPageCount(logText),
-      logTail: '',
-      blockers: [],
+      logTail: unresolved.length > 0 ? logTail.slice(-4_000) : '',
+      blockers: unresolved,
       skill: skillMeta,
       manuscriptInputHash: stored.inputHash,
       compiledAt: opts.now ?? Date.now(),

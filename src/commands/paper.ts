@@ -369,8 +369,12 @@ export function registerPaperCommand(program: Command): void {
       'export recorded experiment results to reports/paper/results.json for figures and tables (deterministic, no model)',
     )
     .option('--json', 'machine-readable output')
+    .option(
+      '--include-ablations',
+      'also export ablation-control rows (excluded by default so tables cannot present controls as competing methods)',
+    )
     .action(
-      action(async (opts: { json?: boolean }) => {
+      action(async (opts: { json?: boolean; includeAblations?: boolean }) => {
         const root = await findRoot();
         const { ProjectRuntime } = await import('../workflow/runtime.js');
         const runtime = await ProjectRuntime.open({ cwd: root });
@@ -383,6 +387,8 @@ export function registerPaperCommand(program: Command): void {
               spec: (row as { spec?: unknown }).spec as never,
               result: (row as { result?: unknown }).result as never,
             })),
+            Date.now(),
+            { includeAblations: opts.includeAblations === true },
           );
           if (opts.json) {
             process.stdout.write(jsonLine({ path, rows: exported.rows.length, export: exported }));
@@ -390,7 +396,10 @@ export function registerPaperCommand(program: Command): void {
           }
           process.stdout.write(
             `results exported: ${exported.rows.length} recorded run(s) → ${path}\n` +
-              `  input hash ${exported.inputHash.slice(0, 19)}… (figures cite this)\n`,
+              `  input hash ${exported.inputHash.slice(0, 19)}… (figures cite this)\n` +
+              (exported.excludedAblations > 0
+                ? `  excluded ${exported.excludedAblations} ablation-control row(s) — rerun with --include-ablations to plot controls\n`
+                : ''),
           );
           for (const row of exported.rows.slice(0, 8)) {
             process.stdout.write(
@@ -554,6 +563,9 @@ export function registerPaperCommand(program: Command): void {
         }
 
         const figures = parsePaperFigureOutput(output, context);
+        const { figureLegibilityWarnings } = await import('../paper/figure.js');
+        const legibility = figureLegibilityWarnings(figures.figures, context.resultSpecIds);
+        for (const warning of legibility) process.stderr.write(`  ! ${warning}\n`);
         const stored: StoredFigurePlan = {
           contract: PAPER_FIGURE_SCHEMA,
           inputHash: request.inputHash,
@@ -597,6 +609,7 @@ export function registerPaperCommand(program: Command): void {
               reused: false,
               eventSeq,
               figures,
+              warnings: legibility,
               path: figurePlanPath(root),
             }),
           );
@@ -604,6 +617,7 @@ export function registerPaperCommand(program: Command): void {
           process.stdout.write(
             `figure plan written: reports/paper/figures-plan.json (${figures.figures.length} figure(s) · ${figures.format} @ ${figures.dpi} dpi, reviewer ${figures.reviewerFeedback.verdict})\n`,
           );
+          for (const warning of legibility) process.stdout.write(`  ! ${warning}\n`);
           process.stdout.write(
             `  inputHash ${stored.inputHash.slice(0, 19)}… · skill ${skill.name}@${skill.sha256.slice(0, 12)}… · harness ${runtimeKind}\n`,
           );
@@ -1024,6 +1038,7 @@ export function registerPaperCommand(program: Command): void {
         process.stdout.write(
           `figure render ${report.status}: ${okCount}/${report.figures.length} script(s) → ${figuresDir}\n`,
         );
+        for (const warning of report.warnings) process.stdout.write(`  ! ${warning}\n`);
         for (const figure of report.figures) {
           if (figure.ok) {
             process.stdout.write(

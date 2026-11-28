@@ -64,6 +64,7 @@ function context(plannedIds: string[] = []): FigureContext {
     question: 'q',
     resultsGuide: '(none exported)',
     resultsFile: null,
+    resultSpecIds: [],
   };
 }
 
@@ -303,7 +304,9 @@ fig.savefig("figures/fig.png")`,
     // attempt per discovery; both must be in the contract the model reads.
     expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('savefig(...)');
     expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('literal substring');
-    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain('experiment-spec, result-file or existing-figure');
+    expect(PAPER_FIGURE_OUTPUT_CONTRACT).toContain(
+      'experiment-spec, result-file or existing-figure',
+    );
     // Observed at render: scripts ran with cwd=figures/ while reading
     // project-root-relative paths, so every open(...) raised FileNotFoundError
     // and all four figures failed. The execution cwd must be stated.

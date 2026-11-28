@@ -5,6 +5,8 @@ import { sha256Of, sha256OfFile } from '../core/hash.js';
 import { redactSecrets } from '../core/redact.js';
 import { runProcess } from '../core/proc.js';
 import { pythonBinary } from '../knowledge/pdf.js';
+import { figureLegibilityWarnings } from './figure.js';
+import { readPaperResults } from './results-export.js';
 
 /**
  * Phase 7 figure pipeline: EXECUTES the plotting scripts persisted by
@@ -82,6 +84,8 @@ export interface FigureRenderReport {
   python: string;
   skill: { name: string; sha256: string };
   planInputHash: string;
+  /** Non-blocking legibility arithmetic (category/label budgets) — see figure.ts. */
+  warnings: string[];
   renderedAt: number;
 }
 
@@ -93,6 +97,7 @@ interface StoredFigurePlan {
     figures: {
       id: string;
       script: string;
+      type?: string;
       caption?: string;
       statistics?: string[];
     }[];
@@ -147,7 +152,9 @@ export function parseSaveTargets(script: string): string[] {
   for (const match of script.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*['"]([^'"\n]+)['"]/gm)) {
     constants.set(match[1]!, match[2]!);
   }
-  for (const match of script.matchAll(/(?:savefig|write_image)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*[,)]/g)) {
+  for (const match of script.matchAll(
+    /(?:savefig|write_image)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*[,)]/g,
+  )) {
     const literal = constants.get(match[1]!);
     if (literal && !literal.includes('\n')) targets.add(literal);
   }
@@ -572,6 +579,11 @@ export async function renderFigures(
     }
   }
 
+  const resultsExport = await readPaperResults(root);
+  const warnings = figureLegibilityWarnings(
+    plan.figures.figures,
+    resultsExport ? resultsExport.rows.map((row) => row.specId) : [],
+  );
   return {
     report: {
       status,
@@ -579,6 +591,7 @@ export async function renderFigures(
       python,
       skill: skillMeta,
       planInputHash: plan.inputHash,
+      warnings,
       renderedAt: opts.now ?? Date.now(),
     },
     figuresDir,

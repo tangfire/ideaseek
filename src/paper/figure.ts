@@ -84,7 +84,7 @@ export const PAPER_FIGURE_OUTPUT_CONTRACT = [
   '- scripts must be self-contained matplotlib sources reading only the declared dataSources (write them for the project layout in the context).',
   '- every script runs with working directory figures/ — every path in the script resolves from there: read project-root data with a ../ prefix (e.g. ../reports/paper/results.json), and savefig(...) a BARE filename (e.g. fig1.pdf, not figures/fig1.pdf) so the output lands in figures/ and matches \\includegraphics{figures/...}.',
   '- every script MUST end by saving: call savefig(...) (both a vector pdf/svg and a png) or write_image(...) — a script that only draws is rejected by the platform.',
-  '- every dataSources[].ref whose kind is experiment-spec, result-file or existing-figure MUST appear as a literal substring of that figure\'s script (load/filter by that id or path) — the platform rejects a script that does not name the source it claims to read.',
+  "- every dataSources[].ref whose kind is experiment-spec, result-file or existing-figure MUST appear as a literal substring of that figure's script (load/filter by that id or path) — the platform rejects a script that does not name the source it claims to read.",
   '- This harness runs no figure reviewer: verdict must be REVIEW_UNAVAILABLE unless the context carries reviewer notes.',
   '- Never claim a figure was rendered — this contract plans and sources scripts only.',
   '- dataSources.ref must cite real context entries (spec ids, file paths, existing figure names) — no invented sources.',
@@ -231,6 +231,38 @@ export interface FigureContext {
   /** How to read reports/paper/results.json, or why it does not exist yet. */
   resultsGuide: string;
   resultsFile: string | null;
+  /** specIds recorded in the results export — the categories a bar figure can plot. */
+  resultSpecIds: string[];
+}
+
+/**
+ * Product thresholds for the observed Figure2 smear: eleven raw spec-id labels
+ * rotated into an unreadable band in a shipped paper. Warn-only by design —
+ * whether a plot is readable enough is the reviewer's judgment, but the
+ * arithmetic that produced the smear must not pass silently.
+ */
+export const FIGURE_CATEGORY_LIMIT = 8;
+export const FIGURE_LABEL_CHAR_LIMIT = 24;
+
+export function figureLegibilityWarnings(
+  figures: { type?: unknown }[],
+  specIds: string[],
+): string[] {
+  const barLike = figures.filter((f) => f.type === 'bar' || f.type === 'multi-panel');
+  if (barLike.length === 0 || specIds.length === 0) return [];
+  const warnings: string[] = [];
+  if (specIds.length > FIGURE_CATEGORY_LIMIT) {
+    warnings.push(
+      `legibility: ${barLike.length} bar-type figure(s) over ${specIds.length} recorded rows — one category per row exceeds the ${FIGURE_CATEGORY_LIMIT}-category budget and long labels overlap (observed in a shipped paper); filter, aggregate or abbreviate in the script`,
+    );
+  }
+  const long = specIds.filter((id) => id.length > FIGURE_LABEL_CHAR_LIMIT);
+  if (long.length > 0) {
+    warnings.push(
+      `legibility: ${long.length} row label(s) longer than ${FIGURE_LABEL_CHAR_LIMIT} chars (e.g. "${long[0]!.slice(0, 40)}…") — raw spec ids do not fit axis labels; use short display names`,
+    );
+  }
+  return warnings;
 }
 
 /** Reads the stored plan (if any) and the figures/ directory (read-only). */
@@ -273,6 +305,7 @@ export async function collectFigureContext(root: string): Promise<FigureContext>
       ? describeResultsForPrompt(resultsExport)
       : 'NO results export exists yet — run: ideaseek paper results (figures may not invent values)',
     resultsFile: resultsExport ? resultsExport.rowPath : null,
+    resultSpecIds: resultsExport ? resultsExport.rows.map((row) => row.specId) : [],
   };
 }
 

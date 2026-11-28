@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
-import { validatePaperFigurePlan } from '../src/paper/figure.js';
+import {
+  figureLegibilityWarnings,
+  FIGURE_CATEGORY_LIMIT,
+  FIGURE_LABEL_CHAR_LIMIT,
+  validatePaperFigurePlan,
+} from '../src/paper/figure.js';
 
 const figure = (over: Record<string, unknown>) => ({
   id: 'Fig 1',
@@ -72,4 +77,27 @@ it('does not require a source reference for context-only figures', () => {
     ]),
   );
   expect(result.errors.join(' ')).not.toMatch(/does not read its declared data source/);
+});
+
+it('legibility warnings: bar figures over budget or with long labels warn; clean stays silent', () => {
+  const bar = [{ type: 'bar' }, { type: 'multi-panel' }];
+  const shortIds = Array.from({ length: FIGURE_CATEGORY_LIMIT }, (_, i) => `spec-${i}`);
+  const longId = `a-very-long-spec-id-beyond-the-${FIGURE_LABEL_CHAR_LIMIT}-char-budget-x`;
+
+  // Within budget, short labels → silent.
+  expect(figureLegibilityWarnings(bar, shortIds)).toEqual([]);
+  // No bar-type figures → the arithmetic does not apply.
+  expect(figureLegibilityWarnings([{ type: 'scatter' }], [...shortIds, longId])).toEqual([]);
+  // No recorded rows → nothing to count.
+  expect(figureLegibilityWarnings(bar, [])).toEqual([]);
+
+  // One row past the category budget → warn (the observed Figure2 had 11).
+  const overBudget = figureLegibilityWarnings(bar, [...shortIds, 'spec-extra']);
+  expect(overBudget).toHaveLength(1);
+  expect(overBudget[0]).toContain(`${FIGURE_CATEGORY_LIMIT}-category budget`);
+
+  // A raw spec id that cannot fit an axis label → warn by name.
+  const longLabel = figureLegibilityWarnings(bar, [longId]);
+  expect(longLabel.join(' ')).toContain('longer than');
+  expect(longLabel.join(' ')).toContain(longId.slice(0, 40));
 });

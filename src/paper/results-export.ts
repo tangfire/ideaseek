@@ -28,6 +28,15 @@ export interface PaperResultRow {
   specId: string;
   ideaId: string | null;
   methodIds: string[];
+  /**
+   * Mechanical provenance so a table can never present the wrong row as a
+   * competing method: `ablation` = control run (ablation.ts marks them
+   * `ablation:<id>` in notes; legacy rows carry `idea-<id>-abl-<slug>`),
+   * `baseline` = spec.idea is null (spec.ts: baseline/protocol runs),
+   * `own` = the idea's own method run. Which baseline is *established* is an
+   * agent judgment (baseline-adequacy), not this field's job.
+   */
+  sourceKind: 'own' | 'ablation' | 'baseline';
   scale: string;
   status: string;
   seeds: number[];
@@ -45,6 +54,8 @@ export interface PaperResultsExport {
   inputHash: string;
   rowPath: string;
   rows: PaperResultRow[];
+  /** Ablation-control rows withheld from this export (0 unless excluded). */
+  excludedAblations: number;
   /**
    * Runs whose numbers are indistinguishable from each other.
    *
@@ -83,6 +94,18 @@ function scaleOf(spec: SpecSource): string {
   if (!Array.isArray(notes)) return 'unknown';
   const note = notes.find((entry) => String(entry).startsWith('scale:'));
   return note ? String(note).slice('scale:'.length) : 'unknown';
+}
+
+function sourceKindOf(spec: SpecSource, specId: string): PaperResultRow['sourceKind'] {
+  const notes = spec.environment?.notes;
+  if (Array.isArray(notes) && notes.some((entry) => String(entry).startsWith('ablation:'))) {
+    return 'ablation';
+  }
+  // Legacy records predate the note marker; ablation.ts names them
+  // idea-<ideaId>-abl-<ablationId>.
+  if (specId.includes('-abl-')) return 'ablation';
+  if (spec.idea == null) return 'baseline';
+  return 'own';
 }
 
 /**
@@ -126,16 +149,19 @@ export function identicalValueGroupsOf(
 export function buildPaperResults(
   entries: { spec: SpecSource; result: ResultSource | null }[],
   now: number,
+  opts: { excludeAblations?: boolean } = {},
 ): PaperResultsExport {
   const rows: PaperResultRow[] = [];
   for (const entry of entries) {
     const spec = entry.spec;
     const result = entry.result ?? null;
     const metrics = Array.isArray(result?.metrics) ? result.metrics : [];
+    const specId = String(spec.specId ?? '');
     rows.push({
-      specId: String(spec.specId ?? ''),
+      specId,
       ideaId: spec.idea?.ideaId ? String(spec.idea.ideaId) : null,
       methodIds: Array.isArray(spec.comparisonIds) ? spec.comparisonIds.map(String) : [],
+      sourceKind: sourceKindOf(spec, specId),
       scale: scaleOf(spec),
       status: String(result?.status ?? 'no-result'),
       seeds: Array.isArray(spec.seeds) ? spec.seeds.map(Number) : [],
@@ -153,22 +179,29 @@ export function buildPaperResults(
     });
   }
   rows.sort((a, b) => a.specId.localeCompare(b.specId));
-  const withoutEmpty = rows.filter((row) => row.specId);
+  const nonEmpty = rows.filter((row) => row.specId);
 
+  // Integrity groups always see EVERY row, including excluded controls —
+  // hiding the rows must not hide the "five ablations share one value" signal.
   const identicalValueGroups = identicalValueGroupsOf(
-    withoutEmpty.map((row) => ({
+    nonEmpty.map((row) => ({
       specId: row.specId,
       status: row.status,
       metrics: row.metrics.map((metric) => ({ name: metric.name, value: metric.value })),
     })),
   );
 
+  const visible = opts.excludeAblations
+    ? nonEmpty.filter((row) => row.sourceKind !== 'ablation')
+    : nonEmpty;
+
   return {
     schemaVersion: 1,
     generatedAt: now,
-    inputHash: sha256Of(redactSecrets(JSON.stringify(withoutEmpty))),
+    inputHash: sha256Of(redactSecrets(JSON.stringify(visible))),
     rowPath: PAPER_RESULTS_FILE.split('\\').join('/'),
-    rows: withoutEmpty,
+    rows: visible,
+    excludedAblations: nonEmpty.length - visible.length,
     identicalValueGroups,
   };
 }
@@ -196,8 +229,11 @@ export async function exportPaperResults(
   root: string,
   entries: { spec: SpecSource; result: ResultSource | null }[],
   now = Date.now(),
+  opts: { includeAblations?: boolean } = {},
 ): Promise<{ export: PaperResultsExport; path: string }> {
-  const built = buildPaperResults(entries, now);
+  const built = buildPaperResults(entries, now, {
+    excludeAblations: opts.includeAblations !== true,
+  });
   const path = join(root, PAPER_RESULTS_FILE);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(built, null, 2)}\n`, 'utf8');
@@ -217,12 +253,19 @@ export function describeResultsForPrompt(exported: PaperResultsExport): string {
   for (const row of exported.rows) {
     for (const metric of row.metrics) identifiers.add(metric.identifier);
   }
+  const byKind = { own: 0, baseline: 0, ablation: 0 };
+  for (const row of exported.rows) byKind[row.sourceKind] += 1;
   const example = exported.rows.find((row) => row.metrics.length > 0) ?? exported.rows[0]!;
   return [
     `Recorded results file (READ THIS in scripts and tables; do not restate or invent numbers): ${
       exported.rowPath
     }`,
     `rows: ${exported.rows.length}; status values: ${[...new Set(exported.rows.map((row) => row.status))].join(', ')}`,
+    `sourceKind of exported rows: own=${byKind.own}, baseline=${byKind.baseline}, ablation=${byKind.ablation}` +
+      (exported.excludedAblations > 0
+        ? `; ${exported.excludedAblations} ablation-control row(s) excluded — rerun: ideaseek paper results --include-ablations to plot controls`
+        : ''),
+    'sourceKind is mechanical provenance: ablation rows are controls and must NEVER be presented as competing methods; whether a baseline row is an established/published method is a separate agent judgment (baseline-adequacy), not something this file can assert.',
     `metric identifiers available: ${[...identifiers].join(', ') || '(none)'}`,
     `example row shape: {"specId":"${example.specId}","scale":"${example.scale}",` +
       `"status":"${example.status}","metrics":[{"name":…,"identifier":…,"value":…}],` +

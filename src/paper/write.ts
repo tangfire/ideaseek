@@ -246,6 +246,20 @@ function renderWriteContext(context: WriteContext): string {
   } else {
     lines.push('Claims to argue: none stored');
   }
+  if (context.snapshot.comparisons.length > 0) {
+    lines.push(
+      'Comparison methods (state identity honestly in tables: official-code is user-asserted provenance, paper-reimplementation is NOT the official implementation, and reference-only rows are context not competitors):',
+    );
+    for (const entry of context.snapshot.comparisons) {
+      lines.push(
+        `  - ${entry.methodId} [${entry.status}]${entry.required ? '' : ' (reference only)'}${
+          entry.sourceKind ? ` source=${entry.sourceKind}` : ''
+        }`,
+      );
+    }
+  } else {
+    lines.push('Comparison methods: none registered — a comparison table has nothing to compare');
+  }
   if (context.snapshot.experiments.length > 0) {
     lines.push('Experiment results (cite by specId in section sources):');
     for (const entry of context.snapshot.experiments) {
@@ -265,7 +279,9 @@ function renderWriteContext(context: WriteContext): string {
       : 'Locked protocol: none',
   );
   if (context.papers.length > 0) {
-    lines.push('Ingested papers (the only admissible bibliography sources; arXiv id in the filename):');
+    lines.push(
+      'Ingested papers (the only admissible bibliography sources; arXiv id in the filename):',
+    );
     for (const paper of context.papers) lines.push(`  - ${paper}`);
   } else {
     lines.push('Ingested papers: none recorded — do not invent references outside the context.');

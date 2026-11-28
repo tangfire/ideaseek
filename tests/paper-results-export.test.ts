@@ -31,7 +31,10 @@ describe('results export integrity', () => {
     const built = buildPaperResults(
       [
         { spec: spec('idea-alpha'), result: result('succeeded', [{ name: 'acc', value: 1.5 }]) },
-        { spec: spec('idea-alpha-abl-x'), result: result('succeeded', [{ name: 'acc', value: 1.5 }]) },
+        {
+          spec: spec('idea-alpha-abl-x'),
+          result: result('succeeded', [{ name: 'acc', value: 1.5 }]),
+        },
         { spec: spec('idea-beta'), result: result('succeeded', [{ name: 'acc', value: 2.5 }]) },
         // A failed run with the same numbers is not evidence and must not join
         // the group — it never reaches the table either.
@@ -77,5 +80,78 @@ describe('results export integrity', () => {
     // The group lists spec ids in the sorted order the file itself uses, so a
     // diff of two exports does not reorder on its own.
     expect(forward.identicalValueGroups[0]?.specIds).toEqual(['idea-abl', 'idea-alpha']);
+  });
+});
+
+describe('sourceKind and ablation exclusion', () => {
+  function specWith(
+    specId: string,
+    ideaId: string | null,
+    extra: Record<string, unknown> = {},
+  ): never {
+    return {
+      specId,
+      idea: ideaId ? { ideaId } : null,
+      comparisonIds: [],
+      metrics: [{ name: 'acc' }],
+      seeds: [42],
+      ...extra,
+    } as never;
+  }
+
+  it('derives sourceKind mechanically: ablation marker/specId, baseline idea-null, own', () => {
+    const built = buildPaperResults(
+      [
+        {
+          spec: specWith('idea-alpha', 'alpha'),
+          result: result('succeeded', [{ name: 'acc', value: 1 }]),
+        },
+        {
+          spec: specWith('repro-fedavg', null), // spec.idea === null → baseline/protocol run
+          result: result('succeeded', [{ name: 'acc', value: 2 }]),
+        },
+        {
+          spec: specWith('idea-alpha-abl-w1', 'alpha', {
+            environment: { notes: ['ablation:w1', 'ablation-label:without w1'] },
+          }),
+          result: result('succeeded', [{ name: 'acc', value: 1 }]),
+        },
+        {
+          spec: specWith('idea-alpha-abl-legacy', 'alpha'), // legacy specId shape
+          result: result('succeeded', [{ name: 'acc', value: 3 }]),
+        },
+      ],
+      1_760_000_000_000,
+    );
+    const byId = new Map(built.rows.map((row) => [row.specId, row.sourceKind]));
+    expect(byId.get('idea-alpha')).toBe('own');
+    expect(byId.get('repro-fedavg')).toBe('baseline');
+    expect(byId.get('idea-alpha-abl-w1')).toBe('ablation');
+    expect(byId.get('idea-alpha-abl-legacy')).toBe('ablation');
+  });
+
+  it('excludes ablation rows only when asked, counts them, and keeps integrity groups', () => {
+    const entries = [
+      {
+        spec: spec('idea-alpha', 'alpha'),
+        result: result('succeeded', [{ name: 'acc', value: 1.5 }]),
+      },
+      {
+        spec: specWith('idea-alpha-abl-w1', 'alpha', { environment: { notes: ['ablation:w1'] } }),
+        result: result('succeeded', [{ name: 'acc', value: 1.5 }]),
+      },
+      { spec: spec('repro-fedavg'), result: result('succeeded', [{ name: 'acc', value: 2.5 }]) },
+    ];
+    const all = buildPaperResults(entries, 1_760_000_000_000);
+    expect(all.rows).toHaveLength(3);
+    expect(all.excludedAblations).toBe(0);
+
+    const filtered = buildPaperResults(entries, 1_760_000_000_000, { excludeAblations: true });
+    expect(filtered.rows.map((row) => row.specId)).toEqual(['idea-alpha', 'repro-fedavg']);
+    expect(filtered.excludedAblations).toBe(1);
+    // The "two runs share one value" signal must survive the filter — hiding
+    // the control rows must not hide that the control did nothing.
+    expect(filtered.identicalValueGroups).toEqual(all.identicalValueGroups);
+    expect(filtered.inputHash).not.toBe(all.inputHash);
   });
 });

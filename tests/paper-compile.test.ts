@@ -8,6 +8,7 @@ import {
   classifyCompileFailure,
   extractPageCount,
   findUnplacedFigures,
+  findUnresolvedReferences,
   readManuscriptDoc,
   unapprovedFigureBlockers,
   unapprovedFigureIncludes,
@@ -105,32 +106,85 @@ describe('compile helpers', () => {
     expect(classifyCompileFailure('Emergency stop.').length).toBeGreaterThan(0);
   });
 
-  it('counts a placed figure by its include path or its placement label', () => {
+  it('counts a placed figure only when a float actually includes the artifact', () => {
     // Observed: --place-figures inserted all four figures using their
     // rendered OUTPUT file names (figures/fig1_accuracy_comparison.pdf) plus
     // \label{fig:fig-1}; the check only looked for the plan id inside the
     // include path (figures/Fig 1), so every freshly placed figure read as
-    // missing and the blocker refused the compile it had just satisfied.
+    // missing. The shipped main.pdf then exposed the opposite hole: a
+    // captioned text paragraph with \label{fig:…} (no graphic at all) read
+    // as placed — so placement now means: inside a float AND the float
+    // includes an artifact.
     const plan = {
       figures: { figures: [{ id: 'Fig 1' }, { id: 'Fig 2' }, { id: 'Table 1' }] },
       preservedExisting: [],
       manualRemaining: ['Architecture diagram'],
     };
     const placedByLabel = [
+      '\\begin{figure}[t]\\centering',
       '\\includegraphics{../figures/fig1_accuracy_comparison.pdf}',
-      '\\label{fig:fig-1}',
+      '\\caption{Accuracy comparison}\\label{fig:fig-1}',
+      '\\end{figure}',
+      '\\begin{figure}[t]\\centering',
       '\\includegraphics{../figures/fig2_gap_cost_vs_accuracy.pdf}',
-      '\\label{fig:fig-2}',
+      '\\caption{Gap vs accuracy}\\label{fig:fig-2}',
+      '\\end{figure}',
     ].join('\n');
     expect(findUnplacedFigures(placedByLabel, plan)).toEqual(['Table 1']);
-    expect(findUnplacedFigures(`${placedByLabel}\n\\includegraphics{figures/Table 1.pdf}`, plan)).toEqual(
-      [],
-    );
+    expect(
+      findUnplacedFigures(
+        `${placedByLabel}\n\\begin{table}[t]\\centering\n\\includegraphics{figures/Table 1.pdf}\n\\caption{Results}\\label{fig:table-1}\n\\end{table}`,
+        plan,
+      ),
+    ).toEqual([]);
+
+    // The observed defect: a figure float whose "diagram" is literal text —
+    // label present, no rendered artifact included → still unplaced.
+    const textBoxFigure = [
+      '\\begin{figure}[t]\\centering',
+      '\\fbox{Schematic: client k computes Uk … server takes leading eigenspace …}',
+      '\\caption{Domain-shaft prototypes}\\label{fig:domain-shaft}',
+      '\\end{figure}',
+    ].join('\n');
+    expect(
+      findUnplacedFigures(textBoxFigure, {
+        figures: { figures: [{ id: 'Domain-shaft prototypes' }] },
+      }),
+    ).toEqual(['Domain-shaft prototypes']);
+
+    // A label in raw body text (no float) does not count either.
+    expect(
+      findUnplacedFigures('see \\ref{fig:fig-1} for details', {
+        figures: { figures: [{ id: 'Fig 1' }] },
+      }),
+    ).toEqual(['Fig 1']);
+
     // manualRemaining is excused; the still-absent ids remain blockers.
     expect(
       findUnplacedFigures('', { ...plan, manualRemaining: ['Architecture diagram', 'Table 1'] }),
     ).toEqual(['Fig 1', 'Fig 2']);
     expect(findUnplacedFigures('', { figures: { figures: [{ id: 'Fig 9' }] } })).toEqual(['Fig 9']);
+  });
+
+  it('demotes a successful build whose log carries unresolved references', () => {
+    // latexmk exits 0 and produces a PDF even when \ref/\cite never resolve —
+    // the shipped paper printed red-boxed (?) markers on five pages.
+    const withRef = [
+      'Output written on main.pdf (10 pages).',
+      "LaTeX Warning: Reference `tab:results' on page 5 undefined on input line 212.",
+      "LaTeX Warning: Citation `smith2020' on page 2 undefined on input line 88.",
+      'There were undefined references.',
+    ].join('\n');
+    const blockers = findUnresolvedReferences(withRef);
+    expect(blockers).toHaveLength(1);
+    expect(blockers[0]).toContain('tab:results');
+    expect(blockers[0]).toContain('smith2020');
+    expect(blockers[0]).toContain('ideaseek paper compile');
+
+    // Summary line without named entries still blocks.
+    expect(findUnresolvedReferences('There were undefined references.')).toHaveLength(1);
+    // A clean log passes.
+    expect(findUnresolvedReferences('Output written on main.pdf (10 pages).')).toEqual([]);
   });
 
   it('readManuscriptDoc fails with actionable codes', async () => {
@@ -525,7 +579,10 @@ describe('paper compile refuses a figure a human rejected (e2e)', () => {
           id: 'experiments',
           heading: 'Experiments',
           latex: `\\section{Experiments}\n${ids
-            .map((id) => `\\includegraphics{figures/${id}}`)
+            .map(
+              (id) =>
+                `\\begin{figure}[t]\\centering\n\\includegraphics{figures/${id}}\n\\caption{${id}}\n\\end{figure}`,
+            )
             .join('\n')}`,
           sources: ['context'],
         },
