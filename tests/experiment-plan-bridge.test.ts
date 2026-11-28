@@ -190,10 +190,23 @@ describe('ARIS experiment-plan / experiment-bridge conformance (Phase 4.5)', () 
   let dir: string;
 
   /** create → IMPLEMENTING → scaffold → check (passes → SMOKE_TESTED). */
+  async function registerPassingBaseline(methodId = 'fedavg'): Promise<void> {
+    // The comparison gate refuses an empty set (contract): the bridge needs
+    // a registered baseline that is runnable. Walk it to smoke-tested (the
+    // chain comparison.test proves legal) so the bridge tests exercise the
+    // bridge, not the empty gate.
+    expect((await runCli(dir, ['comparison', 'register', methodId, '--json'])).code).toBe(0);
+    for (const status of ['accepted', 'source-resolved', 'implemented', 'smoke-tested']) {
+      const step = await runCli(dir, ['comparison', 'set-status', methodId, status, '--json']);
+      expect(step.code, `${status}: ${step.stderr}`).toBe(0);
+    }
+  }
+
   async function setupCheckedIdea(id = 'calib-reweight'): Promise<void> {
     const cardPath = join(dir, 'card.json');
     await writeFile(cardPath, JSON.stringify(makeCard(id), null, 2), 'utf8');
     expect((await runCli(dir, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
+    await registerPassingBaseline();
     expect((await runCli(dir, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(dir, ['idea', 'scaffold', id])).code).toBe(0);
     // A passed check needs code that computes something: the scaffold's own
@@ -523,6 +536,7 @@ describe('ARIS experiment-plan / experiment-bridge conformance (Phase 4.5)', () 
     const cardPath = join(dir, 'card.json');
     await writeFile(cardPath, JSON.stringify(makeCard(id), null, 2), 'utf8');
     expect((await runCli(dir, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
+    await registerPassingBaseline();
     expect((await runCli(dir, ['idea', 'set-status', id, 'IMPLEMENTING'])).code).toBe(0);
     expect((await runCli(dir, ['idea', 'scaffold', id])).code).toBe(0);
 
@@ -747,6 +761,7 @@ if __name__ == "__main__":
     const cardPath = join(dir, 'card.json');
     await writeFile(cardPath, JSON.stringify(makeCard(id), null, 2), 'utf8');
     expect((await runCli(dir, ['idea', 'create', id, '--from-card', cardPath])).code).toBe(0);
+    await registerPassingBaseline();
     expect((await runCli(dir, ['idea', 'scaffold', id])).code).toBe(0);
     expect((await plan(id)).code).toBe(0);
 

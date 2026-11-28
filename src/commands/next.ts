@@ -146,6 +146,20 @@ export async function materialAdvice(
       exitCode: 0,
     };
   }
+  if (count('comparisons') === 0) {
+    // Nothing registered at all: the ladder used to jump straight to
+    // IDEATION_NEXT claiming "comparisons ready" — a lie that let an idea
+    // stage begin with no baseline in existence.
+    return {
+      stage: 'COMPARISONS_MISSING',
+      blockers: [],
+      done: `protocol ${String(stats['protocolProposal'])},0 comparison(s) registered`,
+      suggestion:
+        '从论文发现并注册对比方法（至少1个 required 基线）——没有基线，任何"打赢了谁"的结论都无法成立',
+      command: 'ideaseek comparison discover',
+      exitCode: 0,
+    };
+  }
   if (count('ideas') === 0) {
     return {
       stage: 'IDEATION_NEXT',

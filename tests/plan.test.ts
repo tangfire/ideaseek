@@ -62,7 +62,10 @@ describe('ideaseek plan (dry-run)', () => {
     expect(payload.questionPersisted).toBe(false);
     expect(payload.run).toBeNull();
     expect(payload.ideas).toMatchObject({ total: 0, readyForExperiment: 0, limit: 1 });
-    expect(payload.comparisons.gateOk).toBe(true); // no required methods yet
+    // Zero required comparisons now BLOCK: the gate refuses to vouch for
+    // an empty set (it used to note-and-pass, which let a paper reach
+    // completion with no baseline in existence).
+    expect(payload.comparisons.gateOk).toBe(false);
     expect(payload.model.route).toBeTruthy();
     expect(payload.resources.cpuCores).toBeGreaterThan(0);
 

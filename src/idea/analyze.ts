@@ -150,9 +150,7 @@ export function buildMethodAliasMap(
   const map = new Map<string, string>();
   for (const comparison of comparisons) {
     map.set(comparison.methodId, comparison.methodId);
-    const aliases = Array.isArray(comparison.record.aliases)
-      ? comparison.record.aliases
-      : [];
+    const aliases = Array.isArray(comparison.record.aliases) ? comparison.record.aliases : [];
     for (const alias of aliases) {
       if (typeof alias === 'string' && alias.trim()) map.set(alias, comparison.methodId);
     }
@@ -580,11 +578,7 @@ export async function collectAnalysisInput(
       // Declared rename history: a label the method used to print under is
       // this method, so a rename cannot read as two methods sharing a value.
       const methodId = aliasMap.get(control.methodId) ?? control.methodId;
-      if (
-        allControls.some(
-          (entry) => entry.fromSpecId === from && entry.methodId === methodId,
-        )
-      )
+      if (allControls.some((entry) => entry.fromSpecId === from && entry.methodId === methodId))
         continue;
       allControls.push({ methodId, value: control.value, fromSpecId: from });
     }
@@ -595,6 +589,27 @@ export async function collectAnalysisInput(
     collectControls(asSpec(doc.spec), asResult(doc.result));
   }
   const suspiciousControls = duplicateControlFindings(allControls, subjectPrimary);
+
+  // Observed seeds: the union of seeds bound to SUCCEEDED runs of this idea
+  // (main + scale mirrors + idea-prefixed records). Counting the main spec's
+  // declared list alone rated a single run's declaration as evidence of
+  // seed diversity; what was actually exercised across runs is the honest
+  // number (identical OUTPUTS under different seeds are a separate check —
+  // zeroVariance, not this one).
+  const observedSeeds = new Set<number>();
+  const collectSeeds = (spec: { seeds?: unknown }, result: { status?: unknown } | null): void => {
+    if (!result || result.status !== 'succeeded') return;
+    if (!Array.isArray(spec.seeds)) return;
+    for (const seed of spec.seeds) {
+      if (typeof seed === 'number' && Number.isInteger(seed)) observedSeeds.add(seed);
+    }
+  };
+  if (main) collectSeeds(main.spec, main.result);
+  for (const mirror of succeededMains) collectSeeds(mirror.spec, mirror.result ?? null);
+  for (const doc of all) {
+    if (!doc.result || !doc.specId.startsWith(`idea-${ideaId}`)) continue;
+    collectSeeds(asSpec(doc.spec), asResult(doc.result));
+  }
 
   return {
     selection,
@@ -615,7 +630,7 @@ export async function collectAnalysisInput(
     ideaByScale,
     scalesRun: [...scales].sort(),
     datasetsRun: [...datasets].sort(),
-    seedsCount: main && main.result.status === 'succeeded' ? (main.spec.seeds ?? []).length : 0,
+    seedsCount: observedSeeds.size,
     failures,
     resources,
   };

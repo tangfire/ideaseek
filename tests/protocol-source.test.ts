@@ -79,3 +79,27 @@ it('fails loudly on an unreadable stored artifact', async () => {
   };
   await expect(readLockedProtocol(broken)).rejects.toThrow(/cannot be read/);
 });
+
+it('reads baselineEntries so confirm can enforce them against the registry', async () => {
+  const protocol = await readLockedProtocol(
+    runtimeFor([
+      {
+        protocolId: 'proto-baselines',
+        primaryMetrics: [{ name: 'acc', direction: 'higher' }],
+        baselineEntries: [
+          { methodId: 'fedavg', entry: 'python train.py', source: 'code' },
+          { methodId: 42 }, // malformed entries are dropped, not crashed on
+          'nonsense',
+        ],
+      },
+    ]),
+  );
+  expect(protocol?.baselineEntries).toEqual([
+    { methodId: 'fedavg', entry: 'python train.py', source: 'code' },
+  ]);
+});
+
+it('reports an empty baseline list when an older proposal lacks the field', async () => {
+  const protocol = await readLockedProtocol(runtimeFor([{ protocolId: 'proto-old' }]));
+  expect(protocol?.baselineEntries).toEqual([]);
+});

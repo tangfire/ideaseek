@@ -17,6 +17,7 @@ import { declaredMetric } from '../src/experiment/protocol-source.js';
 const PROTOCOL: LockedProtocol = {
   protocolId: 'p-feddg-1',
   locked: true,
+  baselineEntries: [],
   primaryMetrics: [
     declaredMetric(
       'target_unseen_domain_top1_accuracy (held-out domain value, all samples, %)',

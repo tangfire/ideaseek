@@ -300,6 +300,23 @@ export function registerPaperCommand(program: Command): void {
 
         // Contract gate: invalid output is a hard failure with zero writes.
         const plan = parsePaperPlanOutput(output);
+        // Claim/verdict reconciliation (mechanical): `supported` claims are
+        // only honest when some idea's recorded analysis actually says
+        // supported — the model used to declare claim status freely and the
+        // plan shipped without ever reading analysis.json.
+        const supportedClaims = plan.claimsEvidence.filter(
+          (claim) => claim.status === 'supported',
+        ).length;
+        const anyIdeaSupported = snapshot.ideas.some((idea) => idea.verdict === 'supported');
+        if (supportedClaims > 0 && !anyIdeaSupported) {
+          const detail = `plan declares ${supportedClaims} supported claim(s) but no idea analysis records verdict=supported — run: ideaseek idea analyze <ideaId> (or lower the claims to partial/unadjudicated), then rerun: ideaseek paper plan`;
+          if (opts.json) {
+            process.stdout.write(jsonLine({ ok: false, written: false, errors: [detail] }));
+          } else {
+            process.stderr.write(`paper plan refused, nothing written:\n  ✗ ${detail}\n`);
+          }
+          return 2;
+        }
         const stored: StoredPlan = {
           contract: PAPER_PLAN_SCHEMA,
           inputHash: request.inputHash,

@@ -334,19 +334,14 @@ describe('declared rename aliases', () => {
     const dbWithAliases = {
       getExperiment: async () => null,
       listExperiments: async () => [],
-      listComparisons: async () => [
-        { methodId: registered, record: { aliases: [oldLabel] } },
-      ],
+      listComparisons: async () => [{ methodId: registered, record: { aliases: [oldLabel] } }],
     };
     const root = await workspace(
       [registered],
       [
         {
           spec: specFor('smoke', 1),
-          result: resultFixture(
-            [{ methodId: oldLabel, metric: DECLARED, value: 22.5314 }],
-            23.7,
-          ),
+          result: resultFixture([{ methodId: oldLabel, metric: DECLARED, value: 22.5314 }], 23.7),
         },
         {
           spec: specFor('smoke', 2),
@@ -374,7 +369,11 @@ describe('declared rename aliases', () => {
           result: resultFixture(
             [
               { methodId: 'fedavg', metric: DECLARED, value: 16.896707907604327 },
-              { methodId: 'dp_noise_matched_no_shrinkage', metric: DECLARED, value: 16.896707907604327 },
+              {
+                methodId: 'dp_noise_matched_no_shrinkage',
+                metric: DECLARED,
+                value: 16.896707907604327,
+              },
             ],
             16.715043539185267,
           ),
@@ -384,5 +383,22 @@ describe('declared rename aliases', () => {
     const input = await collectAnalysisInput(root, ideaId, dbWithoutRepro, [DECLARED]);
     expect(input.suspiciousControls ?? []).toHaveLength(1);
     expect(input.suspiciousControls?.[0]).toContain('fedavg and dp_noise_matched_no_shrinkage');
+  });
+});
+
+describe('observed seed counting', () => {
+  it('counts the seed union across succeeded runs, not just the selected main spec', async () => {
+    // v1 declares seed 42, v2 declares seed 43. The old count read only the
+    // selected main spec's declared list (1) and failed the seeds>=2 gate
+    // even though two seeds were actually exercised across the runs.
+    const root = await workspace(
+      ['fedavg'],
+      [
+        { spec: specFor('quick', 1), result: resultFixture([], 1) },
+        { spec: { ...specFor('standard', 2), seeds: [43] }, result: resultFixture([], 1) },
+      ],
+    );
+    const input = await collectAnalysisInput(root, ideaId, dbWithoutRepro, [DECLARED]);
+    expect(input.seedsCount).toBe(2);
   });
 });

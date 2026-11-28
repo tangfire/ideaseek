@@ -559,11 +559,21 @@ describe('ideaseek comparison gate', () => {
     }
   }
 
-  it('passes with no required methods, fails on pending, passes after smoke-tested', async () => {
-    // No methods at all → informational pass.
+  it('blocks with no required methods, fails on pending, passes after smoke-tested', async () => {
+    // No methods at all → the gate refuses to vouch for an empty set (it
+    // used to note-and-pass, letting handoff reach a paper with zero
+    // baselines registered).
     const empty = await runCli(project, ['comparison', 'gate', '--json']);
-    expect(empty.code).toBe(0);
-    expect((JSON.parse(empty.stdout) as { ok: boolean }).ok).toBe(true);
+    expect(empty.code, empty.stdout + empty.stderr).toBe(2);
+    const emptyPayload = JSON.parse(empty.stdout) as {
+      ok: boolean;
+      blocking: { methodId: string; hint: string }[];
+      note?: string;
+    };
+    expect(emptyPayload.ok).toBe(false);
+    expect(emptyPayload.note).toBe('no required comparisons registered');
+    expect(emptyPayload.blocking[0]).toMatchObject({ methodId: '(none)' });
+    expect(emptyPayload.blocking[0]!.hint).toContain('ideaseek comparison discover');
 
     // Registered but not runnable → blocking (exit 2).
     await registerWithStatus('fedavg', ['accepted', 'source-resolved']);

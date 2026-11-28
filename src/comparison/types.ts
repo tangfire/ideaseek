@@ -19,7 +19,13 @@ export type ComparisonStatus =
   | 'blocked'
   | 'excluded';
 
-export type ComparisonSourceKind = 'user' | 'official-code' | 'paper-reimplementation';
+/**
+ * `asserted` = the registrant CLAIMS a source but nothing verified it — the
+ * default, because `--source official-code` used to be asserted silently by
+ * a flag default. official-code/paper-reimplementation stay available as
+ * explicit declarations; a later agent verdict can promote assertions.
+ */
+export type ComparisonSourceKind = 'user' | 'official-code' | 'paper-reimplementation' | 'asserted';
 
 export interface ComparisonRepo {
   /** Public HTTPS or local path; cloned anonymously into upstream/. */
@@ -283,8 +289,12 @@ export function validateComparisonMethod(value: unknown): { ok: boolean; errors:
     errors.push('methodId must be kebab-case');
   }
   if (typeof m.required !== 'boolean') errors.push('required must be boolean');
-  if (!['user', 'official-code', 'paper-reimplementation'].includes(m.sourceKind as string)) {
-    errors.push('sourceKind must be user | official-code | paper-reimplementation');
+  if (
+    !['user', 'official-code', 'paper-reimplementation', 'asserted'].includes(
+      m.sourceKind as string,
+    )
+  ) {
+    errors.push('sourceKind must be user | official-code | paper-reimplementation | asserted');
   }
   if (!Array.isArray(m.paperRefs)) errors.push('paperRefs must be an array');
   if (!Array.isArray(m.notes)) errors.push('notes must be an array');

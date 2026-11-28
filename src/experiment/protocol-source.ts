@@ -41,6 +41,12 @@ export interface LockedProtocol {
   splitRules: string[];
   /** Declarative slicing, the input `data slices --from-protocol` expands. */
   slicing: Record<string, unknown>[];
+  /**
+   * The baselines the proposal binds (protocol.ts validates ≥1 at proposal
+   * time). Read here so `confirm` can enforce them against the comparison
+   * registry — the declaration used to be validated and then read by nobody.
+   */
+  baselineEntries: { methodId: string; entry: string; source?: string }[];
 }
 
 export interface ProtocolSourceRuntime {
@@ -105,6 +111,16 @@ export async function readLockedProtocol(
     secondaryMetrics: metricNames(proposal.secondaryMetrics),
     splitRules: rules.map(String),
     slicing: Array.isArray(slicing) ? (slicing as Record<string, unknown>[]) : [],
+    baselineEntries: Array.isArray(proposal.baselineEntries)
+      ? (proposal.baselineEntries as unknown[])
+          .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+          .filter((entry) => typeof entry.methodId === 'string' && typeof entry.entry === 'string')
+          .map((entry) => ({
+            methodId: String(entry.methodId),
+            entry: String(entry.entry),
+            source: typeof entry.source === 'string' ? String(entry.source) : undefined,
+          }))
+      : [],
   };
 }
 

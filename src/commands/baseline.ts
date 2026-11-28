@@ -488,8 +488,8 @@ async function prepareReproduction(
     throw new IdeaseekError(
       'INVALID_ARGUMENT',
       `${opts.method} is sourceKind=${method.sourceKind}; reproduction only applies to paper-reimplementation methods` +
-        (method.sourceKind === 'official-code'
-          ? ' — official code uses: ideaseek baseline repair --method ' + opts.method
+        (method.sourceKind === 'official-code' || method.sourceKind === 'asserted'
+          ? ' — claimed-official code uses: ideaseek baseline repair --method ' + opts.method
           : ''),
     );
   }

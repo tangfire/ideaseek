@@ -240,6 +240,8 @@ describe('CLI: confirm protocol leakage gate', () => {
     // Fresh project for the passing case (blockers are immutable history).
     const dir2 = await mkdtemp(join(tmpdir(), 'ideaseek-leak-'));
     expect((await runCli(dir2, ['init'])).code).toBe(0);
+    // The proposal binds baseline m1: confirm requires it registered.
+    expect((await runCli(dir2, ['comparison', 'register', 'm1', '--json'])).code).toBe(0);
     await seed(dir2, proposal, [
       slice({ sliceId: 'ok-smoke', scale: 'smoke', stats: { totalRows: 50, selectedRows: 1 } }),
       slice({ sliceId: 'ok-quick', scale: 'quick', stats: { totalRows: 50, selectedRows: 5 } }),

@@ -548,6 +548,27 @@ export async function setIdeaStatus(
 ): Promise<IdeaWorkspaceMeta> {
   const meta = await loadWorkspaceMeta(projectRoot, ideaId);
   assertIdeaTransition(meta.status, to, reason);
+  if (to === 'SUPPORTED') {
+    // SUPPORTED names an evidentiary verdict, so a recorded analysis must
+    // exist: set-status used to walk the transition graph and stop there,
+    // letting a bare command bypass the whole analysis chain (the run that
+    // produced this rule shipped a paper on exactly such a verdict).
+    // Existence only here; the evidence-strength judgment itself is an
+    // agent artifact (later gate), and analysis.json is what analyze writes.
+    let verdict: unknown;
+    try {
+      const text = await readFile(join(ideaDir(projectRoot, ideaId), 'analysis.json'), 'utf8');
+      verdict = (JSON.parse(text) as { verdict?: unknown }).verdict;
+    } catch {
+      verdict = undefined;
+    }
+    if (typeof verdict !== 'string' || !verdict.trim()) {
+      throw new IdeaseekError(
+        'INVALID_STATE',
+        `${ideaId} has no recorded analysis verdict — run: ideaseek idea analyze ${ideaId} (SUPPORTED is recorded by analysis, not set by hand)`,
+      );
+    }
+  }
   meta.history.push({
     at: Date.now(),
     from: meta.status,

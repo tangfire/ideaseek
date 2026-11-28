@@ -350,13 +350,25 @@ describe('terminal-state experiment refusal', () => {
     // set-status NEEDS_REVISION → implement → check — a transition the
     // lifecycle table refuses (SUPPORTED has no outgoing edges), so the
     // recovery path in the error could never execute.
-    const { createWorkspace, hashIdeaSource, loadWorkspaceMeta, setIdeaStatus } = await import(
-      '../src/idea/workspace.js'
-    );
+    const { createWorkspace, hashIdeaSource, loadWorkspaceMeta, setIdeaStatus } =
+      await import('../src/idea/workspace.js');
     const { runIdeaExperiment } = await import('../src/idea/experiment.js');
     const dir = await mkdtemp(join(tmpdir(), 'idea-termhint-'));
     await createWorkspace(dir, { ideaId: 'hint-idea', card: makeCard('hint-idea') });
-    for (const to of ['IMPLEMENTING', 'SMOKE_TESTED', 'RUNNING', 'ANALYZING', 'SUPPORTED'] as const) {
+    // SUPPORTED requires a recorded analysis verdict (contract); this
+    // fixture only needs the terminal state to test the hint path.
+    await writeFile(
+      join(dir, 'ideas', 'hint-idea', 'analysis.json'),
+      JSON.stringify({ verdict: 'supported', reasons: [] }),
+      'utf8',
+    );
+    for (const to of [
+      'IMPLEMENTING',
+      'SMOKE_TESTED',
+      'RUNNING',
+      'ANALYZING',
+      'SUPPORTED',
+    ] as const) {
       await setIdeaStatus(dir, 'hint-idea', to);
     }
     const meta = await loadWorkspaceMeta(dir, 'hint-idea');

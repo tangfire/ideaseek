@@ -80,7 +80,11 @@ export function registerComparisonCommand(program: Command): void {
       (value, prev: string[]) => [...prev, value],
       [] as string[],
     )
-    .option('--source <kind>', 'user | official-code | paper-reimplementation', 'official-code')
+    .option(
+      '--source <kind>',
+      'user | official-code | paper-reimplementation | asserted (default: asserted = declared, unverified)',
+      'asserted',
+    )
     .option('--json', 'machine-readable output')
     .action(
       action(
@@ -96,10 +100,14 @@ export function registerComparisonCommand(program: Command): void {
           },
         ) => {
           const root = await openRoot();
-          if (!['user', 'official-code', 'paper-reimplementation'].includes(opts.source ?? '')) {
+          if (
+            !['user', 'official-code', 'paper-reimplementation', 'asserted'].includes(
+              opts.source ?? '',
+            )
+          ) {
             throw new IdeaseekError(
               'INVALID_ARGUMENT',
-              '--source must be user | official-code | paper-reimplementation',
+              '--source must be user | official-code | paper-reimplementation | asserted',
             );
           }
           const rt = await openRuntime(root);
@@ -246,7 +254,11 @@ export function registerComparisonCommand(program: Command): void {
       (value, prev: string[]) => [...prev, value],
       [] as string[],
     )
-    .option('--source <kind>', 'user | official-code | paper-reimplementation', 'official-code')
+    .option(
+      '--source <kind>',
+      'user | official-code | paper-reimplementation | asserted (default: asserted = declared, unverified)',
+      'asserted',
+    )
     .option('--reference-only', 'reference-only (default is required for the gate)')
     .option('--json', 'machine-readable output')
     .action(
@@ -262,10 +274,14 @@ export function registerComparisonCommand(program: Command): void {
           },
         ) => {
           const root = await openRoot();
-          if (!['user', 'official-code', 'paper-reimplementation'].includes(opts.source ?? '')) {
+          if (
+            !['user', 'official-code', 'paper-reimplementation', 'asserted'].includes(
+              opts.source ?? '',
+            )
+          ) {
             throw new IdeaseekError(
               'INVALID_ARGUMENT',
-              '--source must be user | official-code | paper-reimplementation',
+              '--source must be user | official-code | paper-reimplementation | asserted',
             );
           }
           const now = Date.now();
@@ -1129,12 +1145,10 @@ export function registerComparisonCommand(program: Command): void {
             );
             return ok ? 0 : 2;
           }
-          if (required === 0) {
-            process.stdout.write(
-              'gate: no required comparisons registered (ideaseek comparison import <id> <url>)\n',
-            );
-            return 0;
-          }
+          // required === 0 used to short-circuit here with an informational
+          // exit 0 — the human path then disagreed with --json (which blocks)
+          // and printed nothing about WHY the gate cannot vouch. Fall
+          // through: the generic rendering shows the (none) blocker.
           process.stdout.write(
             `gate: ${passed.length}/${required} required method(s) runnable` +
               (skipped.length > 0 ? ` · ${skipped.length} excluded` : '') +

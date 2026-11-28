@@ -312,6 +312,12 @@ describe('CLI: data slices --from-protocol supersedes the stale generation', () 
       'ds-222222222222-quick-dead02',
     ]);
 
+    // The proposal binds baseline feddg-prototype-alignment: confirm
+    // requires it registered (the mixed-snapshot block fires before that
+    // check, so the earlier refusal above is unaffected).
+    expect(
+      (await runCli(dir, ['comparison', 'register', 'feddg-prototype-alignment', '--json'])).code,
+    ).toBe(0);
     const confirm = await runCli(dir, ['confirm', 'protocol', '--by', 'researcher', '--json']);
     expect(confirm.code).toBe(0);
     const locked = JSON.parse(confirm.stdout) as { locked: boolean; errors?: string[] };

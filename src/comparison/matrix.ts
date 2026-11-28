@@ -145,7 +145,9 @@ export async function buildComparisonMatrix(
             record.sourceKind === 'paper-reimplementation' ||
             record.sourceKind === 'user'
               ? record.sourceKind
-              : 'user',
+              : // `asserted` (and anything unrecognized) is an unverified
+                // claim: never identity as official code.
+                'user',
           sourceKind: typeof record.sourceKind === 'string' ? record.sourceKind : null,
           licenseKind:
             typeof record.repo?.licenseKind === 'string' ? record.repo.licenseKind : null,

@@ -402,6 +402,9 @@ describe('ideaseek full plan / approve (e2e)', () => {
     // Plan readiness requires a confirmed+current fairness lock, which in
     // turn requires a locked protocol and succeeded specs on both sides.
     await seedProtocolProposal(dir);
+    // The proposal binds baseline fedavg — confirm refuses a protocol
+    // whose declared baselines were never registered.
+    expect((await runCli(dir, ['comparison', 'register', 'fedavg', '--json'])).code).toBe(0);
     expect((await runCli(dir, ['confirm', 'protocol', '--json'])).code).toBe(0);
     expect((await runCli(dir, ['full', 'fairness', '--idea', 'alpha', '--json'])).code).toBe(0);
     const fairness = await runCli(dir, [

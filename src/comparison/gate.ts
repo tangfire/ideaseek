@@ -125,12 +125,24 @@ export async function evaluateComparisonGate(
     });
   }
 
+  // Zero required comparisons used to note-and-pass: a project could reach
+  // handoff and a paper with no baseline registered at all, because the gate
+  // vouched for an empty set. An empty set is not evidence — block it.
+  const zeroRequired = methods.length === 0;
+  if (zeroRequired) {
+    blocking.push({
+      methodId: '(none)',
+      status: 'no required comparisons registered',
+      hint: 'register at least one established baseline: ideaseek comparison discover → explain → register (an approved decision waiver is the audited escape hatch)',
+    });
+  }
+
   return {
     ok: blocking.length === 0,
     required: methods.length,
     passed,
     skipped,
     blocking,
-    ...(methods.length === 0 ? { note: 'no required comparisons registered' } : {}),
+    ...(zeroRequired ? { note: 'no required comparisons registered' } : {}),
   };
 }

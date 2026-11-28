@@ -103,6 +103,51 @@ export function registerConfirmCommand(program: Command): void {
             }
             return 2;
           }
+          // The proposal binds ≥1 baseline (validated at proposal time); a
+          // lock that never checked them against the comparison registry
+          // certified protocols whose baselines did not exist — the
+          // declaration was written and then read by nobody.
+          const declaredBaselines = Array.isArray(
+            (proposal as { baselineEntries?: unknown }).baselineEntries,
+          )
+            ? (
+                (proposal as { baselineEntries?: unknown }).baselineEntries as {
+                  methodId?: unknown;
+                }[]
+              )
+                .map((entry) =>
+                  entry && typeof entry.methodId === 'string' ? entry.methodId : null,
+                )
+                .filter((methodId): methodId is string => methodId !== null)
+            : [];
+          const registeredMethods = new Set(
+            (await runtime.db.listComparisons()).map((entry) => entry.methodId),
+          );
+          const missingBaselines = declaredBaselines.filter(
+            (methodId) => !registeredMethods.has(methodId),
+          );
+          if (missingBaselines.length > 0) {
+            const detail = missingBaselines.join(', ');
+            if (opts.json) {
+              process.stdout.write(
+                jsonLine({
+                  locked: false,
+                  errors: [
+                    `protocol baselines not registered as comparisons: ${detail} — register them (ideaseek comparison register/import) or fix the proposal, then rerun: ideaseek confirm protocol`,
+                  ],
+                }),
+              );
+            } else {
+              process.stdout.write(
+                'protocol baselines missing from the comparison registry, not locked:\n',
+              );
+              process.stdout.write(`  ✗ ${detail}\n`);
+              process.stdout.write(
+                '  register them (ideaseek comparison register <methodId> …) or fix the proposal, then rerun: ideaseek confirm protocol\n',
+              );
+            }
+            return 2;
+          }
           const pending = leakage.findings.filter((finding) => finding.severity === 'pending');
           const lock = await lockProtocolProposal(proposal, {
             confirmedBy: opts.by ?? 'user',

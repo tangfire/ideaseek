@@ -151,6 +151,22 @@ describe('gold set: comparison gate', () => {
   });
 });
 
+it('comparison gate blocks an empty registry instead of vouching for nothing', async () => {
+  // A project with zero required comparisons used to note-and-pass: handoff
+  // and a paper could reach completion with no baseline in existence.
+  const zero = await evaluateComparisonGate({
+    listComparisons: async () => [],
+    listExperiments: async () => [],
+  });
+  expect(zero.ok).toBe(false);
+  expect(zero.required).toBe(0);
+  expect(zero.note).toBe('no required comparisons registered');
+  expect(zero.blocking.some((entry) => entry.methodId === '(none)')).toBe(true);
+  expect(zero.blocking.find((entry) => entry.methodId === '(none)')!.hint).toContain(
+    'ideaseek comparison discover',
+  );
+});
+
 describe('gold set: rejected and revisable idea fixtures', () => {
   function losingInput(card: Record<string, unknown>): AnalysisInput {
     return {

@@ -147,7 +147,22 @@ describe('terminal reopen via revision', () => {
     // ("a new version … starts at PROPOSED"); the code must implement it.
     const dir = await mkdtemp(join(tmpdir(), 'idea-reopen-'));
     await createWorkspace(dir, { ideaId: 'reopen-idea', card: makeCard('reopen-idea') });
-    for (const to of ['IMPLEMENTING', 'SMOKE_TESTED', 'RUNNING', 'ANALYZING', 'SUPPORTED'] as const) {
+    for (const to of [
+      'IMPLEMENTING',
+      'SMOKE_TESTED',
+      'RUNNING',
+      'ANALYZING',
+      'SUPPORTED',
+    ] as const) {
+      if (to === 'SUPPORTED') {
+        // SUPPORTED requires a recorded analysis verdict (contract); this
+        // fixture only needs the terminal state to test the reopen path.
+        await writeFile(
+          join(dir, 'ideas', 'reopen-idea', 'analysis.json'),
+          JSON.stringify({ verdict: 'supported', reasons: [] }),
+          'utf8',
+        );
+      }
       await setIdeaStatus(dir, 'reopen-idea', to);
     }
     const before = await loadWorkspaceMeta(dir, 'reopen-idea');
@@ -575,6 +590,32 @@ describe('ideaseek idea workspace (CLI)', () => {
 
     expect((await runCli(project, ['idea', 'verify', 'calib-reweight'])).code).toBe(0);
     expect((await runCli(project, ['idea', 'verify', 'calib-reweight-v2'])).code).toBe(0);
+  }, 60_000);
+
+  it('refuses SUPPORTED without a recorded analysis verdict, then accepts one', async () => {
+    // SUPPORTED names an evidentiary verdict: walking the legal chain to
+    // ANALYZING and then hand-setting SUPPORTED must fail until the analysis
+    // artifact exists (set-status used to just check the transition graph).
+    const cardPath = await writeCard(project, 'card-s.json', makeCard('supported-gate'));
+    expect(
+      (await runCli(project, ['idea', 'create', 'supported-gate', '--from-card', cardPath])).code,
+    ).toBe(0);
+    for (const status of ['IMPLEMENTING', 'SMOKE_TESTED', 'RUNNING', 'ANALYZING']) {
+      const step = await runCli(project, ['idea', 'set-status', 'supported-gate', status]);
+      expect(step.code, step.stderr).toBe(0);
+    }
+    const refused = await runCli(project, ['idea', 'set-status', 'supported-gate', 'SUPPORTED']);
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr).toContain('analysis');
+
+    // The artifact analyze persists is what unblocks the same command.
+    await writeFile(
+      join(project, 'ideas', 'supported-gate', 'analysis.json'),
+      JSON.stringify({ verdict: 'supported', reasons: [] }),
+      'utf8',
+    );
+    const ok = await runCli(project, ['idea', 'set-status', 'supported-gate', 'SUPPORTED']);
+    expect(ok.code, ok.stderr).toBe(0);
   }, 60_000);
 
   it('enforces lifecycle transitions and reasons through the CLI', async () => {

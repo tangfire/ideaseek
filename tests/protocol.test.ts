@@ -231,6 +231,26 @@ describe('CLI: confirm protocol', () => {
     }
   }
 
+  it('refuses to lock a protocol whose declared baselines were never registered', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ideaseek-confirm-baselines-'));
+    expect((await runCli(dir, ['init'])).code).toBe(0);
+    await seedProposal(dir, validProposal());
+
+    const refused = await runCli(dir, ['confirm', 'protocol', '--json']);
+    expect(refused.code, refused.stdout + refused.stderr).toBe(2);
+    expect(refused.stdout).toContain('logreg');
+    expect(refused.stdout).toContain('not registered');
+    // Nothing was locked by the refusal.
+    expect(JSON.parse(refused.stdout).locked).toBe(false);
+
+    // Registering the declared baseline is the documented recovery; the same
+    // command then locks.
+    expect((await runCli(dir, ['comparison', 'register', 'logreg', '--json'])).code).toBe(0);
+    const locked = await runCli(dir, ['confirm', 'protocol', '--json']);
+    expect(locked.code, locked.stdout + locked.stderr).toBe(0);
+    expect(JSON.parse(locked.stdout).locked).toBe(true);
+  }, 60_000);
+
   it('locks a valid proposal, is idempotent, and refuses invalid ones', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ideaseek-confirm-'));
     expect((await runCli(dir, ['init'])).code).toBe(0);
@@ -241,6 +261,9 @@ describe('CLI: confirm protocol', () => {
     expect(empty.stderr).toContain('no protocol proposal found');
 
     await seedProposal(dir, validProposal());
+    // The proposal binds baseline logreg: confirm refuses to lock a
+    // protocol whose declared baselines were never registered.
+    expect((await runCli(dir, ['comparison', 'register', 'logreg', '--json'])).code).toBe(0);
 
     const first = await runCli(dir, ['confirm', 'protocol', '--by', 'researcher', '--json']);
     expect(first.code).toBe(0);

@@ -104,6 +104,11 @@ describe('CLI: protocol propose → confirm loop (fake harness)', () => {
     const { readdir } = await import('node:fs/promises');
     if ((await readdir(join(dir, 'papers'))).length === 0) return; // python missing
 
+    // Register the fake proposal's baseline BEFORE the first propose: the
+    // proposal inputHash covers comparisons, so registering between the two
+    // proposes would legitimately make the second one "not current".
+    expect((await runCli(dir, ['comparison', 'register', 'baseline', '--json'])).code).toBe(0);
+
     const proposed = await runCli(dir, ['protocol', 'propose', '--json'], 120_000);
     expect(proposed.code).toBe(0);
     const payload = JSON.parse(proposed.stdout) as {

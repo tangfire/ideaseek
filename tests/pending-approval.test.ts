@@ -196,6 +196,8 @@ describe('ideaseek pending (CLI)', () => {
     expect(payload.items[0]).toMatchObject({ kind: 'protocol', id: 'protocol:proto-abc123-v1' });
     expect(payload.items[0]!.approve?.cliArgs).toEqual(['confirm', 'protocol', '--by', 'user']);
 
+    // The proposal binds baseline logreg: confirm requires it registered.
+    expect((await runCli(dir, ['comparison', 'register', 'logreg', '--json'])).code).toBe(0);
     expect((await runCli(dir, ['confirm', 'protocol', '--by', 'user'])).code).toBe(0);
     const after = await runCli(dir, ['pending', '--json']);
     expect(after.code).toBe(0);
@@ -253,6 +255,9 @@ describe('REPL confirmation block', () => {
   it('shows the block at startup and /approve locks the protocol', async () => {
     const dir = await makeProjectDir();
     await seedProposal(dir, validProposal());
+    // validProposal binds baseline logreg: /approve runs confirm, which
+    // refuses a protocol whose declared baselines were never registered.
+    expect((await runCli(dir, ['comparison', 'register', 'logreg', '--json'])).code).toBe(0);
 
     const repl = startRepl(dir);
     await repl.waitFor(/Confirmation required/);
@@ -288,6 +293,9 @@ describe('REPL confirmation block', () => {
   it('multiple items require an explicit pick via /approve <n>', async () => {
     const dir = await makeProjectDir();
     await seedProposal(dir, validProposal());
+    // validProposal binds baseline logreg: /approve1 runs confirm, which
+    // refuses a protocol whose declared baselines were never registered.
+    expect((await runCli(dir, ['comparison', 'register', 'logreg', '--json'])).code).toBe(0);
     expect((await runCli(dir, ['decision', 'propose', 'swap', 'dataset'])).code).toBe(0);
 
     const repl = startRepl(dir);
