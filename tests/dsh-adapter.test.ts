@@ -259,9 +259,21 @@ describe('DshHarnessAdapter real runtime (keyless)', () => {
   async function withKeylessCredentials<T>(fn: () => Promise<T>): Promise<T> {
     const prevKey = process.env.DEEPSEEK_API_KEY;
     const prevUserConfig = process.env.IDEASEEK_USER_CONFIG;
+    const prevProfile = process.env.USERPROFILE;
+    const prevHome = process.env.HOME;
     const isolated = await mkdtemp(join(tmpdir(), 'ideaseek-user-config-'));
     process.env.IDEASEEK_USER_CONFIG = join(isolated, 'config.yaml');
     delete process.env.DEEPSEEK_API_KEY;
+    // The DSH runtime ALSO has a global home (~/.dsh: legacy credentials,
+    // sessions, imported settings) shared with every keyed test on this
+    // machine. Under full-suite load the runtime picked working auth up from
+    // that global state and the keyless contract silently became keyed — the
+    // test resolved a REAL model response instead of rejecting. Redirect the
+    // process homedir for the duration (the spawned child inherits it), which
+    // also stops these runs from writing session state into the real ~/.dsh.
+    const isolatedHome = await mkdtemp(join(tmpdir(), 'ideaseek-dsh-global-'));
+    process.env.USERPROFILE = isolatedHome;
+    process.env.HOME = isolatedHome;
     try {
       return await fn();
     } finally {
@@ -269,6 +281,10 @@ describe('DshHarnessAdapter real runtime (keyless)', () => {
       else process.env.DEEPSEEK_API_KEY = prevKey;
       if (prevUserConfig === undefined) delete process.env.IDEASEEK_USER_CONFIG;
       else process.env.IDEASEEK_USER_CONFIG = prevUserConfig;
+      if (prevProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevProfile;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
     }
   }
 
@@ -304,9 +320,21 @@ describe('DshHarnessAdapter real runtime (keyless)', () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'ideaseek-dsh-home-'));
     const adapter = new DshHarnessAdapter({ dshHome, initializeTimeoutMs: 30_000 });
     await withKeylessCredentials(async () => {
+      // Diagnostic snapshot (existence only, never values): when the keyless
+      // contract unexpectedly resolves a REAL model response, the failure
+      // must name which credential channels were live at that moment.
+      const { existsSync } = await import('node:fs');
+      const { userCredentialsPath } = await import('../src/core/env.js');
+      const diag = JSON.stringify({
+        envKey: Boolean(process.env.DEEPSEEK_API_KEY),
+        userConfig: process.env.IDEASEEK_USER_CONFIG ?? null,
+        credsFileExists: existsSync(userCredentialsPath()),
+        home: process.env.HOME ?? null,
+        userProfile: process.env.USERPROFILE ?? null,
+      });
       try {
-        await expect(
-          adapter.runTask({
+        const outcome = await adapter
+          .runTask({
             runId: 'run-test',
             taskId: 'task-test',
             profile: 'paper-extractor',
@@ -315,19 +343,28 @@ describe('DshHarnessAdapter real runtime (keyless)', () => {
             outputSchema: 'papercard-lite-v1',
             budget: { timeoutMs: 60_000 },
             idempotencyKey: 'dsh-no-key-test',
-          }),
-        ).rejects.toSatisfy((error: unknown) => {
-          // Either a typed AUTH/QUOTA block or a clearly-marked retryable DSH
-          // error is acceptable keyless behavior — never a silent success and
-          // never an unmapped crash.
-          const name = (error as Error).name;
-          const message = (error as Error).message ?? '';
-          return (
-            name === 'HarnessBlockError' ||
-            message.includes('dsh ') ||
-            message.includes('failed to start DSH')
+          })
+          .then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error }),
           );
-        });
+        if (outcome.ok) {
+          const output = String((outcome.value as { output?: string }).output ?? '').slice(0, 160);
+          throw new Error(
+            `keyless run SUCCEEDED (credential leak) — diag=${diag} output=${output}`,
+          );
+        }
+        // Either a typed AUTH/QUOTA block or a clearly-marked retryable DSH
+        // error is acceptable keyless behavior — never a silent success and
+        // never an unmapped crash.
+        const name = (outcome.error as Error).name;
+        const message = (outcome.error as Error).message ?? '';
+        expect(
+          name === 'HarnessBlockError' ||
+            message.includes('dsh ') ||
+            message.includes('failed to start DSH'),
+          `unexpected rejection (diag=${diag}): ${name}: ${message.slice(0, 200)}`,
+        ).toBe(true);
       } finally {
         await adapter.shutdown();
       }

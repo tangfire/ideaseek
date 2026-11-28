@@ -518,6 +518,21 @@ export class DshHarnessAdapter implements HarnessAdapter {
     onEvent?: (event: HarnessEvent) => void,
     signal?: AbortSignal,
   ): Promise<HarnessTaskResult> {
+    // Fail closed at the platform boundary, using the same source of truth
+    // as health(): the DSH runtime has been observed completing REAL model
+    // calls while every IdeaSeek-managed credential channel was provably
+    // empty (env var, credentials file, global home) — so "no configured
+    // key" must be OUR refusal, not a hope about runtime behavior. Model
+    // access goes through /models setup; runtime-internal fallbacks are not
+    // a documented product path.
+    loadUserCredentials(); // JIT: a key saved moments ago must be visible here
+    if (!process.env[this.apiKeyEnv]?.trim()) {
+      throw new HarnessBlockError(
+        'AUTH_REQUIRED',
+        `missing credential reference: env ${this.apiKeyEnv} — run: ideaseek models setup`,
+        { code: 'NO_CREDENTIALS' },
+      );
+    }
     await this.initialize();
     const harness = this.harness;
     if (!harness) throw new Error('DSH runtime unavailable after initialize()');
