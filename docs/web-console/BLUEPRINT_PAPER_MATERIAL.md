@@ -139,5 +139,6 @@ M0a 先于或平行于 M0b：文件底座是独立垂直切片，不阻塞文本
 | fake-db 不校验列名（`cloud_task` 排序 bug 的教训，3f4722a） | 材料/文件相关测试必须至少一条打真库语义：列名/约束按迁移文件核对，或在 fake-db 加 schema 校验 |
 | QODER_STORAGE 可用性未知 | FileStore 适配器先行 + 只读探针 spike；读不到走 DB blob 降级（≤1 MB）并如实标注，不阻塞 M0 |
 | 上传被滥用（超大文件、路径逃逸、非 Owner） | 函数边界硬校验：限额 400、`isSafeRelativePath`、Owner 401/403，全部进测试 |
-| 回填与并发 step 竞态 | 回填在同一事务里完成；step 侧本就按 payload 现值判断，最坏结果是多阻断一次再恢复 |
+| 回填与并发 step 竞态 | 平台无事务（`CLOUD_NATIVE_REFACTOR_PLAN.md:113`）：回填走"幂等材料行 + 读改写 CAS 核对返回行"，重放同一材料即重试回填；step 侧按 payload 现值判断，最坏结果是多阻断一次再恢复 |
+| 请求体 8 MiB 安全线 | 文件限额由 FileStore capability 下发（storage 7 MiB / db 1 MiB），前端不写死；大文件属 M2 存储直传范畴 |
 | 正文/文件泄露到公开项目 | 材料视图与文件下载按 Owner/只读分级；公开分享不带正文与文件内容字段 |
